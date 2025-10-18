@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet test)",
+      "Bash(dotnet clean:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(tasklist)",
+      "Bash(dotnet build)",
+      "Bash(taskkill:*)",
+      "Bash(dotnet run:*)",
+      "Bash(curl:*)",
+      "Bash(timeout:*)",
+      "Bash(dir:*)",
+      "Read(//c/Program Files (x86)/Steam/steamapps/common/Wreckfest Dedicated Server/**)",
+      "Bash(tasklist:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Read(//f/Projects/C#/**)",
+      "Bash(git clone:*)",
+      "Bash(python:*)",
+      "Bash(del \"F:\\Projects\\C#\\WreckfestController\\Models\\PlayerListResponse.cs\")",
+      "Bash(dotnet build:*)",
+      "Bash(rm:*)",
+      "Bash(dotnet test:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

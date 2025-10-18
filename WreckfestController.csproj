@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="WreckfestController.Tests\**" />
+    <Content Remove="WreckfestController.Tests\**" />
+    <EmbeddedResource Remove="WreckfestController.Tests\**" />
+    <None Remove="WreckfestController.Tests\**" />
+  </ItemGroup>
+
+</Project>
