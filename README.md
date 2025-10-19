@@ -123,9 +123,18 @@ The API will be available at `https://localhost:5101` (or `http://localhost:5100
 ### Standalone (using the .exe)
 
 **1. Build/Publish the application:**
+
+The project is configured to publish as a single executable file:
+
 ```bash
-dotnet publish -c Release -o "C:\WreckfestController"
+# Framework-dependent (requires .NET 8 runtime on target machine) - Recommended
+dotnet publish WreckfestController.csproj -c Release -r win-x64 -o "C:\WreckfestController"
+
+# Self-contained (includes .NET runtime, larger file, no dependencies)
+dotnet publish WreckfestController.csproj -c Release -r win-x64 --self-contained true -o "C:\WreckfestController"
 ```
+
+This creates a single `WreckfestController.exe` (~4 MB) plus `appsettings.json` and a few small support files.
 
 **2. Configure appsettings.json:**
 
