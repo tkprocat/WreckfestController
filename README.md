@@ -40,7 +40,6 @@ Edit `appsettings.json` to set your Wreckfest server path:
     "ServerPath": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Wreckfest Dedicated Server\\Wreckfest_x64.exe",
     "ServerArguments": "-s server_config=server_config.cfg",
     "WorkingDirectory": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Wreckfest Dedicated Server",
-    "ServerProcessName": "Wreckfest_x64",
     "LogFilePath": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Wreckfest Dedicated Server\\log.txt"
   }
 }
@@ -60,15 +59,25 @@ Edit `appsettings.json` to set your Wreckfest server path:
 - `ServerArguments` - Command-line arguments for the server
   - Example: `"-s server_config=server_config.cfg"`
 
-- `ServerProcessName` - The actual server process name (without .exe)
-  - Common names: `Wreckfest64`, `wreckfest_x64`, `Wreckfest_x64`
-  - Used for PID tracking and fallback detection
-
 - `LogFilePath` - Path to the server's log file (**required for player tracking**)
   - Example: `"C:\\Path\\To\\wreckfest_server.log"`
   - The server writes all output to this log file
   - Used for real-time monitoring and player tracking
   - Use `/api/server/logfile` to view the server logs
+
+**Network Configuration (for standalone Kestrel deployment):**
+
+- `Kestrel:Urls` - URLs to listen on when using Kestrel (not IIS)
+  - Example: `"http://0.0.0.0:5100;https://0.0.0.0:5101"`
+  - `0.0.0.0` means listen on all network interfaces
+  - Use `localhost` or `127.0.0.1` to only allow local connections
+  - Separate multiple URLs with semicolons
+
+- `UseKestrel` - Set to `true` to force Kestrel configuration in production
+  - Default: `false` (uses IIS bindings when deployed to IIS)
+  - Only needed if running standalone without IIS
+
+**Note:** When deployed to IIS, the IP and port are controlled by IIS bindings, not the application configuration.
 
 ## Visual Studio 2022
 
@@ -103,11 +112,46 @@ Edit `appsettings.json` to set your Wreckfest server path:
 
 ## Running the Application
 
+### Development (using dotnet run)
+
 ```bash
 dotnet run
 ```
 
 The API will be available at `https://localhost:5101` (or `http://localhost:5100`)
+
+### Standalone (using the .exe)
+
+**1. Build/Publish the application:**
+```bash
+dotnet publish -c Release -o "C:\WreckfestController"
+```
+
+**2. Configure appsettings.json:**
+
+Set `UseKestrel: true` to enable IP/port configuration:
+
+```json
+{
+  "Kestrel": {
+    "Urls": "http://0.0.0.0:5100;https://0.0.0.0:5101"
+  },
+  "UseKestrel": true
+}
+```
+
+**3. Run the executable:**
+```powershell
+cd C:\WreckfestController
+.\WreckfestController.exe
+```
+
+**Or specify URLs via command line:**
+```powershell
+.\WreckfestController.exe --urls "http://0.0.0.0:5100"
+```
+
+The API will be available at the configured URLs (default: `http://0.0.0.0:5100`)
 
 ## Running Tests
 
@@ -144,10 +188,11 @@ dotnet test
 - **PUT /api/config/event-loop** - Update the event loop configuration
 
 **How PID tracking works:**
-- When you start a server, the API automatically parses the console output to capture the PID
-- This allows precise control of specific server instances (important if running multiple servers)
-- If auto-detection fails, use `/api/server/attach/{pid}` to manually track a running server
-- Status endpoint shows `trackedByPid: true` when PID tracking is active
+- When you start a server via the API, it automatically captures and tracks the process ID (PID)
+- The API **only** tracks the specific server instance it started - it won't interfere with other Wreckfest instances
+- This allows precise control of specific server instances (critical when running multiple servers)
+- Use `/api/server/attach/{pid}` to manually track an already-running server
+- Status endpoint shows `trackedByPid: true` and `trackedPid` when PID tracking is active
 
 ## WebSocket Endpoint
 
@@ -266,23 +311,21 @@ curl http://localhost:5100/api/server/players
 
 ### Server Status Shows "Not Running" After Starting
 
-The API automatically parses console output to capture the server's PID. If this fails:
+If the server process starts but isn't detected by the API:
 
-**Option 1: Manual attach (recommended for multiple servers)**
+**Option 1: Check if the process is running**
 ```bash
-# Find the PID of your running server using Task Manager or:
+# Find running Wreckfest processes
 tasklist | findstr /i "wreck"
+```
 
-# Attach to it
+**Option 2: Manually attach to a running server**
+```bash
+# Attach to it using the PID from tasklist
 curl -X POST http://localhost:5100/api/server/attach/YOUR_PID
 ```
 
-**Option 2: Update process name**
-1. Find the process name using Task Manager or `tasklist | findstr /i "wreck"`
-2. Update `ServerProcessName` in `appsettings.json`
-3. Restart the API
-
-**Note:** PID tracking is more reliable when running multiple servers, as it tracks the specific instance you started.
+**Note:** The API only tracks servers started via the API or manually attached. It won't automatically detect other Wreckfest instances to avoid conflicts when running multiple servers.
 
 ### Port Already in Use
 

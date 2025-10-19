@@ -33,7 +33,7 @@ public class ServerManager
 
     private Process? GetActualServerProcess()
     {
-        // If we have a captured PID, use it
+        // Only track by PID - we always start the server through the API
         if (_actualServerPid.HasValue)
         {
             try
@@ -48,6 +48,7 @@ public class ServerManager
                     _logger.LogWarning("Tracked server process (PID: {PID}) has exited", _actualServerPid.Value);
                     _actualServerPid = null;
                     _startTime = null;
+                    return null;
                 }
             }
             catch (ArgumentException)
@@ -56,54 +57,17 @@ public class ServerManager
                 _logger.LogWarning("Tracked server process (PID: {PID}) no longer exists", _actualServerPid.Value);
                 _actualServerPid = null;
                 _startTime = null;
+                return null;
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error accessing tracked server process (PID: {PID})", _actualServerPid.Value);
+                return null;
             }
         }
 
-        // Fallback to process name detection
-        var processName = _configuration["WreckfestServer:ServerProcessName"];
-        if (string.IsNullOrEmpty(processName))
-        {
-            return _serverProcess?.HasExited == false ? _serverProcess : null;
-        }
-
-        try
-        {
-            // Try exact match first
-            var processes = Process.GetProcessesByName(processName);
-            if (processes.Any())
-            {
-                _logger.LogDebug("Found {Count} process(es) with name '{ProcessName}'", processes.Length, processName);
-                return processes.FirstOrDefault();
-            }
-
-            // Try common variations
-            var variations = new[]
-            {
-                "wreckfest_x64",
-                "wreckfest",
-            };
-
-            foreach (var variation in variations)
-            {
-                processes = Process.GetProcessesByName(variation);
-                if (processes.Any())
-                {
-                    _logger.LogInformation("Found server process with name '{ProcessName}' (tried variation)", variation);
-                    return processes.FirstOrDefault();
-                }
-            }
-
-            return null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting server process");
-            return null;
-        }
+        // No tracked PID means server is not running
+        return null;
     }
 
     public virtual async Task<(bool Success, string Message)> StartServerAsync()
@@ -214,26 +178,9 @@ public class ServerManager
             }
         }
 
-        _logger.LogWarning("Server launcher completed but actual server process not detected after 5 seconds");
-
-        // List all running processes with 'wreck' in the name for debugging
-        try
-        {
-            var allProcesses = Process.GetProcesses()
-                .Where(p => p.ProcessName.ToLower().Contains("wreck"))
-                .Select(p => p.ProcessName)
-                .Distinct()
-                .ToList();
-
-            if (allProcesses.Any())
-            {
-                _logger.LogInformation("Found wreckfest-related processes: {Processes}", string.Join(", ", allProcesses));
-                return (true, $"Server launcher completed. Found processes: {string.Join(", ", allProcesses)}. Update ServerProcessName in config.");
-            }
-        }
-        catch { }
-
-        return (true, "Server launcher completed. Check logs and update ServerProcessName in appsettings.json if needed.");
+        // Process is running but not detected by GetActualServerProcess (shouldn't happen with PID tracking)
+        _logger.LogWarning("Server process started (PID: {PID}) but not confirmed after 5 seconds", _actualServerPid);
+        return (true, $"Server process started (PID: {_actualServerPid}) but not confirmed. Check logs.");
     }
 
     public virtual async Task<(bool Success, string Message)> StopServerAsync()

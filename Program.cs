@@ -3,6 +3,16 @@ using WreckfestController.WebSockets;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Configure Kestrel to use settings from appsettings.json (only applies when NOT using IIS)
+if (!builder.Environment.IsProduction() || builder.Configuration.GetValue<bool>("UseKestrel", false))
+{
+    var urls = builder.Configuration["Kestrel:Urls"];
+    if (!string.IsNullOrEmpty(urls))
+    {
+        builder.WebHost.UseUrls(urls);
+    }
+}
+
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

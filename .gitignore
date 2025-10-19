@@ -80,3 +80,6 @@ appsettings.*.json
 .env
 .env.local
 .env.*.local
+
+# Claude Code settings
+.claude/
