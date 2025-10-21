@@ -21,6 +21,7 @@ public class ServerManager
     private readonly object _logReadLock = new();
     private System.Threading.Timer? _fileWatcherDebounceTimer;
     private System.Threading.Timer? _pollingTimer;
+    private string _currentTrack = string.Empty;
 
     public bool IsRunning => GetActualServerProcess() != null;
 
@@ -300,6 +301,7 @@ public class ServerManager
             Uptime = _startTime.HasValue && actualProcess != null
                 ? DateTime.Now - _startTime.Value
                 : null,
+            CurrentTrack = _currentTrack
         };
     }
 
@@ -604,7 +606,14 @@ public class ServerManager
                     NotifySubscribers(line);
                     _playerTracker.ProcessLogLine(line);
                     _logger.LogInformation("Server log: {Line}", line);
+                    var trackMatch = System.Text.RegularExpressions.Regex.Match(line, @"Current track loaded! Track: ('(.+?)')");
+                    if (trackMatch.Success)
+                    {
+                        _currentTrack = trackMatch.Groups[1].Value;
+                        _logger.LogInformation("Current track updated to: {Track}", _currentTrack);
+                    }
                 }
+
             }
 
             // Update last position
