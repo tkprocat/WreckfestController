@@ -300,8 +300,6 @@ public class ServerManager
             Uptime = _startTime.HasValue && actualProcess != null
                 ? DateTime.Now - _startTime.Value
                 : null,
-            TrackedByPid = _actualServerPid.HasValue,
-            TrackedPid = _actualServerPid
         };
     }
 
@@ -647,6 +645,5 @@ public class ServerStatus
     public bool IsRunning { get; set; }
     public int? ProcessId { get; set; }
     public TimeSpan? Uptime { get; set; }
-    public bool TrackedByPid { get; set; }
-    public int? TrackedPid { get; set; }
+    public string CurrentTrack { get; set; } = string.Empty;
 }
