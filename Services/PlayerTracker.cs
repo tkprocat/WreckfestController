@@ -310,6 +310,14 @@ public class PlayerTracker
             _logger.LogError(ex, "Failed to send player list update");
         }
     }
+
+    /// <summary>
+    /// Manually trigger a player list webhook update (used by OCR tracker after updating player data)
+    /// </summary>
+    public void SendPlayerListWebhook()
+    {
+        _ = SendPlayerListUpdate();
+    }
 }
 
 public class PlayerTrackerEvent

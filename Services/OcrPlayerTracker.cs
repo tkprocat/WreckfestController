@@ -106,22 +106,47 @@ public class OcrPlayerTracker : IDisposable
             var targetWidth = _configuration.GetValue<int?>("WreckfestServer:OcrWindowWidth") ?? 993;
             var targetHeight = _configuration.GetValue<int?>("WreckfestServer:OcrWindowHeight") ?? 1040;
 
-            // Capture and read console window
+            // Capture and save console window screenshot for debugging
             _logger.LogDebug("Capturing console window ({Width}x{Height}) and running OCR", targetWidth, targetHeight);
-            string ocrText = _ocr.ReadConsoleWindow(windowHandle, targetWidth, targetHeight);
 
-            if (string.IsNullOrWhiteSpace(ocrText))
+            var screenshot = _consoleReader.CaptureConsoleWindow(windowHandle, targetWidth, targetHeight);
+            if (screenshot == null)
             {
-                _logger.LogWarning("OCR extracted no text from console");
+                _logger.LogWarning("Failed to capture console window screenshot");
                 return;
             }
 
-            // Parse OCR output
-            var players = ParseOcrPlayerList(ocrText);
-            _logger.LogInformation("OCR extracted {Count} players", players.Count);
+            try
+            {
+                // Save screenshot for debugging
+                var screenshotPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"ocr_debug_{DateTime.Now:yyyyMMdd_HHmmss}.png");
+                screenshot.Save(screenshotPath, System.Drawing.Imaging.ImageFormat.Png);
+                _logger.LogInformation("Saved OCR debug screenshot to: {Path}", screenshotPath);
 
-            // Update player tracking
-            UpdatePlayerTracking(players);
+                // Extract text from screenshot
+                string ocrText = _ocr.ExtractText(screenshot);
+
+                if (string.IsNullOrWhiteSpace(ocrText))
+                {
+                    _logger.LogWarning("OCR extracted no text from console");
+                    return;
+                }
+
+                // Log first 500 characters of extracted text for debugging
+                var textPreview = ocrText.Length > 500 ? ocrText.Substring(0, 500) + "..." : ocrText;
+                _logger.LogInformation("OCR extracted text preview: {Text}", textPreview);
+
+                // Parse OCR output
+                var players = ParseOcrPlayerList(ocrText);
+                _logger.LogInformation("OCR extracted {Count} players", players.Count);
+
+                // Update player tracking
+                UpdatePlayerTracking(players);
+            }
+            finally
+            {
+                screenshot.Dispose();
+            }
 
             _lastOcrUpdate = DateTime.Now;
         }
@@ -155,13 +180,13 @@ public class OcrPlayerTracker : IDisposable
             // \s+(\*?) - Optional asterisk for bot
             // (.+?) - Player name (can have spaces, non-greedy)
             // \s+\| - Pipe separator
-            // \s+\[[ABC]\] - Class indicator
+            // \s+\[[A-Z]\] - Class indicator (any letter A-Z)
             // \s+(\d+) - Score
             // \s+(.+?) - Vehicle name (can have spaces and (L) suffix, non-greedy)
             // \s+\| - Pipe separator
             // \s+ping:\s+(\d+) - Ping
 
-            var match = Regex.Match(line, @"^\s*(\d+):\s+\d+\s+\[\d+\]\s+(\*?)(.+?)\s+\|\s+\[[ABC]\]\s+(\d+)\s+(.+?)\s+\|\s+ping:\s+(\d+)", RegexOptions.IgnoreCase);
+            var match = Regex.Match(line, @"^\s*(\d+):\s+\d+\s+\[\d+\]\s+(\*?)(.+?)\s+\|\s+\[[A-Z]\]\s+(\d+)\s+(.+?)\s+\|\s+ping:\s+(\d+)", RegexOptions.IgnoreCase);
 
             if (match.Success)
             {
@@ -194,6 +219,7 @@ public class OcrPlayerTracker : IDisposable
     private void UpdatePlayerTracking(List<OcrPlayerData> ocrPlayers)
     {
         var onlinePlayers = _playerTracker.GetOnlinePlayers();
+        int updatedCount = 0;
 
         foreach (var ocrPlayer in ocrPlayers)
         {
@@ -207,13 +233,22 @@ public class OcrPlayerTracker : IDisposable
                 trackedPlayer.Score = ocrPlayer.Score;
                 trackedPlayer.Vehicle = ocrPlayer.Vehicle;
                 trackedPlayer.IsBot = ocrPlayer.IsBot; // Update IsBot from OCR (more reliable)
+                trackedPlayer.LastOcrUpdate = DateTime.Now;
                 _logger.LogDebug("Updated player {Name} with OCR data: ID={PlayerId}, Score={Score}, Vehicle={Vehicle}",
                     ocrPlayer.Name, ocrPlayer.PlayerId, ocrPlayer.Score, ocrPlayer.Vehicle);
+                updatedCount++;
             }
             else
             {
                 _logger.LogDebug("OCR found player not in tracking: {Name} (may have just joined)", ocrPlayer.Name);
             }
+        }
+
+        // Trigger webhook update after OCR data is applied
+        if (updatedCount > 0)
+        {
+            _logger.LogInformation("Triggering webhook update after OCR processed {Count} players", updatedCount);
+            _playerTracker.SendPlayerListWebhook();
         }
     }
 

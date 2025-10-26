@@ -32,7 +32,12 @@ public class ConsoleOcr : IDisposable
             }
 
             _engine = new TesseractEngine(_tessdataPath, "eng", EngineMode.Default);
-            _logger.LogInformation("Tesseract OCR engine initialized successfully");
+
+            // Configure for better console text recognition
+            // PSM 6: Assume a single uniform block of text (best for structured console output)
+            _engine.DefaultPageSegMode = PageSegMode.SingleBlock;
+
+            _logger.LogInformation("Tesseract OCR engine initialized successfully with PSM mode: {Mode}", _engine.DefaultPageSegMode);
         }
         catch (Exception ex)
         {
@@ -53,9 +58,12 @@ public class ConsoleOcr : IDisposable
 
         try
         {
+            // Preprocess image for better OCR accuracy
+            using var preprocessed = PreprocessImage(image);
+
             // Convert Bitmap to byte array, then to Pix
             using var ms = new System.IO.MemoryStream();
-            image.Save(ms, System.Drawing.Imaging.ImageFormat.Bmp);
+            preprocessed.Save(ms, System.Drawing.Imaging.ImageFormat.Bmp);
             ms.Position = 0;
             byte[] imageBytes = ms.ToArray();
 
@@ -74,6 +82,66 @@ public class ConsoleOcr : IDisposable
             _logger.LogError(ex, "Failed to extract text from image");
             return string.Empty;
         }
+    }
+
+    /// <summary>
+    /// Preprocess image to improve OCR accuracy
+    /// - Convert to grayscale
+    /// - Increase contrast
+    /// - Apply threshold for black and white
+    /// - Invert colors (console has white text on black background)
+    /// Uses fast LockBits method for pixel manipulation
+    /// </summary>
+    private Bitmap PreprocessImage(Bitmap original)
+    {
+        // Create a new bitmap for preprocessing
+        var processed = new Bitmap(original.Width, original.Height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+
+        // Lock bits for fast pixel access
+        var rect = new Rectangle(0, 0, original.Width, original.Height);
+        var srcData = original.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        var dstData = processed.LockBits(rect, System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+
+        try
+        {
+            unsafe
+            {
+                byte* srcPtr = (byte*)srcData.Scan0;
+                byte* dstPtr = (byte*)dstData.Scan0;
+                int bytes = Math.Abs(srcData.Stride) * original.Height;
+
+                for (int i = 0; i < bytes; i += 3)
+                {
+                    // Get RGB values
+                    byte b = srcPtr[i];
+                    byte g = srcPtr[i + 1];
+                    byte r = srcPtr[i + 2];
+
+                    // Convert to grayscale
+                    int gray = (int)(r * 0.299 + g * 0.587 + b * 0.114);
+
+                    // Apply threshold - console text is bright on dark background
+                    // Threshold at 128 - anything brighter becomes white, darker becomes black
+                    byte newValue = (byte)(gray > 128 ? 255 : 0);
+
+                    // Invert - OCR works better with black text on white background
+                    newValue = (byte)(255 - newValue);
+
+                    // Set all RGB channels to the same value (grayscale)
+                    dstPtr[i] = newValue;     // B
+                    dstPtr[i + 1] = newValue; // G
+                    dstPtr[i + 2] = newValue; // R
+                }
+            }
+        }
+        finally
+        {
+            original.UnlockBits(srcData);
+            processed.UnlockBits(dstData);
+        }
+
+        _logger.LogDebug("Image preprocessed: converted to binary black/white using fast LockBits method");
+        return processed;
     }
 
     /// <summary>
