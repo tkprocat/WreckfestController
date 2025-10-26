@@ -297,6 +297,7 @@ public class ServerManager
     public virtual ServerStatus GetStatus()
     {
         var actualProcess = GetActualServerProcess();
+        var ocrEnabled = _configuration.GetValue<bool>("WreckfestServer:EnableOcrPlayerTracking", false);
 
         return new ServerStatus
         {
@@ -305,7 +306,8 @@ public class ServerManager
             Uptime = _startTime.HasValue && actualProcess != null
                 ? DateTime.Now - _startTime.Value
                 : null,
-            CurrentTrack = _currentTrack
+            CurrentTrack = _currentTrack,
+            OcrEnabled = ocrEnabled
         };
     }
 
@@ -675,4 +677,5 @@ public class ServerStatus
     public int? ProcessId { get; set; }
     public TimeSpan? Uptime { get; set; }
     public string CurrentTrack { get; set; } = string.Empty;
+    public bool OcrEnabled { get; set; }
 }
