@@ -261,7 +261,7 @@ public class ConfigService
         _logger.LogInformation("Basic config updated successfully");
     }
 
-    public virtual void WriteEventLoopTracks(List<EventLoopTrack> tracks)
+    public virtual void WriteEventLoopTracks(String collectionName, List<EventLoopTrack> tracks)
     {
         var configPath = GetConfigFilePath();
         var lines = File.ReadAllLines(configPath);
@@ -299,6 +299,9 @@ public class ConfigService
                     i++;
                 }
 
+                newLines.Add("");
+                newLines.Add($"#CollectionName { collectionName }");
+
                 // Write all event loop tracks
                 for (int j = 0; j < tracks.Count; j++)
                 {
@@ -323,5 +326,17 @@ public class ConfigService
 
         File.WriteAllLines(configPath, newLines);
         _logger.LogInformation("Event loop tracks updated successfully");
+    }
+    public virtual string GetCurrentCollectionName()
+    {
+        string collectionName = String.Empty;
+        var configPath = GetConfigFilePath();
+        var lines = File.ReadAllLines(configPath);
+        var collectionLine = lines.FirstOrDefault(l => l.Trim().StartsWith("#CollectionName"));
+        if (collectionLine != null)
+        {
+            collectionName = collectionLine.Trim().Substring("#CollectionName".Length).Trim();
+        }
+        return collectionName;
     }
 }

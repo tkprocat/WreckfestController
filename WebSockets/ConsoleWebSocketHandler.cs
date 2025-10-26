@@ -36,7 +36,7 @@ public class ConsoleWebSocketHandler
                 }
             };
 
-            _serverManager.SubscribeToOutput(outputCallback);
+            _serverManager.SubscribeToConsoleOutput(outputCallback);
 
             // Send initial status
             var status = _serverManager.GetStatus();
@@ -73,7 +73,7 @@ public class ConsoleWebSocketHandler
         {
             if (outputCallback != null)
             {
-                _serverManager.UnsubscribeFromOutput(outputCallback);
+                _serverManager.UnsubscribeFromConsoleOutput(outputCallback);
             }
         }
     }

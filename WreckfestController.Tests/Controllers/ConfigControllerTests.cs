@@ -5,6 +5,7 @@ using WreckfestController.Controllers;
 using WreckfestController.Models;
 using WreckfestController.Services;
 using Xunit;
+using static WreckfestController.Controllers.ConfigController;
 
 namespace WreckfestController.Tests.Controllers;
 
@@ -139,6 +140,7 @@ public class ConfigControllerTests
     [Fact]
     public void UpdateEventLoopTracks_WhenSuccessful_ReturnsOk()
     {
+        var collectionName = "New collection";
         // Arrange
         var tracks = new List<EventLoopTrack>
         {
@@ -146,172 +148,25 @@ public class ConfigControllerTests
         };
 
         // Act
-        var result = _controller.UpdateEventLoopTracks(tracks);
+        var result = _controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest(collectionName, tracks));
 
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         Assert.NotNull(okResult.Value);
-        _mockConfigService.Verify(s => s.WriteEventLoopTracks(tracks), Times.Once);
+        _mockConfigService.Verify(s => s.WriteEventLoopTracks(collectionName, tracks), Times.Once);
     }
 
     [Fact]
     public void UpdateEventLoopTracks_WhenException_ReturnsBadRequest()
     {
         // Arrange
+        var collectionName = "New collection"; 
         var tracks = new List<EventLoopTrack>();
-        _mockConfigService.Setup(s => s.WriteEventLoopTracks(It.IsAny<List<EventLoopTrack>>()))
+        _mockConfigService.Setup(s => s.WriteEventLoopTracks(collectionName, It.IsAny<List<EventLoopTrack>>()))
             .Throws(new System.Exception("Write failed"));
 
         // Act
-        var result = _controller.UpdateEventLoopTracks(tracks);
-
-        // Assert
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
-    }
-
-    [Fact]
-    public void AddEventLoopTrack_WhenSuccessful_ReturnsOk()
-    {
-        // Arrange
-        var track = new EventLoopTrack { Track = "newtrack", Gamemode = "race" };
-        var existingTracks = new List<EventLoopTrack>
-        {
-            new EventLoopTrack { Track = "track1" }
-        };
-
-        _mockConfigService.Setup(s => s.ReadEventLoopTracks())
-            .Returns(existingTracks);
-
-        // Act
-        var result = _controller.AddEventLoopTrack(track);
-
-        // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
-        _mockConfigService.Verify(s => s.ReadEventLoopTracks(), Times.Once);
-        _mockConfigService.Verify(s => s.WriteEventLoopTracks(It.Is<List<EventLoopTrack>>(t => t.Count == 2)), Times.Once);
-    }
-
-    [Fact]
-    public void AddEventLoopTrack_WhenException_ReturnsBadRequest()
-    {
-        // Arrange
-        var track = new EventLoopTrack();
-        _mockConfigService.Setup(s => s.ReadEventLoopTracks())
-            .Throws(new System.Exception("Read failed"));
-
-        // Act
-        var result = _controller.AddEventLoopTrack(track);
-
-        // Assert
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
-    }
-
-    [Fact]
-    public void UpdateEventLoopTrack_WithValidIndex_ReturnsOk()
-    {
-        // Arrange
-        var track = new EventLoopTrack { Track = "updated", Gamemode = "derby" };
-        var existingTracks = new List<EventLoopTrack>
-        {
-            new EventLoopTrack { Track = "track1" },
-            new EventLoopTrack { Track = "track2" }
-        };
-
-        _mockConfigService.Setup(s => s.ReadEventLoopTracks())
-            .Returns(existingTracks);
-
-        // Act
-        var result = _controller.UpdateEventLoopTrack(1, track);
-
-        // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
-        _mockConfigService.Verify(s => s.WriteEventLoopTracks(It.Is<List<EventLoopTrack>>(
-            t => t[1].Track == "updated")), Times.Once);
-    }
-
-    [Fact]
-    public void UpdateEventLoopTrack_WithInvalidIndex_ReturnsBadRequest()
-    {
-        // Arrange
-        var track = new EventLoopTrack();
-        var existingTracks = new List<EventLoopTrack>
-        {
-            new EventLoopTrack { Track = "track1" }
-        };
-
-        _mockConfigService.Setup(s => s.ReadEventLoopTracks())
-            .Returns(existingTracks);
-
-        // Act
-        var result = _controller.UpdateEventLoopTrack(5, track);
-
-        // Assert
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
-    }
-
-    [Fact]
-    public void DeleteEventLoopTrack_WithValidIndex_ReturnsOk()
-    {
-        // Arrange
-        var existingTracks = new List<EventLoopTrack>
-        {
-            new EventLoopTrack { Track = "track1" },
-            new EventLoopTrack { Track = "track2" },
-            new EventLoopTrack { Track = "track3" }
-        };
-
-        _mockConfigService.Setup(s => s.ReadEventLoopTracks())
-            .Returns(existingTracks);
-
-        // Act
-        var result = _controller.DeleteEventLoopTrack(1);
-
-        // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
-        _mockConfigService.Verify(s => s.WriteEventLoopTracks(It.Is<List<EventLoopTrack>>(
-            t => t.Count == 2 && !t.Any(track => track.Track == "track2"))), Times.Once);
-    }
-
-    [Fact]
-    public void DeleteEventLoopTrack_WithInvalidIndex_ReturnsBadRequest()
-    {
-        // Arrange
-        var existingTracks = new List<EventLoopTrack>
-        {
-            new EventLoopTrack { Track = "track1" }
-        };
-
-        _mockConfigService.Setup(s => s.ReadEventLoopTracks())
-            .Returns(existingTracks);
-
-        // Act
-        var result = _controller.DeleteEventLoopTrack(10);
-
-        // Assert
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
-    }
-
-    [Fact]
-    public void DeleteEventLoopTrack_WithNegativeIndex_ReturnsBadRequest()
-    {
-        // Arrange
-        var existingTracks = new List<EventLoopTrack>
-        {
-            new EventLoopTrack { Track = "track1" }
-        };
-
-        _mockConfigService.Setup(s => s.ReadEventLoopTracks())
-            .Returns(existingTracks);
-
-        // Act
-        var result = _controller.DeleteEventLoopTrack(-1);
+        var result = _controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest(collectionName, tracks));
 
         // Assert
         var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);

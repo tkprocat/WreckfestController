@@ -7,13 +7,16 @@ namespace WreckfestController.Services;
 public class PlayerTracker
 {
     private readonly ConcurrentDictionary<string, Player> _players = new();
+    private readonly ConcurrentBag<Action<PlayerTrackerEvent>> _playerTrackerSubscribers = new();
     private readonly ILogger<PlayerTracker> _logger;
+    private readonly LaravelWebhookService _webhookService;
     private DateTime _lastListUpdate = DateTime.MinValue;
     private readonly object _lock = new();
 
-    public PlayerTracker(ILogger<PlayerTracker> logger)
+    public PlayerTracker(ILogger<PlayerTracker> logger, LaravelWebhookService webhookService)
     {
         _logger = logger;
+        _webhookService = webhookService;
     }
 
     /// <summary>
@@ -40,6 +43,15 @@ public class PlayerTracker
         {
             var playerName = quitMatch.Groups[2].Value;
             PlayerLeft(playerName);
+            return;
+        }
+
+        // Parse kick events: "* 08:38:42 - *AleXi8293 kicked." (bot) or "* 08:38:42 - Player123 kicked." (human)
+        var kickMatch = Regex.Match(line, @"- (\*?)(.+?) kicked\.");
+        if (kickMatch.Success)
+        {
+            var playerName = kickMatch.Groups[2].Value;
+            PlayerKicked(playerName);
             return;
         }
 
@@ -74,7 +86,11 @@ public class PlayerTracker
                     IsBot = isBot
                 };
                 _players[playerName] = player;
+                NotifyPlayerTrackerSubscribers(new PlayerTrackerEvent("Join", player));
                 _logger.LogInformation("{Type} joined: {PlayerName}", isBot ? "Bot" : "Player", playerName);
+
+                // Send updated player list to Laravel
+                _ = SendPlayerListUpdate();
             }
         }
     }
@@ -90,7 +106,31 @@ public class PlayerTracker
             {
                 player.IsOnline = false;
                 player.LastSeenAt = DateTime.Now;
+                NotifyPlayerTrackerSubscribers(new PlayerTrackerEvent("Left", player));
                 _logger.LogInformation("Player left: {PlayerName}", playerName);
+
+                // Send updated player list to Laravel
+                _ = SendPlayerListUpdate();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Mark a player as kicked
+    /// </summary>
+    private void PlayerKicked(string playerName)
+    {
+        lock (_lock)
+        {
+            if (_players.TryGetValue(playerName, out var player))
+            {
+                player.IsOnline = false;
+                player.LastSeenAt = DateTime.Now;
+                NotifyPlayerTrackerSubscribers(new PlayerTrackerEvent("Kicked", player));
+                _logger.LogInformation("Player kicked: {PlayerName}", playerName);
+
+                // Send updated player list to Laravel
+                _ = SendPlayerListUpdate();
             }
         }
     }
@@ -227,5 +267,59 @@ public class PlayerTracker
     public TimeSpan TimeSinceLastListUpdate()
     {
         return DateTime.Now - _lastListUpdate;
+    }
+
+    public void SubscribeToPlayerTracker(Action<PlayerTrackerEvent> playerTrackerEvent)
+    {
+        _playerTrackerSubscribers.Add(playerTrackerEvent);
+    }
+
+    public void UnsubscribeFromPlayerTracker(Action<PlayerTrackerEvent> playerTrackerEvent)
+    {
+        // ConcurrentBag doesn't support removal, but we can handle it by checking if callback is null
+        // For simplicity, we'll keep the subscriber list as is
+    }
+
+    private void NotifyPlayerTrackerSubscribers(PlayerTrackerEvent playerTrackerEvent)
+    {
+        foreach (var subscriber in _playerTrackerSubscribers)
+        {
+            try
+            {
+                subscriber(playerTrackerEvent);
+            }
+            catch
+            {
+                // Ignore subscriber errors
+            }
+        }
+    }
+
+    /// <summary>
+    /// Send the current player list to Laravel webhook
+    /// </summary>
+    private async Task SendPlayerListUpdate()
+    {
+        try
+        {
+            var onlinePlayers = GetOnlinePlayers();
+            await _webhookService.SendPlayersUpdatedAsync(onlinePlayers);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send player list update");
+        }
+    }
+}
+
+public class PlayerTrackerEvent
+{
+    public string EventType { get; set; } = string.Empty; // "Join", "Left", or "Kicked"
+    public Player Player { get; set; } = new Player();
+
+    public PlayerTrackerEvent(string eventType, Player player)
+    {
+        EventType = eventType;
+        Player = player;
     }
 }

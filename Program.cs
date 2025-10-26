@@ -1,16 +1,14 @@
+using Microsoft.AspNetCore.Builder;
 using WreckfestController.Services;
 using WreckfestController.WebSockets;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Kestrel to use settings from appsettings.json (only applies when NOT using IIS)
-if (!builder.Environment.IsProduction() || builder.Configuration.GetValue<bool>("UseKestrel", false))
+// Configure Kestrel to use settings from appsettings.json
+var urls = builder.Configuration["Kestrel:Urls"];
+if (!string.IsNullOrEmpty(urls))
 {
-    var urls = builder.Configuration["Kestrel:Urls"];
-    if (!string.IsNullOrEmpty(urls))
-    {
-        builder.WebHost.UseUrls(urls);
-    }
+    builder.WebHost.UseUrls(urls);
 }
 
 // Add services to the container.
@@ -18,8 +16,14 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Register HTTP client
+builder.Services.AddHttpClient<LaravelWebhookService>();
+
 // Register services as singletons
 builder.Services.AddSingleton<WreckfestController.Services.PlayerTracker>();
+builder.Services.AddSingleton<WreckfestController.Services.TrackChangeTracker>();
+builder.Services.AddSingleton<LaravelWebhookService>();
+builder.Services.AddSingleton<WreckfestController.Services.OcrPlayerTracker>();
 builder.Services.AddSingleton<ServerManager>();
 builder.Services.AddSingleton<WreckfestController.Services.ConfigService>();
 
@@ -45,6 +49,34 @@ app.Use(async (context, next) =>
             var serverManager = context.RequestServices.GetRequiredService<ServerManager>();
             using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
             var handler = new ConsoleWebSocketHandler(webSocket, serverManager);
+            await handler.HandleAsync();
+        }
+        else
+        {
+            context.Response.StatusCode = 400;
+        }
+    }
+    else if (context.Request.Path == "/ws/players")
+    {
+        if (context.WebSockets.IsWebSocketRequest)
+        {
+            var playerTracker = context.RequestServices.GetRequiredService<PlayerTracker>();
+            using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+            var handler = new PlayerTrackerWebSockerHandler(webSocket, playerTracker);
+            await handler.HandleAsync();
+        }
+        else
+        {
+            context.Response.StatusCode = 400;
+        }
+    }
+    else if (context.Request.Path == "/ws/track-changes")
+    {
+        if (context.WebSockets.IsWebSocketRequest)
+        {
+            var trackChangeTracker = context.RequestServices.GetRequiredService<TrackChangeTracker>();
+            using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+            var handler = new TrackChangeWebSocketHandler(webSocket, trackChangeTracker);
             await handler.HandleAsync();
         }
         else

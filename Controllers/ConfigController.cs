@@ -56,6 +56,26 @@ public class ConfigController : ControllerBase
     }
 
     /// <summary>
+    /// Get the name of the track collection for event loops
+    /// </summary>
+    [HttpGet("tracks/collection-name")]
+    public IActionResult GetTrackCollectionName()
+    {
+        try
+        {
+            _logger.LogInformation("Received request to get track collection name");
+            var collectionName = _configService.GetCurrentCollectionName();
+            return Ok(new { collectionName });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read track collection name");
+            return BadRequest(new { message = $"Failed to read track collection name: {ex.Message}" });
+        }
+    }
+
+
+    /// <summary>
     /// Get all event loop tracks
     /// </summary>
     [HttpGet("tracks")]
@@ -78,93 +98,18 @@ public class ConfigController : ControllerBase
     /// Set all event loop tracks (replaces existing tracks)
     /// </summary>
     [HttpPut("tracks")]
-    public IActionResult UpdateEventLoopTracks([FromBody] List<EventLoopTrack> tracks)
+    public IActionResult UpdateEventLoopTracks([FromBody] UpdateEventLoopTracksRequest request)
     {
         try
         {
             _logger.LogInformation("Received request to update event loop tracks");
-            _configService.WriteEventLoopTracks(tracks);
-            return Ok(new { message = "Event loop tracks updated successfully", count = tracks.Count });
+            _configService.WriteEventLoopTracks(request.CollectionName, request.Tracks);
+            return Ok(new { message = "Event loop tracks updated successfully", count = request.Tracks.Count });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update event loop tracks");
             return BadRequest(new { message = $"Failed to update event loop tracks: {ex.Message}" });
-        }
-    }
-
-    /// <summary>
-    /// Add a new track to the event loop
-    /// </summary>
-    [HttpPost("tracks")]
-    public IActionResult AddEventLoopTrack([FromBody] EventLoopTrack track)
-    {
-        try
-        {
-            _logger.LogInformation("Received request to add event loop track");
-            var tracks = _configService.ReadEventLoopTracks();
-            tracks.Add(track);
-            _configService.WriteEventLoopTracks(tracks);
-            return Ok(new { message = "Track added successfully", index = tracks.Count - 1 });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to add event loop track");
-            return BadRequest(new { message = $"Failed to add event loop track: {ex.Message}" });
-        }
-    }
-
-    /// <summary>
-    /// Update a specific track in the event loop by index
-    /// </summary>
-    [HttpPut("tracks/{index}")]
-    public IActionResult UpdateEventLoopTrack(int index, [FromBody] EventLoopTrack track)
-    {
-        try
-        {
-            _logger.LogInformation("Received request to update event loop track at index {Index}", index);
-            var tracks = _configService.ReadEventLoopTracks();
-
-            if (index < 0 || index >= tracks.Count)
-            {
-                return BadRequest(new { message = $"Invalid index {index}. Valid range: 0-{tracks.Count - 1}" });
-            }
-
-            tracks[index] = track;
-            _configService.WriteEventLoopTracks(tracks);
-            return Ok(new { message = $"Track at index {index} updated successfully" });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to update event loop track at index {Index}", index);
-            return BadRequest(new { message = $"Failed to update event loop track: {ex.Message}" });
-        }
-    }
-
-    /// <summary>
-    /// Delete a specific track from the event loop by index
-    /// </summary>
-    [HttpDelete("tracks/{index}")]
-    public IActionResult DeleteEventLoopTrack(int index)
-    {
-        try
-        {
-            _logger.LogInformation("Received request to delete event loop track at index {Index}", index);
-            var tracks = _configService.ReadEventLoopTracks();
-
-            if (index < 0 || index >= tracks.Count)
-            {
-                return BadRequest(new { message = $"Invalid index {index}. Valid range: 0-{tracks.Count - 1}" });
-            }
-
-            tracks.RemoveAt(index);
-            _configService.WriteEventLoopTracks(tracks);
-            return Ok(new { message = $"Track at index {index} deleted successfully", remainingCount = tracks.Count });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to delete event loop track at index {Index}", index);
-            return BadRequest(new { message = $"Failed to delete event loop track: {ex.Message}" });
         }
     }
 }

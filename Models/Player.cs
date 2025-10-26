@@ -3,6 +3,9 @@ namespace WreckfestController.Models;
 public class Player
 {
     public string Name { get; set; } = string.Empty;
+    public int? PlayerId { get; set; }  // Player ID from server list command
+    public int? Score { get; set; }  // Player score from server list command
+    public string? Vehicle { get; set; }  // Vehicle name from server list command
     public DateTime JoinedAt { get; set; }
     public DateTime? LastSeenAt { get; set; }
     public bool IsOnline { get; set; }

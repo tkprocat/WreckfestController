@@ -7,7 +7,7 @@ public class ServerManager
 {
     private Process? _serverProcess;
     private readonly IConfiguration _configuration;
-    private readonly ConcurrentBag<Action<string>> _outputSubscribers = new();
+    private readonly ConcurrentBag<Action<string>> _consoleSubscribers = new();
     private readonly object _lock = new();
     private DateTime? _startTime;
     private int? _actualServerPid;
@@ -18,6 +18,8 @@ public class ServerManager
     private long _lastLogFilePosition = 0;
     private string? _currentLogFilePath;
     private readonly PlayerTracker _playerTracker;
+    private readonly TrackChangeTracker _trackChangeTracker;
+    private readonly OcrPlayerTracker _ocrPlayerTracker;
     private readonly object _logReadLock = new();
     private System.Threading.Timer? _fileWatcherDebounceTimer;
     private System.Threading.Timer? _pollingTimer;
@@ -25,11 +27,13 @@ public class ServerManager
 
     public bool IsRunning => GetActualServerProcess() != null;
 
-    public ServerManager(IConfiguration configuration, ILogger<ServerManager> logger, PlayerTracker playerTracker)
+    public ServerManager(IConfiguration configuration, ILogger<ServerManager> logger, PlayerTracker playerTracker, TrackChangeTracker trackChangeTracker, OcrPlayerTracker ocrPlayerTracker)
     {
         _configuration = configuration;
         _logger = logger;
         _playerTracker = playerTracker;
+        _trackChangeTracker = trackChangeTracker;
+        _ocrPlayerTracker = ocrPlayerTracker;
     }
 
     private Process? GetActualServerProcess()
@@ -264,20 +268,20 @@ public class ServerManager
         return (false, "Command sending not supported by Wreckfest dedicated server");
     }
 
-    public void SubscribeToOutput(Action<string> callback)
+    public void SubscribeToConsoleOutput(Action<string> callback)
     {
-        _outputSubscribers.Add(callback);
+        _consoleSubscribers.Add(callback);
     }
 
-    public void UnsubscribeFromOutput(Action<string> callback)
+    public void UnsubscribeFromConsoleOutput(Action<string> callback)
     {
         // ConcurrentBag doesn't support removal, but we can handle it by checking if callback is null
         // For simplicity, we'll keep the subscriber list as is
     }
 
-    private void NotifySubscribers(string message)
+    private void NotifyConsoleOutputSubscribers(string message)
     {
-        foreach (var subscriber in _outputSubscribers)
+        foreach (var subscriber in _consoleSubscribers)
         {
             try
             {
@@ -603,14 +607,30 @@ public class ServerManager
                 if (!string.IsNullOrWhiteSpace(line))
                 {
                     AddToOutputBuffer(line);
-                    NotifySubscribers(line);
+                    NotifyConsoleOutputSubscribers(line);
                     _playerTracker.ProcessLogLine(line);
+                    _trackChangeTracker.ProcessLogLine(line);
                     _logger.LogInformation("Server log: {Line}", line);
-                    var trackMatch = System.Text.RegularExpressions.Regex.Match(line, @"Current track loaded! Track: ('(.+?)')");
+
+                    var trackMatch = System.Text.RegularExpressions.Regex.Match(line, @"Current track loaded!\s*\(([^)]+)\)");
                     if (trackMatch.Success)
                     {
                         _currentTrack = trackMatch.Groups[1].Value;
                         _logger.LogInformation("Current track updated to: {Track}", _currentTrack);
+                    }
+
+                    // Trigger OCR on "Event started!" (race start)
+                    if (line.Contains("Event started!"))
+                    {
+                        _logger.LogDebug("Event started detected, triggering OCR player list update");
+                        _ = Task.Run(() => _ocrPlayerTracker.TriggerUpdateAsync("Race started"));
+                    }
+
+                    // Trigger OCR on player join/leave events
+                    if (line.Contains("has joined.") || line.Contains("has quit") || line.Contains("kicked."))
+                    {
+                        _logger.LogDebug("Player join/leave detected, triggering OCR player list update");
+                        _ = Task.Run(() => _ocrPlayerTracker.TriggerUpdateAsync("Player join/leave"));
                     }
                 }
 
