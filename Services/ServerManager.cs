@@ -12,6 +12,7 @@ public class ServerManager
     private DateTime? _startTime;
     private int? _actualServerPid;
     private readonly ILogger<ServerManager> _logger;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly System.Collections.Concurrent.ConcurrentQueue<(DateTime Timestamp, string Message)> _outputBuffer = new();
     private const int MaxBufferSize = 500;
     private FileSystemWatcher? _logFileWatcher;
@@ -27,10 +28,11 @@ public class ServerManager
 
     public bool IsRunning => GetActualServerProcess() != null;
 
-    public ServerManager(IConfiguration configuration, ILogger<ServerManager> logger, PlayerTracker playerTracker, TrackChangeTracker trackChangeTracker, OcrPlayerTracker ocrPlayerTracker)
+    public ServerManager(IConfiguration configuration, ILogger<ServerManager> logger, ILoggerFactory loggerFactory, PlayerTracker playerTracker, TrackChangeTracker trackChangeTracker, OcrPlayerTracker ocrPlayerTracker)
     {
         _configuration = configuration;
         _logger = logger;
+        _loggerFactory = loggerFactory;
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
         _ocrPlayerTracker = ocrPlayerTracker;
@@ -254,6 +256,132 @@ public class ServerManager
         return await StartServerAsync();
     }
 
+    public virtual async Task<(bool Success, string Message)> UpdateServerAsync()
+    {
+        _logger.LogInformation("Starting server update process");
+
+        // Stop the server if it's running
+        if (IsRunning)
+        {
+            _logger.LogInformation("Stopping server before update");
+            var stopResult = await StopServerAsync();
+            if (!stopResult.Success)
+            {
+                return (false, $"Failed to stop server for update: {stopResult.Message}");
+            }
+
+            // Wait a moment to ensure server is fully stopped
+            await Task.Delay(2000);
+        }
+
+        // Get steamcmd configuration
+        var steamCmdPath = _configuration["SteamCmd:SteamCmdPath"];
+        var appId = _configuration["SteamCmd:WreckfestAppId"];
+        var installDir = _configuration["SteamCmd:InstallDirectory"];
+
+        if (string.IsNullOrEmpty(steamCmdPath) || !File.Exists(steamCmdPath))
+        {
+            return (false, $"SteamCmd executable not found at: {steamCmdPath}. Please configure SteamCmd:SteamCmdPath in appsettings.json");
+        }
+
+        if (string.IsNullOrEmpty(appId))
+        {
+            return (false, "SteamCmd:WreckfestAppId not configured in appsettings.json");
+        }
+
+        if (string.IsNullOrEmpty(installDir) || !Directory.Exists(installDir))
+        {
+            return (false, $"Install directory not found: {installDir}");
+        }
+
+        try
+        {
+            _logger.LogInformation("Running SteamCmd to update Wreckfest server (AppId: {AppId})", appId);
+
+            // Build steamcmd arguments for anonymous login and update
+            // +login anonymous - login anonymously
+            // +force_install_dir - set install directory
+            // +app_update - update the app
+            // +quit - exit steamcmd after update
+            var arguments = $"+login anonymous +force_install_dir \"{installDir}\" +app_update {appId} validate +quit";
+
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = steamCmdPath,
+                Arguments = arguments,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using var process = new Process { StartInfo = processStartInfo };
+
+            var outputBuilder = new System.Text.StringBuilder();
+            var errorBuilder = new System.Text.StringBuilder();
+
+            process.OutputDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    _logger.LogInformation("SteamCmd: {Output}", e.Data);
+                    outputBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.ErrorDataReceived += (sender, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                {
+                    _logger.LogWarning("SteamCmd Error: {Error}", e.Data);
+                    errorBuilder.AppendLine(e.Data);
+                }
+            };
+
+            process.Start();
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
+            // Wait for steamcmd to complete (with a timeout of 30 minutes)
+            var completed = await Task.Run(() => process.WaitForExit(1800000)); // 30 minutes timeout
+
+            if (!completed)
+            {
+                process.Kill(entireProcessTree: true);
+                return (false, "SteamCmd update timed out after 30 minutes");
+            }
+
+            if (process.ExitCode != 0)
+            {
+                var errorOutput = errorBuilder.ToString();
+                return (false, $"SteamCmd update failed with exit code {process.ExitCode}. Check logs for details.");
+            }
+
+            _logger.LogInformation("SteamCmd update completed successfully");
+
+            // Wait a moment before restarting
+            await Task.Delay(2000);
+
+            // Start the server again
+            _logger.LogInformation("Starting server after update");
+            var startResult = await StartServerAsync();
+
+            if (startResult.Success)
+            {
+                return (true, "Server updated and restarted successfully");
+            }
+            else
+            {
+                return (false, $"Server updated successfully but failed to start: {startResult.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update server via SteamCmd");
+            return (false, $"Failed to update server: {ex.Message}");
+        }
+    }
+
     public virtual async Task<(bool Success, string Message)> SendCommandAsync(string command)
     {
         if (!IsRunning)
@@ -261,11 +389,34 @@ public class ServerManager
             return (false, "Server is not running");
         }
 
-        // Note: Commands cannot be sent directly to the Wreckfest server process
-        // The server doesn't support stdin properly
-        // This endpoint is kept for potential future use or alternative command methods
-        _logger.LogWarning("SendCommand called but Wreckfest server doesn't support command input via API");
-        return (false, "Command sending not supported by Wreckfest dedicated server");
+        try
+        {
+            // Use ConsoleWriter to send commands via window messages
+            var consoleWriter = new ConsoleWriter(_loggerFactory.CreateLogger<ConsoleWriter>());
+            var windowHandle = consoleWriter.FindConsoleWindow();
+
+            if (windowHandle == IntPtr.Zero)
+            {
+                return (false, "Could not find console window");
+            }
+
+            bool success = consoleWriter.SendCommand(windowHandle, command + Environment.NewLine);
+
+            if (success)
+            {
+                _logger.LogInformation("Successfully sent command to console: {Command}", command);
+                return (true, $"Command sent successfully: {command}");
+            }
+            else
+            {
+                return (false, "Failed to send command to console window");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error sending command: {Command}", command);
+            return (false, $"Error sending command: {ex.Message}");
+        }
     }
 
     public void SubscribeToConsoleOutput(Action<string> callback)

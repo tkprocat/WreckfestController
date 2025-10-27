@@ -37,6 +37,11 @@ public class ConsoleOcr : IDisposable
             // PSM 6: Assume a single uniform block of text (best for structured console output)
             _engine.DefaultPageSegMode = PageSegMode.SingleBlock;
 
+            // Additional settings to improve accuracy for console/monospace fonts
+            // These settings help with fixed-width fonts and structured data
+            _engine.SetVariable("tessedit_char_whitelist", "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz[]|():*. -");
+            _engine.SetVariable("preserve_interword_spaces", "1"); // Important for structured data
+
             _logger.LogInformation("Tesseract OCR engine initialized successfully with PSM mode: {Mode}", _engine.DefaultPageSegMode);
         }
         catch (Exception ex)
@@ -94,53 +99,58 @@ public class ConsoleOcr : IDisposable
     /// </summary>
     private Bitmap PreprocessImage(Bitmap original)
     {
-        // Create a new bitmap for preprocessing
-        var processed = new Bitmap(original.Width, original.Height, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        // Create a new bitmap for preprocessing (scale up 2x for better OCR accuracy)
+        int scaleFactor = 2;
+        var processed = new Bitmap(original.Width * scaleFactor, original.Height * scaleFactor, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
 
-        // Lock bits for fast pixel access
-        var rect = new Rectangle(0, 0, original.Width, original.Height);
-        var srcData = original.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
-        var dstData = processed.LockBits(rect, System.Drawing.Imaging.ImageLockMode.WriteOnly, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        // First, scale up the image for better OCR
+        using (var g = System.Drawing.Graphics.FromImage(processed))
+        {
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor; // Preserve sharp edges for text
+            g.DrawImage(original, 0, 0, processed.Width, processed.Height);
+        }
+
+        // Now apply binary threshold with inversion
+        var rect = new Rectangle(0, 0, processed.Width, processed.Height);
+        var data = processed.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
 
         try
         {
             unsafe
             {
-                byte* srcPtr = (byte*)srcData.Scan0;
-                byte* dstPtr = (byte*)dstData.Scan0;
-                int bytes = Math.Abs(srcData.Stride) * original.Height;
+                byte* ptr = (byte*)data.Scan0;
+                int bytes = Math.Abs(data.Stride) * processed.Height;
 
                 for (int i = 0; i < bytes; i += 3)
                 {
                     // Get RGB values
-                    byte b = srcPtr[i];
-                    byte g = srcPtr[i + 1];
-                    byte r = srcPtr[i + 2];
+                    byte b = ptr[i];
+                    byte g = ptr[i + 1];
+                    byte r = ptr[i + 2];
 
                     // Convert to grayscale
                     int gray = (int)(r * 0.299 + g * 0.587 + b * 0.114);
 
                     // Apply threshold - console text is bright on dark background
-                    // Threshold at 128 - anything brighter becomes white, darker becomes black
-                    byte newValue = (byte)(gray > 128 ? 255 : 0);
+                    // Lower threshold to 100 to capture slightly dimmer text
+                    byte newValue = (byte)(gray > 100 ? 255 : 0);
 
                     // Invert - OCR works better with black text on white background
                     newValue = (byte)(255 - newValue);
 
                     // Set all RGB channels to the same value (grayscale)
-                    dstPtr[i] = newValue;     // B
-                    dstPtr[i + 1] = newValue; // G
-                    dstPtr[i + 2] = newValue; // R
+                    ptr[i] = newValue;     // B
+                    ptr[i + 1] = newValue; // G
+                    ptr[i + 2] = newValue; // R
                 }
             }
         }
         finally
         {
-            original.UnlockBits(srcData);
-            processed.UnlockBits(dstData);
+            processed.UnlockBits(data);
         }
 
-        _logger.LogDebug("Image preprocessed: converted to binary black/white using fast LockBits method");
+        _logger.LogDebug("Image preprocessed: scaled {ScaleFactor}x and converted to binary black/white", scaleFactor);
         return processed;
     }
 

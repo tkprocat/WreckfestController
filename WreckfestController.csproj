@@ -35,8 +35,14 @@
     <EmbeddedResource Remove="AddBotsApp\**" />
     <None Remove="AddBotsApp\**" />
 
+    <Compile Remove="EvaluateOcrApp\**" />
+    <Content Remove="EvaluateOcrApp\**" />
+    <EmbeddedResource Remove="EvaluateOcrApp\**" />
+    <None Remove="EvaluateOcrApp\**" />
+
     <Compile Remove="AddBots.cs" />
     <Compile Remove="TestConsoleAutomation.cs" />
+    <Compile Remove="EvaluateOcr.cs" />
   </ItemGroup>
 
   <ItemGroup>

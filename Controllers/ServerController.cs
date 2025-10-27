@@ -64,7 +64,35 @@ public class ServerController : ControllerBase
 
         return BadRequest(new { message = result.Message });
     }
-   
+
+    [HttpPost("update")]
+    public async Task<IActionResult> UpdateServer()
+    {
+        _logger.LogInformation("Received request to update server");
+        var result = await _serverManager.UpdateServerAsync();
+
+        if (result.Success)
+        {
+            return Ok(new { message = result.Message });
+        }
+
+        return BadRequest(new { message = result.Message });
+    }
+
+    [HttpPost("command")]
+    public async Task<IActionResult> SendCommand([FromBody] ServerCommandRequest request)
+    {
+        _logger.LogInformation("Received request to send command: {Command}", request.Command);
+        var result = await _serverManager.SendCommandAsync(request.Command);
+
+        if (result.Success)
+        {
+            return Ok(new { message = result.Message });
+        }
+
+        return BadRequest(new { message = result.Message });
+    }
+
     [HttpPost("attach/{pid}")]
     public IActionResult AttachToProcess(int pid)
     {
