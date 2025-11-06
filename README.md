@@ -2,8 +2,36 @@
 
 A REST API wrapper for controlling your Wreckfest Dedicated Server with real-time console monitoring, player tracking, and server configuration management.
 
+Part of the WreckfestWeb ecosystem - integrates with [WreckfestWeb](https://github.com/tkprocat/WreckfestWeb) for a complete web admin panel.
+
+## Features
+
+- **🎮 Server Control** - Start/Stop/Restart via REST API
+- **⚡ Real-time Monitoring** - WebSocket streaming of console output
+- **👥 Player Tracking** - Track online/offline players, join/leave events
+- **📊 Event Scheduling** - Automated server configuration changes with smart restart logic
+- **🔧 Configuration Management** - Read/update server_config.cfg remotely
+- **🌐 WebSocket Streams** - Console output, player tracking, track changes
+- **🔄 SteamCmd Integration** - Automatic server updates
+- **📡 WreckfestWeb Webhooks** - Player events, track changes, event activation
+- **📝 Swagger UI** - Interactive API documentation
+- **✅ Comprehensive Tests** - 79+ unit tests covering all functionality
+
+## Installation
+
+📖 **See [INSTALL.md](INSTALL.md) for complete installation instructions** including:
+- Pre-compiled releases
+- Configuration guide
+- Running as a Windows Service
+- WreckfestWeb integration
+
 ## Requirements
 
+### For Pre-compiled Releases
+- .NET 8.0 Runtime ([Download](https://dotnet.microsoft.com/download/dotnet/8.0))
+- Wreckfest Dedicated Server
+
+### For Building from Source
 - .NET 8.0 SDK or later
 - Visual Studio 2022 (recommended) or Visual Studio Code
 - Wreckfest Dedicated Server
@@ -16,68 +44,21 @@ A REST API wrapper for controlling your Wreckfest Dedicated Server with real-tim
 4. **Test**: Browser opens automatically to Swagger UI - try the endpoints!
 5. **Run tests**: Open Test Explorer (Ctrl+E, T) and click "Run All Tests"
 
-## Features
-
-- **Start/Stop/Restart** server via REST API
-- **Send commands** to the server console
-- **Real-time console monitoring** via WebSockets
-- **Real-time log file monitoring** with automatic player tracking
-- **Player tracking** - Track online/offline players, join/leave events
-- **Server status** endpoint with detailed process information
-- **Server configuration** management (read/update server_config.cfg)
-- Swagger UI for API documentation
-- Comprehensive test suite (51+ unit tests)
-
 ## Configuration
 
-⚠️ **IMPORTANT**: You must edit `appsettings.json` with your server paths before running!
-
-Edit `appsettings.json` to set your Wreckfest server path:
+Edit `appsettings.json` to set your Wreckfest server paths:
 
 ```json
 {
   "WreckfestServer": {
     "ServerPath": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Wreckfest Dedicated Server\\Wreckfest_x64.exe",
-    "ServerArguments": "-s server_config=server_config.cfg",
     "WorkingDirectory": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Wreckfest Dedicated Server",
     "LogFilePath": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Wreckfest Dedicated Server\\log.txt"
   }
 }
 ```
 
-**Config File Paths:**
-- The `server_config.cfg` path in `ServerArguments` can be:
-  - **Relative**: `server_config=server_config.cfg` (looks in WorkingDirectory)
-  - **Absolute**: `server_config=C:\\Full\\Path\\To\\server_config.cfg`
-- The `WorkingDirectory` must be set to the server's installation folder
-
-**Important Configuration Options:**
-
-- `ServerPath` - Path to the server executable
-  - Point directly to `Wreckfest_x64.exe` (or your server executable)
-
-- `ServerArguments` - Command-line arguments for the server
-  - Example: `"-s server_config=server_config.cfg"`
-
-- `LogFilePath` - Path to the server's log file (**required for player tracking**)
-  - Example: `"C:\\Path\\To\\wreckfest_server.log"`
-  - The server writes all output to this log file
-  - Used for real-time monitoring and player tracking
-  - Use `/api/server/logfile` to view the server logs
-
-**Network Configuration (for standalone Kestrel deployment):**
-
-- `Kestrel:Urls` - URLs to listen on when using Kestrel (not IIS)
-  - Example: `"http://0.0.0.0:5100;https://0.0.0.0:5101"`
-  - `0.0.0.0` means listen on all network interfaces
-  - Use `localhost` or `127.0.0.1` to only allow local connections
-  - Separate multiple URLs with semicolons
-
-- `UseKestrel` - Set to `true` to force Kestrel configuration in production
-  - Default: `false` (uses IIS bindings when deployed to IIS)
-  - Only needed if running standalone without IIS
-
-**Note:** When deployed to IIS, the IP and port are controlled by IIS bindings, not the application configuration.
+For detailed configuration options, see [INSTALL.md](INSTALL.md).
 
 ## Visual Studio 2022
 
@@ -112,55 +93,16 @@ Edit `appsettings.json` to set your Wreckfest server path:
 
 ## Running the Application
 
-### Development (using dotnet run)
-
+### Development
 ```bash
 dotnet run
 ```
 
-The API will be available at `https://localhost:5101` (or `http://localhost:5100`)
+The API will be available at `https://localhost:5101` or `http://localhost:5100`
 
-### Standalone (using the .exe)
+### Production Deployment
 
-**1. Build/Publish the application:**
-
-The project is configured to publish as a single executable file:
-
-```bash
-# Framework-dependent (requires .NET 8 runtime on target machine) - Recommended
-dotnet publish WreckfestController.csproj -c Release -r win-x64 -o "C:\WreckfestController"
-
-# Self-contained (includes .NET runtime, larger file, no dependencies)
-dotnet publish WreckfestController.csproj -c Release -r win-x64 --self-contained true -o "C:\WreckfestController"
-```
-
-This creates a single `WreckfestController.exe` (~4 MB) plus `appsettings.json` and a few small support files.
-
-**2. Configure appsettings.json:**
-
-Set `UseKestrel: true` to enable IP/port configuration:
-
-```json
-{
-  "Kestrel": {
-    "Urls": "http://0.0.0.0:5100;https://0.0.0.0:5101"
-  },
-  "UseKestrel": true
-}
-```
-
-**3. Run the executable:**
-```powershell
-cd C:\WreckfestController
-.\WreckfestController.exe
-```
-
-**Or specify URLs via command line:**
-```powershell
-.\WreckfestController.exe --urls "http://0.0.0.0:5100"
-```
-
-The API will be available at the configured URLs (default: `http://0.0.0.0:5100`)
+For production deployment, Windows Service setup, and advanced configuration, see [INSTALL.md](INSTALL.md).
 
 ## Running Tests
 
@@ -412,4 +354,4 @@ Current test coverage: 51+ tests covering:
 
 ## License
 
-This project is provided as-is. Add a LICENSE file if you plan to open source this project.
+This project is licensed under the MIT License - see the [LICENSE.txt](LICENSE.txt) file for details.
