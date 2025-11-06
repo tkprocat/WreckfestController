@@ -14,9 +14,7 @@
 
   <ItemGroup>
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
-    <PackageReference Include="System.Drawing.Common" Version="9.0.10" />
     <PackageReference Include="System.Management" Version="8.0.0" />
-    <PackageReference Include="Tesseract" Version="5.2.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,29 +23,13 @@
     <EmbeddedResource Remove="WreckfestController.Tests\**" />
     <None Remove="WreckfestController.Tests\**" />
 
-    <Compile Remove="TestOcrApp\**" />
-    <Content Remove="TestOcrApp\**" />
-    <EmbeddedResource Remove="TestOcrApp\**" />
-    <None Remove="TestOcrApp\**" />
-
     <Compile Remove="AddBotsApp\**" />
     <Content Remove="AddBotsApp\**" />
     <EmbeddedResource Remove="AddBotsApp\**" />
     <None Remove="AddBotsApp\**" />
 
-    <Compile Remove="EvaluateOcrApp\**" />
-    <Content Remove="EvaluateOcrApp\**" />
-    <EmbeddedResource Remove="EvaluateOcrApp\**" />
-    <None Remove="EvaluateOcrApp\**" />
-
     <Compile Remove="AddBots.cs" />
-    <Compile Remove="TestConsoleAutomation.cs" />
-    <Compile Remove="EvaluateOcr.cs" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Copy tessdata directory to output -->
-    <None Include="tessdata\**\*" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
 
 </Project>

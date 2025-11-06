@@ -25,21 +25,25 @@ public class EventsControllerTests
             Mock.Of<ILogger<EventStorageService>>());
 
         // Setup SmartRestartService mock with all required dependencies
+        var mockWebhookServiceForTrackers = new Mock<LaravelWebhookService>(
+            Mock.Of<ILogger<LaravelWebhookService>>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<HttpClient>());
+
+        var mockPlayerTracker = new Mock<PlayerTracker>(
+            Mock.Of<ILogger<PlayerTracker>>(),
+            mockWebhookServiceForTrackers.Object);
+
+        var mockTrackChangeTracker = new Mock<TrackChangeTracker>(
+            Mock.Of<ILogger<TrackChangeTracker>>(),
+            mockWebhookServiceForTrackers.Object);
+
         var mockServerManager = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ServerManager>>(),
             Mock.Of<ILoggerFactory>(),
-            Mock.Of<PlayerTracker>(),
-            Mock.Of<TrackChangeTracker>(),
-            Mock.Of<OcrPlayerTracker>());
-        
-        var mockPlayerTracker = new Mock<PlayerTracker>(
-            Mock.Of<ILogger<PlayerTracker>>(),
-            Mock.Of<LaravelWebhookService>());
-        
-        var mockTrackChangeTracker = new Mock<TrackChangeTracker>(
-            Mock.Of<ILogger<TrackChangeTracker>>(),
-            Mock.Of<LaravelWebhookService>());
+            mockPlayerTracker.Object,
+            mockTrackChangeTracker.Object);
         
         var mockConfigService = new Mock<ConfigService>(
             Mock.Of<IConfiguration>(),

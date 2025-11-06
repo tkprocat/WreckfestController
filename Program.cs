@@ -23,7 +23,6 @@ builder.Services.AddHttpClient<LaravelWebhookService>();
 builder.Services.AddSingleton<WreckfestController.Services.PlayerTracker>();
 builder.Services.AddSingleton<WreckfestController.Services.TrackChangeTracker>();
 builder.Services.AddSingleton<LaravelWebhookService>();
-builder.Services.AddSingleton<WreckfestController.Services.OcrPlayerTracker>();
 builder.Services.AddSingleton<ServerManager>();
 builder.Services.AddSingleton<WreckfestController.Services.ConfigService>();
 builder.Services.AddSingleton<WreckfestController.Services.EventStorageService>();

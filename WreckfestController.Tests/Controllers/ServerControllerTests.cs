@@ -35,29 +35,12 @@ public class ServerControllerTests
         var playerTracker = new PlayerTracker(mockPlayerTrackerLogger.Object, mockWebhookService.Object);
         var trackChangeTracker = new TrackChangeTracker(mockTrackChangeTrackerLogger.Object, mockWebhookService.Object);
 
-        // Setup mock configuration for OcrPlayerTracker
-        var mockOcrConfigSection = new Mock<IConfigurationSection>();
-        mockOcrConfigSection.Setup(c => c.Value).Returns("false");
-
-        var mockOcrConfig = new Mock<IConfiguration>();
-        mockOcrConfig.Setup(c => c["WreckfestServer:EnableOcrPlayerTracking"]).Returns("false");
-        mockOcrConfig.Setup(c => c.GetSection("WreckfestServer:EnableOcrPlayerTracking"))
-            .Returns(mockOcrConfigSection.Object);
-
-        var mockOcrPlayerTracker = new Mock<OcrPlayerTracker>(
-            Mock.Of<ILogger<OcrPlayerTracker>>(),
-            mockOcrConfig.Object,
-            playerTracker,
-            Mock.Of<ILogger<ConsoleWriter>>(),
-            Mock.Of<ILogger<ConsoleOcr>>());
-
         _mockServerManager = new Mock<ServerManager>(
             mockConfiguration.Object,
             mockServerManagerLogger.Object,
             mockLoggerFactory.Object,
             playerTracker,
-            trackChangeTracker,
-            mockOcrPlayerTracker.Object);
+            trackChangeTracker);
         _mockLogger = new Mock<ILogger<ServerController>>();
         _controller = new ServerController(_mockServerManager.Object, _mockLogger.Object);
     }

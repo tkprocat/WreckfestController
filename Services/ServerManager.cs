@@ -20,7 +20,6 @@ public class ServerManager
     private string? _currentLogFilePath;
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
-    private readonly OcrPlayerTracker _ocrPlayerTracker;
     private readonly object _logReadLock = new();
     private System.Threading.Timer? _fileWatcherDebounceTimer;
     private System.Threading.Timer? _pollingTimer;
@@ -28,14 +27,13 @@ public class ServerManager
 
     public bool IsRunning => GetActualServerProcess() != null;
 
-    public ServerManager(IConfiguration configuration, ILogger<ServerManager> logger, ILoggerFactory loggerFactory, PlayerTracker playerTracker, TrackChangeTracker trackChangeTracker, OcrPlayerTracker ocrPlayerTracker)
+    public ServerManager(IConfiguration configuration, ILogger<ServerManager> logger, ILoggerFactory loggerFactory, PlayerTracker playerTracker, TrackChangeTracker trackChangeTracker)
     {
         _configuration = configuration;
         _logger = logger;
         _loggerFactory = loggerFactory;
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
-        _ocrPlayerTracker = ocrPlayerTracker;
     }
 
     private Process? GetActualServerProcess()
@@ -448,7 +446,6 @@ public class ServerManager
     public virtual ServerStatus GetStatus()
     {
         var actualProcess = GetActualServerProcess();
-        var ocrEnabled = _configuration.GetValue<bool>("WreckfestServer:EnableOcrPlayerTracking", false);
 
         return new ServerStatus
         {
@@ -457,8 +454,7 @@ public class ServerManager
             Uptime = _startTime.HasValue && actualProcess != null
                 ? DateTime.Now - _startTime.Value
                 : null,
-            CurrentTrack = _currentTrack,
-            OcrEnabled = ocrEnabled
+            CurrentTrack = _currentTrack
         };
     }
 
@@ -772,19 +768,6 @@ public class ServerManager
                         _logger.LogInformation("Current track updated to: {Track}", _currentTrack);
                     }
 
-                    // Trigger OCR on "Event started!" (race start)
-                    if (line.Contains("Event started!"))
-                    {
-                        _logger.LogDebug("Event started detected, triggering OCR player list update");
-                        _ = Task.Run(() => _ocrPlayerTracker.TriggerUpdateAsync("Race started"));
-                    }
-
-                    // Trigger OCR on player join/leave events
-                    if (line.Contains("has joined.") || line.Contains("has quit") || line.Contains("kicked."))
-                    {
-                        _logger.LogDebug("Player join/leave detected, triggering OCR player list update");
-                        _ = Task.Run(() => _ocrPlayerTracker.TriggerUpdateAsync("Player join/leave"));
-                    }
                 }
 
             }
@@ -828,5 +811,4 @@ public class ServerStatus
     public int? ProcessId { get; set; }
     public TimeSpan? Uptime { get; set; }
     public string CurrentTrack { get; set; } = string.Empty;
-    public bool OcrEnabled { get; set; }
 }

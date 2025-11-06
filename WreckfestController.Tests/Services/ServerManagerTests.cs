@@ -16,7 +16,6 @@ public class ServerManagerTests
     private readonly Mock<LaravelWebhookService> _mockWebhookService;
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
-    private readonly Mock<OcrPlayerTracker> _mockOcrPlayerTracker;
     private readonly ServerManager _serverManager;
 
     public ServerManagerTests()
@@ -36,41 +35,16 @@ public class ServerManagerTests
             .Returns("C:\\test\\server.bat");
         _mockConfiguration.Setup(c => c["WreckfestServer:WorkingDirectory"])
             .Returns("C:\\test");
-        _mockConfiguration.Setup(c => c["WreckfestServer:EnableOcrPlayerTracking"])
-            .Returns("false");
-
-        // Setup configuration section for GetValue<bool>
-        var mockOcrSection = new Mock<IConfigurationSection>();
-        mockOcrSection.Setup(s => s.Value).Returns("false");
-        _mockConfiguration.Setup(c => c.GetSection("WreckfestServer:EnableOcrPlayerTracking"))
-            .Returns(mockOcrSection.Object);
 
         _playerTracker = new PlayerTracker(_mockPlayerTrackerLogger.Object, _mockWebhookService.Object);
         _trackChangeTracker = new TrackChangeTracker(_mockTrackChangeTrackerLogger.Object, _mockWebhookService.Object);
-
-        // Setup mock configuration for OcrPlayerTracker
-        var mockOcrConfigSection = new Mock<IConfigurationSection>();
-        mockOcrConfigSection.Setup(c => c.Value).Returns("false");
-
-        var mockOcrConfig = new Mock<IConfiguration>();
-        mockOcrConfig.Setup(c => c["WreckfestServer:EnableOcrPlayerTracking"]).Returns("false");
-        mockOcrConfig.Setup(c => c.GetSection("WreckfestServer:EnableOcrPlayerTracking"))
-            .Returns(mockOcrConfigSection.Object);
-
-        _mockOcrPlayerTracker = new Mock<OcrPlayerTracker>(
-            Mock.Of<ILogger<OcrPlayerTracker>>(),
-            mockOcrConfig.Object,
-            _playerTracker,
-            Mock.Of<ILogger<ConsoleWriter>>(),
-            Mock.Of<ILogger<ConsoleOcr>>());
 
         _serverManager = new ServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
             _mockLoggerFactory.Object,
             _playerTracker,
-            _trackChangeTracker,
-            _mockOcrPlayerTracker.Object);
+            _trackChangeTracker);
     }
 
     [Fact]
@@ -104,8 +78,7 @@ public class ServerManagerTests
             _mockLogger.Object,
             _mockLoggerFactory.Object,
             _playerTracker,
-            _trackChangeTracker,
-            _mockOcrPlayerTracker.Object);
+            _trackChangeTracker);
 
         // Act
         var result = await serverManager.StartServerAsync();
@@ -127,8 +100,7 @@ public class ServerManagerTests
             _mockLogger.Object,
             _mockLoggerFactory.Object,
             _playerTracker,
-            _trackChangeTracker,
-            _mockOcrPlayerTracker.Object);
+            _trackChangeTracker);
 
         // Act
         var result = await serverManager.StartServerAsync();
