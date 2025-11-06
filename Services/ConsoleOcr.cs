@@ -99,58 +99,58 @@ public class ConsoleOcr : IDisposable
     /// </summary>
     private Bitmap PreprocessImage(Bitmap original)
     {
-        // Create a new bitmap for preprocessing (scale up 2x for better OCR accuracy)
+        //// Create a new bitmap for preprocessing (scale up 2x for better OCR accuracy)
         int scaleFactor = 2;
         var processed = new Bitmap(original.Width * scaleFactor, original.Height * scaleFactor, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
 
-        // First, scale up the image for better OCR
-        using (var g = System.Drawing.Graphics.FromImage(processed))
-        {
-            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor; // Preserve sharp edges for text
-            g.DrawImage(original, 0, 0, processed.Width, processed.Height);
-        }
+        //// First, scale up the image for better OCR
+        //using (var g = System.Drawing.Graphics.FromImage(processed))
+        //{
+        //    g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor; // Preserve sharp edges for text
+        //    g.DrawImage(original, 0, 0, processed.Width, processed.Height);
+        //}
 
-        // Now apply binary threshold with inversion
-        var rect = new Rectangle(0, 0, processed.Width, processed.Height);
-        var data = processed.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
+        //// Now apply binary threshold with inversion
+        //var rect = new Rectangle(0, 0, processed.Width, processed.Height);
+        //var data = processed.LockBits(rect, System.Drawing.Imaging.ImageLockMode.ReadWrite, System.Drawing.Imaging.PixelFormat.Format24bppRgb);
 
-        try
-        {
-            unsafe
-            {
-                byte* ptr = (byte*)data.Scan0;
-                int bytes = Math.Abs(data.Stride) * processed.Height;
+        //try
+        //{
+        //    unsafe
+        //    {
+        //        byte* ptr = (byte*)data.Scan0;
+        //        int bytes = Math.Abs(data.Stride) * processed.Height;
 
-                for (int i = 0; i < bytes; i += 3)
-                {
-                    // Get RGB values
-                    byte b = ptr[i];
-                    byte g = ptr[i + 1];
-                    byte r = ptr[i + 2];
+        //        for (int i = 0; i < bytes; i += 3)
+        //        {
+        //            // Get RGB values
+        //            byte b = ptr[i];
+        //            byte g = ptr[i + 1];
+        //            byte r = ptr[i + 2];
 
-                    // Convert to grayscale
-                    int gray = (int)(r * 0.299 + g * 0.587 + b * 0.114);
+        //            // Convert to grayscale
+        //            int gray = (int)(r * 0.299 + g * 0.587 + b * 0.114);
 
-                    // Apply threshold - console text is bright on dark background
-                    // Lower threshold to 100 to capture slightly dimmer text
-                    byte newValue = (byte)(gray > 100 ? 255 : 0);
+        //            // Apply threshold - console text is bright on dark background
+        //            // Lower threshold to 100 to capture slightly dimmer text
+        //            byte newValue = (byte)(gray > 100 ? 255 : 0);
 
-                    // Invert - OCR works better with black text on white background
-                    newValue = (byte)(255 - newValue);
+        //            // Invert - OCR works better with black text on white background
+        //            newValue = (byte)(255 - newValue);
 
-                    // Set all RGB channels to the same value (grayscale)
-                    ptr[i] = newValue;     // B
-                    ptr[i + 1] = newValue; // G
-                    ptr[i + 2] = newValue; // R
-                }
-            }
-        }
-        finally
-        {
-            processed.UnlockBits(data);
-        }
+        //            // Set all RGB channels to the same value (grayscale)
+        //            ptr[i] = newValue;     // B
+        //            ptr[i + 1] = newValue; // G
+        //            ptr[i + 2] = newValue; // R
+        //        }
+        //    }
+        //}
+        //finally
+        //{
+        //    processed.UnlockBits(data);
+        //}
 
-        _logger.LogDebug("Image preprocessed: scaled {ScaleFactor}x and converted to binary black/white", scaleFactor);
+        //_logger.LogDebug("Image preprocessed: scaled {ScaleFactor}x and converted to binary black/white", scaleFactor);
         return processed;
     }
 

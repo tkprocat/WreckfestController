@@ -238,13 +238,14 @@ public class PlayerTracker
     }
 
     /// <summary>
-    /// Get player count
+    /// Get player count (excludes bots - only counts real human players)
     /// </summary>
     public (int online, int total) GetPlayerCount()
     {
         lock (_lock)
         {
-            return (_players.Values.Count(p => p.IsOnline), _players.Count);
+            // Only count real players, not bots, for restart decisions
+            return (_players.Values.Count(p => p.IsOnline && !p.IsBot), _players.Count(p => !p.Value.IsBot));
         }
     }
 

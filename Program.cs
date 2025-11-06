@@ -26,6 +26,12 @@ builder.Services.AddSingleton<LaravelWebhookService>();
 builder.Services.AddSingleton<WreckfestController.Services.OcrPlayerTracker>();
 builder.Services.AddSingleton<ServerManager>();
 builder.Services.AddSingleton<WreckfestController.Services.ConfigService>();
+builder.Services.AddSingleton<WreckfestController.Services.EventStorageService>();
+builder.Services.AddSingleton<WreckfestController.Services.RecurringEventService>();
+builder.Services.AddSingleton<WreckfestController.Services.SmartRestartService>();
+
+// Register hosted services (background services)
+builder.Services.AddHostedService<WreckfestController.Services.EventSchedulerService>();
 
 var app = builder.Build();
 

@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using WreckfestController.Models;
@@ -9,12 +10,17 @@ namespace WreckfestController.Tests.Services;
 public class PlayerTrackerTests
 {
     private readonly Mock<ILogger<PlayerTracker>> _mockLogger;
+    private readonly Mock<LaravelWebhookService> _mockWebhookService;
     private readonly PlayerTracker _playerTracker;
 
     public PlayerTrackerTests()
     {
         _mockLogger = new Mock<ILogger<PlayerTracker>>();
-        _playerTracker = new PlayerTracker(_mockLogger.Object);
+        _mockWebhookService = new Mock<LaravelWebhookService>(
+            Mock.Of<ILogger<LaravelWebhookService>>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<HttpClient>());
+        _playerTracker = new PlayerTracker(_mockLogger.Object, _mockWebhookService.Object);
     }
 
     [Fact]

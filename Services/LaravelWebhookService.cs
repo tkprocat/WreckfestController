@@ -79,6 +79,25 @@ public class LaravelWebhookService
         }
     }
 
+    public async Task SendEventActivatedAsync(int eventId, string eventName)
+    {
+        try
+        {
+            var payload = new
+            {
+                eventId,
+                eventName,
+                timestamp = DateTime.UtcNow
+            };
+            await PostWebhookAsync("event-activated", payload);
+            _logger.LogInformation("Sent event activation webhook for {EventName} (ID: {EventId})", eventName, eventId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send event activated webhook for {EventName} (ID: {EventId})", eventName, eventId);
+        }
+    }
+
     private async Task PostWebhookAsync(string endpoint, object payload)
     {
         var url = $"{_webhookBaseUrl}/{endpoint}";

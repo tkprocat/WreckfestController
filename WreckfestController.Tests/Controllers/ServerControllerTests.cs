@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using WreckfestController.Controllers;
@@ -23,10 +24,40 @@ public class ServerControllerTests
             .Returns("C:\\test");
 
         var mockServerManagerLogger = new Mock<ILogger<ServerManager>>();
+        var mockLoggerFactory = new Mock<ILoggerFactory>();
         var mockPlayerTrackerLogger = new Mock<ILogger<PlayerTracker>>();
-        var playerTracker = new PlayerTracker(mockPlayerTrackerLogger.Object);
+        var mockTrackChangeTrackerLogger = new Mock<ILogger<TrackChangeTracker>>();
+        var mockWebhookService = new Mock<LaravelWebhookService>(
+            Mock.Of<ILogger<LaravelWebhookService>>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<HttpClient>());
 
-        _mockServerManager = new Mock<ServerManager>(mockConfiguration.Object, mockServerManagerLogger.Object, playerTracker);
+        var playerTracker = new PlayerTracker(mockPlayerTrackerLogger.Object, mockWebhookService.Object);
+        var trackChangeTracker = new TrackChangeTracker(mockTrackChangeTrackerLogger.Object, mockWebhookService.Object);
+
+        // Setup mock configuration for OcrPlayerTracker
+        var mockOcrConfigSection = new Mock<IConfigurationSection>();
+        mockOcrConfigSection.Setup(c => c.Value).Returns("false");
+
+        var mockOcrConfig = new Mock<IConfiguration>();
+        mockOcrConfig.Setup(c => c["WreckfestServer:EnableOcrPlayerTracking"]).Returns("false");
+        mockOcrConfig.Setup(c => c.GetSection("WreckfestServer:EnableOcrPlayerTracking"))
+            .Returns(mockOcrConfigSection.Object);
+
+        var mockOcrPlayerTracker = new Mock<OcrPlayerTracker>(
+            Mock.Of<ILogger<OcrPlayerTracker>>(),
+            mockOcrConfig.Object,
+            playerTracker,
+            Mock.Of<ILogger<ConsoleWriter>>(),
+            Mock.Of<ILogger<ConsoleOcr>>());
+
+        _mockServerManager = new Mock<ServerManager>(
+            mockConfiguration.Object,
+            mockServerManagerLogger.Object,
+            mockLoggerFactory.Object,
+            playerTracker,
+            trackChangeTracker,
+            mockOcrPlayerTracker.Object);
         _mockLogger = new Mock<ILogger<ServerController>>();
         _controller = new ServerController(_mockServerManager.Object, _mockLogger.Object);
     }
