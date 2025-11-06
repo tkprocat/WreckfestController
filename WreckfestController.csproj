@@ -22,8 +22,6 @@
     <Content Remove="WreckfestController.Tests\**" />
     <EmbeddedResource Remove="WreckfestController.Tests\**" />
     <None Remove="WreckfestController.Tests\**" />
-
-    <Compile Remove="AddBots.cs" />
   </ItemGroup>
 
 

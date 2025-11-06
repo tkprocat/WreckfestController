@@ -72,7 +72,7 @@ namespace WreckfestController.WebSockets
             }
             catch (Exception ex)
             {
-                // Log error if needed
+                // WebSocket handlers are instantiated directly without DI, so we can't use ILogger here
                 Console.WriteLine($"WebSocket error: {ex.Message}");
             }
             finally

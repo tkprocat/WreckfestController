@@ -67,7 +67,7 @@ app.Use(async (context, next) =>
         {
             var playerTracker = context.RequestServices.GetRequiredService<PlayerTracker>();
             using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-            var handler = new PlayerTrackerWebSockerHandler(webSocket, playerTracker);
+            var handler = new PlayerTrackerWebSocketHandler(webSocket, playerTracker);
             await handler.HandleAsync();
         }
         else

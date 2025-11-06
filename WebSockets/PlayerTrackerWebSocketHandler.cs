@@ -5,12 +5,12 @@ using WreckfestController.Services;
 
 namespace WreckfestController.WebSockets
 {
-    public class PlayerTrackerWebSockerHandler
+    public class PlayerTrackerWebSocketHandler
     {
         private readonly WebSocket _webSocket;
         private readonly PlayerTracker _playerTracker;
 
-        public PlayerTrackerWebSockerHandler(WebSocket webSocket, PlayerTracker playerTracker)
+        public PlayerTrackerWebSocketHandler(WebSocket webSocket, PlayerTracker playerTracker)
         {
             _webSocket = webSocket;
             _playerTracker = playerTracker;
@@ -58,7 +58,7 @@ namespace WreckfestController.WebSockets
             }
             catch (Exception ex)
             {
-                // Log error if needed
+                // WebSocket handlers are instantiated directly without DI, so we can't use ILogger here
                 Console.WriteLine($"WebSocket error: {ex.Message}");
             }
             finally
