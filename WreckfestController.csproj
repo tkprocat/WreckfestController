@@ -23,11 +23,6 @@
     <EmbeddedResource Remove="WreckfestController.Tests\**" />
     <None Remove="WreckfestController.Tests\**" />
 
-    <Compile Remove="AddBotsApp\**" />
-    <Content Remove="AddBotsApp\**" />
-    <EmbeddedResource Remove="AddBotsApp\**" />
-    <None Remove="AddBotsApp\**" />
-
     <Compile Remove="AddBots.cs" />
   </ItemGroup>
 
