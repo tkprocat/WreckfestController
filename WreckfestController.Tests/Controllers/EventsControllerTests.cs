@@ -50,8 +50,9 @@ public class EventsControllerTests
             mockPlayerTracker.Object,
             mockTrackChangeTracker.Object,
             mockServerInfoTracker.Object,
-            mockConsoleMonitor.Object);
-        
+            mockConsoleMonitor.Object,
+            mockWebhookServiceForTrackers.Object);
+
         var mockConfigService = new Mock<ConfigService>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ConfigService>>());
@@ -61,6 +62,7 @@ public class EventsControllerTests
             mockPlayerTracker.Object,
             mockTrackChangeTracker.Object,
             mockConfigService.Object,
+            mockWebhookServiceForTrackers.Object,
             Mock.Of<ILogger<SmartRestartService>>());
 
         // Setup WreckfestWebWebhookService mock

@@ -39,7 +39,8 @@ public class ConfigControllerTests
             playerTracker,
             trackChangeTracker,
             serverInfoTracker,
-            consoleMonitor) { CallBase = false };
+            consoleMonitor,
+            mockWebhookService.Object) { CallBase = false };
         _mockLogger = new Mock<ILogger<ConfigController>>();
         _controller = new ConfigController(_mockConfigService.Object, _mockServerManager.Object, _mockLogger.Object);
     }

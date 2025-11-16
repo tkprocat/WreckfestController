@@ -52,7 +52,8 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object);
+            _mockConsoleMonitor.Object,
+            _mockWebhookService.Object);
     }
 
     [Fact]
@@ -88,7 +89,8 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object);
+            _mockConsoleMonitor.Object,
+            _mockWebhookService.Object);
 
         // Act
         var result = await serverManager.StartServerAsync();
@@ -112,7 +114,8 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object);
+            _mockConsoleMonitor.Object,
+            _mockWebhookService.Object);
 
         // Act
         var result = await serverManager.StartServerAsync();

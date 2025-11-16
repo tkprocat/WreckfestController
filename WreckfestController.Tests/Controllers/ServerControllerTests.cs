@@ -45,7 +45,8 @@ public class ServerControllerTests
             playerTracker,
             trackChangeTracker,
             serverInfoTracker,
-            mockConsoleMonitor.Object);
+            mockConsoleMonitor.Object,
+            mockWebhookService.Object);
         _mockLogger = new Mock<ILogger<ServerController>>();
         _controller = new ServerController(_mockServerManager.Object, _mockLogger.Object);
     }

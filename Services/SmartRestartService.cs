@@ -12,6 +12,7 @@ public class SmartRestartService
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ConfigService _configService;
+    private readonly WreckfestWebWebhookService _webhookService;
     private readonly ILogger<SmartRestartService> _logger;
 
     private SmartRestartState _state = SmartRestartState.Idle;
@@ -33,12 +34,14 @@ public class SmartRestartService
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ConfigService configService,
+        WreckfestWebWebhookService webhookService,
         ILogger<SmartRestartService> logger)
     {
         _serverManager = serverManager;
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
         _configService = configService;
+        _webhookService = webhookService;
         _logger = logger;
 
         // Subscribe to track changes
@@ -137,6 +140,25 @@ public class SmartRestartService
 
                 _ = SendServerMessageAsync(message);
 
+                // Send webhook notification
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _webhookService.SendServerRestartPendingAsync(new Models.ServerRestartPendingEvent
+                        {
+                            MinutesRemaining = _countdownMinutesRemaining,
+                            EventName = _pendingEvent?.Name,
+                            EventId = _pendingEvent?.Id,
+                            ScheduledRestartTime = _countdownStartTime.AddMinutes(CountdownMinutes)
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to send server restart pending webhook");
+                    }
+                });
+
                 _countdownMinutesRemaining--;
 
                 if (_countdownMinutesRemaining == 0)
@@ -152,6 +174,25 @@ public class SmartRestartService
 
                     // Send final message
                     _ = SendServerMessageAsync("Server will restart at the next lobby.");
+
+                    // Send webhook notification for pending state (0 minutes)
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _webhookService.SendServerRestartPendingAsync(new Models.ServerRestartPendingEvent
+                            {
+                                MinutesRemaining = 0,
+                                EventName = _pendingEvent?.Name,
+                                EventId = _pendingEvent?.Id,
+                                ScheduledRestartTime = DateTime.UtcNow
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to send server restart pending webhook");
+                        }
+                    });
 
                     // Start checking for lobby opportunity
                     _countdownTimer = new System.Threading.Timer(

@@ -1040,39 +1040,152 @@ private void ReadNewLogLines()
 
 ---
 
-### Webhooks (C# → Laravel)
+### Webhooks (C# → WreckfestWeb)
 
-**C# sends webhooks to Laravel for:**
+**C# sends webhooks to WreckfestWeb for:**
+
+**Player Events:**
 - Player joined
 - Player left
+- Players updated (current player list)
+
+**Track Events:**
 - Track changed
-- Event activated (future - Events System)
+
+**Event System:**
+- Event activated (when scheduled event triggers)
+
+**Server Lifecycle Events (NEW):**
+- Server started (PID, process name, start time)
+- Server stopped (PID, stop method: graceful/force)
+- Server restarted (old PID, new PID, restart method: command/full)
+- Server attached (when GUI attaches to running process)
+- Server restart pending (countdown warnings with minutes remaining)
 
 **Implementation:**
 ```csharp
-public class LaravelWebhookService
+public class WreckfestWebWebhookService
 {
     private readonly HttpClient _httpClient;
     private readonly string _webhookBaseUrl;  // From appsettings.json
 
-    public async Task SendPlayerJoinedAsync(string playerName)
-    {
-        var url = $"{_webhookBaseUrl}/player-joined";
-        var payload = new { playerName, timestamp = DateTime.UtcNow };
-        await _httpClient.PostAsJsonAsync(url, payload);
-    }
+    // Player Events
+    public async Task SendPlayersUpdatedAsync(List<Player> players)
+    public async Task SendPlayerJoinedAsync(string playerName, bool isBot)  // Obsolete
+    public async Task SendPlayerLeftAsync(string playerName)  // Obsolete
+
+    // Track Events
+    public async Task SendTrackChangedAsync(string trackId)
+
+    // Event System
+    public async Task SendEventActivatedAsync(int eventId, string eventName)
+
+    // Server Lifecycle Events
+    public async Task SendServerStartedAsync(ServerStartedEvent serverEvent)
+    public async Task SendServerStoppedAsync(ServerStoppedEvent serverEvent)
+    public async Task SendServerRestartedAsync(ServerRestartedEvent serverEvent)
+    public async Task SendServerAttachedAsync(ServerAttachedEvent serverEvent)
+    public async Task SendServerRestartPendingAsync(ServerRestartPendingEvent serverEvent)
 }
 ```
 
-**Laravel receives webhooks at:**
-- `POST /api/webhooks/player-joined`
-- `POST /api/webhooks/player-left`
-- `POST /api/webhooks/track-changed`
-- `POST /api/webhooks/event-activated` (future)
+**Event Models:**
+```csharp
+// Models/ServerEvents.cs
+public class ServerStartedEvent
+{
+    public int ProcessId { get; set; }
+    public string ProcessName { get; set; }
+    public DateTime StartTime { get; set; }
+}
 
-**Laravel Implementation:**
+public class ServerStoppedEvent
+{
+    public int ProcessId { get; set; }
+    public string StopMethod { get; set; }  // "Graceful" or "Force"
+}
+
+public class ServerRestartedEvent
+{
+    public int? OldProcessId { get; set; }
+    public int NewProcessId { get; set; }
+    public string RestartMethod { get; set; }  // "Command" or "Full"
+}
+
+public class ServerAttachedEvent
+{
+    public int ProcessId { get; set; }
+    public string ProcessName { get; set; }
+    public DateTime StartTime { get; set; }
+}
+
+public class ServerRestartPendingEvent
+{
+    public int MinutesRemaining { get; set; }
+    public string? EventName { get; set; }
+    public int? EventId { get; set; }
+    public DateTime? ScheduledRestartTime { get; set; }
+}
+```
+
+**WreckfestWeb receives webhooks at:**
+- `POST /api/webhooks/players-updated`
+- `POST /api/webhooks/player-joined` (legacy)
+- `POST /api/webhooks/player-left` (legacy)
+- `POST /api/webhooks/track-changed`
+- `POST /api/webhooks/event-activated`
+- `POST /api/webhooks/server-lifecycle/started`
+- `POST /api/webhooks/server-lifecycle/stopped`
+- `POST /api/webhooks/server-lifecycle/restarted`
+- `POST /api/webhooks/server-lifecycle/attached`
+- `POST /api/webhooks/server-lifecycle/restart-pending`
+
+**Webhook Payload Examples:**
+
+**Server Started:**
+```json
+{
+  "processId": 12345,
+  "processName": "Wreckfest_x64",
+  "startTime": "2025-01-15T20:30:00Z",
+  "timestamp": "2025-01-15T20:30:02Z"
+}
+```
+
+**Server Stopped:**
+```json
+{
+  "processId": 12345,
+  "stopMethod": "Graceful",
+  "timestamp": "2025-01-15T21:00:00Z"
+}
+```
+
+**Server Restarted:**
+```json
+{
+  "oldProcessId": 12345,
+  "newProcessId": 12567,
+  "restartMethod": "Command",
+  "timestamp": "2025-01-15T21:05:00Z"
+}
+```
+
+**Server Restart Pending:**
+```json
+{
+  "minutesRemaining": 3,
+  "eventName": "Weekend Derby Event",
+  "eventId": 42,
+  "scheduledRestartTime": "2025-01-15T21:10:00Z",
+  "timestamp": "2025-01-15T21:07:00Z"
+}
+```
+
+**WreckfestWeb Implementation:**
 - `app/Http/Controllers/WebhookController.php`
 - Broadcasts events to frontend via Laravel Reverb
+- Stores server lifecycle history in database
 
 ---
 

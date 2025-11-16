@@ -22,6 +22,7 @@ public class ServerManager
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ServerInfoTracker _serverInfoTracker;
+    private readonly WreckfestWebWebhookService _webhookService;
     private string _currentTrack = string.Empty;
 
     // Log file monitoring fields (used when UseConsoleMonitoring is false)
@@ -41,7 +42,8 @@ public class ServerManager
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ServerInfoTracker serverInfoTracker,
-        ConsoleMonitor consoleMonitor)
+        ConsoleMonitor consoleMonitor,
+        WreckfestWebWebhookService webhookService)
     {
         _configuration = configuration;
         _logger = logger;
@@ -50,6 +52,7 @@ public class ServerManager
         _trackChangeTracker = trackChangeTracker;
         _serverInfoTracker = serverInfoTracker;
         _consoleMonitor = consoleMonitor;
+        _webhookService = webhookService;
 
         // Subscribe to console monitor output
         _consoleMonitor.SubscribeToOutput(OnConsoleOutputReceived);
@@ -198,6 +201,25 @@ public class ServerManager
             if (actualProcess != null)
             {
                 _logger.LogInformation("Server started successfully. Process: {ProcessName} (PID: {ProcessId})", actualProcess.ProcessName, actualProcess.Id);
+
+                // Send webhook notification
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _webhookService.SendServerStartedAsync(new Models.ServerStartedEvent
+                        {
+                            ProcessId = actualProcess.Id,
+                            ProcessName = actualProcess.ProcessName,
+                            StartTime = _startTime ?? DateTime.Now
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to send server started webhook");
+                    }
+                });
+
                 return (true, $"Server started successfully. Process: {actualProcess.ProcessName} (PID: {actualProcess.Id})");
             }
         }
@@ -247,6 +269,23 @@ public class ServerManager
                 {
                     _logger.LogInformation("Server process exited gracefully");
 
+                    // Send webhook notification before cleanup
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _webhookService.SendServerStoppedAsync(new Models.ServerStoppedEvent
+                            {
+                                ProcessId = currentPid ?? 0,
+                                StopMethod = "Graceful"
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to send server stopped webhook");
+                        }
+                    });
+
                     // Clean up
                     lock (_lock)
                     {
@@ -291,11 +330,29 @@ public class ServerManager
 
             try
             {
-                _logger.LogInformation("Force stopping server process {ProcessId}", actualProcess.Id);
+                var currentPid = actualProcess.Id;
+                _logger.LogInformation("Force stopping server process {ProcessId}", currentPid);
 
                 // Try to kill the actual server process
                 actualProcess.Kill(entireProcessTree: true);
                 actualProcess.WaitForExit(10000);
+
+                // Send webhook notification before cleanup
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _webhookService.SendServerStoppedAsync(new Models.ServerStoppedEvent
+                        {
+                            ProcessId = currentPid,
+                            StopMethod = "Force"
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to send server stopped webhook");
+                    }
+                });
 
                 // Clean up the launcher process if it's still around
                 if (_serverProcess != null && !_serverProcess.HasExited)
@@ -454,8 +511,27 @@ public class ServerManager
                 _startTime = DateTime.Now;
             }
 
+            var oldPid = oldPids.FirstOrDefault();
             _logger.LogInformation("Server restarted successfully via /restart command. New PID: {PID} (was {OldPID})",
-                newPid, oldPids.Contains(_actualServerPid.Value) ? _actualServerPid.Value : (int?)null);
+                newPid, oldPid != 0 ? oldPid : (int?)null);
+
+            // Send webhook notification
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _webhookService.SendServerRestartedAsync(new Models.ServerRestartedEvent
+                    {
+                        OldProcessId = oldPid != 0 ? oldPid : null,
+                        NewProcessId = newPid,
+                        RestartMethod = "Command"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send server restarted webhook");
+                }
+            });
 
             return (true, $"Server restarted successfully via /restart command. New PID: {newPid}");
         }
@@ -1338,6 +1414,25 @@ public class ServerManager
             }
 
             _logger.LogInformation($"Successfully attached to process {processId}");
+
+            // Send webhook notification
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _webhookService.SendServerAttachedAsync(new Models.ServerAttachedEvent
+                    {
+                        ProcessId = processId,
+                        ProcessName = process.ProcessName,
+                        StartTime = _startTime ?? DateTime.Now
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send server attached webhook");
+                }
+            });
+
             return (true, $"Attached to process {processId}");
         }
         catch (Exception ex)

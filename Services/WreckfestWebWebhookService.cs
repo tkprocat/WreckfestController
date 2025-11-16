@@ -101,6 +101,107 @@ public class WreckfestWebWebhookService
         }
     }
 
+    public async Task SendServerStartedAsync(Models.ServerStartedEvent serverEvent)
+    {
+        try
+        {
+            var payload = new
+            {
+                processId = serverEvent.ProcessId,
+                processName = serverEvent.ProcessName,
+                startTime = serverEvent.StartTime,
+                timestamp = DateTime.UtcNow
+            };
+            await PostWebhookAsync("server-lifecycle/started", payload);
+            _logger.LogInformation("Sent server started webhook for PID {ProcessId}", serverEvent.ProcessId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send server started webhook for PID {ProcessId}", serverEvent.ProcessId);
+        }
+    }
+
+    public async Task SendServerStoppedAsync(Models.ServerStoppedEvent serverEvent)
+    {
+        try
+        {
+            var payload = new
+            {
+                processId = serverEvent.ProcessId,
+                stopMethod = serverEvent.StopMethod,
+                timestamp = DateTime.UtcNow
+            };
+            await PostWebhookAsync("server-lifecycle/stopped", payload);
+            _logger.LogInformation("Sent server stopped webhook for PID {ProcessId} ({StopMethod})", serverEvent.ProcessId, serverEvent.StopMethod);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send server stopped webhook for PID {ProcessId}", serverEvent.ProcessId);
+        }
+    }
+
+    public async Task SendServerRestartedAsync(Models.ServerRestartedEvent serverEvent)
+    {
+        try
+        {
+            var payload = new
+            {
+                oldProcessId = serverEvent.OldProcessId,
+                newProcessId = serverEvent.NewProcessId,
+                restartMethod = serverEvent.RestartMethod,
+                timestamp = DateTime.UtcNow
+            };
+            await PostWebhookAsync("server-lifecycle/restarted", payload);
+            _logger.LogInformation("Sent server restarted webhook: {OldPid} -> {NewPid} ({RestartMethod})",
+                serverEvent.OldProcessId, serverEvent.NewProcessId, serverEvent.RestartMethod);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send server restarted webhook");
+        }
+    }
+
+    public async Task SendServerAttachedAsync(Models.ServerAttachedEvent serverEvent)
+    {
+        try
+        {
+            var payload = new
+            {
+                processId = serverEvent.ProcessId,
+                processName = serverEvent.ProcessName,
+                startTime = serverEvent.StartTime,
+                timestamp = DateTime.UtcNow
+            };
+            await PostWebhookAsync("server-lifecycle/attached", payload);
+            _logger.LogInformation("Sent server attached webhook for PID {ProcessId}", serverEvent.ProcessId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send server attached webhook for PID {ProcessId}", serverEvent.ProcessId);
+        }
+    }
+
+    public async Task SendServerRestartPendingAsync(Models.ServerRestartPendingEvent serverEvent)
+    {
+        try
+        {
+            var payload = new
+            {
+                minutesRemaining = serverEvent.MinutesRemaining,
+                eventName = serverEvent.EventName,
+                eventId = serverEvent.EventId,
+                scheduledRestartTime = serverEvent.ScheduledRestartTime,
+                timestamp = DateTime.UtcNow
+            };
+            await PostWebhookAsync("server-lifecycle/restart-pending", payload);
+            _logger.LogInformation("Sent server restart pending webhook: {Minutes} minutes remaining", serverEvent.MinutesRemaining);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send server restart pending webhook");
+        }
+    }
+
     private async Task PostWebhookAsync(string endpoint, object payload)
     {
         var url = $"{_webhookBaseUrl}/{endpoint}";
