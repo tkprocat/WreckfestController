@@ -45,20 +45,27 @@
   - Command input to send commands to server
 - **Configuration Tab** - User-friendly settings management
   - Server settings (executable path, working directory, arguments)
-  - Network settings (Laravel webhook URL, API ports)
+  - Network settings (WreckfestWeb webhook URL, API ports)
   - Browse buttons for file/folder selection
   - Saves to user-settings.json (customizable location)
   - Reset to defaults functionality
+- **Event Scheduler Tab** - View and manage scheduled events
+  - Upcoming events list (auto-refreshes every 30 seconds)
+  - Event details panel (name, start time, tracks, recurring pattern)
+  - Manual event activation ("Activate Now" button)
+  - Triggers smart restart process with countdown warnings
+  - Read-only view (schedule management done via WreckfestWeb)
 - **Modular Architecture** - Tabs implemented as separate UserControls for maintainability
   - `Views/ProcessManagerTab.xaml` - Process management tab
   - `Views/ServerControlTab.xaml` - Server control and monitoring tab
   - `Views/ConfigurationTab.xaml` - Settings configuration tab
+  - `Views/EventSchedulerTab.xaml` - Event scheduler and activation tab
 - **Window Title** - Dynamic title shows PID and config file when attached to a server
 
 ### REST API Mode (ASP.NET Core)
 - REST API for server control (start/stop/restart/update)
 - Server configuration management (server_config.cfg)
-- Real-time player tracking via OCR (Tesseract) and log parsing
+- Real-time player tracking via console output and log parsing
 - Track rotation management (event loops)
 - WebSocket streaming for console output, player events, and track changes
 - Integration with Laravel WreckfestWeb admin panel
@@ -107,8 +114,7 @@
 2. **C# WreckfestController (This Project)**
    - Exposes REST API for server control
    - Manages Wreckfest server process (start/stop/restart)
-   - Monitors server logs for player tracking
-   - Uses OCR to read in-game player list
+   - Monitors server console output and logs for player tracking
    - Sends webhooks to Laravel
    - **Will implement Events System** (see TODO_EVENTS.md)
 
@@ -116,7 +122,7 @@
    - Game server process (Wreckfest_x64.exe)
    - Reads server_config.cfg for configuration
    - Writes log.txt with events (player join/leave, track changes)
-   - Displays in-game UI (for OCR player tracking)
+   - Outputs player data to console
 
 ---
 
@@ -129,9 +135,7 @@
 
 ### Key NuGet Packages
 - **Swashbuckle.AspNetCore** (6.5.0) - Swagger/OpenAPI documentation
-- **System.Drawing.Common** (8.0.1) - Image processing for OCR
 - **System.Management** (8.0.0) - Windows process management
-- **Tesseract** (5.2.0) - OCR engine for player tracking
 
 ### Development Tools
 - **Visual Studio 2022** (recommended) - Full IDE with debugging
@@ -140,7 +144,7 @@
 - **Swagger UI** - API testing and documentation
 
 ### Configuration
-- **appsettings.json** - Server paths, ports, OCR settings
+- **appsettings.json** - Server paths, ports, webhook settings
 - **launchSettings.json** - Development profiles (http/https)
 
 ---
@@ -358,9 +362,8 @@ public class ServerManager
 **Key Implementation Details:**
 - **PID Tracking**: Only tracks servers started via API or manually attached
 - **Log Monitoring**: FileSystemWatcher + 2-second polling fallback
-- **Player Tracking**: Integrates PlayerTracker, OcrPlayerTracker
+- **Player Tracking**: Integrates PlayerTracker with console output monitoring
 - **Track Detection**: Parses "Current track loaded! (track_name)" from logs
-- **OCR Triggers**: Automatic OCR on race start and player join/leave
 
 **Log File Resolution:**
 1. Tries to parse `log=` setting from server_config.cfg
@@ -409,18 +412,6 @@ public class PlayerTracker
 - `"PlayerName has joined."` → Player joined
 - `"PlayerName has quit"` → Player left
 - `"*BotName has joined."` → Bot joined (prefix `*`)
-
-#### **OcrPlayerTracker.cs**
-OCR-based player tracking (fallback/supplement):
-
-```csharp
-public class OcrPlayerTracker
-{
-    Task TriggerUpdateAsync(string reason)  // Capture screenshot, OCR
-}
-```
-
-**Enabled Via:** `appsettings.json` → `WreckfestServer:EnableOcrPlayerTracking: true`
 
 #### **TrackChangeTracker.cs**
 Detects track changes from logs:
@@ -523,8 +514,7 @@ el_weather=clear
   "isRunning": true,
   "processId": 12345,
   "uptime": "01:23:45",
-  "currentTrack": "track/wild_valley/valley_edge_short",
-  "ocrEnabled": true
+  "currentTrack": "track/wild_valley/valley_edge_short"
 }
 ```
 
@@ -693,12 +683,6 @@ ws.onmessage = (event) => {
    - Reliable, no dependencies
    - Handles multi-word names and bots (prefixed with `*`)
 
-2. **OCR-based (Optional)**: OcrPlayerTracker.cs
-   - Uses Tesseract to read in-game player list
-   - Enabled via `appsettings.json`: `"EnableOcrPlayerTracking": true`
-   - Triggered on race start and player join/leave
-   - Slower but can capture names not in logs
-
 **Log Patterns:**
 ```
 [INFO] PlayerName has joined.
@@ -746,8 +730,7 @@ WreckfestController uses a **hybrid configuration system** with two layers:
     "ServerPath": "",
     "ServerArguments": "-s server_config=server_config.cfg",
     "WorkingDirectory": "",
-    "LogFilePath": "",
-    "EnableOcrPlayerTracking": false
+    "LogFilePath": ""
   },
   "SteamCmd": {
     "SteamCmdPath": "C:\\Path\\To\\steamcmd.exe",
@@ -774,8 +757,7 @@ Created automatically when saving settings via Configuration tab:
     "ServerPath": "C:\\Games\\Wreckfest\\Wreckfest_x64.exe",
     "WorkingDirectory": "C:\\Games\\Wreckfest",
     "ServerArguments": "-s server_config=server_config.cfg",
-    "LogFilePath": "C:\\Games\\Wreckfest\\log.txt",
-    "EnableOcrPlayerTracking": false
+    "LogFilePath": "C:\\Games\\Wreckfest\\log.txt"
   },
   "Laravel": {
     "WebhookBaseUrl": "https://wreckfestweb.test/api/webhooks"
@@ -823,9 +805,8 @@ The Configuration tab provides a user-friendly interface for managing settings:
   - Working directory (with browse button)
   - Server arguments
   - Log file path (optional, with browse button)
-  - Enable OCR checkbox
 - **Network Settings Section**:
-  - Laravel webhook base URL
+  - WreckfestWeb webhook base URL
   - API server URLs (Kestrel)
 - **Action Buttons**:
   - Reset to Defaults
@@ -863,7 +844,6 @@ public class SettingsService
 - **ServerArguments**: Must include `server_config=<filename>`
 - **WorkingDirectory**: Server installation folder
 - **LogFilePath**: (Optional) Override log file path; otherwise parsed from server_config.cfg
-- **EnableOcrPlayerTracking**: Enable OCR player tracking (requires Tesseract)
 - **Kestrel:Urls**: API server listening addresses (change ports for multi-instance)
 
 ---
@@ -997,10 +977,6 @@ private void ReadNewLogLines()
         NotifyConsoleOutputSubscribers(line);  // WebSocket subscribers
         _playerTracker.ProcessLogLine(line);   // Player tracking
         _trackChangeTracker.ProcessLogLine(line);  // Track changes
-
-        // Trigger OCR on specific events
-        if (line.Contains("Event started!"))
-            _ = Task.Run(() => _ocrPlayerTracker.TriggerUpdateAsync("Race started"));
     }
 
     _lastLogFilePosition = fileStream.Position;
@@ -1129,16 +1105,20 @@ public class ServerRestartPendingEvent
 ```
 
 **WreckfestWeb receives webhooks at:**
+
+Player & Game State:
 - `POST /api/webhooks/players-updated`
-- `POST /api/webhooks/player-joined` (legacy)
-- `POST /api/webhooks/player-left` (legacy)
 - `POST /api/webhooks/track-changed`
 - `POST /api/webhooks/event-activated`
-- `POST /api/webhooks/server-lifecycle/started`
-- `POST /api/webhooks/server-lifecycle/stopped`
-- `POST /api/webhooks/server-lifecycle/restarted`
-- `POST /api/webhooks/server-lifecycle/attached`
-- `POST /api/webhooks/server-lifecycle/restart-pending`
+- `POST /api/webhooks/player-joined` (legacy)
+- `POST /api/webhooks/player-left` (legacy)
+
+Server Lifecycle:
+- `POST /api/webhooks/server-started`
+- `POST /api/webhooks/server-stopped`
+- `POST /api/webhooks/server-restarted`
+- `POST /api/webhooks/server-attached`
+- `POST /api/webhooks/server-restart-pending`
 
 **Webhook Payload Examples:**
 
@@ -1179,6 +1159,50 @@ public class ServerRestartPendingEvent
   "eventId": 42,
   "scheduledRestartTime": "2025-01-15T21:10:00Z",
   "timestamp": "2025-01-15T21:07:00Z"
+}
+```
+
+**Players Updated:**
+```json
+{
+  "players": [
+    {
+      "name": "PlayerName",
+      "playerId": 1,
+      "score": 150,
+      "vehicle": "Speedbird GT",
+      "slot": 0,
+      "isBot": false,
+      "joinedAt": "2025-01-15T20:30:00Z",
+      "lastSeenAt": "2025-01-15T21:00:00Z"
+    },
+    {
+      "name": "*Bot_01",
+      "playerId": 2,
+      "score": 80,
+      "vehicle": "Killerbee",
+      "slot": 1,
+      "isBot": true,
+      "joinedAt": "2025-01-15T20:35:00Z",
+      "lastSeenAt": "2025-01-15T21:00:00Z"
+    }
+  ]
+}
+```
+
+**Track Changed:**
+```json
+{
+  "trackId": "sandpit_derby_2"
+}
+```
+
+**Event Activated:**
+```json
+{
+  "eventId": 42,
+  "eventName": "Weekend Derby Event",
+  "timestamp": "2025-01-15T21:10:00Z"
 }
 ```
 
@@ -1770,22 +1794,6 @@ taskkill /PID <PID> /F
 # Or change port in Properties/launchSettings.json
 "applicationUrl": "http://localhost:6100"
 ```
-
----
-
-### OCR Not Working
-
-**Symptom:** `EnableOcrPlayerTracking: true` but OCR not detecting players
-
-**Checks:**
-1. Is Tesseract installed?
-2. Is Wreckfest window visible and in focus?
-3. Check OcrPlayerTracker logs for errors
-
-**Requirements:**
-- Tesseract must be installed
-- Wreckfest must be in windowed mode or borderless window
-- Sufficient contrast for OCR to read player names
 
 ---
 

@@ -58,9 +58,16 @@ public class Program
             })
             .ConfigureServices((context, services) =>
             {
+                // Register GUI logger provider
+                var guiLoggerProvider = new GuiLoggerProvider();
+                services.AddSingleton(guiLoggerProvider);
+                services.AddLogging(builder =>
+                {
 #if DEBUG
-                services.AddLogging(builder => builder.AddDebug());
+                    builder.AddDebug();
 #endif
+                    builder.AddProvider(guiLoggerProvider);
+                });
 
                 // Register core services
                 services.AddHttpClient<WreckfestWebWebhookService>();

@@ -139,13 +139,23 @@
                                     <Border Padding="8,5" Margin="0,2"
                                             Background="{StaticResource BackgroundDark}">
                                         <StackPanel>
-                                            <TextBlock Text="{Binding Timestamp}"
-                                                       FontSize="10"
-                                                       Foreground="{StaticResource TextSecondary}"/>
-                                            <TextBlock Text="{Binding Message}"
-                                                       FontSize="12"
-                                                       Foreground="{Binding Color}"
-                                                       TextWrapping="Wrap"/>
+                                            <TextBox Text="{Binding Timestamp, Mode=OneWay}"
+                                                    FontSize="10"
+                                                    Foreground="{StaticResource TextSecondary}"
+                                                    Background="Transparent"
+                                                    BorderThickness="0"
+                                                    IsReadOnly="True"
+                                                    IsTabStop="False"
+                                                    Cursor="Arrow"/>
+                                            <TextBox Text="{Binding Message, Mode=OneWay}"
+                                                    FontSize="12"
+                                                    Foreground="{Binding Color}"
+                                                    TextWrapping="Wrap"
+                                                    Background="Transparent"
+                                                    BorderThickness="0"
+                                                    IsReadOnly="True"
+                                                    IsTabStop="False"
+                                                    Cursor="Arrow"/>
                                         </StackPanel>
                                     </Border>
                                 </DataTemplate>

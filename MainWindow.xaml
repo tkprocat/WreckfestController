@@ -66,14 +66,24 @@
 
             <!-- Main Content -->
             <TabControl Grid.Row="1" Background="{StaticResource BackgroundDark}" Margin="10">
-                <!-- Process Manager Tab - Process List -->
-                <TabItem Header="Process Manager">
-                    <ContentControl x:Name="StatusTabContent"/>
-                </TabItem>
-
                 <!-- Server Control Tab -->
                 <TabItem Header="Server Control">
                     <ContentControl x:Name="ServerControlTabContent"/>
+                </TabItem>
+
+                <!-- Controller Log Tab -->
+                <TabItem Header="Controller Log">
+                    <ContentControl x:Name="ControllerLogTabContent"/>
+                </TabItem>
+
+                <!-- Event Scheduler Tab -->
+                <TabItem Header="Event Scheduler">
+                    <ContentControl x:Name="EventSchedulerTabContent"/>
+                </TabItem>
+
+                <!-- Process Manager Tab -->
+                <TabItem Header="Process Manager">
+                    <ContentControl x:Name="StatusTabContent"/>
                 </TabItem>
 
                 <!-- Configuration Tab -->

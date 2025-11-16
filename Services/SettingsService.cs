@@ -124,8 +124,7 @@ public class SettingsService
                 ServerPath = _configuration["WreckfestServer:ServerPath"],
                 ServerArguments = _configuration["WreckfestServer:ServerArguments"],
                 WorkingDirectory = _configuration["WreckfestServer:WorkingDirectory"],
-                LogFilePath = _configuration["WreckfestServer:LogFilePath"],
-                EnableOcrPlayerTracking = _configuration.GetValue<bool>("WreckfestServer:EnableOcrPlayerTracking")
+                LogFilePath = _configuration["WreckfestServer:LogFilePath"]
             },
             WreckfestWeb = new WreckfestWebSettings
             {

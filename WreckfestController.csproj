@@ -15,6 +15,7 @@
     <!-- Application info -->
     <ApplicationTitle>Wreckfest Controller</ApplicationTitle>
     <Version>1.0.0</Version>
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <GenerateAssemblyVersionAttribute>false</GenerateAssemblyVersionAttribute>
     <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
     <GenerateAssemblyInformationalVersionAttribute>false</GenerateAssemblyInformationalVersionAttribute>

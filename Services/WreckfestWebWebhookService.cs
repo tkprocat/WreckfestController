@@ -23,183 +23,136 @@ public class WreckfestWebWebhookService
 
     public async Task SendPlayersUpdatedAsync(List<Models.Player> players)
     {
-        try
+        var payload = new
         {
-            var payload = new
+            players = players.Select(p => new
             {
-                players = players.Select(p => new
-                {
-                    name = p.Name,
-                    isBot = p.IsBot
-                }).ToList()
-            };
-            await PostWebhookAsync("players-updated", payload);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send players updated webhook");
-        }
+                name = p.Name,
+                playerId = p.PlayerId,
+                score = p.Score,
+                vehicle = p.Vehicle,
+                slot = p.Slot,
+                isBot = p.IsBot,
+                joinedAt = p.JoinedAt,
+                lastSeenAt = p.LastSeenAt
+            }).ToList()
+        };
+        await SendWebhook("players-updated", payload, "", "Failed to send players updated webhook");
     }
 
     [Obsolete("Use SendPlayersUpdatedAsync instead")]
     public async Task SendPlayerJoinedAsync(string playerName, bool isBot)
     {
-        try
-        {
-            var payload = new { playerName, isBot };
-            await PostWebhookAsync("player-joined", payload);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send player joined webhook for {PlayerName}", playerName);
-        }
+        var payload = new { playerName, isBot };
+        await SendWebhook("player-joined", payload, "", $"Failed to send player joined webhook for {playerName}");
     }
 
     [Obsolete("Use SendPlayersUpdatedAsync instead")]
     public async Task SendPlayerLeftAsync(string playerName)
     {
-        try
-        {
-            var payload = new { playerName };
-            await PostWebhookAsync("player-left", payload);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send player left webhook for {PlayerName}", playerName);
-        }
+        var payload = new { playerName };
+        await SendWebhook("player-left", payload, "", $"Failed to send player left webhook for {playerName}");
     }
 
     public async Task SendTrackChangedAsync(string trackId)
     {
-        try
-        {
-            var payload = new { trackId };
-            await PostWebhookAsync("track-changed", payload);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send track changed webhook for {TrackId}", trackId);
-        }
+        var payload = new { trackId };
+        await SendWebhook("track-changed", payload, "", $"Failed to send track changed webhook for {trackId}");
     }
 
     public async Task SendEventActivatedAsync(int eventId, string eventName)
     {
-        try
+        var payload = new
         {
-            var payload = new
-            {
-                eventId,
-                eventName,
-                timestamp = DateTime.UtcNow
-            };
-            await PostWebhookAsync("event-activated", payload);
-            _logger.LogInformation("Sent event activation webhook for {EventName} (ID: {EventId})", eventName, eventId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send event activated webhook for {EventName} (ID: {EventId})", eventName, eventId);
-        }
+            eventId,
+            eventName,
+            timestamp = DateTime.UtcNow
+        };
+        await SendWebhook(
+            "event-activated",
+            payload,
+            $"Sent event activation webhook for {eventName} (ID: {eventId})",
+            $"Failed to send event activated webhook for {eventName} (ID: {eventId})");
     }
 
     public async Task SendServerStartedAsync(Models.ServerStartedEvent serverEvent)
     {
-        try
+        var payload = new
         {
-            var payload = new
-            {
-                processId = serverEvent.ProcessId,
-                processName = serverEvent.ProcessName,
-                startTime = serverEvent.StartTime,
-                timestamp = DateTime.UtcNow
-            };
-            await PostWebhookAsync("server-lifecycle/started", payload);
-            _logger.LogInformation("Sent server started webhook for PID {ProcessId}", serverEvent.ProcessId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send server started webhook for PID {ProcessId}", serverEvent.ProcessId);
-        }
+            processId = serverEvent.ProcessId,
+            processName = serverEvent.ProcessName,
+            startTime = serverEvent.StartTime,
+            timestamp = DateTime.UtcNow
+        };
+        await SendWebhook(
+            "server-started",
+            payload,
+            $"Sent server started webhook for PID {serverEvent.ProcessId}",
+            $"Failed to send server started webhook for PID {serverEvent.ProcessId}");
     }
 
     public async Task SendServerStoppedAsync(Models.ServerStoppedEvent serverEvent)
     {
-        try
+        var payload = new
         {
-            var payload = new
-            {
-                processId = serverEvent.ProcessId,
-                stopMethod = serverEvent.StopMethod,
-                timestamp = DateTime.UtcNow
-            };
-            await PostWebhookAsync("server-lifecycle/stopped", payload);
-            _logger.LogInformation("Sent server stopped webhook for PID {ProcessId} ({StopMethod})", serverEvent.ProcessId, serverEvent.StopMethod);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send server stopped webhook for PID {ProcessId}", serverEvent.ProcessId);
-        }
+            processId = serverEvent.ProcessId,
+            stopMethod = serverEvent.StopMethod,
+            timestamp = DateTime.UtcNow
+        };
+        await SendWebhook(
+            "server-stopped",
+            payload,
+            $"Sent server stopped webhook for PID {serverEvent.ProcessId} ({serverEvent.StopMethod})",
+            $"Failed to send server stopped webhook for PID {serverEvent.ProcessId}");
     }
 
     public async Task SendServerRestartedAsync(Models.ServerRestartedEvent serverEvent)
     {
-        try
+        var payload = new
         {
-            var payload = new
-            {
-                oldProcessId = serverEvent.OldProcessId,
-                newProcessId = serverEvent.NewProcessId,
-                restartMethod = serverEvent.RestartMethod,
-                timestamp = DateTime.UtcNow
-            };
-            await PostWebhookAsync("server-lifecycle/restarted", payload);
-            _logger.LogInformation("Sent server restarted webhook: {OldPid} -> {NewPid} ({RestartMethod})",
-                serverEvent.OldProcessId, serverEvent.NewProcessId, serverEvent.RestartMethod);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send server restarted webhook");
-        }
+            oldProcessId = serverEvent.OldProcessId,
+            newProcessId = serverEvent.NewProcessId,
+            restartMethod = serverEvent.RestartMethod,
+            timestamp = DateTime.UtcNow
+        };
+        await SendWebhook(
+            "server-restarted",
+            payload,
+            $"Sent server restarted webhook: {serverEvent.OldProcessId} -> {serverEvent.NewProcessId} ({serverEvent.RestartMethod})",
+            "Failed to send server restarted webhook");
     }
 
     public async Task SendServerAttachedAsync(Models.ServerAttachedEvent serverEvent)
     {
-        try
+        var payload = new
         {
-            var payload = new
-            {
-                processId = serverEvent.ProcessId,
-                processName = serverEvent.ProcessName,
-                startTime = serverEvent.StartTime,
-                timestamp = DateTime.UtcNow
-            };
-            await PostWebhookAsync("server-lifecycle/attached", payload);
-            _logger.LogInformation("Sent server attached webhook for PID {ProcessId}", serverEvent.ProcessId);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send server attached webhook for PID {ProcessId}", serverEvent.ProcessId);
-        }
+            processId = serverEvent.ProcessId,
+            processName = serverEvent.ProcessName,
+            startTime = serverEvent.StartTime,
+            timestamp = DateTime.UtcNow
+        };
+        await SendWebhook(
+            "server-attached",
+            payload,
+            $"Sent server attached webhook for PID {serverEvent.ProcessId}",
+            $"Failed to send server attached webhook for PID {serverEvent.ProcessId}");
     }
 
     public async Task SendServerRestartPendingAsync(Models.ServerRestartPendingEvent serverEvent)
     {
-        try
+        var payload = new
         {
-            var payload = new
-            {
-                minutesRemaining = serverEvent.MinutesRemaining,
-                eventName = serverEvent.EventName,
-                eventId = serverEvent.EventId,
-                scheduledRestartTime = serverEvent.ScheduledRestartTime,
-                timestamp = DateTime.UtcNow
-            };
-            await PostWebhookAsync("server-lifecycle/restart-pending", payload);
-            _logger.LogInformation("Sent server restart pending webhook: {Minutes} minutes remaining", serverEvent.MinutesRemaining);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send server restart pending webhook");
-        }
+            minutesRemaining = serverEvent.MinutesRemaining,
+            eventName = serverEvent.EventName,
+            eventId = serverEvent.EventId,
+            scheduledRestartTime = serverEvent.ScheduledRestartTime,
+            timestamp = DateTime.UtcNow
+        };
+        await SendWebhook(
+            "server-restart-pending",
+            payload,
+            $"Sent server restart pending webhook: {serverEvent.MinutesRemaining} minutes remaining",
+            "Failed to send server restart pending webhook");
     }
 
     private async Task PostWebhookAsync(string endpoint, object payload)
@@ -217,6 +170,22 @@ public class WreckfestWebWebhookService
         else
         {
             _logger.LogWarning("Webhook failed with status {StatusCode} to {Url}", response.StatusCode, url);
+        }
+    }
+
+    private async Task SendWebhook(string endpoint, object payload, string successMessage, string errorMessage)
+    {
+        try
+        {
+            await PostWebhookAsync(endpoint, payload);
+            if (!string.IsNullOrEmpty(successMessage))
+            {
+                _logger.LogInformation(successMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "{ErrorMessage} to {Url}", errorMessage, $"{_webhookBaseUrl}/{endpoint}");
         }
     }
 }

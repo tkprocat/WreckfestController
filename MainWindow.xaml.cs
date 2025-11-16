@@ -22,12 +22,17 @@ public partial class MainWindow : Window
     private ProcessManagerTab? _processManagerTab;
     private ServerControlTab? _serverControlTab;
     private ConfigurationTab? _configurationTab;
+    private EventSchedulerTab? _eventSchedulerTab;
+    private ControllerLogTab? _controllerLogTab;
 
     public MainWindow(
         ServerManager serverManager,
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         SettingsService settingsService,
+        EventStorageService eventStorageService,
+        SmartRestartService smartRestartService,
+        GuiLoggerProvider guiLoggerProvider,
         ILogger<MainWindow> logger,
         ILoggerFactory loggerFactory)
     {
@@ -53,13 +58,22 @@ public partial class MainWindow : Window
             settingsService,
             _loggerFactory.CreateLogger<ConfigurationTab>());
 
+        _eventSchedulerTab = new EventSchedulerTab(
+            eventStorageService,
+            smartRestartService,
+            _loggerFactory.CreateLogger<EventSchedulerTab>());
+
+        _controllerLogTab = new ControllerLogTab();
+
+        // Connect GUI logger to Controller Log tab
+        guiLoggerProvider.SetLogTab(_controllerLogTab);
+
         // Set tab content
         StatusTabContent.Content = _processManagerTab;
         ServerControlTabContent.Content = _serverControlTab;
         ConfigurationTabContent.Content = _configurationTab;
-
-        // Set window icon from Material Design PackIcon
-        SetIconFromPackIcon();
+        EventSchedulerTabContent.Content = _eventSchedulerTab;
+        ControllerLogTabContent.Content = _controllerLogTab;
 
         // Setup status update timer
         _statusUpdateTimer = new Timer(1000); // Update every second
@@ -175,39 +189,6 @@ public partial class MainWindow : Window
     private void CloseButton_Click(object sender, RoutedEventArgs e)
     {
         Close();
-    }
-
-    private void SetIconFromPackIcon()
-    {
-        try
-        {
-            // Create a PackIcon programmatically
-            var packIcon = new materialDesign.PackIcon
-            {
-                Kind = materialDesign.PackIconKind.Wrench,
-                Width = 32,
-                Height = 32,
-                Foreground = new SolidColorBrush(Colors.White)
-            };
-
-            // Render to bitmap
-            var drawingVisual = new DrawingVisual();
-            using (DrawingContext drawingContext = drawingVisual.RenderOpen())
-            {
-                var visualBrush = new VisualBrush(packIcon);
-                drawingContext.DrawRectangle(visualBrush, null, new Rect(0, 0, 32, 32));
-            }
-
-            var renderTargetBitmap = new RenderTargetBitmap(32, 32, 96, 96, PixelFormats.Pbgra32);
-            renderTargetBitmap.Render(drawingVisual);
-
-            // Set as window icon directly from BitmapSource
-            Icon = renderTargetBitmap;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to set window icon from PackIcon");
-        }
     }
 
     protected override void OnClosed(EventArgs e)

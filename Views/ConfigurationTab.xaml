@@ -125,12 +125,6 @@
                                 Click="OnBrowseLogFilePathClicked"
                                 Width="100"/>
                     </Grid>
-
-                    <!-- Enable OCR -->
-                    <CheckBox x:Name="EnableOcrCheckBox"
-                              Content="Enable OCR Player Tracking"
-                              Foreground="{StaticResource TextPrimary}"
-                              Style="{StaticResource MaterialDesignCheckBox}"/>
                 </StackPanel>
             </Border>
 

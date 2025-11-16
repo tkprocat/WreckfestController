@@ -49,7 +49,6 @@ public partial class ConfigurationTab : UserControl
         WorkingDirectoryTextBox.Text = settings.WreckfestServer?.WorkingDirectory ?? "";
         ServerArgumentsTextBox.Text = settings.WreckfestServer?.ServerArguments ?? "";
         LogFilePathTextBox.Text = settings.WreckfestServer?.LogFilePath ?? "";
-        EnableOcrCheckBox.IsChecked = settings.WreckfestServer?.EnableOcrPlayerTracking ?? false;
 
         // Network settings
         WreckfestWebWebhookUrlTextBox.Text = settings.WreckfestWeb?.WebhookBaseUrl ?? "";
@@ -65,8 +64,7 @@ public partial class ConfigurationTab : UserControl
                 ServerPath = ServerPathTextBox.Text,
                 WorkingDirectory = WorkingDirectoryTextBox.Text,
                 ServerArguments = ServerArgumentsTextBox.Text,
-                LogFilePath = LogFilePathTextBox.Text,
-                EnableOcrPlayerTracking = EnableOcrCheckBox.IsChecked ?? false
+                LogFilePath = LogFilePathTextBox.Text
             },
             WreckfestWeb = new WreckfestWebSettings
             {
@@ -259,8 +257,7 @@ public partial class ConfigurationTab : UserControl
                     ServerPath = "",
                     ServerArguments = "-s server_config=server_config.cfg",
                     WorkingDirectory = "",
-                    LogFilePath = "",
-                    EnableOcrPlayerTracking = false
+                    LogFilePath = ""
                 },
                 WreckfestWeb = new WreckfestWebSettings
                 {

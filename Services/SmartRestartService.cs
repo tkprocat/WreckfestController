@@ -97,18 +97,18 @@ public class SmartRestartService
             _pendingEvent = @event;
             _onRestartCompleteCallback = onComplete;
 
-            // Check if anyone is online
+            // Check if any real players are online (excludes bots)
             var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
 
             if (onlinePlayers == 0)
             {
-                _logger.LogInformation("No players online - restarting immediately");
+                _logger.LogInformation("No real players online (only bots or empty) - skipping countdown and restarting immediately");
                 _ = Task.Run(() => ExecuteRestartAsync());
                 return true;
             }
 
-            // Players are online - start countdown
-            _logger.LogInformation("{PlayerCount} players online - starting {Minutes}-minute countdown", onlinePlayers, CountdownMinutes);
+            // Real players are online - start countdown
+            _logger.LogInformation("{PlayerCount} real players online - starting {Minutes}-minute countdown", onlinePlayers, CountdownMinutes);
             _state = SmartRestartState.Warning;
             _countdownMinutesRemaining = CountdownMinutes;
             _countdownStartTime = DateTime.UtcNow;
@@ -302,20 +302,9 @@ public class SmartRestartService
         try
         {
             _logger.LogInformation(
-                "Activating event: {EventName} (ID: {EventId})",
+                "Executing restart for event: {EventName} (ID: {EventId})",
                 eventToActivate.Name,
                 eventToActivate.Id);
-
-            // Apply event configuration BEFORE restarting so server picks up new config
-            var configApplied = await ApplyEventConfigurationAsync(eventToActivate);
-            if (!configApplied)
-            {
-                _logger.LogError("Failed to apply event configuration - aborting restart");
-                ResetState();
-                return;
-            }
-
-            _logger.LogInformation("Configuration applied successfully, restarting server");
 
             // Restart the server using in-game /restart command (faster and cleaner)
             var restartResult = await _serverManager.RestartServerViaCommandAsync();
@@ -350,75 +339,6 @@ public class SmartRestartService
         {
             _logger.LogError(ex, "Error during restart execution");
             ResetState();
-        }
-    }
-
-    /// <summary>
-    /// Applies the event's server configuration
-    /// </summary>
-    private async Task<bool> ApplyEventConfigurationAsync(Event @event)
-    {
-        try
-        {
-            _logger.LogInformation("Applying configuration for event: {EventName}", @event.Name);
-
-            // Read current config
-            var currentConfig = _configService.ReadBasicConfig();
-
-            // Apply server config overrides if present
-            if (@event.ServerConfig != null)
-            {
-                var eventConfig = @event.ServerConfig;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.ServerName))
-                    currentConfig.ServerName = eventConfig.ServerName;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.WelcomeMessage))
-                    currentConfig.WelcomeMessage = eventConfig.WelcomeMessage;
-
-                if (eventConfig.Password != null)
-                    currentConfig.Password = eventConfig.Password;
-
-                if (eventConfig.MaxPlayers.HasValue)
-                    currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value;
-
-                if (eventConfig.Bots.HasValue)
-                    currentConfig.Bots = eventConfig.Bots.Value;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.AiDifficulty))
-                    currentConfig.AiDifficulty = eventConfig.AiDifficulty;
-
-                if (eventConfig.Laps.HasValue)
-                    currentConfig.Laps = eventConfig.Laps.Value;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.VehicleDamage))
-                    currentConfig.VehicleDamage = eventConfig.VehicleDamage;
-
-                if (eventConfig.LobbyCountdown.HasValue)
-                    currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value;
-
-                // Write updated config
-                _configService.WriteBasicConfig(currentConfig);
-                _logger.LogInformation("Server configuration updated");
-            }
-
-            // Apply track rotation if present
-            if (@event.Tracks != null && @event.Tracks.Count > 0)
-            {
-                var collectionName = string.IsNullOrWhiteSpace(@event.CollectionName)
-                    ? $"Event: {@event.Name}"
-                    : @event.CollectionName;
-
-                _configService.WriteEventLoopTracks(collectionName, @event.Tracks);
-                _logger.LogInformation("Track rotation updated with {Count} tracks", @event.Tracks.Count);
-            }
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error applying event configuration");
-            return false;
         }
     }
 

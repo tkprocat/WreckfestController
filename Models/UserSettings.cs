@@ -33,9 +33,6 @@ public class WreckfestServerSettings
 
     [JsonPropertyName("LogFilePath")]
     public string? LogFilePath { get; set; }
-
-    [JsonPropertyName("EnableOcrPlayerTracking")]
-    public bool EnableOcrPlayerTracking { get; set; }
 }
 
 /// <summary>
