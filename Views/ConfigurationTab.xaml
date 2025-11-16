@@ -1,0 +1,209 @@
+<UserControl x:Class="WreckfestController.Views.ConfigurationTab"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="10" Background="{StaticResource BackgroundDark}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Settings File Path Info -->
+            <Border Grid.Row="0"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="10"
+                    Margin="0,0,0,20">
+                <StackPanel>
+                    <TextBlock Text="Settings Location"
+                               FontSize="12"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextSecondary}"
+                               Margin="0,0,0,5"/>
+                    <TextBlock x:Name="SettingsPathText"
+                               Text="Loading..."
+                               FontSize="11"
+                               Foreground="{StaticResource TextPrimary}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Server Settings Section -->
+            <Border Grid.Row="1"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,0,0,15">
+                <StackPanel>
+                    <TextBlock Text="SERVER SETTINGS"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimary}"
+                               Margin="0,0,0,15"/>
+
+                    <!-- Server Path -->
+                    <TextBlock Text="Server Executable Path"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <Grid Margin="0,0,0,15">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="ServerPathTextBox"
+                                 Grid.Column="0"
+                                 materialDesign:HintAssist.Hint="Path to Wreckfest_x64.exe"
+                                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                 Foreground="{StaticResource TextPrimary}"
+                                 Margin="0,0,10,0"/>
+                        <Button Grid.Column="1"
+                                Content="BROWSE"
+                                Click="OnBrowseServerPathClicked"
+                                Width="100"/>
+                    </Grid>
+
+                    <!-- Working Directory -->
+                    <TextBlock Text="Working Directory"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <Grid Margin="0,0,0,15">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="WorkingDirectoryTextBox"
+                                 Grid.Column="0"
+                                 materialDesign:HintAssist.Hint="Server installation folder"
+                                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                 Foreground="{StaticResource TextPrimary}"
+                                 Margin="0,0,10,0"/>
+                        <Button Grid.Column="1"
+                                Content="BROWSE"
+                                Click="OnBrowseWorkingDirectoryClicked"
+                                Width="100"/>
+                    </Grid>
+
+                    <!-- Server Arguments -->
+                    <TextBlock Text="Server Arguments"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="ServerArgumentsTextBox"
+                             materialDesign:HintAssist.Hint="E.g. -s server_config=server_config.cfg"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- Log File Path -->
+                    <TextBlock Text="Log File Path (optional)"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <Grid Margin="0,0,0,15">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="LogFilePathTextBox"
+                                 Grid.Column="0"
+                                 materialDesign:HintAssist.Hint="Leave empty to auto-detect from config"
+                                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                 Foreground="{StaticResource TextPrimary}"
+                                 Margin="0,0,10,0"/>
+                        <Button Grid.Column="1"
+                                Content="BROWSE"
+                                Click="OnBrowseLogFilePathClicked"
+                                Width="100"/>
+                    </Grid>
+
+                    <!-- Enable OCR -->
+                    <CheckBox x:Name="EnableOcrCheckBox"
+                              Content="Enable OCR Player Tracking"
+                              Foreground="{StaticResource TextPrimary}"
+                              Style="{StaticResource MaterialDesignCheckBox}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Network Settings Section -->
+            <Border Grid.Row="2"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,0,0,15">
+                <StackPanel>
+                    <TextBlock Text="NETWORK SETTINGS"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimary}"
+                               Margin="0,0,0,15"/>
+
+                    <!-- WreckfestWeb Webhook URL -->
+                    <TextBlock Text="WreckfestWeb Webhook Base URL"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="WreckfestWebWebhookUrlTextBox"
+                             materialDesign:HintAssist.Hint="http://localhost:8000/api/webhooks"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- Controller Listening Ports -->
+                    <TextBlock Text="Controller Listening Ports"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="KestrelUrlsTextBox"
+                             materialDesign:HintAssist.Hint="http://0.0.0.0:5100;https://0.0.0.0:5101"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"/>
+                    <TextBlock Text="Listening addresses for WreckfestController API. Separate multiple URLs with semicolons. Change ports for multi-instance setups."
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="10"
+                               TextWrapping="Wrap"
+                               Margin="0,5,0,0"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Action Buttons -->
+            <StackPanel Grid.Row="3"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Margin="0,10,0,0">
+                <Button x:Name="ResetButton"
+                        Content="RESET TO DEFAULTS"
+                        Click="OnResetClicked"
+                        Width="160"
+                        Margin="0,0,10,0"/>
+                <Button x:Name="SaveButton"
+                        Content="SAVE SETTINGS"
+                        Background="{StaticResource ButtonGreen}"
+                        Foreground="White"
+                        Click="OnSaveClicked"
+                        Width="140"/>
+            </StackPanel>
+
+            <!-- Status Message -->
+            <TextBlock x:Name="StatusMessageText"
+                       Grid.Row="4"
+                       Text=""
+                       Foreground="{StaticResource TextSecondary}"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Margin="0,15,0,0"
+                       HorizontalAlignment="Right"/>
+        </Grid>
+    </ScrollViewer>
+</UserControl>

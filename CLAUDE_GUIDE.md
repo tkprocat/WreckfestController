@@ -1,7 +1,7 @@
 # WreckfestController - AI Development Guide
 
-**Project Type:** ASP.NET Core 8.0 Web API
-**Purpose:** REST API wrapper for controlling Wreckfest Dedicated Server
+**Project Type:** ASP.NET Core 8.0 Web API + WPF Desktop Application
+**Purpose:** REST API wrapper and desktop GUI for controlling Wreckfest Dedicated Server
 **Last Updated:** January 2025
 
 ---
@@ -28,7 +28,34 @@
 
 ## Project Overview
 
-**WreckfestController** is a .NET 8.0 ASP.NET Core Web API that provides:
+**WreckfestController** is a dual-mode .NET 10.0 application that provides:
+
+### Desktop GUI Mode (WPF)
+- **Material Design UI** - Professional dark theme using MaterialDesignInXamlToolkit 5.3.0
+- **Custom Dark Titlebar** - Frameless window with custom titlebar (no white Windows titlebar), wrench icon, min/max/close buttons
+- **Process Manager Tab** - Scan and attach to running Wreckfest servers (view PID, config file, uptime, memory)
+  - Process list with auto-refresh every 5 seconds
+  - Refresh, Attach, Kill Process, Start New Server buttons
+  - Color-coded buttons (Green=Start, Red=Kill, Light Blue=Attach)
+- **Server Control Tab** - Complete server management interface
+  - Server status panel (running/stopped, players, track, uptime)
+  - Start/Stop/Restart buttons (Green/Red/Orange)
+  - Real-time console output mirror (left panel)
+  - Event log with timestamps (right panel)
+  - Command input to send commands to server
+- **Configuration Tab** - User-friendly settings management
+  - Server settings (executable path, working directory, arguments)
+  - Network settings (Laravel webhook URL, API ports)
+  - Browse buttons for file/folder selection
+  - Saves to user-settings.json (customizable location)
+  - Reset to defaults functionality
+- **Modular Architecture** - Tabs implemented as separate UserControls for maintainability
+  - `Views/ProcessManagerTab.xaml` - Process management tab
+  - `Views/ServerControlTab.xaml` - Server control and monitoring tab
+  - `Views/ConfigurationTab.xaml` - Settings configuration tab
+- **Window Title** - Dynamic title shows PID and config file when attached to a server
+
+### REST API Mode (ASP.NET Core)
 - REST API for server control (start/stop/restart/update)
 - Server configuration management (server_config.cfg)
 - Real-time player tracking via OCR (Tesseract) and log parsing
@@ -124,46 +151,127 @@
 WreckfestController/
 ├── Controllers/              # API endpoints
 │   ├── ServerController.cs        # Server control (start/stop/restart)
-│   └── ConfigController.cs        # Configuration management
+│   ├── ConfigController.cs        # Configuration management
+│   └── EventsController.cs        # Events system endpoints
 ├── Services/                # Business logic
 │   ├── ServerManager.cs           # Server process management
 │   ├── ConfigService.cs           # server_config.cfg parsing/writing
 │   ├── PlayerTracker.cs           # Log-based player tracking
-│   ├── OcrPlayerTracker.cs        # OCR-based player tracking
 │   ├── TrackChangeTracker.cs      # Track change detection
 │   ├── LaravelWebhookService.cs   # Webhooks to Laravel
-│   ├── ConsoleWriter.cs           # Send commands to server
-│   └── ConsoleReader.cs           # Read server console output
+│   ├── ConsoleMonitor.cs          # Monitor server console output
+│   ├── EventStorageService.cs     # SQLite event storage
+│   ├── SmartRestartService.cs     # Automatic server restarts
+│   └── ApiServer.cs               # ASP.NET Core server hosting
 ├── Models/                  # Data models
 │   ├── ServerConfig.cs            # server_config.cfg model
 │   ├── EventLoopTrack.cs          # Track rotation entry
 │   ├── Player.cs                  # Player tracking model
-│   └── PlayerListResponse.cs      # API response model
+│   ├── PlayerListResponse.cs      # API response model
+│   ├── ServerProcessInfo.cs       # Process information for UI
+│   └── UpdateEventLoopTracksRequest.cs  # Track update request
+├── Views/                   # WPF UserControls (UI components)
+│   ├── ProcessManagerTab.xaml/.cs # Process list and management
+│   ├── ServerControlTab.xaml/.cs  # Server control and monitoring
+│   └── ConfigurationTab.xaml/.cs  # Settings configuration
 ├── WebSockets/              # Real-time streaming
 │   ├── ConsoleWebSocketHandler.cs     # Stream console output
 │   ├── PlayerTrackerWebSocketHandler.cs  # Stream player events
 │   └── TrackChangeWebSocketHandler.cs    # Stream track changes
-├── Program.cs               # Application entry point
+├── MainWindow.xaml/.cs      # WPF main window with custom titlebar
+├── App.xaml/.cs             # WPF application entry & Material Design theme
+├── Program.cs               # Application entry point (dual-mode: WPF/API)
+├── GlobalUsings.cs          # Global using directives
 ├── appsettings.json         # Configuration
-├── Properties/
-│   └── launchSettings.json  # Development profiles
+├── appsettings.example.json # Configuration template
 ├── WreckfestController.Tests/  # Unit tests (51+ tests)
 │   ├── Controllers/
 │   └── Services/
-├── Utility Apps/            # Standalone tools
-│   ├── AddBotsApp/          # Add bots via console commands
-│   ├── TestOcrApp/          # Test OCR player detection
-│   └── EvaluateOcrApp/      # Evaluate OCR accuracy
 ├── README.md                # Main documentation
-├── README_PROJECT_STRUCTURE.md  # Detailed structure doc
-├── VS2022_TIPS.md           # Visual Studio tips
-├── TODO_EVENTS.md           # Events system implementation plan
-└── CLAUDE_GUIDE.md          # This file
+├── INSTALL.md               # Installation and deployment guide
+├── MATERIALDESIGN.md        # Material Design UI guidelines
+└── CLAUDE_GUIDE.md          # This file (AI development guide)
 ```
 
 ---
 
 ## Key Components
+
+### WPF Desktop UI (Views/)
+
+The WPF desktop application uses a modular architecture with UserControls for better maintainability:
+
+#### **MainWindow.xaml/.cs**
+The main application window with custom dark titlebar:
+- **Custom Titlebar**: Frameless window (`WindowStyle="None"`) with custom-drawn titlebar
+  - Material Design wrench icon (white)
+  - Window title (shows PID and config when attached)
+  - Min/Max/Close buttons with Material Design flat button style
+  - Draggable titlebar (click to drag, double-click to maximize)
+- **Tab Container**: Hosts Process Manager and Server Control tabs as UserControls
+- **Timers**:
+  - Status update timer (1 second) - updates server status panel
+  - Process list refresh timer (5 seconds) - refreshes process list
+- **Icon Generation**: Programmatically generates taskbar icon from Material Design PackIcon
+
+#### **Views/ProcessManagerTab.xaml/.cs**
+Process management and server discovery (displayed as "Process Manager" tab):
+- **DataGrid**: Lists all running Wreckfest server processes
+  - Columns: PID, Config File, Uptime, Memory (MB), Status
+  - Blue selection highlight (#2C5282)
+  - Auto-refresh every 5 seconds
+- **Buttons**:
+  - REFRESH - Manual refresh of process list
+  - ATTACH (Light Blue) - Attach to selected process for monitoring
+  - KILL PROCESS (Red) - Terminate selected process
+  - START NEW SERVER (Green) - Launch new server instance
+- **Code-behind**: Handles process enumeration, attach/kill operations
+
+#### **Views/ServerControlTab.xaml/.cs**
+Complete server control and monitoring interface:
+- **Server Status Panel** (top):
+  - Server Status: Running/Stopped (Green/Red)
+  - Players: Current / Max (e.g., "12 / 24")
+  - Current Track: Track name or "None"
+  - Uptime: HH:MM:SS format
+  - Control buttons: START (Green), STOP (Red), RESTART (Orange)
+- **Console Output** (left panel):
+  - Real-time mirror of server console
+  - Monospace font (Consolas/Courier New)
+  - Auto-scroll to bottom
+  - Max 1000 lines (auto-trimmed)
+- **Event Log** (right panel):
+  - Timestamped events (HH:MM:SS)
+  - Color-coded messages:
+    - Green (#51CF66) - Player joined, server started
+    - Red (#FF6B6B) - Player left, errors
+    - Yellow (#FFD43B) - Player kicked, warnings
+    - Light Blue (#74C0FC) - Track changes
+  - Clear log button
+  - Max 100 items (auto-trimmed)
+- **Command Input** (bottom):
+  - Text input for server commands
+  - Send button (Green)
+  - Enter key to submit
+- **Code-behind**: Manages subscriptions to ServerManager events, updates UI in real-time
+
+#### **App.xaml**
+Application-wide resources and Material Design theme:
+```xml
+<materialDesign:BundledTheme BaseTheme="Dark"
+                           PrimaryColor="Blue"
+                           SecondaryColor="Cyan" />
+```
+- **Color Palette**:
+  - `BackgroundDark` (#1a1a1a) - Main background
+  - `BackgroundMedium` (#2d2d2d) - Panels
+  - `TextPrimary` (#e0e0e0) - Main text
+  - `TextSecondary` (#a0a0a0) - Labels
+  - `BorderColor` (#444) - Borders
+  - `ButtonGreen` (#238636) - Success actions
+  - `ButtonRed` (#DC3545) - Destructive actions
+  - `ButtonOrange` (#FD7E14) - Warning actions
+  - `ButtonLightBlue` (#74C0FC) - Info actions
 
 ### Controllers
 
@@ -604,15 +712,41 @@ ws.onmessage = (event) => {
 
 ## Configuration System
 
+WreckfestController uses a **hybrid configuration system** with two layers:
+
+### Configuration Files
+
+**1. appsettings.json** (Application Defaults - Ships with app)
+- Read-only defaults that ship with the application
+- Provides fallback values if user settings don't exist
+- Safe to overwrite on application updates
+
+**2. user-settings.json** (User Overrides - Customizable Location)
+- User-editable settings that override appsettings.json
+- Default location: `%LocalAppData%\WreckfestController\user-settings.json`
+- Can be customized via `UserSettingsPath` in appsettings.json
+- Managed through Configuration tab UI
+
+### Configuration Loading Priority
+
+```
+1. appsettings.json (defaults)
+2. user-settings.json (overrides)
+3. Environment variables (highest priority)
+```
+
 ### appsettings.json Structure
 
 ```json
 {
+  "UserSettingsPath": "",  // Empty = %LocalAppData%\WreckfestController\user-settings.json
+                           // Or specify custom path for multi-instance setups
+
   "WreckfestServer": {
-    "ServerPath": "C:\\Path\\To\\Wreckfest_x64.exe",
+    "ServerPath": "",
     "ServerArguments": "-s server_config=server_config.cfg",
-    "WorkingDirectory": "C:\\Path\\To\\Wreckfest Dedicated Server",
-    "LogFilePath": "C:\\Path\\To\\log.txt",
+    "WorkingDirectory": "",
+    "LogFilePath": "",
     "EnableOcrPlayerTracking": false
   },
   "SteamCmd": {
@@ -621,7 +755,7 @@ ws.onmessage = (event) => {
     "InstallDirectory": "C:\\Path\\To\\Wreckfest Dedicated Server"
   },
   "Laravel": {
-    "WebhookBaseUrl": "https://wreckfestweb.test/api/webhooks"
+    "WebhookBaseUrl": "http://localhost:8000/api/webhooks"
   },
   "Kestrel": {
     "Urls": "http://0.0.0.0:5100;https://0.0.0.0:5101"
@@ -630,13 +764,107 @@ ws.onmessage = (event) => {
 }
 ```
 
+### user-settings.json Structure
+
+Created automatically when saving settings via Configuration tab:
+
+```json
+{
+  "WreckfestServer": {
+    "ServerPath": "C:\\Games\\Wreckfest\\Wreckfest_x64.exe",
+    "WorkingDirectory": "C:\\Games\\Wreckfest",
+    "ServerArguments": "-s server_config=server_config.cfg",
+    "LogFilePath": "C:\\Games\\Wreckfest\\log.txt",
+    "EnableOcrPlayerTracking": false
+  },
+  "Laravel": {
+    "WebhookBaseUrl": "https://wreckfestweb.test/api/webhooks"
+  },
+  "Kestrel": {
+    "Urls": "http://0.0.0.0:5100;https://0.0.0.0:5101"
+  }
+}
+```
+
+### Multi-Instance Configuration
+
+To run multiple WreckfestController instances on the same machine:
+
+**Instance 1** (`C:\WreckfestController-Server1\appsettings.json`):
+```json
+{
+  "UserSettingsPath": "C:\\WreckfestController-Server1\\user-settings.json",
+  "Kestrel": {
+    "Urls": "http://0.0.0.0:5100;https://0.0.0.0:5101"
+  }
+}
+```
+
+**Instance 2** (`C:\WreckfestController-Server2\appsettings.json`):
+```json
+{
+  "UserSettingsPath": "C:\\WreckfestController-Server2\\user-settings.json",
+  "Kestrel": {
+    "Urls": "http://0.0.0.0:5200;https://0.0.0.0:5201"
+  }
+}
+```
+
+Each instance will maintain its own separate configuration.
+
+### Configuration Tab UI
+
+The Configuration tab provides a user-friendly interface for managing settings:
+
+**Features:**
+- **Settings Location Display** - Shows where user-settings.json is stored
+- **Server Settings Section**:
+  - Server executable path (with browse button)
+  - Working directory (with browse button)
+  - Server arguments
+  - Log file path (optional, with browse button)
+  - Enable OCR checkbox
+- **Network Settings Section**:
+  - Laravel webhook base URL
+  - API server URLs (Kestrel)
+- **Action Buttons**:
+  - Reset to Defaults
+  - Save Settings (requires restart to apply)
+- **Validation**: Warns if paths don't exist before saving
+
+**Using the Configuration Tab:**
+1. Open the Configuration tab
+2. Click Browse buttons to select paths
+3. Modify settings as needed
+4. Click "Save Settings"
+5. Restart application for changes to take effect
+
+### SettingsService
+
+**Services/SettingsService.cs** manages user settings:
+
+```csharp
+public class SettingsService
+{
+    string GetUserSettingsPath()              // Get resolved settings path
+    UserSettings LoadSettings()               // Load settings from file
+    void SaveSettings(UserSettings settings)  // Save settings to file
+}
+```
+
+**Key Features:**
+- Path resolution with environment variable expansion
+- Automatic directory creation
+- JSON serialization/deserialization
+- Error handling and logging
+
 **Important Settings:**
 - **ServerPath**: Direct path to Wreckfest_x64.exe
 - **ServerArguments**: Must include `server_config=<filename>`
 - **WorkingDirectory**: Server installation folder
 - **LogFilePath**: (Optional) Override log file path; otherwise parsed from server_config.cfg
 - **EnableOcrPlayerTracking**: Enable OCR player tracking (requires Tesseract)
-- **Kestrel:Urls**: Only used when `UseKestrel: true` (standalone deployment)
+- **Kestrel:Urls**: API server listening addresses (change ports for multi-instance)
 
 ---
 

@@ -13,9 +13,12 @@ public class ServerManagerTests
     private readonly Mock<ILoggerFactory> _mockLoggerFactory;
     private readonly Mock<ILogger<PlayerTracker>> _mockPlayerTrackerLogger;
     private readonly Mock<ILogger<TrackChangeTracker>> _mockTrackChangeTrackerLogger;
-    private readonly Mock<LaravelWebhookService> _mockWebhookService;
+    private readonly Mock<ILogger<ServerInfoTracker>> _mockServerInfoTrackerLogger;
+    private readonly Mock<WreckfestWebWebhookService> _mockWebhookService;
+    private readonly Mock<ConsoleMonitor> _mockConsoleMonitor;
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
+    private readonly ServerInfoTracker _serverInfoTracker;
     private readonly ServerManager _serverManager;
 
     public ServerManagerTests()
@@ -25,8 +28,9 @@ public class ServerManagerTests
         _mockLoggerFactory = new Mock<ILoggerFactory>();
         _mockPlayerTrackerLogger = new Mock<ILogger<PlayerTracker>>();
         _mockTrackChangeTrackerLogger = new Mock<ILogger<TrackChangeTracker>>();
-        _mockWebhookService = new Mock<LaravelWebhookService>(
-            Mock.Of<ILogger<LaravelWebhookService>>(),
+        _mockServerInfoTrackerLogger = new Mock<ILogger<ServerInfoTracker>>();
+        _mockWebhookService = new Mock<WreckfestWebWebhookService>(
+            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
             Mock.Of<IConfiguration>(),
             Mock.Of<HttpClient>());
 
@@ -38,13 +42,17 @@ public class ServerManagerTests
 
         _playerTracker = new PlayerTracker(_mockPlayerTrackerLogger.Object, _mockWebhookService.Object);
         _trackChangeTracker = new TrackChangeTracker(_mockTrackChangeTrackerLogger.Object, _mockWebhookService.Object);
+        _serverInfoTracker = new ServerInfoTracker(_mockServerInfoTrackerLogger.Object);
+        _mockConsoleMonitor = new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>());
 
         _serverManager = new ServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
             _mockLoggerFactory.Object,
             _playerTracker,
-            _trackChangeTracker);
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockConsoleMonitor.Object);
     }
 
     [Fact]
@@ -78,7 +86,9 @@ public class ServerManagerTests
             _mockLogger.Object,
             _mockLoggerFactory.Object,
             _playerTracker,
-            _trackChangeTracker);
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockConsoleMonitor.Object);
 
         // Act
         var result = await serverManager.StartServerAsync();
@@ -100,7 +110,9 @@ public class ServerManagerTests
             _mockLogger.Object,
             _mockLoggerFactory.Object,
             _playerTracker,
-            _trackChangeTracker);
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockConsoleMonitor.Object);
 
         // Act
         var result = await serverManager.StartServerAsync();

@@ -5,14 +5,14 @@ namespace WreckfestController.Services;
 
 /// <summary>
 /// Background service that periodically checks for events that need to be activated.
-/// Runs independently of Laravel and activates events at their scheduled time.
+/// Runs independently of WreckfestWeb and activates events at their scheduled time.
 /// </summary>
 public class EventSchedulerService : IHostedService, IDisposable
 {
     private readonly EventStorageService _storageService;
     private readonly SmartRestartService _smartRestartService;
     private readonly RecurringEventService _recurringEventService;
-    private readonly LaravelWebhookService _webhookService;
+    private readonly WreckfestWebWebhookService _webhookService;
     private readonly ILogger<EventSchedulerService> _logger;
 
     private System.Threading.Timer? _timer;
@@ -27,7 +27,7 @@ public class EventSchedulerService : IHostedService, IDisposable
         EventStorageService storageService,
         SmartRestartService smartRestartService,
         RecurringEventService recurringEventService,
-        LaravelWebhookService webhookService,
+        WreckfestWebWebhookService webhookService,
         ILogger<EventSchedulerService> logger)
     {
         _storageService = storageService;

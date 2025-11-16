@@ -7,11 +7,11 @@ public class TrackChangeTracker
 {
     private readonly ConcurrentBag<Action<TrackChangeEvent>> _trackChangeSubscribers = new();
     private readonly ILogger<TrackChangeTracker> _logger;
-    private readonly LaravelWebhookService _webhookService;
+    private readonly WreckfestWebWebhookService _webhookService;
     private string? _currentTrack = null;
     private readonly object _lock = new();
 
-    public TrackChangeTracker(ILogger<TrackChangeTracker> logger, LaravelWebhookService webhookService)
+    public TrackChangeTracker(ILogger<TrackChangeTracker> logger, WreckfestWebWebhookService webhookService)
     {
         _logger = logger;
         _webhookService = webhookService;

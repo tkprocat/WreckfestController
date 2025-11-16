@@ -261,12 +261,23 @@ public class SmartRestartService
         try
         {
             _logger.LogInformation(
-                "Restarting server for event: {EventName} (ID: {EventId})",
+                "Activating event: {EventName} (ID: {EventId})",
                 eventToActivate.Name,
                 eventToActivate.Id);
 
-            // Restart the server
-            var restartResult = await _serverManager.RestartServerAsync();
+            // Apply event configuration BEFORE restarting so server picks up new config
+            var configApplied = await ApplyEventConfigurationAsync(eventToActivate);
+            if (!configApplied)
+            {
+                _logger.LogError("Failed to apply event configuration - aborting restart");
+                ResetState();
+                return;
+            }
+
+            _logger.LogInformation("Configuration applied successfully, restarting server");
+
+            // Restart the server using in-game /restart command (faster and cleaner)
+            var restartResult = await _serverManager.RestartServerViaCommandAsync();
             if (!restartResult.Success)
             {
                 _logger.LogError("Server restart failed: {Message}", restartResult.Message);
@@ -278,14 +289,6 @@ public class SmartRestartService
 
             // Wait a moment for server to stabilize
             await Task.Delay(2000);
-
-            // Apply event configuration
-            var configApplied = await ApplyEventConfigurationAsync(eventToActivate);
-            if (!configApplied)
-            {
-                _logger.LogError("Failed to apply event configuration");
-                // Continue anyway - restart succeeded
-            }
 
             _logger.LogInformation("Event {EventName} activated successfully", eventToActivate.Name);
 

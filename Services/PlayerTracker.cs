@@ -9,11 +9,16 @@ public class PlayerTracker
     private readonly ConcurrentDictionary<string, Player> _players = new();
     private readonly ConcurrentBag<Action<PlayerTrackerEvent>> _playerTrackerSubscribers = new();
     private readonly ILogger<PlayerTracker> _logger;
-    private readonly LaravelWebhookService _webhookService;
+    private readonly WreckfestWebWebhookService _webhookService;
     private DateTime _lastListUpdate = DateTime.MinValue;
     private readonly object _lock = new();
 
-    public PlayerTracker(ILogger<PlayerTracker> logger, LaravelWebhookService webhookService)
+    // State for parsing multi-line list command responses
+    private bool _collectingListResponse = false;
+    private readonly List<string> _listResponseLines = new();
+    private DateTime _listResponseStartTime = DateTime.MinValue;
+
+    public PlayerTracker(ILogger<PlayerTracker> logger, WreckfestWebWebhookService webhookService)
     {
         _logger = logger;
         _webhookService = webhookService;
@@ -26,6 +31,52 @@ public class PlayerTracker
     {
         if (string.IsNullOrWhiteSpace(line))
             return;
+
+        lock (_lock)
+        {
+            // Check if we're collecting list response
+            if (_collectingListResponse)
+            {
+                // Check for player entry line: "  1:    0 [0] *PlayerName" or similar format
+                // The line starts with whitespace, then a number, then a colon
+                if (Regex.IsMatch(line, @"^\s+\d+:"))
+                {
+                    _listResponseLines.Add(line);
+                    return;
+                }
+                // Check for empty line or non-list content - end of list
+                else if (string.IsNullOrWhiteSpace(line.Trim()) ||
+                         (!line.Contains("Players:") && !line.Trim().Equals("list") && !Regex.IsMatch(line, @"^\s+\d+:")))
+                {
+                    // Process the collected list
+                    if (_listResponseLines.Count > 1) // Need at least "list" command + one player entry
+                    {
+                        ProcessListResponse(_listResponseLines.ToArray());
+                        _ = SendPlayerListUpdate(); // Send webhook after processing list
+                    }
+                    _collectingListResponse = false;
+                    _listResponseLines.Clear();
+                }
+            }
+
+            // Check for start of list response: "Players: 3/24" or just "list" command
+            if (Regex.IsMatch(line, @"Players:\s*\d+/\d+") || line.Trim() == "list")
+            {
+                _collectingListResponse = true;
+                _listResponseStartTime = DateTime.Now;
+                _listResponseLines.Clear();
+                _listResponseLines.Add(line);
+                return;
+            }
+
+            // If we've been collecting for too long (>2 seconds), abandon it
+            if (_collectingListResponse && (DateTime.Now - _listResponseStartTime).TotalSeconds > 2)
+            {
+                _logger.LogWarning("List response collection timed out, abandoning");
+                _collectingListResponse = false;
+                _listResponseLines.Clear();
+            }
+        }
 
         // Parse join events: "16:53:14 - *eRacer has joined." (bot) or "16:53:14 - Player123 has joined." (human)
         var joinMatch = Regex.Match(line, @"- (\*?)(.+?) has joined\.");
@@ -160,13 +211,19 @@ public class PlayerTracker
                     continue;
                 }
 
-                // Parse player entries: "0: *PlayerName" (bot) or "0: PlayerName" (human)
-                var playerMatch = Regex.Match(line, @"^(\d+):\s*(\*?)(.+)$");
+                // Parse player entries: "  1:    0 [0] *Lord Bane        | [A] 244 Stellar      | ping: 0    | ready"
+                // Format: whitespace + slot + ": " + other data + [bracket] + asterisk (optional) + playerName
+                // Handle both normal lines and wrapped lines (ending with >)
+                var playerMatch = Regex.Match(line, @"^\s+(\d+):\s+\d+\s+\[.\]\s+(\*?)(.+?)(?:\s*[\|>]|$)");
                 if (playerMatch.Success)
                 {
                     var slot = int.Parse(playerMatch.Groups[1].Value);
                     var isBot = playerMatch.Groups[2].Value == "*";
                     var playerName = playerMatch.Groups[3].Value.Trim();
+
+                    // Skip empty names
+                    if (string.IsNullOrWhiteSpace(playerName))
+                        continue;
 
                     playersInList.Add(playerName);
 
@@ -205,6 +262,10 @@ public class PlayerTracker
             }
 
             _lastListUpdate = DateTime.Now;
+
+            // Notify subscribers that the player list was updated
+            NotifyPlayerTrackerSubscribers(new PlayerTrackerEvent("PlayersUpdated", null));
+            _logger.LogInformation("Player list updated via list command. Online players: {Count}", playersInList.Count);
         }
     }
 
@@ -323,10 +384,10 @@ public class PlayerTracker
 
 public class PlayerTrackerEvent
 {
-    public string EventType { get; set; } = string.Empty; // "Join", "Left", or "Kicked"
-    public Player Player { get; set; } = new Player();
+    public string EventType { get; set; } = string.Empty; // "Join", "Left", "Kicked", or "PlayersUpdated"
+    public Player? Player { get; set; }
 
-    public PlayerTrackerEvent(string eventType, Player player)
+    public PlayerTrackerEvent(string eventType, Player? player)
     {
         EventType = eventType;
         Player = player;

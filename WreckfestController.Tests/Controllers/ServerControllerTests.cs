@@ -27,20 +27,25 @@ public class ServerControllerTests
         var mockLoggerFactory = new Mock<ILoggerFactory>();
         var mockPlayerTrackerLogger = new Mock<ILogger<PlayerTracker>>();
         var mockTrackChangeTrackerLogger = new Mock<ILogger<TrackChangeTracker>>();
-        var mockWebhookService = new Mock<LaravelWebhookService>(
-            Mock.Of<ILogger<LaravelWebhookService>>(),
+        var mockServerInfoTrackerLogger = new Mock<ILogger<ServerInfoTracker>>();
+        var mockWebhookService = new Mock<WreckfestWebWebhookService>(
+            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
             Mock.Of<IConfiguration>(),
             Mock.Of<HttpClient>());
 
         var playerTracker = new PlayerTracker(mockPlayerTrackerLogger.Object, mockWebhookService.Object);
         var trackChangeTracker = new TrackChangeTracker(mockTrackChangeTrackerLogger.Object, mockWebhookService.Object);
+        var serverInfoTracker = new ServerInfoTracker(mockServerInfoTrackerLogger.Object);
+        var mockConsoleMonitor = new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>());
 
         _mockServerManager = new Mock<ServerManager>(
             mockConfiguration.Object,
             mockServerManagerLogger.Object,
             mockLoggerFactory.Object,
             playerTracker,
-            trackChangeTracker);
+            trackChangeTracker,
+            serverInfoTracker,
+            mockConsoleMonitor.Object);
         _mockLogger = new Mock<ILogger<ServerController>>();
         _controller = new ServerController(_mockServerManager.Object, _mockLogger.Object);
     }
@@ -106,7 +111,7 @@ public class ServerControllerTests
     public async Task StopServer_WhenSuccessful_ReturnsOkResult()
     {
         // Arrange
-        _mockServerManager.Setup(m => m.StopServerAsync())
+        _mockServerManager.Setup(m => m.StopServerViaCommandAsync())
             .ReturnsAsync((true, "Server stopped successfully"));
 
         // Act
@@ -115,14 +120,14 @@ public class ServerControllerTests
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         Assert.NotNull(okResult.Value);
-        _mockServerManager.Verify(m => m.StopServerAsync(), Times.Once);
+        _mockServerManager.Verify(m => m.StopServerViaCommandAsync(), Times.Once);
     }
 
     [Fact]
     public async Task StopServer_WhenFailed_ReturnsBadRequest()
     {
         // Arrange
-        _mockServerManager.Setup(m => m.StopServerAsync())
+        _mockServerManager.Setup(m => m.StopServerViaCommandAsync())
             .ReturnsAsync((false, "Server is not running"));
 
         // Act
@@ -131,14 +136,14 @@ public class ServerControllerTests
         // Assert
         var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
         Assert.NotNull(badRequestResult.Value);
-        _mockServerManager.Verify(m => m.StopServerAsync(), Times.Once);
+        _mockServerManager.Verify(m => m.StopServerViaCommandAsync(), Times.Once);
     }
 
     [Fact]
     public async Task RestartServer_WhenSuccessful_ReturnsOkResult()
     {
         // Arrange
-        _mockServerManager.Setup(m => m.RestartServerAsync())
+        _mockServerManager.Setup(m => m.RestartServerViaCommandAsync())
             .ReturnsAsync((true, "Server restarted successfully"));
 
         // Act
@@ -147,14 +152,14 @@ public class ServerControllerTests
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
         Assert.NotNull(okResult.Value);
-        _mockServerManager.Verify(m => m.RestartServerAsync(), Times.Once);
+        _mockServerManager.Verify(m => m.RestartServerViaCommandAsync(), Times.Once);
     }
 
     [Fact]
     public async Task RestartServer_WhenFailed_ReturnsBadRequest()
     {
         // Arrange
-        _mockServerManager.Setup(m => m.RestartServerAsync())
+        _mockServerManager.Setup(m => m.RestartServerViaCommandAsync())
             .ReturnsAsync((false, "Failed to restart"));
 
         // Act
@@ -163,7 +168,7 @@ public class ServerControllerTests
         // Assert
         var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
         Assert.NotNull(badRequestResult.Value);
-        _mockServerManager.Verify(m => m.RestartServerAsync(), Times.Once);
+        _mockServerManager.Verify(m => m.RestartServerViaCommandAsync(), Times.Once);
     }
 
     [Fact]

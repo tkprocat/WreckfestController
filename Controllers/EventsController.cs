@@ -13,13 +13,13 @@ public class EventsController : ControllerBase
 {
     private readonly EventStorageService _storageService;
     private readonly SmartRestartService _smartRestartService;
-    private readonly LaravelWebhookService _webhookService;
+    private readonly WreckfestWebWebhookService _webhookService;
     private readonly ILogger<EventsController> _logger;
 
     public EventsController(
         EventStorageService storageService,
         SmartRestartService smartRestartService,
-        LaravelWebhookService webhookService,
+        WreckfestWebWebhookService webhookService,
         ILogger<EventsController> logger)
     {
         _storageService = storageService;

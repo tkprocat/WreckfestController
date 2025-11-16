@@ -1,21 +1,24 @@
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace WreckfestController.Services;
 
-public class LaravelWebhookService
+public class WreckfestWebWebhookService
 {
-    private readonly ILogger<LaravelWebhookService> _logger;
+    private readonly ILogger<WreckfestWebWebhookService> _logger;
     private readonly IConfiguration _configuration;
     private readonly HttpClient _httpClient;
     private readonly string _webhookBaseUrl;
 
-    public LaravelWebhookService(ILogger<LaravelWebhookService> logger, IConfiguration configuration, HttpClient httpClient)
+    public WreckfestWebWebhookService(ILogger<WreckfestWebWebhookService> logger, IConfiguration configuration, HttpClient httpClient)
     {
         _logger = logger;
         _configuration = configuration;
         _httpClient = httpClient;
-        _webhookBaseUrl = _configuration["Laravel:WebhookBaseUrl"] ?? "http://localhost:8000/api/webhooks";
+        _webhookBaseUrl = _configuration["WreckfestWeb:WebhookBaseUrl"] ?? "http://localhost:8000/api/webhooks";
     }
 
     public async Task SendPlayersUpdatedAsync(List<Models.Player> players)

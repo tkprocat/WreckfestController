@@ -1,5 +1,8 @@
 using System.Diagnostics;
 using System.Collections.Concurrent;
+using System.IO;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 
 namespace WreckfestController.Services;
 
@@ -15,25 +18,41 @@ public class ServerManager
     private readonly ILoggerFactory _loggerFactory;
     private readonly System.Collections.Concurrent.ConcurrentQueue<(DateTime Timestamp, string Message)> _outputBuffer = new();
     private const int MaxBufferSize = 500;
+    private readonly ConsoleMonitor _consoleMonitor;
+    private readonly PlayerTracker _playerTracker;
+    private readonly TrackChangeTracker _trackChangeTracker;
+    private readonly ServerInfoTracker _serverInfoTracker;
+    private string _currentTrack = string.Empty;
+
+    // Log file monitoring fields (used when UseConsoleMonitoring is false)
     private FileSystemWatcher? _logFileWatcher;
     private long _lastLogFilePosition = 0;
     private string? _currentLogFilePath;
-    private readonly PlayerTracker _playerTracker;
-    private readonly TrackChangeTracker _trackChangeTracker;
     private readonly object _logReadLock = new();
     private System.Threading.Timer? _fileWatcherDebounceTimer;
     private System.Threading.Timer? _pollingTimer;
-    private string _currentTrack = string.Empty;
 
     public bool IsRunning => GetActualServerProcess() != null;
 
-    public ServerManager(IConfiguration configuration, ILogger<ServerManager> logger, ILoggerFactory loggerFactory, PlayerTracker playerTracker, TrackChangeTracker trackChangeTracker)
+    public ServerManager(
+        IConfiguration configuration,
+        ILogger<ServerManager> logger,
+        ILoggerFactory loggerFactory,
+        PlayerTracker playerTracker,
+        TrackChangeTracker trackChangeTracker,
+        ServerInfoTracker serverInfoTracker,
+        ConsoleMonitor consoleMonitor)
     {
         _configuration = configuration;
         _logger = logger;
         _loggerFactory = loggerFactory;
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
+        _serverInfoTracker = serverInfoTracker;
+        _consoleMonitor = consoleMonitor;
+
+        // Subscribe to console monitor output
+        _consoleMonitor.SubscribeToOutput(OnConsoleOutputReceived);
     }
 
     private Process? GetActualServerProcess()
@@ -59,14 +78,14 @@ public class ServerManager
             catch (ArgumentException)
             {
                 // Process doesn't exist
-                _logger.LogWarning("Tracked server process (PID: {PID}) no longer exists", _actualServerPid.Value);
+                _logger.LogWarning("Tracked server process (PID: {PID}) no longer exists", _actualServerPid!.Value);
                 _actualServerPid = null;
                 _startTime = null;
                 return null;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error accessing tracked server process (PID: {PID})", _actualServerPid.Value);
+                _logger.LogError(ex, "Error accessing tracked server process (PID: {PID})", _actualServerPid!.Value);
                 return null;
             }
         }
@@ -150,8 +169,8 @@ public class ServerManager
                 _actualServerPid = process.Id;
                 _startTime = DateTime.Now;
 
-                // Start monitoring the log file for real-time output
-                StartLogFileMonitoring();
+                // Start monitoring the server output (console or log file)
+                StartOutputMonitoring();
 
                 // Check if process exits immediately
                 if (process.WaitForExit(500))
@@ -188,6 +207,78 @@ public class ServerManager
         return (true, $"Server process started (PID: {_actualServerPid}) but not confirmed. Check logs.");
     }
 
+    /// <summary>
+    /// Stops the server gracefully using the built-in "exit" command.
+    /// </summary>
+    public virtual async Task<(bool Success, string Message)> StopServerViaCommandAsync()
+    {
+        if (!IsRunning)
+        {
+            return (false, "Server is not running");
+        }
+
+        try
+        {
+            var currentPid = _actualServerPid;
+            _logger.LogInformation("Stopping server gracefully via 'exit' command (PID: {PID})", currentPid);
+
+            // Send exit command
+            var commandResult = await SendCommandAsync("exit");
+            if (!commandResult.Success)
+            {
+                _logger.LogWarning("Failed to send exit command, falling back to force stop");
+                return await StopServerAsync();
+            }
+
+            _logger.LogInformation("Exit command sent, waiting for server to shutdown...");
+
+            // Wait for the process to exit gracefully (max 30 seconds)
+            var timeout = TimeSpan.FromSeconds(30);
+            var startTime = DateTime.Now;
+            var checkInterval = TimeSpan.FromMilliseconds(500);
+
+            while (DateTime.Now - startTime < timeout)
+            {
+                await Task.Delay(checkInterval);
+
+                // Check if process has exited
+                var process = GetActualServerProcess();
+                if (process == null)
+                {
+                    _logger.LogInformation("Server process exited gracefully");
+
+                    // Clean up
+                    lock (_lock)
+                    {
+                        _serverProcess = null;
+                        _startTime = null;
+                        _actualServerPid = null;
+
+                        // Stop monitoring log file
+                        StopOutputMonitoring();
+
+                        // Clear player tracking
+                        _playerTracker.Clear();
+                    }
+
+                    return (true, $"Server stopped gracefully (was PID: {currentPid})");
+                }
+            }
+
+            // Timeout - process didn't exit gracefully
+            _logger.LogWarning("Server didn't exit gracefully within timeout, forcing shutdown");
+            return await StopServerAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to stop server gracefully, falling back to force stop");
+            return await StopServerAsync();
+        }
+    }
+
+    /// <summary>
+    /// Force stops the server by killing the process tree.
+    /// </summary>
     public virtual async Task<(bool Success, string Message)> StopServerAsync()
     {
         lock (_lock)
@@ -200,7 +291,7 @@ public class ServerManager
 
             try
             {
-                _logger.LogInformation("Stopping server process {ProcessId}", actualProcess.Id);
+                _logger.LogInformation("Force stopping server process {ProcessId}", actualProcess.Id);
 
                 // Try to kill the actual server process
                 actualProcess.Kill(entireProcessTree: true);
@@ -252,6 +343,148 @@ public class ServerManager
         await Task.Delay(2000);
 
         return await StartServerAsync();
+    }
+
+    /// <summary>
+    /// Restarts the server using the built-in /restart command and tracks the new PID.
+    /// This is faster than stop+start but requires PID detection logic.
+    /// </summary>
+    public virtual async Task<(bool Success, string Message)> RestartServerViaCommandAsync()
+    {
+        if (!IsRunning)
+        {
+            return (false, "Server is not running");
+        }
+
+        try
+        {
+            _logger.LogInformation("Starting server restart via /restart command");
+
+            // Step 1: Get all current Wreckfest*.exe PIDs
+            var oldPids = GetAllWreckfestPids();
+            _logger.LogInformation("Current Wreckfest PIDs before restart: {PIDs}", string.Join(", ", oldPids));
+
+            // Step 2: Send /restart command
+            var commandResult = await SendCommandAsync("/restart");
+            if (!commandResult.Success)
+            {
+                return (false, $"Failed to send restart command: {commandResult.Message}");
+            }
+
+            _logger.LogInformation("Restart command sent, waiting for server to restart...");
+
+            // Step 3: Wait for restart to complete
+            // We'll wait for either:
+            // - A log message indicating restart (e.g., "Server connected.", "Current track loaded!")
+            // - Or a timeout (30 seconds max)
+
+            var restartDetected = false;
+            var timeout = TimeSpan.FromSeconds(30);
+            var startTime = DateTime.Now;
+            var logCheckInterval = TimeSpan.FromMilliseconds(500);
+
+            // Store initial log position to detect new messages
+            var initialLogPosition = _lastLogFilePosition;
+
+            while (DateTime.Now - startTime < timeout)
+            {
+                await Task.Delay(logCheckInterval);
+
+                // Check if we've received new log lines indicating restart
+                // The ReadNewLogLines method updates _lastLogFilePosition
+                if (_lastLogFilePosition > initialLogPosition)
+                {
+                    // Look for restart indicators in the output buffer
+                    var recentMessages = _outputBuffer
+                        .Where(m => m.Timestamp > startTime)
+                        .Select(m => m.Message)
+                        .ToList();
+
+                    // Check for common restart indicators
+                    if (recentMessages.Any(m =>
+                        m.Contains("Server connected", StringComparison.OrdinalIgnoreCase) ||
+                        m.Contains("Current track loaded!", StringComparison.OrdinalIgnoreCase) ||
+                        m.Contains("Server started", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _logger.LogInformation("Restart detected via log message");
+                        restartDetected = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!restartDetected)
+            {
+                _logger.LogWarning("Restart completion not detected via logs within timeout, proceeding with PID detection anyway");
+            }
+
+            // Wait a bit more to ensure new process is fully started
+            await Task.Delay(2000);
+
+            // Step 4: Get all current Wreckfest*.exe PIDs again
+            var newPids = GetAllWreckfestPids();
+            _logger.LogInformation("Wreckfest PIDs after restart: {PIDs}", string.Join(", ", newPids));
+
+            // Step 5: Find the new PID (PIDs in newPids that aren't in oldPids)
+            var newProcessPids = newPids.Except(oldPids).ToList();
+
+            if (newProcessPids.Count == 0)
+            {
+                _logger.LogError("No new Wreckfest process detected after restart");
+                return (false, "Server restart failed: No new process detected. The server may have failed to restart.");
+            }
+
+            if (newProcessPids.Count > 1)
+            {
+                _logger.LogWarning("Multiple new Wreckfest processes detected: {PIDs}. Using the first one.", string.Join(", ", newProcessPids));
+            }
+
+            // Update to track the new PID
+            var newPid = newProcessPids.First();
+            _actualServerPid = newPid;
+
+            // Update start time
+            try
+            {
+                var process = Process.GetProcessById(newPid);
+                _startTime = process.StartTime;
+            }
+            catch
+            {
+                _startTime = DateTime.Now;
+            }
+
+            _logger.LogInformation("Server restarted successfully via /restart command. New PID: {PID} (was {OldPID})",
+                newPid, oldPids.Contains(_actualServerPid.Value) ? _actualServerPid.Value : (int?)null);
+
+            return (true, $"Server restarted successfully via /restart command. New PID: {newPid}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to restart server via /restart command");
+            return (false, $"Failed to restart server: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Gets all running Wreckfest*.exe process IDs
+    /// </summary>
+    private List<int> GetAllWreckfestPids()
+    {
+        try
+        {
+            var processes = Process.GetProcesses()
+                .Where(p => p.ProcessName.StartsWith("Wreckfest", StringComparison.OrdinalIgnoreCase))
+                .Select(p => p.Id)
+                .ToList();
+
+            return processes;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error getting Wreckfest process IDs");
+            return new List<int>();
+        }
     }
 
     public virtual async Task<(bool Success, string Message)> UpdateServerAsync()
@@ -472,6 +705,9 @@ public class ServerManager
             _startTime = process.StartTime;
             _logger.LogInformation("Attached to existing server process (PID: {PID}, Name: {Name})", pid, process.ProcessName);
 
+            // Start monitoring the attached process
+            StartOutputMonitoring();
+
             return (true, $"Attached to process {pid} ({process.ProcessName})");
         }
         catch (ArgumentException)
@@ -595,6 +831,122 @@ public class ServerManager
         {
             _logger.LogError(ex, "Failed to read log file: {Path}", logFilePath);
             return (false, $"Failed to read log file: {ex.Message}", logFilePath, null);
+        }
+    }
+
+    /// <summary>
+    /// Starts output monitoring using either console monitoring or log file monitoring
+    /// based on the UseConsoleMonitoring configuration setting.
+    /// </summary>
+    private void StartOutputMonitoring()
+    {
+        bool useConsoleMonitoring = _configuration.GetValue("WreckfestServer:UseConsoleMonitoring", true);
+
+        if (useConsoleMonitoring)
+        {
+            StartConsoleMonitoring();
+        }
+        else
+        {
+            StartLogFileMonitoring();
+        }
+    }
+
+    /// <summary>
+    /// Stops output monitoring (both console and log file monitoring).
+    /// </summary>
+    private void StopOutputMonitoring()
+    {
+        StopConsoleMonitoring();
+        StopLogFileMonitoring();
+    }
+
+    /// <summary>
+    /// Callback for console monitor output.
+    /// </summary>
+    private void OnConsoleOutputReceived(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return;
+
+        // Console monitor may send multi-line output, so split by newlines
+        var lines = output.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+
+            // Add to output buffer
+            _outputBuffer.Enqueue((DateTime.Now, line));
+            while (_outputBuffer.Count > MaxBufferSize)
+            {
+                _outputBuffer.TryDequeue(out _);
+            }
+
+            // Notify subscribers
+            foreach (var subscriber in _consoleSubscribers)
+            {
+                try
+                {
+                    subscriber(line);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error notifying console subscriber");
+                }
+            }
+
+            // Parse for player events, track changes, and server info
+            _playerTracker.ProcessLogLine(line);
+            _trackChangeTracker.ProcessLogLine(line);
+            _serverInfoTracker.ProcessLogLine(line);
+        }
+    }
+
+    /// <summary>
+    /// Starts monitoring the server process console using Windows Console API.
+    /// </summary>
+    private void StartConsoleMonitoring()
+    {
+        try
+        {
+            if (_actualServerPid == null)
+            {
+                _logger.LogWarning("Cannot start console monitoring: No server process ID");
+                return;
+            }
+
+            bool started = _consoleMonitor.StartMonitoring(_actualServerPid.Value);
+
+            if (started)
+            {
+                _logger.LogInformation("Console monitoring started for PID: {ProcessId}", _actualServerPid);
+            }
+            else
+            {
+                _logger.LogWarning("Failed to start console monitoring for PID: {ProcessId}", _actualServerPid);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to start console monitoring");
+        }
+    }
+
+    /// <summary>
+    /// Stops console monitoring.
+    /// </summary>
+    private void StopConsoleMonitoring()
+    {
+        try
+        {
+            _consoleMonitor.StopMonitoring();
+            _logger.LogInformation("Console monitoring stopped");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error stopping console monitoring");
         }
     }
 
@@ -759,6 +1111,7 @@ public class ServerManager
                     NotifyConsoleOutputSubscribers(line);
                     _playerTracker.ProcessLogLine(line);
                     _trackChangeTracker.ProcessLogLine(line);
+                    _serverInfoTracker.ProcessLogLine(line);
                     _logger.LogInformation("Server log: {Line}", line);
 
                     var trackMatch = System.Text.RegularExpressions.Regex.Match(line, @"Current track loaded!\s*\(([^)]+)\)");
@@ -802,6 +1155,226 @@ public class ServerManager
             Players = onlinePlayers,
             LastUpdated = DateTime.Now
         };
+    }
+
+    /// <summary>
+    /// Request server info by sending ? command and waiting for response
+    /// </summary>
+    public virtual async Task<(bool Success, string Message, Models.ServerConfig? Config)> GetServerInfoAsync()
+    {
+        if (!IsRunning)
+        {
+            return (false, "Server is not running", null);
+        }
+
+        try
+        {
+            // Send ? command
+            var commandResult = await SendCommandAsync("?");
+            if (!commandResult.Success)
+            {
+                return (false, $"Failed to send ? command: {commandResult.Message}", null);
+            }
+
+            // Wait for response (max 5 seconds)
+            var config = await _serverInfoTracker.RequestServerInfoAsync(TimeSpan.FromSeconds(5));
+
+            return (true, "Server info retrieved successfully", config);
+        }
+        catch (TimeoutException)
+        {
+            return (false, "Server info request timed out - the server may not support the ? command", null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to retrieve server info");
+            return (false, $"Failed to retrieve server info: {ex.Message}", null);
+        }
+    }
+
+    /// <summary>
+    /// Scans for running Wreckfest server processes
+    /// </summary>
+    public List<Models.ServerProcessInfo> GetRunningWreckfestServers()
+    {
+        var servers = new List<Models.ServerProcessInfo>();
+
+        try
+        {
+            var processes = Process.GetProcesses();
+            var currentPid = _serverProcess?.Id;
+
+            foreach (var process in processes)
+            {
+                try
+                {
+                    // Look for Wreckfest_x64.exe or Wreckfest.exe
+                    if (process.ProcessName.Equals("Wreckfest_x64", StringComparison.OrdinalIgnoreCase) ||
+                        process.ProcessName.Equals("Wreckfest", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Get command line using WMI
+                        using (var searcher = new System.Management.ManagementObjectSearcher(
+                            $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {process.Id}"))
+                        {
+                            var results = searcher.Get();
+                            foreach (System.Management.ManagementObject obj in results)
+                            {
+                                var commandLine = obj["CommandLine"]?.ToString() ?? string.Empty;
+
+                                // Only include servers started with -s parameter
+                                if (commandLine.Contains(" -s ", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    var serverInfo = new Models.ServerProcessInfo
+                                    {
+                                        ProcessId = process.Id,
+                                        StartTime = process.StartTime,
+                                        ExecutablePath = process.MainModule?.FileName ?? string.Empty,
+                                        MemoryUsageMB = process.WorkingSet64 / 1024 / 1024,
+                                        IsAttached = process.Id == currentPid,
+                                        ConfigFile = ExtractConfigFileName(commandLine)
+                                    };
+
+                                    servers.Add(serverInfo);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Skip processes we can't access
+                    _logger.LogTrace(ex, $"Could not access process {process.Id}");
+                }
+                finally
+                {
+                    process.Dispose();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to scan for Wreckfest servers");
+        }
+
+        return servers.OrderBy(s => s.StartTime).ToList();
+    }
+
+    /// <summary>
+    /// Extracts the config file name from command line arguments
+    /// </summary>
+    private string ExtractConfigFileName(string commandLine)
+    {
+        try
+        {
+            // Look for pattern: -s server_config=xxx.cfg
+            var match = System.Text.RegularExpressions.Regex.Match(
+                commandLine,
+                @"-s\s+server_config=([^\s]+)",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            if (match.Success)
+            {
+                return match.Groups[1].Value;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogTrace(ex, "Failed to extract config file name from command line");
+        }
+
+        return "Unknown";
+    }
+
+    /// <summary>
+    /// Attaches to an existing Wreckfest server process
+    /// </summary>
+    public async Task<(bool Success, string Message)> AttachToProcessAsync(int processId)
+    {
+        try
+        {
+            _logger.LogInformation($"Attempting to attach to process {processId}");
+
+            // Check if process exists and is a Wreckfest server
+            var process = Process.GetProcessById(processId);
+            if (process == null || process.HasExited)
+            {
+                return (false, $"Process {processId} not found or has exited");
+            }
+
+            if (!process.ProcessName.Equals("Wreckfest_x64", StringComparison.OrdinalIgnoreCase) &&
+                !process.ProcessName.Equals("Wreckfest", StringComparison.OrdinalIgnoreCase))
+            {
+                return (false, $"Process {processId} is not a Wreckfest server");
+            }
+
+            // Stop any currently running server first
+            if (_serverProcess != null && !_serverProcess.HasExited)
+            {
+                _logger.LogInformation("Detaching from current server before attaching to new one");
+                await StopServerAsync();
+            }
+
+            lock (_lock)
+            {
+                _serverProcess = process;
+                _actualServerPid = processId;
+                _startTime = process.StartTime;
+            }
+
+            // Start monitoring the existing process
+            bool started = _consoleMonitor.StartMonitoring(_actualServerPid.Value);
+
+            if (started)
+            {
+                _logger.LogInformation($"Console monitoring started for attached process {processId}");
+
+                // Initialize trackers
+                _playerTracker.Clear();
+                _trackChangeTracker.Clear();
+            }
+            else
+            {
+                _logger.LogWarning($"Failed to start console monitoring for process {processId}");
+            }
+
+            _logger.LogInformation($"Successfully attached to process {processId}");
+            return (true, $"Attached to process {processId}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, $"Failed to attach to process {processId}");
+            return (false, $"Failed to attach: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Gets the config file name for the currently attached server
+    /// </summary>
+    public string GetCurrentConfigFileName()
+    {
+        try
+        {
+            var pid = _serverProcess?.Id;
+            if (pid == null)
+                return string.Empty;
+
+            using (var searcher = new System.Management.ManagementObjectSearcher(
+                $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {pid}"))
+            {
+                var results = searcher.Get();
+                foreach (System.Management.ManagementObject obj in results)
+                {
+                    var commandLine = obj["CommandLine"]?.ToString() ?? string.Empty;
+                    return ExtractConfigFileName(commandLine);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogTrace(ex, "Failed to get config file name for current process");
+        }
+
+        return string.Empty;
     }
 }
 

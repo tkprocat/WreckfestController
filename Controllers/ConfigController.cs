@@ -9,11 +9,13 @@ namespace WreckfestController.Controllers;
 public class ConfigController : ControllerBase
 {
     private readonly ConfigService _configService;
+    private readonly ServerManager _serverManager;
     private readonly ILogger<ConfigController> _logger;
 
-    public ConfigController(ConfigService configService, ILogger<ConfigController> logger)
+    public ConfigController(ConfigService configService, ServerManager serverManager, ILogger<ConfigController> logger)
     {
         _configService = configService;
+        _serverManager = serverManager;
         _logger = logger;
     }
 
@@ -110,6 +112,31 @@ public class ConfigController : ControllerBase
         {
             _logger.LogError(ex, "Failed to update event loop tracks");
             return BadRequest(new { message = $"Failed to update event loop tracks: {ex.Message}" });
+        }
+    }
+
+    /// <summary>
+    /// Get live server info by sending ? command to the running server
+    /// </summary>
+    [HttpGet("serverinfo")]
+    public async Task<IActionResult> GetServerInfo()
+    {
+        try
+        {
+            _logger.LogInformation("Received request to get live server info");
+            var result = await _serverManager.GetServerInfoAsync();
+
+            if (!result.Success)
+            {
+                return BadRequest(new { message = result.Message });
+            }
+
+            return Ok(result.Config);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to retrieve server info");
+            return BadRequest(new { message = $"Failed to retrieve server info: {ex.Message}" });
         }
     }
 }

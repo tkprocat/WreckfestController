@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Reflection;
 using WreckfestController.Services;
 
 namespace WreckfestController.Controllers;
@@ -14,6 +15,21 @@ public class ServerController : ControllerBase
     {
         _serverManager = serverManager;
         _logger = logger;
+    }
+
+    [HttpGet("version")]
+    public IActionResult GetVersion()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var version = assembly.GetName().Version;
+        var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+
+        return Ok(new
+        {
+            version = informationalVersion ?? version?.ToString() ?? "Unknown",
+            assemblyVersion = version?.ToString() ?? "Unknown",
+            product = "WreckfestController"
+        });
     }
 
     [HttpGet("status")]
@@ -40,7 +56,21 @@ public class ServerController : ControllerBase
     [HttpPost("stop")]
     public async Task<IActionResult> StopServer()
     {
-        _logger.LogInformation("Received request to stop server");
+        _logger.LogInformation("Received request to stop server (using graceful 'exit' command)");
+        var result = await _serverManager.StopServerViaCommandAsync();
+
+        if (result.Success)
+        {
+            return Ok(new { message = result.Message });
+        }
+
+        return BadRequest(new { message = result.Message });
+    }
+
+    [HttpPost("forcestop")]
+    public async Task<IActionResult> ForceStopServer()
+    {
+        _logger.LogInformation("Received request to force stop server (kill process)");
         var result = await _serverManager.StopServerAsync();
 
         if (result.Success)
@@ -54,7 +84,21 @@ public class ServerController : ControllerBase
     [HttpPost("restart")]
     public async Task<IActionResult> RestartServer()
     {
-        _logger.LogInformation("Received request to restart server");
+        _logger.LogInformation("Received request to restart server (using in-game /restart command)");
+        var result = await _serverManager.RestartServerViaCommandAsync();
+
+        if (result.Success)
+        {
+            return Ok(new { message = result.Message });
+        }
+
+        return BadRequest(new { message = result.Message });
+    }
+
+    [HttpPost("forcerestart")]
+    public async Task<IActionResult> ForceRestartServer()
+    {
+        _logger.LogInformation("Received request to force restart server (stop + start)");
         var result = await _serverManager.RestartServerAsync();
 
         if (result.Success)
