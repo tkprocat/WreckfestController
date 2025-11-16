@@ -10,6 +10,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Settings File Path Info -->
@@ -49,28 +50,6 @@
                                Foreground="{StaticResource TextPrimary}"
                                Margin="0,0,0,15"/>
 
-                    <!-- Server Path -->
-                    <TextBlock Text="Server Executable Path"
-                               Foreground="{StaticResource TextSecondary}"
-                               FontSize="12"
-                               Margin="0,0,0,5"/>
-                    <Grid Margin="0,0,0,15">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="ServerPathTextBox"
-                                 Grid.Column="0"
-                                 materialDesign:HintAssist.Hint="Path to Wreckfest_x64.exe"
-                                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                                 Foreground="{StaticResource TextPrimary}"
-                                 Margin="0,0,10,0"/>
-                        <Button Grid.Column="1"
-                                Content="BROWSE"
-                                Click="OnBrowseServerPathClicked"
-                                Width="100"/>
-                    </Grid>
-
                     <!-- Working Directory -->
                     <TextBlock Text="Working Directory"
                                Foreground="{StaticResource TextSecondary}"
@@ -93,43 +72,91 @@
                                 Width="100"/>
                     </Grid>
 
+                    <!-- Server Executable -->
+                    <TextBlock Text="Server Executable"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="ServerPathTextBox"
+                             materialDesign:HintAssist.Hint="Wreckfest_x64.exe"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- Log File Name -->
+                    <TextBlock Text="Log File Name (optional)"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="LogFilePathTextBox"
+                             materialDesign:HintAssist.Hint="log.txt (leave empty to auto-detect)"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
                     <!-- Server Arguments -->
                     <TextBlock Text="Server Arguments"
                                Foreground="{StaticResource TextSecondary}"
                                FontSize="12"
                                Margin="0,0,0,5"/>
                     <TextBox x:Name="ServerArgumentsTextBox"
-                             materialDesign:HintAssist.Hint="E.g. -s server_config=server_config.cfg"
+                             materialDesign:HintAssist.Hint="-s server_config=server_config.cfg"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- SteamCmd Settings Section -->
+            <Border Grid.Row="2"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,0,0,15">
+                <StackPanel>
+                    <TextBlock Text="STEAMCMD SETTINGS"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimary}"
+                               Margin="0,0,0,15"/>
+
+                    <!-- SteamCmd Path -->
+                    <TextBlock Text="SteamCmd Executable Path"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="SteamCmdPathTextBox"
+                             materialDesign:HintAssist.Hint="Path to steamcmd.exe"
                              Style="{StaticResource MaterialDesignOutlinedTextBox}"
                              Foreground="{StaticResource TextPrimary}"
                              Margin="0,0,0,15"/>
 
-                    <!-- Log File Path -->
-                    <TextBlock Text="Log File Path (optional)"
+                    <!-- Wreckfest App ID -->
+                    <TextBlock Text="Wreckfest App ID"
                                Foreground="{StaticResource TextSecondary}"
                                FontSize="12"
                                Margin="0,0,0,5"/>
-                    <Grid Margin="0,0,0,15">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="LogFilePathTextBox"
-                                 Grid.Column="0"
-                                 materialDesign:HintAssist.Hint="Leave empty to auto-detect from config"
-                                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                                 Foreground="{StaticResource TextPrimary}"
-                                 Margin="0,0,10,0"/>
-                        <Button Grid.Column="1"
-                                Content="BROWSE"
-                                Click="OnBrowseLogFilePathClicked"
-                                Width="100"/>
-                    </Grid>
+                    <TextBox x:Name="WreckfestAppIdTextBox"
+                             materialDesign:HintAssist.Hint="361580"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- Install Directory -->
+                    <TextBlock Text="Install Directory"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="InstallDirectoryTextBox"
+                             materialDesign:HintAssist.Hint="Where SteamCmd installs/updates Wreckfest"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"/>
                 </StackPanel>
             </Border>
 
             <!-- Network Settings Section -->
-            <Border Grid.Row="2"
+            <Border Grid.Row="3"
                     Background="{StaticResource BackgroundMedium}"
                     BorderBrush="{StaticResource BorderColor}"
                     BorderThickness="1"
@@ -151,28 +178,12 @@
                     <TextBox x:Name="WreckfestWebWebhookUrlTextBox"
                              materialDesign:HintAssist.Hint="http://localhost:8000/api/webhooks"
                              Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                             Foreground="{StaticResource TextPrimary}"
-                             Margin="0,0,0,15"/>
-
-                    <!-- Controller Listening Ports -->
-                    <TextBlock Text="Controller Listening Ports"
-                               Foreground="{StaticResource TextSecondary}"
-                               FontSize="12"
-                               Margin="0,0,0,5"/>
-                    <TextBox x:Name="KestrelUrlsTextBox"
-                             materialDesign:HintAssist.Hint="http://0.0.0.0:5100;https://0.0.0.0:5101"
-                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
                              Foreground="{StaticResource TextPrimary}"/>
-                    <TextBlock Text="Listening addresses for WreckfestController API. Separate multiple URLs with semicolons. Change ports for multi-instance setups."
-                               Foreground="{StaticResource TextSecondary}"
-                               FontSize="10"
-                               TextWrapping="Wrap"
-                               Margin="0,5,0,0"/>
                 </StackPanel>
             </Border>
 
             <!-- Action Buttons -->
-            <StackPanel Grid.Row="3"
+            <StackPanel Grid.Row="4"
                         Orientation="Horizontal"
                         HorizontalAlignment="Right"
                         Margin="0,10,0,0">
@@ -191,7 +202,7 @@
 
             <!-- Status Message -->
             <TextBlock x:Name="StatusMessageText"
-                       Grid.Row="4"
+                       Grid.Row="5"
                        Text=""
                        Foreground="{StaticResource TextSecondary}"
                        FontSize="11"

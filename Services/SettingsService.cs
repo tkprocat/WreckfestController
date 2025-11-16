@@ -113,7 +113,7 @@ public class SettingsService
     }
 
     /// <summary>
-    /// Creates default settings from appsettings.json configuration
+    /// Creates default settings with sensible defaults
     /// </summary>
     private UserSettings CreateDefaultSettings()
     {
@@ -121,18 +121,20 @@ public class SettingsService
         {
             WreckfestServer = new WreckfestServerSettings
             {
-                ServerPath = _configuration["WreckfestServer:ServerPath"],
-                ServerArguments = _configuration["WreckfestServer:ServerArguments"],
-                WorkingDirectory = _configuration["WreckfestServer:WorkingDirectory"],
-                LogFilePath = _configuration["WreckfestServer:LogFilePath"]
+                ServerPath = _configuration["WreckfestServer:ServerPath"] ?? "",
+                ServerArguments = _configuration["WreckfestServer:ServerArguments"] ?? "-s server_config=server_config.cfg",
+                WorkingDirectory = _configuration["WreckfestServer:WorkingDirectory"] ?? "",
+                LogFilePath = _configuration["WreckfestServer:LogFilePath"] ?? ""
+            },
+            SteamCmd = new SteamCmdSettings
+            {
+                SteamCmdPath = _configuration["SteamCmd:SteamCmdPath"] ?? "",
+                WreckfestAppId = _configuration["SteamCmd:WreckfestAppId"] ?? "361580",
+                InstallDirectory = _configuration["SteamCmd:InstallDirectory"] ?? ""
             },
             WreckfestWeb = new WreckfestWebSettings
             {
-                WebhookBaseUrl = _configuration["WreckfestWeb:WebhookBaseUrl"]
-            },
-            Kestrel = new KestrelSettings
-            {
-                Urls = _configuration["Kestrel:Urls"]
+                WebhookBaseUrl = _configuration["WreckfestWeb:WebhookBaseUrl"] ?? "http://localhost:8000/api/webhooks"
             }
         };
     }

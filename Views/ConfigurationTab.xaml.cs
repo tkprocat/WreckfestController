@@ -45,76 +45,63 @@ public partial class ConfigurationTab : UserControl
     private void PopulateForm(UserSettings settings)
     {
         // Server settings
-        ServerPathTextBox.Text = settings.WreckfestServer?.ServerPath ?? "";
         WorkingDirectoryTextBox.Text = settings.WreckfestServer?.WorkingDirectory ?? "";
+
+        // For ServerPath and LogFilePath, if they're absolute paths, extract just the filename
+        var serverPath = settings.WreckfestServer?.ServerPath ?? "";
+        ServerPathTextBox.Text = Path.IsPathRooted(serverPath) ? Path.GetFileName(serverPath) : serverPath;
+
+        var logPath = settings.WreckfestServer?.LogFilePath ?? "";
+        LogFilePathTextBox.Text = Path.IsPathRooted(logPath) ? Path.GetFileName(logPath) : logPath;
+
         ServerArgumentsTextBox.Text = settings.WreckfestServer?.ServerArguments ?? "";
-        LogFilePathTextBox.Text = settings.WreckfestServer?.LogFilePath ?? "";
+
+        // SteamCmd settings
+        SteamCmdPathTextBox.Text = settings.SteamCmd?.SteamCmdPath ?? "";
+        WreckfestAppIdTextBox.Text = settings.SteamCmd?.WreckfestAppId ?? "";
+        InstallDirectoryTextBox.Text = settings.SteamCmd?.InstallDirectory ?? "";
 
         // Network settings
         WreckfestWebWebhookUrlTextBox.Text = settings.WreckfestWeb?.WebhookBaseUrl ?? "";
-        KestrelUrlsTextBox.Text = settings.Kestrel?.Urls ?? "";
     }
 
     private UserSettings GatherFormData()
     {
+        var workingDir = WorkingDirectoryTextBox.Text;
+        var serverExe = ServerPathTextBox.Text;
+        var logFile = LogFilePathTextBox.Text;
+
+        // Combine paths if working directory is specified and paths aren't already absolute
+        var serverPath = string.IsNullOrWhiteSpace(serverExe) ? "" :
+            (!string.IsNullOrWhiteSpace(workingDir) && !Path.IsPathRooted(serverExe)
+                ? Path.Combine(workingDir, serverExe)
+                : serverExe);
+
+        var logFilePath = string.IsNullOrWhiteSpace(logFile) ? "" :
+            (!string.IsNullOrWhiteSpace(workingDir) && !Path.IsPathRooted(logFile)
+                ? Path.Combine(workingDir, logFile)
+                : logFile);
+
         return new UserSettings
         {
             WreckfestServer = new WreckfestServerSettings
             {
-                ServerPath = ServerPathTextBox.Text,
-                WorkingDirectory = WorkingDirectoryTextBox.Text,
+                ServerPath = serverPath,
+                WorkingDirectory = workingDir,
                 ServerArguments = ServerArgumentsTextBox.Text,
-                LogFilePath = LogFilePathTextBox.Text
+                LogFilePath = logFilePath
+            },
+            SteamCmd = new SteamCmdSettings
+            {
+                SteamCmdPath = SteamCmdPathTextBox.Text,
+                WreckfestAppId = WreckfestAppIdTextBox.Text,
+                InstallDirectory = InstallDirectoryTextBox.Text
             },
             WreckfestWeb = new WreckfestWebSettings
             {
                 WebhookBaseUrl = WreckfestWebWebhookUrlTextBox.Text
-            },
-            Kestrel = new KestrelSettings
-            {
-                Urls = KestrelUrlsTextBox.Text
             }
         };
-    }
-
-    private void OnBrowseServerPathClicked(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFileDialog
-        {
-            Title = "Select Wreckfest Server Executable",
-            Filter = "Wreckfest Executables (Wreckfest*.exe)|Wreckfest*.exe|All Executables (*.exe)|*.exe|All Files (*.*)|*.*",
-            FileName = "Wreckfest_x64.exe"
-        };
-
-        // Open in the directory of the current path if it exists
-        var currentPath = ServerPathTextBox.Text;
-        if (!string.IsNullOrWhiteSpace(currentPath))
-        {
-            if (File.Exists(currentPath))
-            {
-                dialog.InitialDirectory = Path.GetDirectoryName(currentPath);
-                dialog.FileName = Path.GetFileName(currentPath);
-            }
-            else if (Directory.Exists(currentPath))
-            {
-                dialog.InitialDirectory = currentPath;
-            }
-        }
-
-        if (dialog.ShowDialog() == true)
-        {
-            ServerPathTextBox.Text = dialog.FileName;
-
-            // Auto-populate working directory if empty
-            if (string.IsNullOrWhiteSpace(WorkingDirectoryTextBox.Text))
-            {
-                var directory = Path.GetDirectoryName(dialog.FileName);
-                if (!string.IsNullOrEmpty(directory))
-                {
-                    WorkingDirectoryTextBox.Text = directory;
-                }
-            }
-        }
     }
 
     private void OnBrowseWorkingDirectoryClicked(object sender, RoutedEventArgs e)
@@ -137,54 +124,11 @@ public partial class ConfigurationTab : UserControl
         }
     }
 
-    private void OnBrowseLogFilePathClicked(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFileDialog
-        {
-            Title = "Select Log File",
-            Filter = "Log Files (*.txt;*.log)|*.txt;*.log|All Files (*.*)|*.*",
-            FileName = "log.txt"
-        };
-
-        // Open in the directory of the current path if it exists
-        var currentPath = LogFilePathTextBox.Text;
-        if (!string.IsNullOrWhiteSpace(currentPath))
-        {
-            if (File.Exists(currentPath))
-            {
-                dialog.InitialDirectory = Path.GetDirectoryName(currentPath);
-                dialog.FileName = Path.GetFileName(currentPath);
-            }
-            else if (Directory.Exists(currentPath))
-            {
-                dialog.InitialDirectory = currentPath;
-            }
-        }
-        // Fallback to working directory if log path is empty
-        else if (!string.IsNullOrWhiteSpace(WorkingDirectoryTextBox.Text) &&
-                 Directory.Exists(WorkingDirectoryTextBox.Text))
-        {
-            dialog.InitialDirectory = WorkingDirectoryTextBox.Text;
-        }
-
-        if (dialog.ShowDialog() == true)
-        {
-            LogFilePathTextBox.Text = dialog.FileName;
-        }
-    }
-
     private void OnSaveClicked(object sender, RoutedEventArgs e)
     {
         try
         {
             // Validate required fields
-            if (string.IsNullOrWhiteSpace(ServerPathTextBox.Text))
-            {
-                MessageBox.Show("Server Path is required.", "Validation Error",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
             if (string.IsNullOrWhiteSpace(WorkingDirectoryTextBox.Text))
             {
                 MessageBox.Show("Working Directory is required.", "Validation Error",
@@ -192,19 +136,14 @@ public partial class ConfigurationTab : UserControl
                 return;
             }
 
-            // Validate paths exist
-            if (!File.Exists(ServerPathTextBox.Text))
+            if (string.IsNullOrWhiteSpace(ServerPathTextBox.Text))
             {
-                var result = MessageBox.Show(
-                    "Server executable not found at specified path. Save anyway?",
-                    "File Not Found",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
-
-                if (result != MessageBoxResult.Yes)
-                    return;
+                MessageBox.Show("Server Executable is required.", "Validation Error",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
             }
 
+            // Validate working directory exists
             if (!Directory.Exists(WorkingDirectoryTextBox.Text))
             {
                 var result = MessageBox.Show(
@@ -217,15 +156,29 @@ public partial class ConfigurationTab : UserControl
                     return;
             }
 
+            // Validate server executable exists (combine with working directory)
+            var serverExePath = Path.Combine(WorkingDirectoryTextBox.Text, ServerPathTextBox.Text);
+            if (!File.Exists(serverExePath))
+            {
+                var result = MessageBox.Show(
+                    $"Server executable not found at:\n{serverExePath}\n\nSave anyway?",
+                    "File Not Found",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (result != MessageBoxResult.Yes)
+                    return;
+            }
+
             // Gather and save settings
             var settings = GatherFormData();
             _settingsService.SaveSettings(settings);
             _currentSettings = settings;
 
-            ShowStatusMessage("Settings saved successfully! Restart the application for changes to take effect.", isError: false);
+            ShowStatusMessage("Settings saved successfully!", isError: false);
 
             MessageBox.Show(
-                "Settings saved successfully!\n\nPlease restart the application for changes to take effect.",
+                "Settings saved successfully!\n\nMost changes will take effect immediately.",
                 "Settings Saved",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -259,13 +212,15 @@ public partial class ConfigurationTab : UserControl
                     WorkingDirectory = "",
                     LogFilePath = ""
                 },
+                SteamCmd = new SteamCmdSettings
+                {
+                    SteamCmdPath = "",
+                    WreckfestAppId = "361580",
+                    InstallDirectory = ""
+                },
                 WreckfestWeb = new WreckfestWebSettings
                 {
                     WebhookBaseUrl = "http://localhost:8000/api/webhooks"
-                },
-                Kestrel = new KestrelSettings
-                {
-                    Urls = "http://0.0.0.0:5100;https://0.0.0.0:5101"
                 }
             };
 

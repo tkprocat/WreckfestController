@@ -10,11 +10,11 @@ public class UserSettings
     [JsonPropertyName("WreckfestServer")]
     public WreckfestServerSettings? WreckfestServer { get; set; }
 
+    [JsonPropertyName("SteamCmd")]
+    public SteamCmdSettings? SteamCmd { get; set; }
+
     [JsonPropertyName("WreckfestWeb")]
     public WreckfestWebSettings? WreckfestWeb { get; set; }
-
-    [JsonPropertyName("Kestrel")]
-    public KestrelSettings? Kestrel { get; set; }
 }
 
 /// <summary>
@@ -36,19 +36,25 @@ public class WreckfestServerSettings
 }
 
 /// <summary>
+/// SteamCmd configuration settings
+/// </summary>
+public class SteamCmdSettings
+{
+    [JsonPropertyName("SteamCmdPath")]
+    public string? SteamCmdPath { get; set; }
+
+    [JsonPropertyName("WreckfestAppId")]
+    public string? WreckfestAppId { get; set; }
+
+    [JsonPropertyName("InstallDirectory")]
+    public string? InstallDirectory { get; set; }
+}
+
+/// <summary>
 /// WreckfestWeb webhook configuration settings
 /// </summary>
 public class WreckfestWebSettings
 {
     [JsonPropertyName("WebhookBaseUrl")]
     public string? WebhookBaseUrl { get; set; }
-}
-
-/// <summary>
-/// Kestrel web server configuration settings
-/// </summary>
-public class KestrelSettings
-{
-    [JsonPropertyName("Urls")]
-    public string? Urls { get; set; }
 }

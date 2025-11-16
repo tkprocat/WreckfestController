@@ -1,0 +1,16 @@
+{
+  "WreckfestServer": {
+    "ServerPath": "<path-to-wreckfest-server>\\Wreckfest_x64.exe",
+    "ServerArguments": "-s server_config=server_config.cfg",
+    "WorkingDirectory": "<path-to-wreckfest-server>",
+    "LogFilePath": "<path-to-wreckfest-server>\\log.txt"
+  },
+  "SteamCmd": {
+    "SteamCmdPath": "<path-to-steamcmd>\\steamcmd.exe",
+    "WreckfestAppId": "361580",
+    "InstallDirectory": "<path-to-wreckfest-server>"
+  },
+  "WreckfestWeb": {
+    "WebhookBaseUrl": "https://your-laravel-app.com/api/webhooks"
+  }
+}

@@ -11,14 +11,20 @@ public class WreckfestWebWebhookService
     private readonly ILogger<WreckfestWebWebhookService> _logger;
     private readonly IConfiguration _configuration;
     private readonly HttpClient _httpClient;
-    private readonly string _webhookBaseUrl;
 
     public WreckfestWebWebhookService(ILogger<WreckfestWebWebhookService> logger, IConfiguration configuration, HttpClient httpClient)
     {
         _logger = logger;
         _configuration = configuration;
         _httpClient = httpClient;
-        _webhookBaseUrl = _configuration["WreckfestWeb:WebhookBaseUrl"] ?? "http://localhost:8000/api/webhooks";
+    }
+
+    /// <summary>
+    /// Gets the webhook base URL from configuration (supports hot-reload)
+    /// </summary>
+    private string GetWebhookBaseUrl()
+    {
+        return _configuration["WreckfestWeb:WebhookBaseUrl"] ?? "http://localhost:8000/api/webhooks";
     }
 
     public async Task SendPlayersUpdatedAsync(List<Models.Player> players)
@@ -157,7 +163,8 @@ public class WreckfestWebWebhookService
 
     private async Task PostWebhookAsync(string endpoint, object payload)
     {
-        var url = $"{_webhookBaseUrl}/{endpoint}";
+        var webhookBaseUrl = GetWebhookBaseUrl();
+        var url = $"{webhookBaseUrl}/{endpoint}";
         var json = JsonSerializer.Serialize(payload);
         var content = new StringContent(json, Encoding.UTF8, "application/json");
 
@@ -185,7 +192,8 @@ public class WreckfestWebWebhookService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "{ErrorMessage} to {Url}", errorMessage, $"{_webhookBaseUrl}/{endpoint}");
+            var webhookBaseUrl = GetWebhookBaseUrl();
+            _logger.LogError(ex, "{ErrorMessage} to {Url}", errorMessage, $"{webhookBaseUrl}/{endpoint}");
         }
     }
 }

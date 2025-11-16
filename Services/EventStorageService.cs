@@ -14,22 +14,12 @@ public class EventStorageService
 {
     private readonly IConfiguration _configuration;
     private readonly ILogger<EventStorageService> _logger;
-    private readonly string _scheduleFilePath;
     private readonly JsonSerializerOptions _jsonOptions;
 
     public EventStorageService(IConfiguration configuration, ILogger<EventStorageService> logger)
     {
         _configuration = configuration;
         _logger = logger;
-
-        // Determine storage path - use working directory (alongside server_config.cfg) or application directory
-        var workingDir = _configuration["WreckfestServer:WorkingDirectory"];
-        var baseDir = !string.IsNullOrEmpty(workingDir)
-            ? workingDir
-            : AppDomain.CurrentDomain.BaseDirectory;
-
-        // Store directly in working directory alongside other Wreckfest config files
-        _scheduleFilePath = Path.Combine(baseDir, "event-schedule.json");
 
         // Configure JSON serialization options
         _jsonOptions = new JsonSerializerOptions
@@ -39,7 +29,40 @@ public class EventStorageService
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         };
 
-        _logger.LogInformation("EventStorageService initialized. Schedule path: {Path}", _scheduleFilePath);
+        _logger.LogInformation("EventStorageService initialized");
+    }
+
+    /// <summary>
+    /// Gets the schedule file path from configuration (supports hot-reload)
+    /// </summary>
+    private string GetScheduleFilePath()
+    {
+        var configuredPath = _configuration["EventSchedulePath"];
+
+        if (string.IsNullOrWhiteSpace(configuredPath))
+        {
+            // Fallback: use working directory (alongside server_config.cfg) or application directory
+            var workingDir = _configuration["WreckfestServer:WorkingDirectory"];
+            var baseDir = !string.IsNullOrEmpty(workingDir)
+                ? workingDir
+                : AppDomain.CurrentDomain.BaseDirectory;
+
+            return Path.Combine(baseDir, "event-schedule.json");
+        }
+        else
+        {
+            // Use configured path (expand environment variables like %LocalAppData%)
+            var expandedPath = Environment.ExpandEnvironmentVariables(configuredPath);
+
+            // Ensure directory exists
+            var directory = Path.GetDirectoryName(expandedPath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            return expandedPath;
+        }
     }
 
     /// <summary>
@@ -48,11 +71,12 @@ public class EventStorageService
     /// <returns>The loaded schedule, or an empty schedule if file doesn't exist</returns>
     public EventSchedule LoadSchedule()
     {
+        var scheduleFilePath = GetScheduleFilePath();
         try
         {
-            if (!File.Exists(_scheduleFilePath))
+            if (!File.Exists(scheduleFilePath))
             {
-                _logger.LogInformation("No existing schedule file found at {Path}. Returning empty schedule.", _scheduleFilePath);
+                _logger.LogInformation("No existing schedule file found at {Path}. Returning empty schedule.", scheduleFilePath);
                 return new EventSchedule
                 {
                     Events = new List<Event>(),
@@ -60,12 +84,12 @@ public class EventStorageService
                 };
             }
 
-            var json = File.ReadAllText(_scheduleFilePath);
+            var json = File.ReadAllText(scheduleFilePath);
             var schedule = JsonSerializer.Deserialize<EventSchedule>(json, _jsonOptions);
 
             if (schedule == null)
             {
-                _logger.LogWarning("Failed to deserialize schedule from {Path}. Returning empty schedule.", _scheduleFilePath);
+                _logger.LogWarning("Failed to deserialize schedule from {Path}. Returning empty schedule.", scheduleFilePath);
                 return new EventSchedule
                 {
                     Events = new List<Event>(),
@@ -84,12 +108,12 @@ public class EventStorageService
                 }
             }
 
-            _logger.LogInformation("Loaded schedule with {Count} events from {Path}", schedule.Events.Count, _scheduleFilePath);
+            _logger.LogInformation("Loaded schedule with {Count} events from {Path}", schedule.Events.Count, scheduleFilePath);
             return schedule;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error loading schedule from {Path}. Returning empty schedule.", _scheduleFilePath);
+            _logger.LogError(ex, "Error loading schedule from {Path}. Returning empty schedule.", scheduleFilePath);
             return new EventSchedule
             {
                 Events = new List<Event>(),
@@ -105,6 +129,7 @@ public class EventStorageService
     /// <returns>True if save was successful, false otherwise</returns>
     public bool SaveSchedule(EventSchedule schedule)
     {
+        var scheduleFilePath = GetScheduleFilePath();
         try
         {
             // Update last updated timestamp
@@ -114,22 +139,22 @@ public class EventStorageService
             var json = JsonSerializer.Serialize(schedule, _jsonOptions);
 
             // Write to file (atomic write using temp file)
-            var tempPath = _scheduleFilePath + ".tmp";
+            var tempPath = scheduleFilePath + ".tmp";
             File.WriteAllText(tempPath, json);
 
             // Replace existing file
-            if (File.Exists(_scheduleFilePath))
+            if (File.Exists(scheduleFilePath))
             {
-                File.Delete(_scheduleFilePath);
+                File.Delete(scheduleFilePath);
             }
-            File.Move(tempPath, _scheduleFilePath);
+            File.Move(tempPath, scheduleFilePath);
 
-            _logger.LogInformation("Saved schedule with {Count} events to {Path}", schedule.Events.Count, _scheduleFilePath);
+            _logger.LogInformation("Saved schedule with {Count} events to {Path}", schedule.Events.Count, scheduleFilePath);
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error saving schedule to {Path}", _scheduleFilePath);
+            _logger.LogError(ex, "Error saving schedule to {Path}", scheduleFilePath);
             return false;
         }
     }
@@ -158,14 +183,9 @@ public class EventStorageService
     }
 
     /// <summary>
-    /// Gets the path to the schedule file
-    /// </summary>
-    public string GetScheduleFilePath() => _scheduleFilePath;
-
-    /// <summary>
     /// Checks if a schedule file exists
     /// </summary>
-    public bool ScheduleExists() => File.Exists(_scheduleFilePath);
+    public bool ScheduleExists() => File.Exists(GetScheduleFilePath());
 
     /// <summary>
     /// Deletes the schedule file (use with caution)
@@ -173,18 +193,19 @@ public class EventStorageService
     /// <returns>True if file was deleted or didn't exist, false on error</returns>
     public bool DeleteSchedule()
     {
+        var scheduleFilePath = GetScheduleFilePath();
         try
         {
-            if (File.Exists(_scheduleFilePath))
+            if (File.Exists(scheduleFilePath))
             {
-                File.Delete(_scheduleFilePath);
-                _logger.LogInformation("Deleted schedule file at {Path}", _scheduleFilePath);
+                File.Delete(scheduleFilePath);
+                _logger.LogInformation("Deleted schedule file at {Path}", scheduleFilePath);
             }
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error deleting schedule file at {Path}", _scheduleFilePath);
+            _logger.LogError(ex, "Error deleting schedule file at {Path}", scheduleFilePath);
             return false;
         }
     }
@@ -195,18 +216,19 @@ public class EventStorageService
     /// <returns>Path to backup file if successful, null otherwise</returns>
     public string? BackupSchedule()
     {
+        var scheduleFilePath = GetScheduleFilePath();
         try
         {
-            if (!File.Exists(_scheduleFilePath))
+            if (!File.Exists(scheduleFilePath))
             {
-                _logger.LogWarning("No schedule file to backup at {Path}", _scheduleFilePath);
+                _logger.LogWarning("No schedule file to backup at {Path}", scheduleFilePath);
                 return null;
             }
 
             var timestamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
-            var backupPath = _scheduleFilePath.Replace(".json", $".backup.{timestamp}.json");
+            var backupPath = scheduleFilePath.Replace(".json", $".backup.{timestamp}.json");
 
-            File.Copy(_scheduleFilePath, backupPath);
+            File.Copy(scheduleFilePath, backupPath);
             _logger.LogInformation("Created backup at {BackupPath}", backupPath);
 
             return backupPath;
