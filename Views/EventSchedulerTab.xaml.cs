@@ -151,25 +151,21 @@ public partial class EventSchedulerTab : UserControl
             var state = _smartRestartService.GetState();
             if (state != SmartRestartState.Idle)
             {
-                MessageBox.Show(
+                await DialogService.ShowWarningAsync(
                     $"Smart restart is already in progress (State: {state}). Please wait for it to complete.",
-                    "Cannot Activate",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
+                    "Cannot Activate");
                 return;
             }
 
             // Confirm with user
-            var result = MessageBox.Show(
+            var result = await DialogService.ShowConfirmationAsync(
                 $"This will initiate a smart restart to activate event:\n\n" +
                 $"'{_selectedEvent.Name}'\n\n" +
                 $"The server will send countdown warnings to players and restart at the next lobby.\n\n" +
                 $"Continue?",
-                "Confirm Event Activation",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Question);
+                "Confirm Event Activation");
 
-            if (result != MessageBoxResult.Yes)
+            if (!result)
                 return;
 
             _logger.LogInformation("Manually activating event: {EventName} (ID: {EventId})", _selectedEvent.Name, _selectedEvent.Id);
@@ -180,12 +176,10 @@ public partial class EventSchedulerTab : UserControl
             // Initiate smart restart for this event
             _smartRestartService.InitiateRestart(_selectedEvent, null!);
 
-            MessageBox.Show(
+            await DialogService.ShowSuccessAsync(
                 $"Event activation initiated!\n\n" +
                 $"The server will begin the countdown process and restart at the next opportunity.",
-                "Activation Started",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+                "Activation Started");
 
             // Refresh the event list
             LoadUpcomingEvents();
@@ -193,11 +187,7 @@ public partial class EventSchedulerTab : UserControl
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error activating event");
-            MessageBox.Show(
-                $"Failed to activate event: {ex.Message}",
-                "Error",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+            await DialogService.ShowErrorAsync($"Failed to activate event: {ex.Message}");
             ActivateButton.IsEnabled = true;
         }
     }

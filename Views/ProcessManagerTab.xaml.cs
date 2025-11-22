@@ -70,33 +70,31 @@ public partial class ProcessManagerTab : UserControl
             {
                 _updateWindowTitle();
                 RefreshProcessList();
-                MessageBox.Show($"Successfully attached to process {selectedProcess.ProcessId}",
-                    "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                await DialogService.ShowSuccessAsync($"Successfully attached to process {selectedProcess.ProcessId}",
+                    "Success");
             }
             else
             {
-                MessageBox.Show(result.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                await DialogService.ShowErrorAsync(result.Message);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error attaching to process");
-            MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            await DialogService.ShowErrorAsync(ex.Message);
         }
     }
 
-    private void OnKillProcessClicked(object sender, RoutedEventArgs e)
+    private async void OnKillProcessClicked(object sender, RoutedEventArgs e)
     {
         if (ProcessListGrid.SelectedItem is not ServerProcessInfo selectedProcess)
             return;
 
-        var result = MessageBox.Show(
+        var result = await DialogService.ShowConfirmationAsync(
             $"Are you sure you want to kill process {selectedProcess.ProcessId} ({selectedProcess.ConfigFile})?",
-            "Confirm Kill Process",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
+            "Confirm Kill Process");
 
-        if (result != MessageBoxResult.Yes)
+        if (!result)
             return;
 
         try
@@ -106,13 +104,13 @@ public partial class ProcessManagerTab : UserControl
             process.WaitForExit(5000);
 
             RefreshProcessList();
-            MessageBox.Show($"Process {selectedProcess.ProcessId} killed successfully",
-                "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            await DialogService.ShowSuccessAsync($"Process {selectedProcess.ProcessId} killed successfully",
+                "Success");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error killing process");
-            MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            await DialogService.ShowErrorAsync(ex.Message);
         }
     }
 

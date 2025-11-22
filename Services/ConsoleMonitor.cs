@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace WreckfestController.Services;
 
@@ -12,11 +13,15 @@ public class ConsoleMonitor : IDisposable
     private readonly ILogger<ConsoleMonitor> _logger;
     private IntPtr _consoleHandle = IntPtr.Zero;
     private COORD _lastPosition;
+    private short _lastConsoleWidth;
     private Timer? _monitorTimer;
     private readonly List<Action<string>> _outputSubscribers = new();
     private int _targetProcessId;
     private bool _isMonitoring;
     private readonly object _lockObject = new();
+
+    // Line buffer for accumulating incomplete output across polling cycles
+    private string _incompleteLineBuffer = "";
 
     // Windows API Constants
     private const int STD_OUTPUT_HANDLE = -11;
@@ -45,6 +50,11 @@ public class ConsoleMonitor : IDisposable
         uint nLength,
         COORD dwReadCoord,
         out uint lpNumberOfCharsRead);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetConsoleScreenBufferSize(
+        IntPtr hConsoleOutput,
+        COORD dwSize);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct COORD
@@ -89,9 +99,9 @@ public class ConsoleMonitor : IDisposable
     /// Starts monitoring the console output of the specified process.
     /// </summary>
     /// <param name="processId">The process ID to monitor</param>
-    /// <param name="pollingIntervalMs">How often to check for new output (default: 100ms)</param>
+    /// <param name="pollingIntervalMs">How often to check for new output (default: 500ms - slower to avoid capturing partial output)</param>
     /// <returns>True if successfully attached and started monitoring</returns>
-    public bool StartMonitoring(int processId, int pollingIntervalMs = 100)
+    public bool StartMonitoring(int processId, int pollingIntervalMs = 500)
     {
         lock (_lockObject)
         {
@@ -136,17 +146,19 @@ public class ConsoleMonitor : IDisposable
                     return false;
                 }
 
-                // Get initial cursor position
+                // Get initial cursor position and console width
                 if (GetConsoleScreenBufferInfo(_consoleHandle, out var bufferInfo))
                 {
                     _lastPosition = bufferInfo.dwCursorPosition;
-                    _logger.LogInformation("Console attached. Initial cursor position: ({X}, {Y})",
-                        _lastPosition.X, _lastPosition.Y);
+                    _lastConsoleWidth = bufferInfo.dwSize.X;
+                    _logger.LogInformation("Console attached. Initial cursor position: ({X}, {Y}), Width: {Width}",
+                        _lastPosition.X, _lastPosition.Y, _lastConsoleWidth);
                 }
                 else
                 {
                     _logger.LogWarning("Could not get initial console buffer info");
                     _lastPosition = new COORD(0, 0);
+                    _lastConsoleWidth = 80; // Default fallback
                 }
 
                 _targetProcessId = processId;
@@ -225,6 +237,17 @@ public class ConsoleMonitor : IDisposable
                 return;
             }
 
+            // Check if console was resized
+            if (bufferInfo.dwSize.X != _lastConsoleWidth)
+            {
+                _logger.LogInformation("Console width changed from {OldWidth} to {NewWidth}. Resetting position tracking.",
+                    _lastConsoleWidth, bufferInfo.dwSize.X);
+                _lastConsoleWidth = bufferInfo.dwSize.X;
+                _lastPosition = bufferInfo.dwCursorPosition;
+                // Don't read output this cycle, just update tracking
+                return;
+            }
+
             // Check if cursor has moved (indicating new output)
             if (bufferInfo.dwCursorPosition.Y > _lastPosition.Y ||
                 (bufferInfo.dwCursorPosition.Y == _lastPosition.Y &&
@@ -284,27 +307,76 @@ public class ConsoleMonitor : IDisposable
         if (string.IsNullOrEmpty(rawOutput))
             return;
 
-        StringBuilder processedOutput = new StringBuilder();
-
-        // Split by console width and trim each line
-        for (int i = 0; i < rawOutput.Length; i += consoleWidth)
+        // DEBUG: Dump raw output to file
+        try
         {
-            int lineLength = Math.Min(consoleWidth, rawOutput.Length - i);
-            string line = rawOutput.Substring(i, lineLength);
+            var debugPath = Path.Combine(Path.GetTempPath(), "wreckfest_console_debug.txt");
+            File.AppendAllText(debugPath, $"\n\n=== RAW OUTPUT (Width: {consoleWidth}) at {DateTime.Now:HH:mm:ss.fff} ===\n");
+            File.AppendAllText(debugPath, rawOutput);
+            File.AppendAllText(debugPath, "\n=== END RAW OUTPUT ===\n");
+        }
+        catch
+        {
+            // Ignore debug file errors
+        }
 
-            // Trim trailing spaces but keep content
-            line = line.TrimEnd();
+        // Prepend any incomplete line from previous cycle
+        string fullText = _incompleteLineBuffer + rawOutput;
+        _incompleteLineBuffer = ""; // Clear buffer
 
-            if (!string.IsNullOrEmpty(line))
+        // Process text: handle both explicit newlines and console width wrapping
+        var lines = new List<string>();
+        int pos = 0;
+
+        while (pos < fullText.Length)
+        {
+            // Look for line breaks within console width
+            int lineEnd = Math.Min(pos + consoleWidth, fullText.Length);
+            int newlinePos = fullText.IndexOfAny(new[] { '\r', '\n' }, pos, lineEnd - pos);
+
+            if (newlinePos >= 0)
             {
-                processedOutput.AppendLine(line);
+                // Found explicit newline - extract line
+                string line = fullText.Substring(pos, newlinePos - pos).TrimEnd();
+                if (!string.IsNullOrWhiteSpace(line))
+                {
+                    lines.Add(line);
+                }
+
+                // Skip past newline characters
+                pos = newlinePos;
+                while (pos < fullText.Length && (fullText[pos] == '\r' || fullText[pos] == '\n'))
+                {
+                    pos++;
+                }
+            }
+            else
+            {
+                // No newline found - either wrapped line or end of buffer
+                string segment = fullText.Substring(pos, lineEnd - pos).TrimEnd();
+
+                if (lineEnd < fullText.Length)
+                {
+                    // Not at end of buffer - this is a wrapped line
+                    if (!string.IsNullOrWhiteSpace(segment))
+                    {
+                        lines.Add(segment);
+                    }
+                    pos = lineEnd;
+                }
+                else
+                {
+                    // At end of buffer - might be incomplete
+                    _incompleteLineBuffer = segment;
+                    break;
+                }
             }
         }
 
-        string output = processedOutput.ToString();
-        if (!string.IsNullOrEmpty(output))
+        // Emit complete lines
+        if (lines.Count > 0)
         {
-            // Notify subscribers
+            string output = string.Join(Environment.NewLine, lines);
             NotifySubscribers(output);
         }
     }
@@ -347,6 +419,7 @@ public class ConsoleMonitor : IDisposable
 
         _isMonitoring = false;
         _targetProcessId = 0;
+        _incompleteLineBuffer = ""; // Clear line buffer
     }
 
     public void Dispose()

@@ -56,6 +56,38 @@ public class ServerManager
 
         // Subscribe to console monitor output
         _consoleMonitor.SubscribeToOutput(OnConsoleOutputReceived);
+
+        // Subscribe to player tracker list command requests
+        _playerTracker.OnListCommandRequested += OnListCommandRequested;
+    }
+
+    /// <summary>
+    /// Handles player tracker requests to send a list command
+    /// </summary>
+    private void OnListCommandRequested()
+    {
+        if (!IsRunning)
+        {
+            _logger.LogDebug("Ignoring list command request - server is not running");
+            return;
+        }
+
+        // Fire and forget - we don't want to block the player tracker
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await SendCommandAsync("list");
+                if (!result.Success)
+                {
+                    _logger.LogWarning("Failed to send list command: {Message}", result.Message);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending list command");
+            }
+        });
     }
 
     private Process? GetActualServerProcess()
@@ -584,21 +616,21 @@ public class ServerManager
         // Get steamcmd configuration
         var steamCmdPath = _configuration["SteamCmd:SteamCmdPath"];
         var appId = _configuration["SteamCmd:WreckfestAppId"];
-        var installDir = _configuration["SteamCmd:InstallDirectory"];
+        var installDir = _configuration["WreckfestServer:WorkingDirectory"];
 
         if (string.IsNullOrEmpty(steamCmdPath) || !File.Exists(steamCmdPath))
         {
-            return (false, $"SteamCmd executable not found at: {steamCmdPath}. Please configure SteamCmd:SteamCmdPath in appsettings.json");
+            return (false, $"SteamCmd executable not found at: {steamCmdPath}. Please configure SteamCmd Path in settings.");
         }
 
         if (string.IsNullOrEmpty(appId))
         {
-            return (false, "SteamCmd:WreckfestAppId not configured in appsettings.json");
+            return (false, "SteamCmd Wreckfest App ID not configured in settings.");
         }
 
         if (string.IsNullOrEmpty(installDir) || !Directory.Exists(installDir))
         {
-            return (false, $"Install directory not found: {installDir}");
+            return (false, $"Wreckfest Working Directory not found: {installDir}. Please configure in settings.");
         }
 
         try
@@ -912,11 +944,12 @@ public class ServerManager
 
     /// <summary>
     /// Starts output monitoring using either console monitoring or log file monitoring
-    /// based on the UseConsoleMonitoring configuration setting.
+    /// based on the UseConsoleMonitoring user setting.
     /// </summary>
     private void StartOutputMonitoring()
     {
-        bool useConsoleMonitoring = _configuration.GetValue("WreckfestServer:UseConsoleMonitoring", true);
+        // Check user settings first, fallback to config, default to true (console monitoring)
+        var useConsoleMonitoring = _configuration.GetValue("WreckfestServer:UseConsoleMonitoring", true);
 
         if (useConsoleMonitoring)
         {
@@ -982,32 +1015,63 @@ public class ServerManager
 
     /// <summary>
     /// Starts monitoring the server process console using Windows Console API.
+    /// Includes retry logic for slow-starting processes.
     /// </summary>
     private void StartConsoleMonitoring()
     {
-        try
+        if (_actualServerPid == null)
         {
-            if (_actualServerPid == null)
+            _logger.LogWarning("Cannot start console monitoring: No server process ID");
+            return;
+        }
+
+        // Start retry loop in background to not block
+        _ = Task.Run(async () =>
+        {
+            const int maxRetries = 5;
+            const int retryDelayMs = 2000; // 2 seconds between retries
+
+            for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
-                _logger.LogWarning("Cannot start console monitoring: No server process ID");
-                return;
+                try
+                {
+                    // Check if process is still running
+                    if (_actualServerPid == null)
+                    {
+                        _logger.LogWarning("Console monitoring aborted: Server process ID cleared");
+                        return;
+                    }
+
+                    bool started = _consoleMonitor.StartMonitoring(_actualServerPid.Value);
+
+                    if (started)
+                    {
+                        _logger.LogInformation("Console monitoring started for PID: {ProcessId} (attempt {Attempt}/{MaxRetries})",
+                            _actualServerPid, attempt, maxRetries);
+                        return; // Success!
+                    }
+                    else
+                    {
+                        _logger.LogWarning("Failed to start console monitoring for PID: {ProcessId} (attempt {Attempt}/{MaxRetries})",
+                            _actualServerPid, attempt, maxRetries);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error starting console monitoring (attempt {Attempt}/{MaxRetries})", attempt, maxRetries);
+                }
+
+                // Wait before retry (unless this was the last attempt)
+                if (attempt < maxRetries)
+                {
+                    _logger.LogDebug("Retrying console monitoring in {DelayMs}ms...", retryDelayMs);
+                    await Task.Delay(retryDelayMs);
+                }
             }
 
-            bool started = _consoleMonitor.StartMonitoring(_actualServerPid.Value);
-
-            if (started)
-            {
-                _logger.LogInformation("Console monitoring started for PID: {ProcessId}", _actualServerPid);
-            }
-            else
-            {
-                _logger.LogWarning("Failed to start console monitoring for PID: {ProcessId}", _actualServerPid);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to start console monitoring");
-        }
+            _logger.LogError("Failed to start console monitoring after {MaxRetries} attempts for PID: {ProcessId}",
+                maxRetries, _actualServerPid);
+        });
     }
 
     /// <summary>
@@ -1397,21 +1461,12 @@ public class ServerManager
                 _startTime = process.StartTime;
             }
 
-            // Start monitoring the existing process
-            bool started = _consoleMonitor.StartMonitoring(_actualServerPid.Value);
+            // Initialize trackers
+            _playerTracker.Clear();
+            _trackChangeTracker.Clear();
 
-            if (started)
-            {
-                _logger.LogInformation($"Console monitoring started for attached process {processId}");
-
-                // Initialize trackers
-                _playerTracker.Clear();
-                _trackChangeTracker.Clear();
-            }
-            else
-            {
-                _logger.LogWarning($"Failed to start console monitoring for process {processId}");
-            }
+            // Start monitoring the existing process (with retry logic)
+            StartConsoleMonitoring();
 
             _logger.LogInformation($"Successfully attached to process {processId}");
 

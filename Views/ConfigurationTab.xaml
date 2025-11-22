@@ -102,7 +102,20 @@
                     <TextBox x:Name="ServerArgumentsTextBox"
                              materialDesign:HintAssist.Hint="-s server_config=server_config.cfg"
                              Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                             Foreground="{StaticResource TextPrimary}"/>
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- Use Console Monitoring -->
+                    <CheckBox x:Name="UseConsoleMonitoringCheckBox"
+                              Content="Use Console Monitoring (recommended)"
+                              IsChecked="True"
+                              Foreground="{StaticResource TextPrimary}"
+                              materialDesign:CheckBoxAssist.CheckBoxSize="20"/>
+                    <TextBlock Text="Provides real-time console output including all server messages"
+                               FontSize="10"
+                               Foreground="{StaticResource TextSecondary}"
+                               Margin="32,2,0,0"
+                               TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
 
@@ -139,17 +152,6 @@
                                Margin="0,0,0,5"/>
                     <TextBox x:Name="WreckfestAppIdTextBox"
                              materialDesign:HintAssist.Hint="361580"
-                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                             Foreground="{StaticResource TextPrimary}"
-                             Margin="0,0,0,15"/>
-
-                    <!-- Install Directory -->
-                    <TextBlock Text="Install Directory"
-                               Foreground="{StaticResource TextSecondary}"
-                               FontSize="12"
-                               Margin="0,0,0,5"/>
-                    <TextBox x:Name="InstallDirectoryTextBox"
-                             materialDesign:HintAssist.Hint="Where SteamCmd installs/updates Wreckfest"
                              Style="{StaticResource MaterialDesignOutlinedTextBox}"
                              Foreground="{StaticResource TextPrimary}"/>
                 </StackPanel>

@@ -1,0 +1,85 @@
+<UserControl x:Class="WreckfestController.Services.ConfirmationDialogView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes">
+    <Border Background="{StaticResource BackgroundDark}"
+            BorderBrush="{StaticResource BorderColor}"
+            BorderThickness="1"
+            CornerRadius="8"
+            Padding="0"
+            MinWidth="400"
+            MaxWidth="600">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Header -->
+            <Border Grid.Row="0"
+                    Background="{StaticResource BackgroundMedium}"
+                    CornerRadius="8,8,0,0"
+                    Padding="20,15">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <materialDesign:PackIcon Grid.Column="0"
+                                             Kind="{Binding Icon}"
+                                             Width="24"
+                                             Height="24"
+                                             VerticalAlignment="Center"
+                                             Margin="0,0,15,0">
+                        <materialDesign:PackIcon.Foreground>
+                            <SolidColorBrush Color="{Binding IconColor}"/>
+                        </materialDesign:PackIcon.Foreground>
+                    </materialDesign:PackIcon>
+
+                    <TextBlock Grid.Column="1"
+                               Text="{Binding Title}"
+                               FontSize="18"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimary}"
+                               VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <!-- Content -->
+            <Border Grid.Row="1" Padding="20">
+                <TextBlock Text="{Binding Message}"
+                           FontSize="14"
+                           Foreground="{StaticResource TextPrimary}"
+                           TextWrapping="Wrap"
+                           LineHeight="20"/>
+            </Border>
+
+            <!-- Footer -->
+            <Border Grid.Row="2"
+                    Background="{StaticResource BackgroundMedium}"
+                    CornerRadius="0,0,8,8"
+                    Padding="20,15">
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right">
+                    <Button Content="NO"
+                            Command="{x:Static materialDesign:DialogHost.CloseDialogCommand}"
+                            CommandParameter="False"
+                            Background="{StaticResource BackgroundDark}"
+                            Foreground="{StaticResource TextPrimary}"
+                            BorderBrush="{StaticResource BorderColor}"
+                            BorderThickness="1"
+                            Width="100"
+                            Margin="0,0,10,0"/>
+                    <Button Content="YES"
+                            Command="{x:Static materialDesign:DialogHost.CloseDialogCommand}"
+                            CommandParameter="True"
+                            Background="{StaticResource ButtonLightBlue}"
+                            Foreground="White"
+                            Width="100"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

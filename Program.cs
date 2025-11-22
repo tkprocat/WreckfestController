@@ -45,8 +45,13 @@ public class Program
         Host.CreateDefaultBuilder(args)
             .ConfigureAppConfiguration((context, config) =>
             {
-                config.SetBasePath(AppDomain.CurrentDomain.BaseDirectory);
-                config.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+                // For single-file apps, use the directory where the exe is located
+                // Environment.ProcessPath gives us the actual exe path even in single-file mode
+                var exeDirectory = Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory;
+                config.SetBasePath(exeDirectory);
+
+                // appsettings.json is optional - app works with defaults if not present
+                config.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
                 config.AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", optional: true);
 
                 // Build temporary configuration to get UserSettingsPath

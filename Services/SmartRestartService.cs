@@ -98,9 +98,7 @@ public class SmartRestartService
             _onRestartCompleteCallback = onComplete;
 
             // Check if any real players are online (excludes bots)
-            var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
-
-            if (onlinePlayers == 0)
+            if (!_playerTracker.HasPlayersOnline())
             {
                 _logger.LogInformation("No real players online (only bots or empty) - skipping countdown and restarting immediately");
                 _ = Task.Run(() => ExecuteRestartAsync());
@@ -108,6 +106,7 @@ public class SmartRestartService
             }
 
             // Real players are online - start countdown
+            var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
             _logger.LogInformation("{PlayerCount} real players online - starting {Minutes}-minute countdown", onlinePlayers, CountdownMinutes);
             _state = SmartRestartState.Warning;
             _countdownMinutesRemaining = CountdownMinutes;

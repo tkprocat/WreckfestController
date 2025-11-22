@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using WreckfestController.Services;
 
 namespace WreckfestController.Views;
 
@@ -21,7 +22,8 @@ public partial class ControllerLogTab : UserControl
     /// </summary>
     public void AddLogEntry(string level, string message)
     {
-        Dispatcher.Invoke(() =>
+        // Use BeginInvoke to prevent deadlocks when called from background threads
+        Dispatcher.BeginInvoke(() =>
         {
             // Limit log entries to prevent memory bloat
             if (_logEntries.Count >= MaxLogEntries)
@@ -65,15 +67,13 @@ public partial class ControllerLogTab : UserControl
         };
     }
 
-    private void OnClearLogClicked(object sender, RoutedEventArgs e)
+    private async void OnClearLogClicked(object sender, RoutedEventArgs e)
     {
-        var result = MessageBox.Show(
+        var result = await DialogService.ShowConfirmationAsync(
             "Are you sure you want to clear the controller log?",
-            "Clear Log",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
+            "Clear Log");
 
-        if (result == MessageBoxResult.Yes)
+        if (result)
         {
             _logEntries.Clear();
             UpdateLogCount();

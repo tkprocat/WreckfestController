@@ -124,13 +124,13 @@ public class SettingsService
                 ServerPath = _configuration["WreckfestServer:ServerPath"] ?? "",
                 ServerArguments = _configuration["WreckfestServer:ServerArguments"] ?? "-s server_config=server_config.cfg",
                 WorkingDirectory = _configuration["WreckfestServer:WorkingDirectory"] ?? "",
-                LogFilePath = _configuration["WreckfestServer:LogFilePath"] ?? ""
+                LogFilePath = _configuration["WreckfestServer:LogFilePath"] ?? "",
+                UseConsoleMonitoring = true  // Default to console monitoring
             },
             SteamCmd = new SteamCmdSettings
             {
                 SteamCmdPath = _configuration["SteamCmd:SteamCmdPath"] ?? "",
-                WreckfestAppId = _configuration["SteamCmd:WreckfestAppId"] ?? "361580",
-                InstallDirectory = _configuration["SteamCmd:InstallDirectory"] ?? ""
+                WreckfestAppId = _configuration["SteamCmd:WreckfestAppId"] ?? "361580"
             },
             WreckfestWeb = new WreckfestWebSettings
             {

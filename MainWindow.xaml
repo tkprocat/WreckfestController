@@ -12,11 +12,12 @@
             BorderBrush="#ff8c00"
             BorderThickness="1"
             CornerRadius="8">
-        <Grid>
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/> <!-- Custom titlebar -->
-                <RowDefinition Height="*"/>    <!-- Main content -->
-            </Grid.RowDefinitions>
+        <materialDesign:DialogHost Identifier="RootDialog">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/> <!-- Custom titlebar -->
+                    <RowDefinition Height="*"/>    <!-- Main content -->
+                </Grid.RowDefinitions>
 
             <!-- Custom Titlebar -->
             <Grid Grid.Row="0"
@@ -71,6 +72,11 @@
                     <ContentControl x:Name="ServerControlTabContent"/>
                 </TabItem>
 
+                <!-- Players Tab -->
+                <TabItem Header="Players">
+                    <ContentControl x:Name="PlayersTabContent"/>
+                </TabItem>
+
                 <!-- Controller Log Tab -->
                 <TabItem Header="Controller Log">
                     <ContentControl x:Name="ControllerLogTabContent"/>
@@ -92,6 +98,7 @@
                 </TabItem>
             </TabControl>
 
-        </Grid> <!-- Root Grid with titlebar -->
+            </Grid> <!-- Root Grid with titlebar -->
+        </materialDesign:DialogHost>
     </Border> <!-- Window border -->
 </Window>

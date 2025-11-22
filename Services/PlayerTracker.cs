@@ -13,10 +13,19 @@ public class PlayerTracker
     private DateTime _lastListUpdate = DateTime.MinValue;
     private readonly object _lock = new();
 
+    /// <summary>
+    /// Event raised when a list command should be sent to refresh player data
+    /// </summary>
+    public event Action? OnListCommandRequested;
+
     // State for parsing multi-line list command responses
     private bool _collectingListResponse = false;
     private readonly List<string> _listResponseLines = new();
     private DateTime _listResponseStartTime = DateTime.MinValue;
+
+    // Debounce timer for list command requests
+    private Timer? _listCommandDebounceTimer;
+    private readonly object _debounceTimerLock = new();
 
     public PlayerTracker(ILogger<PlayerTracker> logger, WreckfestWebWebhookService webhookService)
     {
@@ -32,6 +41,14 @@ public class PlayerTracker
         if (string.IsNullOrWhiteSpace(line))
             return;
 
+        // DEBUG: Log all lines being processed
+        try
+        {
+            var debugPath = Path.Combine(Path.GetTempPath(), "wreckfest_playertracker_debug.txt");
+            File.AppendAllText(debugPath, $"[{DateTime.Now:HH:mm:ss.fff}] ProcessLogLine: {line}\n");
+        }
+        catch { }
+
         lock (_lock)
         {
             // Check if we're collecting list response
@@ -42,17 +59,27 @@ public class PlayerTracker
                 if (Regex.IsMatch(line, @"^\s+\d+:"))
                 {
                     _listResponseLines.Add(line);
+                    _logger.LogDebug("[LIST] Added player line ({Count} total): {Line}", _listResponseLines.Count, line);
                     return;
                 }
                 // Check for empty line or non-list content - end of list
                 else if (string.IsNullOrWhiteSpace(line.Trim()) ||
                          (!line.Contains("Players:") && !line.Trim().Equals("list") && !Regex.IsMatch(line, @"^\s+\d+:")))
                 {
+                    _logger.LogDebug("[LIST] End of list detected. Reason: {Reason}, Line: '{Line}'",
+                        string.IsNullOrWhiteSpace(line.Trim()) ? "empty/whitespace" : "non-list content",
+                        line);
+
                     // Process the collected list
                     if (_listResponseLines.Count > 1) // Need at least "list" command + one player entry
                     {
+                        _logger.LogInformation("[LIST] Processing {Count} collected lines", _listResponseLines.Count);
                         ProcessListResponse(_listResponseLines.ToArray());
                         _ = SendPlayerListUpdate(); // Send webhook after processing list
+                    }
+                    else
+                    {
+                        _logger.LogWarning("[LIST] Not enough lines collected ({Count}), skipping processing", _listResponseLines.Count);
                     }
                     _collectingListResponse = false;
                     _listResponseLines.Clear();
@@ -66,13 +93,15 @@ public class PlayerTracker
                 _listResponseStartTime = DateTime.Now;
                 _listResponseLines.Clear();
                 _listResponseLines.Add(line);
+                _logger.LogDebug("[LIST] Started collecting list response with: {Line}", line);
                 return;
             }
 
             // If we've been collecting for too long (>2 seconds), abandon it
             if (_collectingListResponse && (DateTime.Now - _listResponseStartTime).TotalSeconds > 2)
             {
-                _logger.LogWarning("List response collection timed out, abandoning");
+                _logger.LogWarning("[LIST] Collection timed out after {Elapsed:F1}s, abandoning. Collected {Count} lines",
+                    (DateTime.Now - _listResponseStartTime).TotalSeconds, _listResponseLines.Count);
                 _collectingListResponse = false;
                 _listResponseLines.Clear();
             }
@@ -144,6 +173,9 @@ public class PlayerTracker
                 _ = SendPlayerListUpdate();
             }
         }
+
+        // Request a list command to get full player details (slot, admin status, etc.)
+        RequestListCommand();
     }
 
     /// <summary>
@@ -164,6 +196,9 @@ public class PlayerTracker
                 _ = SendPlayerListUpdate();
             }
         }
+
+        // Request a list command to refresh player data
+        RequestListCommand();
     }
 
     /// <summary>
@@ -184,6 +219,9 @@ public class PlayerTracker
                 _ = SendPlayerListUpdate();
             }
         }
+
+        // Request a list command to refresh player data
+        RequestListCommand();
     }
 
     /// <summary>
@@ -198,32 +236,72 @@ public class PlayerTracker
     {
         lock (_lock)
         {
+            _logger.LogDebug("[LIST PARSE] Processing {Count} lines", lines.Length);
+
             // Track which players are in the current list
             var playersInList = new HashSet<string>();
 
             foreach (var line in lines)
             {
+                _logger.LogDebug("[LIST PARSE] Line: '{Line}'", line);
+
                 // Parse player count: "Players: 3/24"
                 var countMatch = Regex.Match(line, @"Players:\s*(\d+)/(\d+)");
                 if (countMatch.Success)
                 {
-                    _logger.LogDebug("Server has {Current}/{Max} players", countMatch.Groups[1].Value, countMatch.Groups[2].Value);
+                    _logger.LogDebug("[LIST PARSE] Player count: {Current}/{Max}", countMatch.Groups[1].Value, countMatch.Groups[2].Value);
                     continue;
                 }
 
                 // Parse player entries: "  1:    0 [0] *Lord Bane        | [A] 244 Stellar      | ping: 0    | ready"
-                // Format: whitespace + slot + ": " + other data + [bracket] + asterisk (optional) + playerName
+                //                   or: " 11:    0 [0] Procat A                         | [A] 237 Lawn Mower" (with admin A)
+                // Format: whitespace + slot + ": " + other data + [bracket] + asterisk (optional) + playerName + optional role indicator
                 // Handle both normal lines and wrapped lines (ending with >)
+                // ANSI color codes might be present, so we need to handle them
                 var playerMatch = Regex.Match(line, @"^\s+(\d+):\s+\d+\s+\[.\]\s+(\*?)(.+?)(?:\s*[\|>]|$)");
                 if (playerMatch.Success)
                 {
                     var slot = int.Parse(playerMatch.Groups[1].Value);
                     var isBot = playerMatch.Groups[2].Value == "*";
-                    var playerName = playerMatch.Groups[3].Value.Trim();
+                    var fullNameWithRole = playerMatch.Groups[3].Value.Trim();
+
+                    _logger.LogDebug("[LIST PARSE] Regex matched: Slot={Slot}, IsBot={IsBot}, FullName='{FullName}'",
+                        slot, isBot, fullNameWithRole);
+
+                    // Check for admin/moderator indicators (A or M at the end after spaces)
+                    // ANSI color codes format: \x1b[38;2;R;G;Bm or similar escape sequences
+                    // Orange A: might be surrounded by ANSI codes like \x1b[38;2;255;165;0mA\x1b[0m
+                    var isAdmin = false;
+                    var isModerator = false;
+                    var playerName = fullNameWithRole;
+
+                    // Remove ANSI color codes and check for role indicators
+                    var cleanName = Regex.Replace(fullNameWithRole, @"\x1b\[[0-9;]*m", "");
+
+                    // Check if there's a single letter (A or M) at the end separated by whitespace
+                    var roleMatch = Regex.Match(cleanName, @"^(.+?)\s+([AM])\s*$");
+                    if (roleMatch.Success)
+                    {
+                        playerName = roleMatch.Groups[1].Value.Trim();
+                        var roleIndicator = roleMatch.Groups[2].Value;
+                        isAdmin = roleIndicator == "A";
+                        isModerator = roleIndicator == "M";
+                        _logger.LogDebug("[LIST PARSE] Role detected: {Role} for '{PlayerName}'", roleIndicator, playerName);
+                    }
+                    else
+                    {
+                        playerName = cleanName.Trim();
+                    }
 
                     // Skip empty names
                     if (string.IsNullOrWhiteSpace(playerName))
+                    {
+                        _logger.LogDebug("[LIST PARSE] Skipping empty player name");
                         continue;
+                    }
+
+                    _logger.LogDebug("[LIST PARSE] Final: PlayerName='{PlayerName}', IsAdmin={IsAdmin}, IsMod={IsMod}",
+                        playerName, isAdmin, isModerator);
 
                     playersInList.Add(playerName);
 
@@ -231,6 +309,7 @@ public class PlayerTracker
                     {
                         player.IsOnline = true;
                         player.Slot = slot;
+                        player.IsAdmin = isAdmin;
                         player.LastSeenAt = DateTime.Now;
                     }
                     else
@@ -243,9 +322,19 @@ public class PlayerTracker
                             LastSeenAt = DateTime.Now,
                             IsOnline = true,
                             IsBot = isBot,
+                            IsAdmin = isAdmin,
                             Slot = slot
                         };
-                        _logger.LogInformation("{Type} discovered via list command: {PlayerName}", isBot ? "Bot" : "Player", playerName);
+                        var typeDescription = isBot ? "Bot" : (isAdmin ? "Admin" : "Player");
+                        _logger.LogInformation("{Type} discovered via list command: {PlayerName}", typeDescription, playerName);
+                    }
+                }
+                else
+                {
+                    // Log lines that didn't match the player regex (excluding known non-player lines)
+                    if (!line.Trim().Equals("list") && !line.Contains("Players:"))
+                    {
+                        _logger.LogDebug("[LIST PARSE] Line did not match player regex: '{Line}'", line);
                     }
                 }
             }
@@ -311,6 +400,18 @@ public class PlayerTracker
     }
 
     /// <summary>
+    /// Checks if any real players (excluding bots) are currently online
+    /// </summary>
+    /// <returns>True if one or more real players are online, false otherwise</returns>
+    public bool HasPlayersOnline()
+    {
+        lock (_lock)
+        {
+            return _players.Values.Any(p => p.IsOnline && !p.IsBot);
+        }
+    }
+
+    /// <summary>
     /// Clear all player data (used when server stops)
     /// </summary>
     public void Clear()
@@ -353,6 +454,48 @@ public class PlayerTracker
             catch
             {
                 // Ignore subscriber errors
+            }
+        }
+    }
+
+    /// <summary>
+    /// Request a list command to be sent to the server.
+    /// Debounces requests to avoid spamming the server - if a request comes in during
+    /// the debounce period, it schedules another request after the period expires.
+    /// </summary>
+    /// <param name="force">If true, bypasses the debounce check and sends immediately</param>
+    public void RequestListCommand(bool force = false)
+    {
+        if (force)
+        {
+            _logger.LogInformation("Requesting list command to refresh player data (forced)");
+            OnListCommandRequested?.Invoke();
+            return;
+        }
+
+        // Debounce: only request if we haven't requested recently (within 2 seconds)
+        var timeSinceLastUpdate = TimeSinceLastListUpdate();
+        if (timeSinceLastUpdate.TotalSeconds >= 2)
+        {
+            _logger.LogInformation("Requesting list command to refresh player data");
+            OnListCommandRequested?.Invoke();
+        }
+        else
+        {
+            // Schedule a request after the debounce period expires
+            lock (_debounceTimerLock)
+            {
+                // Cancel any existing timer and create a new one
+                _listCommandDebounceTimer?.Dispose();
+
+                var delayMs = (int)((2 - timeSinceLastUpdate.TotalSeconds) * 1000) + 100; // Add 100ms buffer
+                _logger.LogDebug("Debouncing list command request - will fire in {DelayMs}ms", delayMs);
+
+                _listCommandDebounceTimer = new Timer(_ =>
+                {
+                    _logger.LogInformation("Requesting list command to refresh player data (debounced)");
+                    OnListCommandRequested?.Invoke();
+                }, null, delayMs, Timeout.Infinite);
             }
         }
     }

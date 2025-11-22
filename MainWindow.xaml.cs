@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private ConfigurationTab? _configurationTab;
     private EventSchedulerTab? _eventSchedulerTab;
     private ControllerLogTab? _controllerLogTab;
+    private PlayersTab? _playersTab;
 
     public MainWindow(
         ServerManager serverManager,
@@ -52,6 +53,7 @@ public partial class MainWindow : Window
             serverManager,
             playerTracker,
             trackChangeTracker,
+            settingsService,
             _loggerFactory.CreateLogger<ServerControlTab>());
 
         _configurationTab = new ConfigurationTab(
@@ -65,12 +67,18 @@ public partial class MainWindow : Window
 
         _controllerLogTab = new ControllerLogTab();
 
+        _playersTab = new PlayersTab(
+            playerTracker,
+            serverManager,
+            _loggerFactory.CreateLogger<PlayersTab>());
+
         // Connect GUI logger to Controller Log tab
         guiLoggerProvider.SetLogTab(_controllerLogTab);
 
         // Set tab content
         StatusTabContent.Content = _processManagerTab;
         ServerControlTabContent.Content = _serverControlTab;
+        PlayersTabContent.Content = _playersTab;
         ConfigurationTabContent.Content = _configurationTab;
         EventSchedulerTabContent.Content = _eventSchedulerTab;
         ControllerLogTabContent.Content = _controllerLogTab;
@@ -145,14 +153,14 @@ public partial class MainWindow : Window
             else
             {
                 _serverControlTab?.AddEventLogItem($"Failed to start server: {result.Message}", "#FF6B6B");
-                MessageBox.Show(result.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                await DialogService.ShowErrorAsync(result.Message);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error starting server");
             _serverControlTab?.AddEventLogItem($"Error starting server: {ex.Message}", "#FF6B6B");
-            MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            await DialogService.ShowErrorAsync(ex.Message);
         }
     }
 

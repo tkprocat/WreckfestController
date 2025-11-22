@@ -55,11 +55,11 @@ public partial class ConfigurationTab : UserControl
         LogFilePathTextBox.Text = Path.IsPathRooted(logPath) ? Path.GetFileName(logPath) : logPath;
 
         ServerArgumentsTextBox.Text = settings.WreckfestServer?.ServerArguments ?? "";
+        UseConsoleMonitoringCheckBox.IsChecked = settings.WreckfestServer?.UseConsoleMonitoring ?? true;
 
         // SteamCmd settings
         SteamCmdPathTextBox.Text = settings.SteamCmd?.SteamCmdPath ?? "";
         WreckfestAppIdTextBox.Text = settings.SteamCmd?.WreckfestAppId ?? "";
-        InstallDirectoryTextBox.Text = settings.SteamCmd?.InstallDirectory ?? "";
 
         // Network settings
         WreckfestWebWebhookUrlTextBox.Text = settings.WreckfestWeb?.WebhookBaseUrl ?? "";
@@ -89,13 +89,13 @@ public partial class ConfigurationTab : UserControl
                 ServerPath = serverPath,
                 WorkingDirectory = workingDir,
                 ServerArguments = ServerArgumentsTextBox.Text,
-                LogFilePath = logFilePath
+                LogFilePath = logFilePath,
+                UseConsoleMonitoring = UseConsoleMonitoringCheckBox.IsChecked ?? true
             },
             SteamCmd = new SteamCmdSettings
             {
                 SteamCmdPath = SteamCmdPathTextBox.Text,
-                WreckfestAppId = WreckfestAppIdTextBox.Text,
-                InstallDirectory = InstallDirectoryTextBox.Text
+                WreckfestAppId = WreckfestAppIdTextBox.Text
             },
             WreckfestWeb = new WreckfestWebSettings
             {
@@ -124,35 +124,31 @@ public partial class ConfigurationTab : UserControl
         }
     }
 
-    private void OnSaveClicked(object sender, RoutedEventArgs e)
+    private async void OnSaveClicked(object sender, RoutedEventArgs e)
     {
         try
         {
             // Validate required fields
             if (string.IsNullOrWhiteSpace(WorkingDirectoryTextBox.Text))
             {
-                MessageBox.Show("Working Directory is required.", "Validation Error",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                await DialogService.ShowWarningAsync("Working Directory is required.", "Validation Error");
                 return;
             }
 
             if (string.IsNullOrWhiteSpace(ServerPathTextBox.Text))
             {
-                MessageBox.Show("Server Executable is required.", "Validation Error",
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                await DialogService.ShowWarningAsync("Server Executable is required.", "Validation Error");
                 return;
             }
 
             // Validate working directory exists
             if (!Directory.Exists(WorkingDirectoryTextBox.Text))
             {
-                var result = MessageBox.Show(
+                var result = await DialogService.ShowConfirmationAsync(
                     "Working directory not found. Save anyway?",
-                    "Directory Not Found",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
+                    "Directory Not Found");
 
-                if (result != MessageBoxResult.Yes)
+                if (!result)
                     return;
             }
 
@@ -160,13 +156,11 @@ public partial class ConfigurationTab : UserControl
             var serverExePath = Path.Combine(WorkingDirectoryTextBox.Text, ServerPathTextBox.Text);
             if (!File.Exists(serverExePath))
             {
-                var result = MessageBox.Show(
+                var result = await DialogService.ShowConfirmationAsync(
                     $"Server executable not found at:\n{serverExePath}\n\nSave anyway?",
-                    "File Not Found",
-                    MessageBoxButton.YesNo,
-                    MessageBoxImage.Warning);
+                    "File Not Found");
 
-                if (result != MessageBoxResult.Yes)
+                if (!result)
                     return;
             }
 
@@ -177,30 +171,25 @@ public partial class ConfigurationTab : UserControl
 
             ShowStatusMessage("Settings saved successfully!", isError: false);
 
-            MessageBox.Show(
+            await DialogService.ShowSuccessAsync(
                 "Settings saved successfully!\n\nMost changes will take effect immediately.",
-                "Settings Saved",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+                "Settings Saved");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error saving settings");
             ShowStatusMessage($"Error saving settings: {ex.Message}", isError: true);
-            MessageBox.Show($"Error saving settings: {ex.Message}", "Error",
-                MessageBoxButton.OK, MessageBoxImage.Error);
+            await DialogService.ShowErrorAsync($"Error saving settings: {ex.Message}");
         }
     }
 
-    private void OnResetClicked(object sender, RoutedEventArgs e)
+    private async void OnResetClicked(object sender, RoutedEventArgs e)
     {
-        var result = MessageBox.Show(
+        var result = await DialogService.ShowConfirmationAsync(
             "Reset all settings to defaults? This will clear your current configuration.",
-            "Confirm Reset",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Warning);
+            "Confirm Reset");
 
-        if (result == MessageBoxResult.Yes)
+        if (result)
         {
             // Load defaults from service
             var defaults = new UserSettings
@@ -210,13 +199,13 @@ public partial class ConfigurationTab : UserControl
                     ServerPath = "",
                     ServerArguments = "-s server_config=server_config.cfg",
                     WorkingDirectory = "",
-                    LogFilePath = ""
+                    LogFilePath = "",
+                    UseConsoleMonitoring = true
                 },
                 SteamCmd = new SteamCmdSettings
                 {
                     SteamCmdPath = "",
-                    WreckfestAppId = "361580",
-                    InstallDirectory = ""
+                    WreckfestAppId = "361580"
                 },
                 WreckfestWeb = new WreckfestWebSettings
                 {

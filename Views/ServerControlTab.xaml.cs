@@ -14,6 +14,7 @@ public partial class ServerControlTab : UserControl
     private readonly ServerManager _serverManager;
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
+    private readonly SettingsService _settingsService;
     private readonly ILogger<ServerControlTab> _logger;
     private readonly StringBuilder _consoleBuffer = new();
     private readonly ObservableCollection<EventLogItem> _eventLogItems = new();
@@ -24,6 +25,7 @@ public partial class ServerControlTab : UserControl
         ServerManager serverManager,
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
+        SettingsService settingsService,
         ILogger<ServerControlTab> logger)
     {
         InitializeComponent();
@@ -31,6 +33,7 @@ public partial class ServerControlTab : UserControl
         _serverManager = serverManager;
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
+        _settingsService = settingsService;
         _logger = logger;
 
         EventLogContainer.ItemsSource = _eventLogItems;
@@ -66,11 +69,48 @@ public partial class ServerControlTab : UserControl
         StartButton.IsEnabled = !status.IsRunning;
         StopButton.IsEnabled = status.IsRunning;
         RestartButton.IsEnabled = status.IsRunning;
+
+        // Enable Update button only if SteamCMD is properly configured
+        UpdateButton.IsEnabled = IsSteamCmdConfigured();
+    }
+
+    /// <summary>
+    /// Checks if SteamCMD is properly configured
+    /// </summary>
+    private bool IsSteamCmdConfigured()
+    {
+        try
+        {
+            var settings = _settingsService.LoadSettings();
+            var steamCmdPath = settings.SteamCmd?.SteamCmdPath;
+            var appId = settings.SteamCmd?.WreckfestAppId;
+
+            // Both SteamCmdPath and WreckfestAppId must be set
+            if (string.IsNullOrWhiteSpace(steamCmdPath) || string.IsNullOrWhiteSpace(appId))
+            {
+                return false;
+            }
+
+            // Check if SteamCMD executable exists
+            if (!File.Exists(steamCmdPath))
+            {
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error checking SteamCMD configuration");
+            return false;
+        }
     }
 
     private void OnConsoleOutput(string output)
     {
-        Dispatcher.Invoke(() =>
+        // Use BeginInvoke (async) instead of Invoke (sync) to prevent deadlocks
+        // The timer thread should never block waiting for the UI thread
+        Dispatcher.BeginInvoke(() =>
         {
             try
             {
@@ -122,7 +162,8 @@ public partial class ServerControlTab : UserControl
 
     public void AddEventLogItem(string message, string colorHex)
     {
-        Dispatcher.Invoke(() =>
+        // Use BeginInvoke to prevent deadlocks when called from background threads
+        Dispatcher.BeginInvoke(() =>
         {
             try
             {
@@ -166,14 +207,14 @@ public partial class ServerControlTab : UserControl
             else
             {
                 AddEventLogItem($"Failed to start server: {result.Message}", "#FF6B6B");
-                MessageBox.Show(result.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                await DialogService.ShowErrorAsync(result.Message);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error starting server");
             AddEventLogItem($"Error starting server: {ex.Message}", "#FF6B6B");
-            MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            await DialogService.ShowErrorAsync(ex.Message);
         }
     }
 
@@ -193,14 +234,14 @@ public partial class ServerControlTab : UserControl
             else
             {
                 AddEventLogItem($"Failed to stop server: {result.Message}", "#FF6B6B");
-                MessageBox.Show(result.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                await DialogService.ShowErrorAsync(result.Message);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error stopping server");
             AddEventLogItem($"Error stopping server: {ex.Message}", "#FF6B6B");
-            MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            await DialogService.ShowErrorAsync(ex.Message);
         }
     }
 
@@ -219,14 +260,58 @@ public partial class ServerControlTab : UserControl
             else
             {
                 AddEventLogItem($"Failed to restart server: {result.Message}", "#FF6B6B");
-                MessageBox.Show(result.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                await DialogService.ShowErrorAsync(result.Message);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error restarting server");
             AddEventLogItem($"Error restarting server: {ex.Message}", "#FF6B6B");
-            MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            await DialogService.ShowErrorAsync(ex.Message);
+        }
+    }
+
+    private async void OnUpdateClicked(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            // Check if players are online and confirm action
+            if (!await ConfirmActionWithPlayersAsync("server update"))
+            {
+                AddEventLogItem("Server update cancelled", "#FFD43B");
+                return;
+            }
+
+            // Disable update button during operation
+            UpdateButton.IsEnabled = false;
+
+            AddEventLogItem("Starting server update via SteamCmd...", "#74C0FC");
+            var updateResult = await _serverManager.UpdateServerAsync();
+
+            if (updateResult.Success)
+            {
+                AddEventLogItem("Server updated successfully", "#51CF66");
+                _consoleBuffer.Clear();
+                await DialogService.ShowSuccessAsync(
+                    "Server updated and restarted successfully!",
+                    "Update Complete");
+            }
+            else
+            {
+                AddEventLogItem($"Server update failed: {updateResult.Message}", "#FF6B6B");
+                await DialogService.ShowErrorAsync(updateResult.Message, "Update Failed");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating server");
+            AddEventLogItem($"Error updating server: {ex.Message}", "#FF6B6B");
+            await DialogService.ShowErrorAsync(ex.Message);
+        }
+        finally
+        {
+            // Re-enable update button only if SteamCMD is configured
+            UpdateButton.IsEnabled = IsSteamCmdConfigured();
         }
     }
 
@@ -256,14 +341,14 @@ public partial class ServerControlTab : UserControl
             else
             {
                 AddEventLogItem($"Failed to send command: {result.Message}", "#FF6B6B");
-                MessageBox.Show(result.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                await DialogService.ShowErrorAsync(result.Message);
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error sending command");
             AddEventLogItem($"Error sending command: {ex.Message}", "#FF6B6B");
-            MessageBox.Show(ex.Message, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            await DialogService.ShowErrorAsync(ex.Message);
         }
     }
 
@@ -271,6 +356,31 @@ public partial class ServerControlTab : UserControl
     {
         _eventLogItems.Clear();
         AddEventLogItem("Event log cleared", "#888888");
+    }
+
+    /// <summary>
+    /// Checks if players are online and prompts user for confirmation if they are.
+    /// </summary>
+    /// <param name="actionName">The action being performed (e.g., "update", "stop", "restart")</param>
+    /// <returns>True if should proceed (no players or user confirmed), false if user cancelled</returns>
+    private async Task<bool> ConfirmActionWithPlayersAsync(string actionName)
+    {
+        var status = _serverManager.GetStatus();
+        if (!status.IsRunning)
+        {
+            return true; // Server not running, proceed
+        }
+
+        if (!_playerTracker.HasPlayersOnline())
+        {
+            return true; // No players online, proceed
+        }
+
+        // Players are online - ask for confirmation
+        var (onlinePlayers, bots) = _playerTracker.GetPlayerCount();
+        return await DialogService.ShowConfirmationAsync(
+            $"{onlinePlayers} player(s) online ({bots} bots).\n\nProceed with {actionName}?",
+            "Players Online");
     }
 }
 

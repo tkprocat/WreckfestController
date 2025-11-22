@@ -33,6 +33,9 @@ public class WreckfestServerSettings
 
     [JsonPropertyName("LogFilePath")]
     public string? LogFilePath { get; set; }
+
+    [JsonPropertyName("UseConsoleMonitoring")]
+    public bool? UseConsoleMonitoring { get; set; }
 }
 
 /// <summary>
@@ -45,9 +48,6 @@ public class SteamCmdSettings
 
     [JsonPropertyName("WreckfestAppId")]
     public string? WreckfestAppId { get; set; }
-
-    [JsonPropertyName("InstallDirectory")]
-    public string? InstallDirectory { get; set; }
 }
 
 /// <summary>
