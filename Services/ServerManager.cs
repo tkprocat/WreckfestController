@@ -1447,10 +1447,21 @@ public class ServerManager
                 return (false, $"Process {processId} is not a Wreckfest server");
             }
 
-            // Stop any currently running server first
-            if (_serverProcess != null && !_serverProcess.HasExited)
+            // Stop monitoring if we're already monitoring a different process
+            // IMPORTANT: Must stop monitoring BEFORE killing the process, otherwise
+            // we'll detach from the target process's console and crash it
+            if (_actualServerPid.HasValue && _actualServerPid.Value != processId)
             {
-                _logger.LogInformation("Detaching from current server before attaching to new one");
+                _logger.LogInformation("Stopping monitoring of current process {CurrentPid} before attaching to {NewPid}",
+                    _actualServerPid, processId);
+                StopOutputMonitoring();
+            }
+
+            // Stop any currently running server if it's a different process
+            if (_serverProcess != null && !_serverProcess.HasExited && _serverProcess.Id != processId)
+            {
+                _logger.LogInformation("Stopping current server {CurrentPid} before attaching to {NewPid}",
+                    _serverProcess.Id, processId);
                 await StopServerAsync();
             }
 
@@ -1465,8 +1476,15 @@ public class ServerManager
             _playerTracker.Clear();
             _trackChangeTracker.Clear();
 
-            // Start monitoring the existing process (with retry logic)
-            StartConsoleMonitoring();
+            // Start monitoring the existing process (with retry logic) only if we're not already monitoring it
+            if (!_consoleMonitor.IsMonitoring || _consoleMonitor.TargetProcessId != processId)
+            {
+                StartConsoleMonitoring();
+            }
+            else
+            {
+                _logger.LogInformation("Already monitoring process {ProcessId}, skipping console monitoring start", processId);
+            }
 
             _logger.LogInformation($"Successfully attached to process {processId}");
 

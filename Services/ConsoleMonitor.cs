@@ -116,14 +116,22 @@ public class ConsoleMonitor : IDisposable
                 // WORKAROUND: Since we're a console app, we need to free our own console first
                 // This is not ideal but may work for ASP.NET Core applications
                 // Note: This will disable console output from our own application!
-                try
+                // IMPORTANT: Only free console if we have one and it's not already the target process's console
+                if (_consoleHandle == IntPtr.Zero || _consoleHandle == new IntPtr(-1))
                 {
-                    FreeConsole();
-                    _logger.LogInformation("Freed own console to attach to process {ProcessId}", processId);
+                    try
+                    {
+                        FreeConsole();
+                        _logger.LogInformation("Freed own console to attach to process {ProcessId}", processId);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Could not free own console (may not have one)");
+                    }
                 }
-                catch (Exception ex)
+                else
                 {
-                    _logger.LogWarning(ex, "Could not free own console (may not have one)");
+                    _logger.LogInformation("Console handle already exists, not freeing console before attach to process {ProcessId}", processId);
                 }
 
                 // Attach to the target process's console
