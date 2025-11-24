@@ -45,6 +45,11 @@ public class ServerManagerTests
         _serverInfoTracker = new ServerInfoTracker(_mockServerInfoTrackerLogger.Object);
         _mockConsoleMonitor = new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>());
 
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
         _serverManager = new ServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
@@ -53,7 +58,8 @@ public class ServerManagerTests
             _trackChangeTracker,
             _serverInfoTracker,
             _mockConsoleMonitor.Object,
-            _mockWebhookService.Object);
+            _mockWebhookService.Object,
+            mockConsoleLogSender.Object);
     }
 
     [Fact]
@@ -82,6 +88,11 @@ public class ServerManagerTests
         _mockConfiguration.Setup(c => c["WreckfestServer:ServerPath"])
             .Returns("C:\\nonexistent\\server.bat");
 
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
@@ -90,7 +101,8 @@ public class ServerManagerTests
             _trackChangeTracker,
             _serverInfoTracker,
             _mockConsoleMonitor.Object,
-            _mockWebhookService.Object);
+            _mockWebhookService.Object,
+            mockConsoleLogSender.Object);
 
         // Act
         var result = await serverManager.StartServerAsync();
@@ -107,6 +119,11 @@ public class ServerManagerTests
         _mockConfiguration.Setup(c => c["WreckfestServer:ServerPath"])
             .Returns(string.Empty);
 
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
@@ -115,7 +132,8 @@ public class ServerManagerTests
             _trackChangeTracker,
             _serverInfoTracker,
             _mockConsoleMonitor.Object,
-            _mockWebhookService.Object);
+            _mockWebhookService.Object,
+            mockConsoleLogSender.Object);
 
         // Act
         var result = await serverManager.StartServerAsync();

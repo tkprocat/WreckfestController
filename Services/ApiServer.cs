@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Hosting;
-using WreckfestController.WebSockets;
 
 namespace WreckfestController.Services;
 
@@ -66,6 +65,7 @@ public class ApiServer : IApiServer, IDisposable
             builder.Services.AddSingleton(_serviceProvider.GetRequiredService<PlayerTracker>());
             builder.Services.AddSingleton(_serviceProvider.GetRequiredService<TrackChangeTracker>());
             builder.Services.AddSingleton(_serviceProvider.GetRequiredService<WreckfestWebWebhookService>());
+            builder.Services.AddSingleton(_serviceProvider.GetRequiredService<ConsoleLogWebhookSender>());
             builder.Services.AddSingleton(_serviceProvider.GetRequiredService<ServerManager>());
             builder.Services.AddSingleton(_serviceProvider.GetRequiredService<ConfigService>());
             builder.Services.AddSingleton(_serviceProvider.GetRequiredService<EventStorageService>());
@@ -76,60 +76,6 @@ public class ApiServer : IApiServer, IDisposable
 
             // Configure middleware
             // Swagger disabled - causes build issues with MAUI
-
-            // Enable WebSockets
-            _app.UseWebSockets();
-
-            // WebSocket middleware for console streaming
-            _app.Use(async (context, next) =>
-            {
-                if (context.Request.Path == "/ws/console")
-                {
-                    if (context.WebSockets.IsWebSocketRequest)
-                    {
-                        var serverManager = context.RequestServices.GetRequiredService<ServerManager>();
-                        using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-                        var handler = new ConsoleWebSocketHandler(webSocket, serverManager);
-                        await handler.HandleAsync();
-                    }
-                    else
-                    {
-                        context.Response.StatusCode = 400;
-                    }
-                }
-                else if (context.Request.Path == "/ws/players")
-                {
-                    if (context.WebSockets.IsWebSocketRequest)
-                    {
-                        var playerTracker = context.RequestServices.GetRequiredService<PlayerTracker>();
-                        using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-                        var handler = new PlayerTrackerWebSocketHandler(webSocket, playerTracker);
-                        await handler.HandleAsync();
-                    }
-                    else
-                    {
-                        context.Response.StatusCode = 400;
-                    }
-                }
-                else if (context.Request.Path == "/ws/track-changes")
-                {
-                    if (context.WebSockets.IsWebSocketRequest)
-                    {
-                        var trackChangeTracker = context.RequestServices.GetRequiredService<TrackChangeTracker>();
-                        using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-                        var handler = new TrackChangeWebSocketHandler(webSocket, trackChangeTracker);
-                        await handler.HandleAsync();
-                    }
-                    else
-                    {
-                        context.Response.StatusCode = 400;
-                    }
-                }
-                else
-                {
-                    await next();
-                }
-            });
 
             _app.UseAuthorization();
             _app.MapControllers();

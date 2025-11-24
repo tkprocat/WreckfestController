@@ -38,70 +38,19 @@
                 Background="{StaticResource BackgroundMedium}">
             <ScrollViewer x:Name="LogScrollView"
                          VerticalScrollBarVisibility="Auto"
-                         Padding="10">
-                <ItemsControl x:Name="LogContainer">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <Border Padding="8,5"
-                                   Margin="0,2"
-                                   Background="{StaticResource BackgroundDark}"
-                                   BorderBrush="{StaticResource BorderColor}"
-                                   BorderThickness="0,0,0,1">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                        <ColumnDefinition Width="*"/>
-                                    </Grid.ColumnDefinitions>
-
-                                    <!-- Timestamp -->
-                                    <TextBox Grid.Column="0"
-                                            Text="{Binding Timestamp, Mode=OneWay}"
-                                            FontSize="10"
-                                            FontFamily="Consolas"
-                                            Foreground="{StaticResource TextSecondary}"
-                                            VerticalAlignment="Top"
-                                            Margin="0,0,10,0"
-                                            Background="Transparent"
-                                            BorderThickness="0"
-                                            IsReadOnly="True"
-                                            IsTabStop="False"
-                                            Cursor="Arrow"/>
-
-                                    <!-- Level Badge -->
-                                    <Border Grid.Column="1"
-                                           Background="{Binding LevelColor}"
-                                           CornerRadius="3"
-                                           Padding="6,2"
-                                           Margin="0,0,10,0"
-                                           VerticalAlignment="Top">
-                                        <TextBox Text="{Binding Level, Mode=OneWay}"
-                                                FontSize="10"
-                                                FontWeight="Bold"
-                                                Foreground="White"
-                                                Background="Transparent"
-                                                BorderThickness="0"
-                                                IsReadOnly="True"
-                                                IsTabStop="False"
-                                                Cursor="Arrow"/>
-                                    </Border>
-
-                                    <!-- Message -->
-                                    <TextBox Grid.Column="2"
-                                            Text="{Binding Message, Mode=OneWay}"
-                                            FontSize="12"
-                                            Foreground="{StaticResource TextPrimary}"
-                                            TextWrapping="Wrap"
-                                            Background="Transparent"
-                                            BorderThickness="0"
-                                            IsReadOnly="True"
-                                            IsTabStop="False"
-                                            Cursor="Arrow"/>
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                         HorizontalScrollBarVisibility="Auto">
+                <TextBox x:Name="LogTextBox"
+                        FontFamily="Consolas"
+                        FontSize="12"
+                        Foreground="{StaticResource TextPrimary}"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        IsReadOnly="True"
+                        TextWrapping="NoWrap"
+                        VerticalAlignment="Top"
+                        Padding="10"
+                        VerticalScrollBarVisibility="Disabled"
+                        HorizontalScrollBarVisibility="Disabled"/>
             </ScrollViewer>
         </Border>
 

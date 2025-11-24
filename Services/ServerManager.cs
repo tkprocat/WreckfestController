@@ -23,6 +23,7 @@ public class ServerManager
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ServerInfoTracker _serverInfoTracker;
     private readonly WreckfestWebWebhookService _webhookService;
+    private readonly ConsoleLogWebhookSender _consoleLogSender;
     private string _currentTrack = string.Empty;
 
     // Log file monitoring fields (used when UseConsoleMonitoring is false)
@@ -43,7 +44,8 @@ public class ServerManager
         TrackChangeTracker trackChangeTracker,
         ServerInfoTracker serverInfoTracker,
         ConsoleMonitor consoleMonitor,
-        WreckfestWebWebhookService webhookService)
+        WreckfestWebWebhookService webhookService,
+        ConsoleLogWebhookSender consoleLogSender)
     {
         _configuration = configuration;
         _logger = logger;
@@ -53,6 +55,7 @@ public class ServerManager
         _serverInfoTracker = serverInfoTracker;
         _consoleMonitor = consoleMonitor;
         _webhookService = webhookService;
+        _consoleLogSender = consoleLogSender;
 
         // Subscribe to console monitor output
         _consoleMonitor.SubscribeToOutput(OnConsoleOutputReceived);
@@ -1006,6 +1009,9 @@ public class ServerManager
                 }
             }
 
+            // Send to webhook for Laravel
+            _consoleLogSender.AddLog(line);
+
             // Parse for player events, track changes, and server info
             _playerTracker.ProcessLogLine(line);
             _trackChangeTracker.ProcessLogLine(line);
@@ -1249,6 +1255,7 @@ public class ServerManager
                 {
                     AddToOutputBuffer(line);
                     NotifyConsoleOutputSubscribers(line);
+                    _consoleLogSender.AddLog(line);
                     _playerTracker.ProcessLogLine(line);
                     _trackChangeTracker.ProcessLogLine(line);
                     _serverInfoTracker.ProcessLogLine(line);

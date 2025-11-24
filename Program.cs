@@ -76,10 +76,12 @@ public class Program
 
                 // Register core services
                 services.AddHttpClient<WreckfestWebWebhookService>();
+                services.AddHttpClient<ConsoleLogWebhookSender>();
                 services.AddSingleton<PlayerTracker>();
                 services.AddSingleton<TrackChangeTracker>();
                 services.AddSingleton<ServerInfoTracker>();
                 services.AddSingleton<WreckfestWebWebhookService>();
+                services.AddSingleton<ConsoleLogWebhookSender>();
                 services.AddSingleton<ConfigService>();
                 services.AddSingleton<EventStorageService>();
                 services.AddSingleton<RecurringEventService>();

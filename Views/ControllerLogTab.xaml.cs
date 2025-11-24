@@ -1,20 +1,19 @@
-using System.Collections.ObjectModel;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
 using WreckfestController.Services;
 
 namespace WreckfestController.Views;
 
 public partial class ControllerLogTab : UserControl
 {
-    private readonly ObservableCollection<LogEntry> _logEntries = new();
+    private readonly StringBuilder _logText = new();
+    private int _logEntryCount = 0;
     private const int MaxLogEntries = 500; // Limit to prevent memory issues
 
     public ControllerLogTab()
     {
         InitializeComponent();
-        LogContainer.ItemsSource = _logEntries;
     }
 
     /// <summary>
@@ -26,20 +25,24 @@ public partial class ControllerLogTab : UserControl
         Dispatcher.BeginInvoke(() =>
         {
             // Limit log entries to prevent memory bloat
-            if (_logEntries.Count >= MaxLogEntries)
+            if (_logEntryCount >= MaxLogEntries)
             {
-                _logEntries.RemoveAt(0);
+                // Remove first line from StringBuilder
+                var text = _logText.ToString();
+                var firstNewline = text.IndexOf('\n');
+                if (firstNewline >= 0)
+                {
+                    _logText.Clear();
+                    _logText.Append(text.Substring(firstNewline + 1));
+                    _logEntryCount--;
+                }
             }
 
-            var entry = new LogEntry
-            {
-                Timestamp = DateTime.Now.ToString("HH:mm:ss.fff"),
-                Level = level,
-                Message = message,
-                LevelColor = GetColorForLevel(level)
-            };
+            var timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
+            _logText.AppendLine($"[{timestamp}] [{level,-5}] {message}");
+            _logEntryCount++;
 
-            _logEntries.Add(entry);
+            LogTextBox.Text = _logText.ToString();
             UpdateLogCount();
 
             // Auto-scroll to bottom if enabled
@@ -52,19 +55,7 @@ public partial class ControllerLogTab : UserControl
 
     private void UpdateLogCount()
     {
-        LogCountText.Text = $"({_logEntries.Count} entries)";
-    }
-
-    private string GetColorForLevel(string level)
-    {
-        return level switch
-        {
-            "ERROR" => "#FF6B6B",      // Red
-            "WARN" => "#FFD43B",       // Yellow
-            "INFO" => "#74C0FC",       // Blue
-            "DEBUG" => "#868E96",      // Gray
-            _ => "#C9D1D9"             // Default text color
-        };
+        LogCountText.Text = $"({_logEntryCount} entries)";
     }
 
     private async void OnClearLogClicked(object sender, RoutedEventArgs e)
@@ -75,16 +66,10 @@ public partial class ControllerLogTab : UserControl
 
         if (result)
         {
-            _logEntries.Clear();
+            _logText.Clear();
+            _logEntryCount = 0;
+            LogTextBox.Text = string.Empty;
             UpdateLogCount();
         }
     }
-}
-
-public class LogEntry
-{
-    public string Timestamp { get; set; } = string.Empty;
-    public string Level { get; set; } = string.Empty;
-    public string Message { get; set; } = string.Empty;
-    public string LevelColor { get; set; } = string.Empty;
 }
