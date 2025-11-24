@@ -167,6 +167,18 @@ public class RecurringEventService
             return false;
         }
 
+        // Decrement occurrences BEFORE calculating next instance
+        // This ensures the occurrence count check works correctly
+        if (@event.RecurringPattern.Occurrences.HasValue)
+        {
+            @event.RecurringPattern.Occurrences--;
+            _logger.LogDebug(
+                "Event {EventName} (ID {EventId}) has {Remaining} occurrences remaining",
+                @event.Name,
+                @event.Id,
+                @event.RecurringPattern.Occurrences);
+        }
+
         var nextInstance = CalculateNextInstance(@event, DateTime.UtcNow);
         if (!nextInstance.HasValue)
         {
@@ -180,17 +192,6 @@ public class RecurringEventService
         {
             _logger.LogError("Failed to update event {EventName} (ID {EventId}) start time in schedule", @event.Name, @event.Id);
             return false;
-        }
-
-        // Decrement occurrences if limit is set
-        if (@event.RecurringPattern.Occurrences.HasValue)
-        {
-            @event.RecurringPattern.Occurrences--;
-            _logger.LogDebug(
-                "Event {EventName} (ID {EventId}) has {Remaining} occurrences remaining",
-                @event.Name,
-                @event.Id,
-                @event.RecurringPattern.Occurrences);
         }
 
         // Save the updated schedule
