@@ -45,7 +45,7 @@ public class SmartRestartService
         _logger = logger;
 
         // Subscribe to track changes
-        _trackChangeTracker.SubscribeToTrackChange(OnTrackChanged);
+        _trackChangeTracker.TrackChanged += OnTrackChanged;
     }
 
     /// <summary>
@@ -101,6 +101,7 @@ public class SmartRestartService
             if (!_playerTracker.HasPlayersOnline())
             {
                 _logger.LogInformation("No real players online (only bots or empty) - skipping countdown and restarting immediately");
+                _state = SmartRestartState.Pending; // Set state so ExecuteRestartAsync doesn't early-return
                 _ = Task.Run(() => ExecuteRestartAsync());
                 return true;
             }

@@ -172,7 +172,7 @@ public class ServerManagerTests
         Action<string> callback = (message) => { };
 
         // Act & Assert
-        var exception = Record.Exception(() => _serverManager.SubscribeToConsoleOutput(callback));
+        var exception = Record.Exception(() => _serverManager.ConsoleOutput += callback);
         Assert.Null(exception);
     }
 
@@ -181,10 +181,10 @@ public class ServerManagerTests
     {
         // Arrange
         Action<string> callback = (message) => { };
-        _serverManager.SubscribeToConsoleOutput(callback);
+        _serverManager.ConsoleOutput += callback;
 
         // Act & Assert
-        var exception = Record.Exception(() => _serverManager.UnsubscribeFromConsoleOutput(callback));
+        var exception = Record.Exception(() => _serverManager.ConsoleOutput -= callback);
         Assert.Null(exception);
     }
 }

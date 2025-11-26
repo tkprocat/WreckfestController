@@ -8,7 +8,8 @@ namespace WreckfestController.Services;
 
 /// <summary>
 /// Service responsible for persisting and loading the event schedule from disk.
-/// Stores the schedule as JSON in the working directory alongside server_config.cfg.
+/// Stores the schedule as JSON in %LocalAppData%\WreckfestController\ by default
+/// (same location as user-settings.json) to avoid Windows folder permission issues.
 /// </summary>
 public class EventStorageService
 {
@@ -41,13 +42,14 @@ public class EventStorageService
 
         if (string.IsNullOrWhiteSpace(configuredPath))
         {
-            // Fallback: use working directory (alongside server_config.cfg) or application directory
-            var workingDir = _configuration["WreckfestServer:WorkingDirectory"];
-            var baseDir = !string.IsNullOrEmpty(workingDir)
-                ? workingDir
-                : AppDomain.CurrentDomain.BaseDirectory;
-
-            return Path.Combine(baseDir, "event-schedule.json");
+            // Default to %LocalAppData%\WreckfestController\event-schedule.json
+            // Same location as user-settings.json to avoid Windows folder permission issues
+            var appDataPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WreckfestController"
+            );
+            Directory.CreateDirectory(appDataPath);
+            return Path.Combine(appDataPath, "event-schedule.json");
         }
         else
         {

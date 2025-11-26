@@ -7,7 +7,6 @@ namespace WreckfestController.Services;
 public class PlayerTracker
 {
     private readonly ConcurrentDictionary<string, Player> _players = new();
-    private readonly ConcurrentBag<Action<PlayerTrackerEvent>> _playerTrackerSubscribers = new();
     private readonly ILogger<PlayerTracker> _logger;
     private readonly WreckfestWebWebhookService _webhookService;
     private DateTime _lastListUpdate = DateTime.MinValue;
@@ -17,6 +16,11 @@ public class PlayerTracker
     /// Event raised when a list command should be sent to refresh player data
     /// </summary>
     public event Action? OnListCommandRequested;
+
+    /// <summary>
+    /// Event raised when player data changes (join, leave, update)
+    /// </summary>
+    public event Action<PlayerTrackerEvent>? PlayerEvent;
 
     // State for parsing multi-line list command responses
     private bool _collectingListResponse = false;
@@ -141,17 +145,16 @@ public class PlayerTracker
     }
 
     /// <summary>
-    /// Mark a player as joined
+    /// Add a player who joined
     /// </summary>
     private void PlayerJoined(string playerName, bool isBot)
     {
         lock (_lock)
         {
-            if (_players.TryGetValue(playerName, out var existingPlayer))
+            if (_players.ContainsKey(playerName))
             {
-                // Player rejoined
-                existingPlayer.IsOnline = true;
-                existingPlayer.LastSeenAt = DateTime.Now;
+                // Player rejoined - update join time
+                _players[playerName].JoinedAt = DateTime.Now;
                 _logger.LogInformation("{Type} rejoined: {PlayerName}", isBot ? "Bot" : "Player", playerName);
             }
             else
@@ -161,12 +164,10 @@ public class PlayerTracker
                 {
                     Name = playerName,
                     JoinedAt = DateTime.Now,
-                    LastSeenAt = DateTime.Now,
-                    IsOnline = true,
                     IsBot = isBot
                 };
                 _players[playerName] = player;
-                NotifyPlayerTrackerSubscribers(new PlayerTrackerEvent("Join", player));
+                NotifyPlayerEvent(new PlayerTrackerEvent("Join", player));
                 _logger.LogInformation("{Type} joined: {PlayerName}", isBot ? "Bot" : "Player", playerName);
 
                 // Send updated player list to Laravel
@@ -179,17 +180,15 @@ public class PlayerTracker
     }
 
     /// <summary>
-    /// Mark a player as left
+    /// Remove a player who left
     /// </summary>
     private void PlayerLeft(string playerName)
     {
         lock (_lock)
         {
-            if (_players.TryGetValue(playerName, out var player))
+            if (_players.TryRemove(playerName, out var player))
             {
-                player.IsOnline = false;
-                player.LastSeenAt = DateTime.Now;
-                NotifyPlayerTrackerSubscribers(new PlayerTrackerEvent("Left", player));
+                NotifyPlayerEvent(new PlayerTrackerEvent("Left", player));
                 _logger.LogInformation("Player left: {PlayerName}", playerName);
 
                 // Send updated player list to Laravel
@@ -202,17 +201,15 @@ public class PlayerTracker
     }
 
     /// <summary>
-    /// Mark a player as kicked
+    /// Remove a player who was kicked
     /// </summary>
     private void PlayerKicked(string playerName)
     {
         lock (_lock)
         {
-            if (_players.TryGetValue(playerName, out var player))
+            if (_players.TryRemove(playerName, out var player))
             {
-                player.IsOnline = false;
-                player.LastSeenAt = DateTime.Now;
-                NotifyPlayerTrackerSubscribers(new PlayerTrackerEvent("Kicked", player));
+                NotifyPlayerEvent(new PlayerTrackerEvent("Kicked", player));
                 _logger.LogInformation("Player kicked: {PlayerName}", playerName);
 
                 // Send updated player list to Laravel
@@ -307,10 +304,9 @@ public class PlayerTracker
 
                     if (_players.TryGetValue(playerName, out var player))
                     {
-                        player.IsOnline = true;
+                        // Update existing player info
                         player.Slot = slot;
                         player.IsAdmin = isAdmin;
-                        player.LastSeenAt = DateTime.Now;
                     }
                     else
                     {
@@ -319,8 +315,6 @@ public class PlayerTracker
                         {
                             Name = playerName,
                             JoinedAt = DateTime.Now,
-                            LastSeenAt = DateTime.Now,
-                            IsOnline = true,
                             IsBot = isBot,
                             IsAdmin = isAdmin,
                             Slot = slot
@@ -339,50 +333,34 @@ public class PlayerTracker
                 }
             }
 
-            // Mark players not in the list as offline
-            foreach (var player in _players.Values.Where(p => p.IsOnline).ToList())
+            // Remove players not in the list (they must have left)
+            foreach (var player in _players.Values.ToList())
             {
                 if (!playersInList.Contains(player.Name))
                 {
-                    player.IsOnline = false;
-                    player.LastSeenAt = DateTime.Now;
-                    _logger.LogDebug("Player marked offline after list command: {PlayerName}", player.Name);
+                    _players.TryRemove(player.Name, out _);
+                    _logger.LogDebug("Player removed after list command (not in list): {PlayerName}", player.Name);
                 }
             }
 
             _lastListUpdate = DateTime.Now;
 
             // Notify subscribers that the player list was updated
-            NotifyPlayerTrackerSubscribers(new PlayerTrackerEvent("PlayersUpdated", null));
+            NotifyPlayerEvent(new PlayerTrackerEvent("PlayersUpdated", null));
             _logger.LogInformation("Player list updated via list command. Online players: {Count}", playersInList.Count);
         }
     }
 
     /// <summary>
-    /// Get current online players
+    /// Get current players
     /// </summary>
-    public List<Player> GetOnlinePlayers()
+    public List<Player> GetPlayers()
     {
         lock (_lock)
         {
             return _players.Values
-                .Where(p => p.IsOnline)
                 .OrderBy(p => p.Slot ?? int.MaxValue)
                 .ThenBy(p => p.JoinedAt)
-                .ToList();
-        }
-    }
-
-    /// <summary>
-    /// Get all players (including offline)
-    /// </summary>
-    public List<Player> GetAllPlayers()
-    {
-        lock (_lock)
-        {
-            return _players.Values
-                .OrderByDescending(p => p.IsOnline)
-                .ThenByDescending(p => p.LastSeenAt)
                 .ToList();
         }
     }
@@ -395,7 +373,7 @@ public class PlayerTracker
         lock (_lock)
         {
             // Only count real players, not bots, for restart decisions
-            return (_players.Values.Count(p => p.IsOnline && !p.IsBot), _players.Count(p => !p.Value.IsBot));
+            return (_players.Values.Count(p => !p.IsBot), _players.Count(p => !p.Value.IsBot));
         }
     }
 
@@ -407,7 +385,7 @@ public class PlayerTracker
     {
         lock (_lock)
         {
-            return _players.Values.Any(p => p.IsOnline && !p.IsBot);
+            return _players.Values.Any(p => !p.IsBot);
         }
     }
 
@@ -432,30 +410,9 @@ public class PlayerTracker
         return DateTime.Now - _lastListUpdate;
     }
 
-    public void SubscribeToPlayerTracker(Action<PlayerTrackerEvent> playerTrackerEvent)
+    private void NotifyPlayerEvent(PlayerTrackerEvent playerTrackerEvent)
     {
-        _playerTrackerSubscribers.Add(playerTrackerEvent);
-    }
-
-    public void UnsubscribeFromPlayerTracker(Action<PlayerTrackerEvent> playerTrackerEvent)
-    {
-        // ConcurrentBag doesn't support removal, but we can handle it by checking if callback is null
-        // For simplicity, we'll keep the subscriber list as is
-    }
-
-    private void NotifyPlayerTrackerSubscribers(PlayerTrackerEvent playerTrackerEvent)
-    {
-        foreach (var subscriber in _playerTrackerSubscribers)
-        {
-            try
-            {
-                subscriber(playerTrackerEvent);
-            }
-            catch
-            {
-                // Ignore subscriber errors
-            }
-        }
+        PlayerEvent?.Invoke(playerTrackerEvent);
     }
 
     /// <summary>
@@ -507,7 +464,7 @@ public class PlayerTracker
     {
         try
         {
-            var onlinePlayers = GetOnlinePlayers();
+            var onlinePlayers = GetPlayers();
             await _webhookService.SendPlayersUpdatedAsync(onlinePlayers);
         }
         catch (Exception ex)

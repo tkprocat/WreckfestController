@@ -64,8 +64,8 @@
                                        Binding="{Binding TrackCount}"
                                        Width="0.7*"/>
 
-                    <DataGridTextColumn Header="Recurring"
-                                       Binding="{Binding RecurringPattern}"
+                    <DataGridTextColumn Header="Repeat"
+                                       Binding="{Binding RepeatSchedule}"
                                        Width="1.5*"/>
                 </DataGrid.Columns>
 
@@ -231,7 +231,8 @@
                    Background="{StaticResource ButtonOrange}"
                    Foreground="White"
                    HorizontalAlignment="Stretch"
-                   Padding="20,12"
+                   MinHeight="44"
+                   Padding="20,14"
                    FontWeight="SemiBold"
                    IsEnabled="False"
                    Click="OnActivateClicked">

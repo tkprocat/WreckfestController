@@ -65,49 +65,7 @@ public class ConfigService
 
             var key = parts[0].Trim();
             var value = parts[1].Trim();
-
-            switch (key)
-            {
-                case "server_name": config.ServerName = value; break;
-                case "welcome_message": config.WelcomeMessage = value; break;
-                case "password": config.Password = value; break;
-                case "max_players": int.TryParse(value, out var maxPlayers); config.MaxPlayers = maxPlayers; break;
-                case "lan": int.TryParse(value, out var lan); config.Lan = lan; break;
-                case "steam_port": int.TryParse(value, out var steamPort); config.SteamPort = steamPort; break;
-                case "game_port": int.TryParse(value, out var gamePort); config.GamePort = gamePort; break;
-                case "query_port": int.TryParse(value, out var queryPort); config.QueryPort = queryPort; break;
-                case "exclude_from_quickplay": int.TryParse(value, out var excludeFromQuickplay); config.ExcludeFromQuickplay = excludeFromQuickplay; break;
-                case "clear_users": int.TryParse(value, out var clearUsers); config.ClearUsers = clearUsers; break;
-                case "owner_disabled": int.TryParse(value, out var ownerDisabled); config.OwnerDisabled = ownerDisabled; break;
-                case "admin_control": int.TryParse(value, out var adminControl); config.AdminControl = adminControl; break;
-                case "lobby_countdown": int.TryParse(value, out var lobbyCountdown); config.LobbyCountdown = lobbyCountdown; break;
-                case "ready_players_required": int.TryParse(value, out var readyPlayersRequired); config.ReadyPlayersRequired = readyPlayersRequired; break;
-                case "admin_steam_ids": config.AdminSteamIds = value; break;
-                case "op_steam_ids": config.OpSteamIds = value; break;
-                case "session_mode": config.SessionMode = value; break;
-                case "grid_order": config.GridOrder = value; break;
-                case "enable_track_vote": int.TryParse(value, out var enableTrackVote); config.EnableTrackVote = enableTrackVote; break;
-                case "disable_idle_kick": int.TryParse(value, out var disableIdleKick); config.DisableIdleKick = disableIdleKick; break;
-                case "track": config.Track = value; break;
-                case "gamemode": config.Gamemode = value; break;
-                case "bots": int.TryParse(value, out var bots); config.Bots = bots; break;
-                case "ai_difficulty": config.AiDifficulty = value; break;
-                case "num_teams": int.TryParse(value, out var numTeams); config.NumTeams = numTeams; break;
-                case "laps": int.TryParse(value, out var laps); config.Laps = laps; break;
-                case "time_limit": int.TryParse(value, out var timeLimit); config.TimeLimit = timeLimit; break;
-                case "elimination_interval": int.TryParse(value, out var eliminationInterval); config.EliminationInterval = eliminationInterval; break;
-                case "vehicle_damage": config.VehicleDamage = value; break;
-                case "car_class_restriction": config.CarClassRestriction = value; break;
-                case "car_restriction": config.CarRestriction = value; break;
-                case "special_vehicles_disabled": int.TryParse(value, out var specialVehiclesDisabled); config.SpecialVehiclesDisabled = specialVehiclesDisabled; break;
-                case "car_reset_disabled": int.TryParse(value, out var carResetDisabled); config.CarResetDisabled = carResetDisabled; break;
-                case "car_reset_delay": int.TryParse(value, out var carResetDelay); config.CarResetDelay = carResetDelay; break;
-                case "wrong_way_limiter_disabled": int.TryParse(value, out var wrongWayLimiterDisabled); config.WrongWayLimiterDisabled = wrongWayLimiterDisabled; break;
-                case "weather": config.Weather = value; break;
-                case "frequency": config.Frequency = value; break;
-                case "mods": config.Mods = value; break;
-                case "log": config.Log = value; break;
-            }
+            config.ApplyConfigValue(key, value);
         }
 
         return config;

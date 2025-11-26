@@ -51,9 +51,22 @@ public class ApiServer : IApiServer, IDisposable
 
             // Configure Kestrel URLs
             var configuration = _serviceProvider.GetRequiredService<IConfiguration>();
-            var urls = configuration["Kestrel:Urls"] ?? "http://localhost:5100;https://localhost:5101";
-            builder.WebHost.UseUrls(urls);
-            BaseUrl = urls.Split(';')[0];
+            var urls = configuration["Kestrel:Urls"] ?? "http://localhost:5100";
+
+            // Filter out HTTPS URLs if no valid certificate is available
+            // This prevents startup errors when running as a WPF app
+            var filteredUrls = string.Join(";", urls.Split(';')
+                .Where(url => !url.Trim().StartsWith("https://", StringComparison.OrdinalIgnoreCase)));
+
+            if (string.IsNullOrWhiteSpace(filteredUrls))
+            {
+                filteredUrls = "http://localhost:5100"; // Fallback to HTTP
+            }
+
+            builder.WebHost.UseUrls(filteredUrls);
+            BaseUrl = filteredUrls.Split(';')[0];
+
+            _logger.LogInformation("API server will listen on: {Urls}", filteredUrls);
 
             // Add controllers
             builder.Services.AddControllers();
@@ -133,6 +146,6 @@ public class ApiServer : IApiServer, IDisposable
 
     public void Dispose()
     {
-        _ = StopAsync();
+        StopAsync().GetAwaiter().GetResult();
     }
 }

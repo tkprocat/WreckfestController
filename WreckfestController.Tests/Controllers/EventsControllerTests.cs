@@ -42,6 +42,10 @@ public class EventsControllerTests
             Mock.Of<ILogger<ServerInfoTracker>>());
 
         var mockConsoleMonitor = new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>());
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var mockServerManager = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
@@ -51,7 +55,8 @@ public class EventsControllerTests
             mockTrackChangeTracker.Object,
             mockServerInfoTracker.Object,
             mockConsoleMonitor.Object,
-            mockWebhookServiceForTrackers.Object);
+            mockWebhookServiceForTrackers.Object,
+            mockConsoleLogSender.Object);
 
         var mockConfigService = new Mock<ConfigService>(
             Mock.Of<IConfiguration>(),
@@ -177,9 +182,9 @@ public class EventsControllerTests
                     Name = "Test Event",
                     StartTime = DateTime.UtcNow.AddHours(1),
                     Tracks = new List<EventLoopTrack>(),
-                    RecurringPattern = new RecurringPattern
+                    Repeat = new RepeatSchedule
                     {
-                        Type = RecurringType.Weekly,
+                        Frequency = "weekly",
                         Days = new List<int>() // No days specified for weekly
                     }
                 }

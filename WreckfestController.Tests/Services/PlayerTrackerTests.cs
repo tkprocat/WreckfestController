@@ -33,11 +33,10 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine(logLine);
 
         // Assert
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Single(players);
         Assert.Equal("eRacer", players[0].Name);
         Assert.True(players[0].IsBot);
-        Assert.True(players[0].IsOnline);
     }
 
     [Fact]
@@ -50,15 +49,14 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine(logLine);
 
         // Assert
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Single(players);
         Assert.Equal("Player123", players[0].Name);
         Assert.False(players[0].IsBot);
-        Assert.True(players[0].IsOnline);
     }
 
     [Fact]
-    public void ProcessLogLine_BotQuitEvent_MarksOffline()
+    public void ProcessLogLine_BotQuitEvent_RemovesPlayer()
     {
         // Arrange
         _playerTracker.ProcessLogLine("16:53:14 - *eRacer has joined.");
@@ -68,16 +66,12 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine(logLine);
 
         // Assert
-        var onlinePlayers = _playerTracker.GetOnlinePlayers();
-        Assert.Empty(onlinePlayers);
-
-        var allPlayers = _playerTracker.GetAllPlayers();
-        Assert.Single(allPlayers);
-        Assert.False(allPlayers[0].IsOnline);
+        var players = _playerTracker.GetPlayers();
+        Assert.Empty(players);
     }
 
     [Fact]
-    public void ProcessLogLine_HumanQuitEvent_MarksOffline()
+    public void ProcessLogLine_HumanQuitEvent_RemovesPlayer()
     {
         // Arrange
         _playerTracker.ProcessLogLine("16:53:14 - Player123 has joined.");
@@ -87,16 +81,12 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine(logLine);
 
         // Assert
-        var onlinePlayers = _playerTracker.GetOnlinePlayers();
-        Assert.Empty(onlinePlayers);
-
-        var allPlayers = _playerTracker.GetAllPlayers();
-        Assert.Single(allPlayers);
-        Assert.False(allPlayers[0].IsOnline);
+        var players = _playerTracker.GetPlayers();
+        Assert.Empty(players);
     }
 
     [Fact]
-    public void ProcessLogLine_PlayerRejoins_UpdatesStatus()
+    public void ProcessLogLine_PlayerRejoins_TracksPlayer()
     {
         // Arrange
         _playerTracker.ProcessLogLine("16:53:14 - Player123 has joined.");
@@ -106,9 +96,8 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine("17:00:00 - Player123 has joined.");
 
         // Assert
-        var onlinePlayers = _playerTracker.GetOnlinePlayers();
-        Assert.Single(onlinePlayers);
-        Assert.True(onlinePlayers[0].IsOnline);
+        var players = _playerTracker.GetPlayers();
+        Assert.Single(players);
     }
 
     [Fact]
@@ -119,7 +108,7 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine("   ");
 
         // Assert
-        var players = _playerTracker.GetAllPlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Empty(players);
     }
 
@@ -131,7 +120,7 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine("16:53:14 - Server started");
 
         // Assert
-        var players = _playerTracker.GetAllPlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Empty(players);
     }
 
@@ -150,7 +139,7 @@ public class PlayerTrackerTests
         _playerTracker.ProcessListResponse(lines);
 
         // Assert
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Equal(2, players.Count);
 
         var bot = players.FirstOrDefault(p => p.Name == "eRacer");
@@ -165,7 +154,7 @@ public class PlayerTrackerTests
     }
 
     [Fact]
-    public void ProcessListResponse_EmptyList_MarksAllOffline()
+    public void ProcessListResponse_EmptyList_RemovesAllPlayers()
     {
         // Arrange
         var lines = new[]
@@ -181,12 +170,8 @@ public class PlayerTrackerTests
         _playerTracker.ProcessListResponse(emptyLines);
 
         // Assert
-        var onlinePlayers = _playerTracker.GetOnlinePlayers();
-        Assert.Empty(onlinePlayers);
-
-        var allPlayers = _playerTracker.GetAllPlayers();
-        Assert.Equal(2, allPlayers.Count);
-        Assert.All(allPlayers, p => Assert.False(p.IsOnline));
+        var players = _playerTracker.GetPlayers();
+        Assert.Empty(players);
     }
 
     [Fact]
@@ -204,10 +189,9 @@ public class PlayerTrackerTests
         _playerTracker.ProcessListResponse(lines);
 
         // Assert
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Single(players);
         Assert.Equal(0, players[0].Slot);
-        Assert.True(players[0].IsOnline);
     }
 
     [Fact]
@@ -224,11 +208,11 @@ public class PlayerTrackerTests
 
         // Assert
         Assert.Equal(2, online);
-        Assert.Equal(3, total);
+        Assert.Equal(2, total);  // Player3 is removed, not just marked offline
     }
 
     [Fact]
-    public void GetOnlinePlayers_OrdersBySlotThenJoinTime()
+    public void GetPlayers_OrdersBySlotThenJoinTime()
     {
         // Arrange
         var lines = new[]
@@ -241,30 +225,13 @@ public class PlayerTrackerTests
 
         // Act
         _playerTracker.ProcessListResponse(lines);
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
 
         // Assert
         Assert.Equal(3, players.Count);
         Assert.Equal("Player1", players[0].Name);
         Assert.Equal("Player2", players[1].Name);
         Assert.Equal("Player3", players[2].Name);
-    }
-
-    [Fact]
-    public void GetAllPlayers_IncludesOfflinePlayers()
-    {
-        // Arrange
-        _playerTracker.ProcessLogLine("16:53:14 - Player1 has joined.");
-        _playerTracker.ProcessLogLine("16:53:15 - Player2 has joined.");
-        _playerTracker.ProcessLogLine("16:55:00 - Player1 has quit.");
-
-        // Act
-        var allPlayers = _playerTracker.GetAllPlayers();
-
-        // Assert
-        Assert.Equal(2, allPlayers.Count);
-        Assert.Contains(allPlayers, p => p.Name == "Player1" && !p.IsOnline);
-        Assert.Contains(allPlayers, p => p.Name == "Player2" && p.IsOnline);
     }
 
     [Fact]
@@ -278,7 +245,7 @@ public class PlayerTrackerTests
         _playerTracker.Clear();
 
         // Assert
-        var players = _playerTracker.GetAllPlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Empty(players);
 
         var (online, total) = _playerTracker.GetPlayerCount();
@@ -319,7 +286,7 @@ public class PlayerTrackerTests
         _playerTracker.ProcessListResponse(lines);
 
         // Assert
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Equal(5, players.Count);
 
         var bots = players.Where(p => p.IsBot).ToList();
@@ -342,11 +309,10 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine(logLine);
 
         // Assert
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Single(players);
         Assert.Equal("Ultimate Night of Super Se", players[0].Name);
         Assert.True(players[0].IsBot);
-        Assert.True(players[0].IsOnline);
     }
 
     [Fact]
@@ -359,15 +325,14 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine(logLine);
 
         // Assert
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Single(players);
         Assert.Equal("Pro Gamer 123", players[0].Name);
         Assert.False(players[0].IsBot);
-        Assert.True(players[0].IsOnline);
     }
 
     [Fact]
-    public void ProcessLogLine_BotWithSpacesQuitEvent_MarksOffline()
+    public void ProcessLogLine_BotWithSpacesQuitEvent_RemovesPlayer()
     {
         // Arrange
         _playerTracker.ProcessLogLine("16:53:14 - *Ultimate Night of Super Se has joined.");
@@ -377,13 +342,8 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine(logLine);
 
         // Assert
-        var onlinePlayers = _playerTracker.GetOnlinePlayers();
-        Assert.Empty(onlinePlayers);
-
-        var allPlayers = _playerTracker.GetAllPlayers();
-        Assert.Single(allPlayers);
-        Assert.Equal("Ultimate Night of Super Se", allPlayers[0].Name);
-        Assert.False(allPlayers[0].IsOnline);
+        var players = _playerTracker.GetPlayers();
+        Assert.Empty(players);
     }
 
     [Fact]
@@ -402,7 +362,7 @@ public class PlayerTrackerTests
         _playerTracker.ProcessListResponse(lines);
 
         // Assert
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
         Assert.Equal(3, players.Count);
 
         var bot = players.FirstOrDefault(p => p.Name == "Ultimate Night of Super Se");
@@ -451,25 +411,25 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine("Some other server message");
 
         // Assert
-        var onlinePlayers = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
 
         // When the "has joined" message interrupts the list, the collection stops
         // So we should have only the 3 players BEFORE the interruption + the NewBot that joined
-        Assert.Equal(4, onlinePlayers.Count);
+        Assert.Equal(4, players.Count);
 
         // Verify players that were processed before the interruption
-        Assert.Contains(onlinePlayers, p => p.Name == "Lord Bane" && p.IsBot);
-        Assert.Contains(onlinePlayers, p => p.Name == "Goose4all" && p.IsBot);
-        Assert.Contains(onlinePlayers, p => p.Name == "johnsacka" && p.IsBot);
+        Assert.Contains(players, p => p.Name == "Lord Bane" && p.IsBot);
+        Assert.Contains(players, p => p.Name == "Goose4all" && p.IsBot);
+        Assert.Contains(players, p => p.Name == "johnsacka" && p.IsBot);
 
         // Verify the bot that joined during the list (which caused the interruption)
-        Assert.Contains(onlinePlayers, p => p.Name == "NewBot" && p.IsBot);
+        Assert.Contains(players, p => p.Name == "NewBot" && p.IsBot);
 
         // Verify slots are assigned correctly for the entries that were collected
-        var lordBane = onlinePlayers.First(p => p.Name == "Lord Bane");
+        var lordBane = players.First(p => p.Name == "Lord Bane");
         Assert.Equal(1, lordBane.Slot);
 
-        var goose = onlinePlayers.First(p => p.Name == "Goose4all");
+        var goose = players.First(p => p.Name == "Goose4all");
         Assert.Equal(2, goose.Slot);
 
         // This test demonstrates that interruptions ARE handled gracefully:
@@ -508,27 +468,27 @@ public class PlayerTrackerTests
         _playerTracker.ProcessLogLine("Some other server message");
 
         // Assert
-        var onlinePlayers = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
 
         // Should have all 10 players
-        Assert.Equal(10, onlinePlayers.Count);
+        Assert.Equal(10, players.Count);
 
         // Verify all players are present and are bots
-        Assert.All(onlinePlayers, p => Assert.True(p.IsBot));
+        Assert.All(players, p => Assert.True(p.IsBot));
 
         // Verify specific players
-        Assert.Contains(onlinePlayers, p => p.Name == "Lord Bane");
-        Assert.Contains(onlinePlayers, p => p.Name == "Goose4all");
-        Assert.Contains(onlinePlayers, p => p.Name == "johnsacka");
-        Assert.Contains(onlinePlayers, p => p.Name == "Seppo Hallikainen");
-        Assert.Contains(onlinePlayers, p => p.Name == "Roadwarrior");
-        Assert.Contains(onlinePlayers, p => p.Name == "L3vn");
-        Assert.Contains(onlinePlayers, p => p.Name == "RPE001");
-        Assert.Contains(onlinePlayers, p => p.Name == "BZ");
-        Assert.Contains(onlinePlayers, p => p.Name == "Icheherntion");
-        Assert.Contains(onlinePlayers, p => p.Name == "Ryzza5");
+        Assert.Contains(players, p => p.Name == "Lord Bane");
+        Assert.Contains(players, p => p.Name == "Goose4all");
+        Assert.Contains(players, p => p.Name == "johnsacka");
+        Assert.Contains(players, p => p.Name == "Seppo Hallikainen");
+        Assert.Contains(players, p => p.Name == "Roadwarrior");
+        Assert.Contains(players, p => p.Name == "L3vn");
+        Assert.Contains(players, p => p.Name == "RPE001");
+        Assert.Contains(players, p => p.Name == "BZ");
+        Assert.Contains(players, p => p.Name == "Icheherntion");
+        Assert.Contains(players, p => p.Name == "Ryzza5");
 
         // Verify slots are assigned
-        Assert.All(onlinePlayers, p => Assert.NotNull(p.Slot));
+        Assert.All(players, p => Assert.NotNull(p.Slot));
     }
 }

@@ -22,29 +22,20 @@ public class RecurringEventService
     /// <returns>The next occurrence timestamp, or null if event doesn't recur</returns>
     public DateTime? CalculateNextInstance(Event @event, DateTime? fromTime = null)
     {
-        if (@event.RecurringPattern == null)
+        if (@event.Repeat == null)
         {
-            _logger.LogDebug("Event {EventName} (ID {EventId}) has no recurring pattern", @event.Name, @event.Id);
+            _logger.LogDebug("Event {EventName} (ID {EventId}) has no repeat schedule (single occurrence)", @event.Name, @event.Id);
             return null;
         }
 
-        var pattern = @event.RecurringPattern;
-
-        // Check if occurrences limit is reached
-        if (pattern.Occurrences.HasValue && pattern.Occurrences.Value <= 0)
-        {
-            _logger.LogInformation("Event {EventName} (ID {EventId}) has reached occurrence limit", @event.Name, @event.Id);
-            return null;
-        }
-
+        var repeat = @event.Repeat;
         var baseTime = fromTime ?? DateTime.UtcNow;
 
-        DateTime? nextOccurrence = pattern.Type switch
-        {
-            RecurringType.Daily => CalculateDailyNextInstance(baseTime, pattern),
-            RecurringType.Weekly => CalculateWeeklyNextInstance(baseTime, pattern),
-            _ => null
-        };
+        DateTime? nextOccurrence = repeat.IsDaily
+            ? CalculateDailyNextInstance(baseTime, repeat)
+            : repeat.IsWeekly
+                ? CalculateWeeklyNextInstance(baseTime, repeat)
+                : null;
 
         if (nextOccurrence.HasValue)
         {
@@ -68,11 +59,11 @@ public class RecurringEventService
     /// <summary>
     /// Calculates next daily occurrence
     /// </summary>
-    private DateTime CalculateDailyNextInstance(DateTime fromTime, RecurringPattern pattern)
+    private DateTime CalculateDailyNextInstance(DateTime fromTime, RepeatSchedule repeat)
     {
         // For daily events, we need to find the next occurrence at the specified time
         var today = fromTime.Date;
-        var nextOccurrence = today.Add(pattern.Time);
+        var nextOccurrence = today.Add(repeat.TimeAsTimeSpan);
 
         // If the time today has already passed, move to tomorrow
         if (nextOccurrence <= fromTime)
@@ -87,19 +78,19 @@ public class RecurringEventService
     /// <summary>
     /// Calculates next weekly occurrence
     /// </summary>
-    private DateTime? CalculateWeeklyNextInstance(DateTime fromTime, RecurringPattern pattern)
+    private DateTime? CalculateWeeklyNextInstance(DateTime fromTime, RepeatSchedule repeat)
     {
-        if (pattern.Days == null || pattern.Days.Count == 0)
+        if (repeat.Days == null || repeat.Days.Count == 0)
         {
             _logger.LogWarning("Weekly recurring pattern has no days specified");
             return null;
         }
 
         // Sort days to make it easier to find the next occurrence
-        var sortedDays = pattern.Days.OrderBy(d => d).ToList();
+        var sortedDays = repeat.Days.OrderBy(d => d).ToList();
 
         var currentDay = (int)fromTime.DayOfWeek; // 0 = Sunday, 6 = Saturday
-        var currentTime = fromTime.TimeOfDay;
+        var timeOfDay = repeat.TimeAsTimeSpan;
 
         // Find the next valid day
         DateTime? nextOccurrence = null;
@@ -111,7 +102,7 @@ public class RecurringEventService
             {
                 // This day is later in the week
                 var daysUntil = day - currentDay;
-                var candidate = fromTime.Date.AddDays(daysUntil).Add(pattern.Time);
+                var candidate = fromTime.Date.AddDays(daysUntil).Add(timeOfDay);
 
                 if (candidate > fromTime)
                 {
@@ -122,7 +113,7 @@ public class RecurringEventService
             else if (day == currentDay)
             {
                 // Same day - check if time hasn't passed yet
-                var candidate = fromTime.Date.Add(pattern.Time);
+                var candidate = fromTime.Date.Add(timeOfDay);
                 if (candidate > fromTime)
                 {
                     nextOccurrence = candidate;
@@ -141,7 +132,7 @@ public class RecurringEventService
                 daysUntilNextWeek = 7; // Full week ahead
             }
 
-            nextOccurrence = fromTime.Date.AddDays(daysUntilNextWeek).Add(pattern.Time);
+            nextOccurrence = fromTime.Date.AddDays(daysUntilNextWeek).Add(timeOfDay);
         }
 
         _logger.LogDebug(
@@ -161,28 +152,16 @@ public class RecurringEventService
     /// <returns>True if rescheduling was successful</returns>
     public bool RescheduleEvent(Event @event, EventStorageService storageService, EventSchedule schedule)
     {
-        if (@event.RecurringPattern == null)
+        if (@event.Repeat == null)
         {
-            _logger.LogWarning("Cannot reschedule event {EventName} (ID {EventId}) - no recurring pattern", @event.Name, @event.Id);
+            _logger.LogWarning("Cannot reschedule event {EventName} (ID {EventId}) - no repeat schedule (single occurrence)", @event.Name, @event.Id);
             return false;
-        }
-
-        // Decrement occurrences BEFORE calculating next instance
-        // This ensures the occurrence count check works correctly
-        if (@event.RecurringPattern.Occurrences.HasValue)
-        {
-            @event.RecurringPattern.Occurrences--;
-            _logger.LogDebug(
-                "Event {EventName} (ID {EventId}) has {Remaining} occurrences remaining",
-                @event.Name,
-                @event.Id,
-                @event.RecurringPattern.Occurrences);
         }
 
         var nextInstance = CalculateNextInstance(@event, DateTime.UtcNow);
         if (!nextInstance.HasValue)
         {
-            _logger.LogInformation("Event {EventName} (ID {EventId}) will not recur (reached limit or invalid pattern)", @event.Name, @event.Id);
+            _logger.LogInformation("Event {EventName} (ID {EventId}) will not recur (invalid pattern)", @event.Name, @event.Id);
             return false;
         }
 
@@ -212,36 +191,41 @@ public class RecurringEventService
     }
 
     /// <summary>
-    /// Gets a human-readable description of a recurring pattern
+    /// Gets a human-readable description of a repeat schedule
     /// </summary>
-    public string GetRecurringDescription(RecurringPattern pattern)
+    public string GetRepeatDescription(RepeatSchedule? repeat)
     {
-        if (pattern == null)
+        if (repeat == null)
         {
-            return "Does not recur";
+            return "Does not repeat";
         }
 
-        return pattern.Type switch
+        if (repeat.IsDaily)
         {
-            RecurringType.Daily => $"Daily at {pattern.Time:hh\\:mm}",
-            RecurringType.Weekly => GetWeeklyDescription(pattern),
-            _ => "Unknown recurrence type"
-        };
+            return $"Daily at {repeat.Time}";
+        }
+
+        if (repeat.IsWeekly)
+        {
+            return GetWeeklyDescription(repeat);
+        }
+
+        return "Unknown repeat frequency";
     }
 
-    private string GetWeeklyDescription(RecurringPattern pattern)
+    private string GetWeeklyDescription(RepeatSchedule repeat)
     {
-        if (pattern.Days == null || pattern.Days.Count == 0)
+        if (repeat.Days == null || repeat.Days.Count == 0)
         {
             return "Weekly (no days specified)";
         }
 
-        var dayNames = pattern.Days
+        var dayNames = repeat.Days
             .OrderBy(d => d)
             .Select(d => ((DayOfWeek)d).ToString().Substring(0, 3)) // Mon, Tue, etc.
             .ToList();
 
         var daysString = string.Join(", ", dayNames);
-        return $"Weekly on {daysString} at {pattern.Time:hh\\:mm}";
+        return $"Weekly on {daysString} at {repeat.Time}";
     }
 }

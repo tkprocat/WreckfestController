@@ -26,7 +26,7 @@ public partial class PlayersTab : UserControl
         PlayersContainer.ItemsSource = _playerViewModels;
 
         // Subscribe to player updates
-        _playerTracker.SubscribeToPlayerTracker(OnPlayerEvent);
+        _playerTracker.PlayerEvent += OnPlayerEvent;
 
         // Initial load
         RefreshPlayerList();
@@ -43,7 +43,7 @@ public partial class PlayersTab : UserControl
     {
         try
         {
-            var onlinePlayers = _playerTracker.GetOnlinePlayers();
+            var onlinePlayers = _playerTracker.GetPlayers();
             var (realPlayers, bots) = _playerTracker.GetPlayerCount();
 
             // Update header
@@ -139,6 +139,8 @@ public partial class PlayersTab : UserControl
 /// </summary>
 public class PlayerViewModel
 {
+    private static readonly SolidColorBrush OnlineColor = new(Color.FromRgb(0x51, 0xCF, 0x66));
+
     public string Name { get; set; }
     public int? Slot { get; set; }
     public string SlotInfo { get; set; }
@@ -183,10 +185,7 @@ public class PlayerViewModel
             JoinTimeText = $"{(int)timeSinceJoin.TotalHours}h {(int)timeSinceJoin.Minutes}m ago";
         }
 
-        // Status color (green for online, gray for offline)
-        StatusColor = player.IsOnline
-            ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#51CF66")!)
-            : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#888888")!);
+        StatusColor = OnlineColor;
 
         // Show admin/bot badges
         IsAdminVisible = player.IsAdmin ? Visibility.Visible : Visibility.Collapsed;

@@ -33,6 +33,8 @@ public partial class MainWindow : Window
         SettingsService settingsService,
         EventStorageService eventStorageService,
         SmartRestartService smartRestartService,
+        ConfigService configService,
+        WreckfestWebWebhookService webhookService,
         GuiLoggerProvider guiLoggerProvider,
         ILogger<MainWindow> logger,
         ILoggerFactory loggerFactory)
@@ -63,6 +65,8 @@ public partial class MainWindow : Window
         _eventSchedulerTab = new EventSchedulerTab(
             eventStorageService,
             smartRestartService,
+            configService,
+            webhookService,
             _loggerFactory.CreateLogger<EventSchedulerTab>());
 
         _controllerLogTab = new ControllerLogTab();
@@ -74,6 +78,9 @@ public partial class MainWindow : Window
 
         // Connect GUI logger to Controller Log tab
         guiLoggerProvider.SetLogTab(_controllerLogTab);
+
+        // Subscribe to PID changes to update window title
+        _serverManager.ProcessIdChanged += OnProcessIdChanged;
 
         // Set tab content
         StatusTabContent.Content = _processManagerTab;
@@ -107,6 +114,11 @@ public partial class MainWindow : Window
     private void OnProcessListRefreshTick(object? sender, ElapsedEventArgs e)
     {
         Dispatcher.Invoke(() => _processManagerTab?.RefreshProcessList());
+    }
+
+    private void OnProcessIdChanged(int? newPid)
+    {
+        Dispatcher.Invoke(UpdateWindowTitle);
     }
 
     public void UpdateWindowTitle()

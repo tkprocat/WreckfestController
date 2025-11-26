@@ -263,7 +263,7 @@ public class EventSchedulerService : IHostedService, IDisposable
             _ = _webhookService.SendEventActivatedAsync(@event.Id, @event.Name);
 
             // Handle recurring events
-            if (@event.RecurringPattern != null)
+            if (@event.Repeat != null)
             {
                 _logger.LogInformation(
                     "Event {EventName} (ID {EventId}) is recurring - calculating next instance",

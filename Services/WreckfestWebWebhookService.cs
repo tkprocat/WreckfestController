@@ -39,21 +39,18 @@ public class WreckfestWebWebhookService
                 vehicle = p.Vehicle,
                 slot = p.Slot,
                 isBot = p.IsBot,
-                joinedAt = p.JoinedAt,
-                lastSeenAt = p.LastSeenAt
+                joinedAt = p.JoinedAt
             }).ToList()
         };
         await SendWebhook("players-updated", payload, "", "Failed to send players updated webhook");
     }
 
-    [Obsolete("Use SendPlayersUpdatedAsync instead")]
     public async Task SendPlayerJoinedAsync(string playerName, bool isBot)
     {
         var payload = new { playerName, isBot };
         await SendWebhook("player-joined", payload, "", $"Failed to send player joined webhook for {playerName}");
     }
 
-    [Obsolete("Use SendPlayersUpdatedAsync instead")]
     public async Task SendPlayerLeftAsync(string playerName)
     {
         var payload = new { playerName };

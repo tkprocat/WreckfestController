@@ -126,7 +126,7 @@ public class EventsController : ControllerBase
                 e.ServerConfig,
                 e.Tracks,
                 e.CollectionName,
-                e.RecurringPattern,
+                e.Repeat,
                 StartsIn = FormatTimeUntil(e.StartTime, now),
                 StartsInMinutes = (e.StartTime - now).TotalMinutes
             }).ToList();
@@ -402,13 +402,13 @@ public class EventsController : ControllerBase
                 }
             }
 
-            // Validate recurring pattern if present
-            if (evt.RecurringPattern != null)
+            // Validate repeat schedule if present
+            if (evt.Repeat != null)
             {
-                if (evt.RecurringPattern.Type == RecurringType.Weekly &&
-                    (evt.RecurringPattern.Days == null || evt.RecurringPattern.Days.Count == 0))
+                if (evt.Repeat.IsWeekly &&
+                    (evt.Repeat.Days == null || evt.Repeat.Days.Count == 0))
                 {
-                    errors.Add($"Event {i} (ID {evt.Id}): Weekly recurring events must specify at least one day");
+                    errors.Add($"Event {i} (ID {evt.Id}): Weekly repeating events must specify at least one day");
                 }
             }
         }

@@ -34,7 +34,7 @@ public class PlayerTrackerAdminDetectionTests
 
         // Act
         _playerTracker.ProcessListResponse(listOutput);
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
 
         // Assert
         Assert.Single(players);
@@ -55,7 +55,7 @@ public class PlayerTrackerAdminDetectionTests
 
         // Act
         _playerTracker.ProcessListResponse(listOutput);
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
 
         // Assert
         Assert.Single(players);
@@ -78,7 +78,7 @@ public class PlayerTrackerAdminDetectionTests
 
         // Act
         _playerTracker.ProcessListResponse(listOutput);
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
 
         // Assert
         Assert.Equal(3, players.Count);
@@ -111,7 +111,7 @@ public class PlayerTrackerAdminDetectionTests
 
         // Act
         _playerTracker.ProcessListResponse(listOutput);
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
 
         // Assert
         Assert.Single(players);
@@ -137,17 +137,18 @@ public class PlayerTrackerAdminDetectionTests
 
         // Act - First without admin
         _playerTracker.ProcessListResponse(initialList);
-        var playersBeforeAdmin = _playerTracker.GetOnlinePlayers();
+        var playersBeforeAdmin = _playerTracker.GetPlayers();
 
-        // Act - Then with admin
-        _playerTracker.ProcessListResponse(updatedList);
-        var playersAfterAdmin = _playerTracker.GetOnlinePlayers();
-
-        // Assert
+        // Assert - before admin promotion
         Assert.Single(playersBeforeAdmin);
         Assert.Equal("RegularPlayer", playersBeforeAdmin[0].Name);
         Assert.False(playersBeforeAdmin[0].IsAdmin);
 
+        // Act - Then with admin
+        _playerTracker.ProcessListResponse(updatedList);
+        var playersAfterAdmin = _playerTracker.GetPlayers();
+
+        // Assert - after admin promotion
         Assert.Single(playersAfterAdmin);
         Assert.Equal("RegularPlayer", playersAfterAdmin[0].Name);
         Assert.True(playersAfterAdmin[0].IsAdmin);
@@ -165,7 +166,7 @@ public class PlayerTrackerAdminDetectionTests
 
         // Act
         _playerTracker.ProcessListResponse(listOutput);
-        var players = _playerTracker.GetOnlinePlayers();
+        var players = _playerTracker.GetPlayers();
 
         // Assert
         Assert.Single(players);

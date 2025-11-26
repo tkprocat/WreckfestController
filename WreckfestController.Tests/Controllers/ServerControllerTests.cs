@@ -37,6 +37,10 @@ public class ServerControllerTests
         var trackChangeTracker = new TrackChangeTracker(mockTrackChangeTrackerLogger.Object, mockWebhookService.Object);
         var serverInfoTracker = new ServerInfoTracker(mockServerInfoTrackerLogger.Object);
         var mockConsoleMonitor = new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>());
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         _mockServerManager = new Mock<ServerManager>(
             mockConfiguration.Object,
@@ -46,7 +50,8 @@ public class ServerControllerTests
             trackChangeTracker,
             serverInfoTracker,
             mockConsoleMonitor.Object,
-            mockWebhookService.Object);
+            mockWebhookService.Object,
+            mockConsoleLogSender.Object);
         _mockLogger = new Mock<ILogger<ServerController>>();
         _controller = new ServerController(_mockServerManager.Object, _mockLogger.Object);
     }
@@ -182,9 +187,9 @@ public class ServerControllerTests
             MaxPlayers = 24,
             Players = new List<Models.Player>
             {
-                new Models.Player { Name = "Player1", IsOnline = true, IsBot = false, Slot = 0 },
-                new Models.Player { Name = "eRacer", IsOnline = true, IsBot = true, Slot = 1 },
-                new Models.Player { Name = "Player2", IsOnline = true, IsBot = false, Slot = 2 }
+                new Models.Player { Name = "Player1", IsBot = false, Slot = 0 },
+                new Models.Player { Name = "eRacer", IsBot = true, Slot = 1 },
+                new Models.Player { Name = "Player2", IsBot = false, Slot = 2 }
             },
             LastUpdated = DateTime.Now
         };

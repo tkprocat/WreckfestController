@@ -59,7 +59,7 @@ public class DialogService
         };
 
         var result = await DialogHost.Show(view, "RootDialog");
-        return result is bool boolResult && boolResult;
+        return result is true;
     }
 
     /// <summary>

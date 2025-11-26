@@ -10,7 +10,10 @@ public class ServerManager
 {
     private Process? _serverProcess;
     private readonly IConfiguration _configuration;
-    private readonly ConcurrentBag<Action<string>> _consoleSubscribers = new();
+    /// <summary>
+    /// Event raised when console output is received from the server
+    /// </summary>
+    public event Action<string>? ConsoleOutput;
     private readonly object _lock = new();
     private DateTime? _startTime;
     private int? _actualServerPid;
@@ -33,6 +36,11 @@ public class ServerManager
     private readonly object _logReadLock = new();
     private System.Threading.Timer? _fileWatcherDebounceTimer;
     private System.Threading.Timer? _pollingTimer;
+
+    /// <summary>
+    /// Raised when the server process ID changes (after restart or attach)
+    /// </summary>
+    public event Action<int?>? ProcessIdChanged;
 
     public bool IsRunning => GetActualServerProcess() != null;
 
@@ -206,6 +214,7 @@ public class ServerManager
                 _serverProcess = process;
                 _actualServerPid = process.Id;
                 _startTime = DateTime.Now;
+                ProcessIdChanged?.Invoke(process.Id);
 
                 // Start monitoring the server output (console or log file)
                 StartOutputMonitoring();
@@ -279,6 +288,9 @@ public class ServerManager
             var currentPid = _actualServerPid;
             _logger.LogInformation("Stopping server gracefully via 'exit' command (PID: {PID})", currentPid);
 
+            // Stop output monitoring before sending exit command (frees console attachment)
+            StopOutputMonitoring();
+
             // Send exit command
             var commandResult = await SendCommandAsync("exit");
             if (!commandResult.Success)
@@ -327,9 +339,6 @@ public class ServerManager
                         _serverProcess = null;
                         _startTime = null;
                         _actualServerPid = null;
-
-                        // Stop monitoring log file
-                        StopOutputMonitoring();
 
                         // Clear player tracking
                         _playerTracker.Clear();
@@ -403,12 +412,12 @@ public class ServerManager
                     }
                 }
 
+                // Stop output monitoring before cleanup (frees console attachment)
+                StopOutputMonitoring();
+
                 _serverProcess = null;
                 _startTime = null;
                 _actualServerPid = null;
-
-                // Stop monitoring log file
-                StopLogFileMonitoring();
 
                 // Clear player tracking
                 _playerTracker.Clear();
@@ -456,7 +465,11 @@ public class ServerManager
             var oldPids = GetAllWreckfestPids();
             _logger.LogInformation("Current Wreckfest PIDs before restart: {PIDs}", string.Join(", ", oldPids));
 
-            // Step 2: Send /restart command
+            // Step 2: Stop output monitoring before restart (old process will be killed)
+            _logger.LogDebug("Stopping output monitoring before restart");
+            StopOutputMonitoring();
+
+            // Step 3: Send /restart command
             var commandResult = await SendCommandAsync("/restart");
             if (!commandResult.Success)
             {
@@ -534,6 +547,7 @@ public class ServerManager
             // Update to track the new PID
             var newPid = newProcessPids.First();
             _actualServerPid = newPid;
+            ProcessIdChanged?.Invoke(newPid);
 
             // Update start time
             try
@@ -549,6 +563,10 @@ public class ServerManager
             var oldPid = oldPids.FirstOrDefault();
             _logger.LogInformation("Server restarted successfully via /restart command. New PID: {PID} (was {OldPID})",
                 newPid, oldPid != 0 ? oldPid : (int?)null);
+
+            // Restart console monitoring for the new process
+            _logger.LogDebug("Restarting output monitoring for new process");
+            StartOutputMonitoring();
 
             // Send webhook notification
             _ = Task.Run(async () =>
@@ -726,6 +744,11 @@ public class ServerManager
 
     public virtual async Task<(bool Success, string Message)> SendCommandAsync(string command)
     {
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return (false, "Command cannot be empty");
+        }
+
         if (!IsRunning)
         {
             return (false, "Server is not running");
@@ -761,30 +784,9 @@ public class ServerManager
         }
     }
 
-    public void SubscribeToConsoleOutput(Action<string> callback)
+    private void NotifyConsoleOutput(string message)
     {
-        _consoleSubscribers.Add(callback);
-    }
-
-    public void UnsubscribeFromConsoleOutput(Action<string> callback)
-    {
-        // ConcurrentBag doesn't support removal, but we can handle it by checking if callback is null
-        // For simplicity, we'll keep the subscriber list as is
-    }
-
-    private void NotifyConsoleOutputSubscribers(string message)
-    {
-        foreach (var subscriber in _consoleSubscribers)
-        {
-            try
-            {
-                subscriber(message);
-            }
-            catch
-            {
-                // Ignore subscriber errors
-            }
-        }
+        ConsoleOutput?.Invoke(message);
     }
 
     public virtual ServerStatus GetStatus()
@@ -814,6 +816,7 @@ public class ServerManager
 
             _actualServerPid = pid;
             _startTime = process.StartTime;
+            ProcessIdChanged?.Invoke(pid);
             _logger.LogInformation("Attached to existing server process (PID: {PID}, Name: {Name})", pid, process.ProcessName);
 
             // Start monitoring the attached process
@@ -997,17 +1000,7 @@ public class ServerManager
             }
 
             // Notify subscribers
-            foreach (var subscriber in _consoleSubscribers)
-            {
-                try
-                {
-                    subscriber(line);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error notifying console subscriber");
-                }
-            }
+            NotifyConsoleOutput(line);
 
             // Send to webhook for Laravel
             _consoleLogSender.AddLog(line);
@@ -1035,7 +1028,7 @@ public class ServerManager
         _ = Task.Run(async () =>
         {
             const int maxRetries = 5;
-            const int retryDelayMs = 2000; // 2 seconds between retries
+            const int baseDelayMs = 1000; // Start with 1 second
 
             for (int attempt = 1; attempt <= maxRetries; attempt++)
             {
@@ -1067,11 +1060,12 @@ public class ServerManager
                     _logger.LogError(ex, "Error starting console monitoring (attempt {Attempt}/{MaxRetries})", attempt, maxRetries);
                 }
 
-                // Wait before retry (unless this was the last attempt)
+                // Wait before retry with exponential backoff (unless this was the last attempt)
                 if (attempt < maxRetries)
                 {
-                    _logger.LogDebug("Retrying console monitoring in {DelayMs}ms...", retryDelayMs);
-                    await Task.Delay(retryDelayMs);
+                    var delayMs = baseDelayMs * (1 << (attempt - 1)); // 1s, 2s, 4s, 8s
+                    _logger.LogDebug("Retrying console monitoring in {DelayMs}ms...", delayMs);
+                    await Task.Delay(delayMs);
                 }
             }
 
@@ -1254,12 +1248,12 @@ public class ServerManager
                 if (!string.IsNullOrWhiteSpace(line))
                 {
                     AddToOutputBuffer(line);
-                    NotifyConsoleOutputSubscribers(line);
+                    NotifyConsoleOutput(line);
                     _consoleLogSender.AddLog(line);
                     _playerTracker.ProcessLogLine(line);
                     _trackChangeTracker.ProcessLogLine(line);
                     _serverInfoTracker.ProcessLogLine(line);
-                    _logger.LogInformation("Server log: {Line}", line);
+                    _logger.LogDebug("Server log: {Line}", line);
 
                     var trackMatch = System.Text.RegularExpressions.Regex.Match(line, @"Current track loaded!\s*\(([^)]+)\)");
                     if (trackMatch.Success)
@@ -1292,7 +1286,7 @@ public class ServerManager
 
     public virtual Models.PlayerListResponse GetPlayerList()
     {
-        var onlinePlayers = _playerTracker.GetOnlinePlayers();
+        var onlinePlayers = _playerTracker.GetPlayers();
         var (onlineCount, totalCount) = _playerTracker.GetPlayerCount();
 
         return new Models.PlayerListResponse
@@ -1478,6 +1472,7 @@ public class ServerManager
                 _actualServerPid = processId;
                 _startTime = process.StartTime;
             }
+            ProcessIdChanged?.Invoke(processId);
 
             // Initialize trackers
             _playerTracker.Clear();

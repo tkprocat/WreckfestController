@@ -39,9 +39,9 @@ public partial class ServerControlTab : UserControl
         EventLogContainer.ItemsSource = _eventLogItems;
 
         // Subscribe to server events
-        _serverManager.SubscribeToConsoleOutput(OnConsoleOutput);
-        _playerTracker.SubscribeToPlayerTracker(OnPlayerEvent);
-        _trackChangeTracker.SubscribeToTrackChange(OnTrackChangeEvent);
+        _serverManager.ConsoleOutput += OnConsoleOutput;
+        _playerTracker.PlayerEvent += OnPlayerEvent;
+        _trackChangeTracker.TrackChanged += OnTrackChangeEvent;
     }
 
     public void UpdateServerStatus()
