@@ -57,4 +57,7 @@ public class WreckfestWebSettings
 {
     [JsonPropertyName("WebhookBaseUrl")]
     public string? WebhookBaseUrl { get; set; }
+
+    [JsonPropertyName("WebhookApiKey")]
+    public string? WebhookApiKey { get; set; }
 }

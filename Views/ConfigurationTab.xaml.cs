@@ -63,6 +63,7 @@ public partial class ConfigurationTab : UserControl
 
         // Network settings
         WreckfestWebWebhookUrlTextBox.Text = settings.WreckfestWeb?.WebhookBaseUrl ?? "";
+        WreckfestWebApiKeyTextBox.Text = settings.WreckfestWeb?.WebhookApiKey ?? "";
     }
 
     private UserSettings GatherFormData()
@@ -99,7 +100,8 @@ public partial class ConfigurationTab : UserControl
             },
             WreckfestWeb = new WreckfestWebSettings
             {
-                WebhookBaseUrl = WreckfestWebWebhookUrlTextBox.Text
+                WebhookBaseUrl = WreckfestWebWebhookUrlTextBox.Text,
+                WebhookApiKey = WreckfestWebApiKeyTextBox.Text
             }
         };
     }
@@ -209,7 +211,8 @@ public partial class ConfigurationTab : UserControl
                 },
                 WreckfestWeb = new WreckfestWebSettings
                 {
-                    WebhookBaseUrl = "http://localhost:8000/api/webhooks"
+                    WebhookBaseUrl = "http://localhost:8000/api/webhooks",
+                    WebhookApiKey = ""
                 }
             };
 

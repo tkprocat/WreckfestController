@@ -87,6 +87,7 @@ public class Program
                 services.AddSingleton<RecurringEventService>();
                 services.AddSingleton<SmartRestartService>();
                 services.AddSingleton<ConsoleMonitor>();
+                services.AddSingleton<ConsoleWriter>();
                 services.AddSingleton<ServerManager>();
                 services.AddSingleton<SettingsService>();
 

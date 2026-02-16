@@ -10,12 +10,12 @@ public class ServerManagerTests
 {
     private readonly Mock<IConfiguration> _mockConfiguration;
     private readonly Mock<ILogger<ServerManager>> _mockLogger;
-    private readonly Mock<ILoggerFactory> _mockLoggerFactory;
     private readonly Mock<ILogger<PlayerTracker>> _mockPlayerTrackerLogger;
     private readonly Mock<ILogger<TrackChangeTracker>> _mockTrackChangeTrackerLogger;
     private readonly Mock<ILogger<ServerInfoTracker>> _mockServerInfoTrackerLogger;
     private readonly Mock<WreckfestWebWebhookService> _mockWebhookService;
     private readonly Mock<ConsoleMonitor> _mockConsoleMonitor;
+    private readonly Mock<ConsoleWriter> _mockConsoleWriter;
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ServerInfoTracker _serverInfoTracker;
@@ -25,7 +25,6 @@ public class ServerManagerTests
     {
         _mockConfiguration = new Mock<IConfiguration>();
         _mockLogger = new Mock<ILogger<ServerManager>>();
-        _mockLoggerFactory = new Mock<ILoggerFactory>();
         _mockPlayerTrackerLogger = new Mock<ILogger<PlayerTracker>>();
         _mockTrackChangeTrackerLogger = new Mock<ILogger<TrackChangeTracker>>();
         _mockServerInfoTrackerLogger = new Mock<ILogger<ServerInfoTracker>>();
@@ -44,6 +43,7 @@ public class ServerManagerTests
         _trackChangeTracker = new TrackChangeTracker(_mockTrackChangeTrackerLogger.Object, _mockWebhookService.Object);
         _serverInfoTracker = new ServerInfoTracker(_mockServerInfoTrackerLogger.Object);
         _mockConsoleMonitor = new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>());
+        _mockConsoleWriter = new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>());
 
         var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
             Mock.Of<HttpClient>(),
@@ -53,11 +53,11 @@ public class ServerManagerTests
         _serverManager = new ServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
-            _mockLoggerFactory.Object,
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
             _mockConsoleMonitor.Object,
+            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object);
     }
@@ -96,11 +96,11 @@ public class ServerManagerTests
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
-            _mockLoggerFactory.Object,
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
             _mockConsoleMonitor.Object,
+            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object);
 
@@ -127,11 +127,11 @@ public class ServerManagerTests
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
-            _mockLoggerFactory.Object,
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
             _mockConsoleMonitor.Object,
+            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object);
 

@@ -238,7 +238,7 @@ public class PlayerTrackerAdminDetectionTests
         var (onlinePlayers, totalPlayers) = _playerTracker.GetPlayerCount();
 
         // Assert
-        Assert.Equal(1, onlinePlayers);  // Only Procat is a real player
-        Assert.Equal(1, totalPlayers);   // Total real players ever seen
+        Assert.Equal(1, onlinePlayers);   // Only Procat is a real player
+        Assert.Equal(11, totalPlayers);  // 11 total players (10 bots + 1 human)
     }
 }

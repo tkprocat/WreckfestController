@@ -44,7 +44,8 @@ public partial class PlayersTab : UserControl
         try
         {
             var onlinePlayers = _playerTracker.GetPlayers();
-            var (realPlayers, bots) = _playerTracker.GetPlayerCount();
+            var (realPlayers, total) = _playerTracker.GetPlayerCount();
+            var bots = total - realPlayers;
 
             // Update header
             PlayerCountText.Text = $"{realPlayers} player(s) online ({bots} bots)";

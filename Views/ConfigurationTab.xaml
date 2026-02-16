@@ -180,7 +180,23 @@
                     <TextBox x:Name="WreckfestWebWebhookUrlTextBox"
                              materialDesign:HintAssist.Hint="http://localhost:8000/api/webhooks"
                              Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- WreckfestWeb API Key -->
+                    <TextBlock Text="WreckfestWeb API Key"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="WreckfestWebApiKeyTextBox"
+                             materialDesign:HintAssist.Hint="64-character hex key for webhook authentication"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
                              Foreground="{StaticResource TextPrimary}"/>
+                    <TextBlock Text="Required for authenticating webhook requests to WreckfestWeb (X-API-Key header)"
+                               FontSize="10"
+                               Foreground="{StaticResource TextSecondary}"
+                               Margin="0,5,0,0"
+                               TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
 

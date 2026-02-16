@@ -55,8 +55,8 @@ public partial class ServerControlTab : UserControl
             : (SolidColorBrush)FindResource("RedColor");
 
         // Update player count
-        var (onlineCount, maxPlayers) = _playerTracker.GetPlayerCount();
-        PlayerCountLabel.Text = $"{onlineCount} / {maxPlayers}";
+        var (onlineCount, totalPlayers) = _playerTracker.GetPlayerCount();
+        PlayerCountLabel.Text = $"{onlineCount} / {totalPlayers}";
 
         // Update current track
         var currentTrack = _trackChangeTracker.GetCurrentTrack();
@@ -377,7 +377,8 @@ public partial class ServerControlTab : UserControl
         }
 
         // Players are online - ask for confirmation
-        var (onlinePlayers, bots) = _playerTracker.GetPlayerCount();
+        var (onlinePlayers, total) = _playerTracker.GetPlayerCount();
+        var bots = total - onlinePlayers;
         return await DialogService.ShowConfirmationAsync(
             $"{onlinePlayers} player(s) online ({bots} bots).\n\nProceed with {actionName}?",
             "Players Online");

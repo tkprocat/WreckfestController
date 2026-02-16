@@ -11,6 +11,7 @@
     "WreckfestAppId": "361580"
   },
   "WreckfestWeb": {
-    "WebhookBaseUrl": "https://your-laravel-app.com/api/webhooks"
+    "WebhookBaseUrl": "https://your-laravel-app.com/api/webhooks",
+    "WebhookApiKey": "your-64-character-hex-key-here"
   }
 }

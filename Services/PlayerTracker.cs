@@ -45,14 +45,6 @@ public class PlayerTracker
         if (string.IsNullOrWhiteSpace(line))
             return;
 
-        // DEBUG: Log all lines being processed
-        try
-        {
-            var debugPath = Path.Combine(Path.GetTempPath(), "wreckfest_playertracker_debug.txt");
-            File.AppendAllText(debugPath, $"[{DateTime.Now:HH:mm:ss.fff}] ProcessLogLine: {line}\n");
-        }
-        catch { }
-
         lock (_lock)
         {
             // Check if we're collecting list response
@@ -366,14 +358,13 @@ public class PlayerTracker
     }
 
     /// <summary>
-    /// Get player count (excludes bots - only counts real human players)
+    /// Get player count: online = real players (excluding bots), total = all players including bots
     /// </summary>
     public (int online, int total) GetPlayerCount()
     {
         lock (_lock)
         {
-            // Only count real players, not bots, for restart decisions
-            return (_players.Values.Count(p => !p.IsBot), _players.Count(p => !p.Value.IsBot));
+            return (_players.Values.Count(p => !p.IsBot), _players.Count);
         }
     }
 

@@ -134,7 +134,8 @@ public class SettingsService
             },
             WreckfestWeb = new WreckfestWebSettings
             {
-                WebhookBaseUrl = _configuration["WreckfestWeb:WebhookBaseUrl"] ?? "http://localhost:8000/api/webhooks"
+                WebhookBaseUrl = _configuration["WreckfestWeb:WebhookBaseUrl"] ?? "http://localhost:8000/api/webhooks",
+                WebhookApiKey = _configuration["WreckfestWeb:WebhookApiKey"] ?? ""
             }
         };
     }

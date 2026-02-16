@@ -18,10 +18,10 @@ public class ServerManager
     private DateTime? _startTime;
     private int? _actualServerPid;
     private readonly ILogger<ServerManager> _logger;
-    private readonly ILoggerFactory _loggerFactory;
     private readonly System.Collections.Concurrent.ConcurrentQueue<(DateTime Timestamp, string Message)> _outputBuffer = new();
     private const int MaxBufferSize = 500;
     private readonly ConsoleMonitor _consoleMonitor;
+    private readonly ConsoleWriter _consoleWriter;
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ServerInfoTracker _serverInfoTracker;
@@ -47,21 +47,21 @@ public class ServerManager
     public ServerManager(
         IConfiguration configuration,
         ILogger<ServerManager> logger,
-        ILoggerFactory loggerFactory,
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ServerInfoTracker serverInfoTracker,
         ConsoleMonitor consoleMonitor,
+        ConsoleWriter consoleWriter,
         WreckfestWebWebhookService webhookService,
         ConsoleLogWebhookSender consoleLogSender)
     {
         _configuration = configuration;
         _logger = logger;
-        _loggerFactory = loggerFactory;
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
         _serverInfoTracker = serverInfoTracker;
         _consoleMonitor = consoleMonitor;
+        _consoleWriter = consoleWriter;
         _webhookService = webhookService;
         _consoleLogSender = consoleLogSender;
 
@@ -364,40 +364,46 @@ public class ServerManager
     /// </summary>
     public virtual async Task<(bool Success, string Message)> StopServerAsync()
     {
+        Process? actualProcess;
+        int currentPid;
+
         lock (_lock)
         {
-            var actualProcess = GetActualServerProcess();
+            actualProcess = GetActualServerProcess();
             if (actualProcess == null)
             {
                 return (false, "Server is not running");
             }
+            currentPid = actualProcess.Id;
+        }
 
-            try
+        try
+        {
+            _logger.LogInformation("Force stopping server process {ProcessId}", currentPid);
+
+            // Kill and wait outside the lock to avoid blocking status checks
+            actualProcess.Kill(entireProcessTree: true);
+            actualProcess.WaitForExit(10000);
+
+            // Send webhook notification before cleanup
+            _ = Task.Run(async () =>
             {
-                var currentPid = actualProcess.Id;
-                _logger.LogInformation("Force stopping server process {ProcessId}", currentPid);
-
-                // Try to kill the actual server process
-                actualProcess.Kill(entireProcessTree: true);
-                actualProcess.WaitForExit(10000);
-
-                // Send webhook notification before cleanup
-                _ = Task.Run(async () =>
+                try
                 {
-                    try
+                    await _webhookService.SendServerStoppedAsync(new Models.ServerStoppedEvent
                     {
-                        await _webhookService.SendServerStoppedAsync(new Models.ServerStoppedEvent
-                        {
-                            ProcessId = currentPid,
-                            StopMethod = "Force"
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to send server stopped webhook");
-                    }
-                });
+                        ProcessId = currentPid,
+                        StopMethod = "Force"
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send server stopped webhook");
+                }
+            });
 
+            lock (_lock)
+            {
                 // Clean up the launcher process if it's still around
                 if (_serverProcess != null && !_serverProcess.HasExited)
                 {
@@ -421,14 +427,14 @@ public class ServerManager
 
                 // Clear player tracking
                 _playerTracker.Clear();
+            }
 
-                return (true, "Server stopped successfully");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to stop server");
-                return (false, $"Failed to stop server: {ex.Message}");
-            }
+            return (true, "Server stopped successfully");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to stop server");
+            return (false, $"Failed to stop server: {ex.Message}");
         }
     }
 
@@ -756,16 +762,14 @@ public class ServerManager
 
         try
         {
-            // Use ConsoleWriter to send commands via window messages
-            var consoleWriter = new ConsoleWriter(_loggerFactory.CreateLogger<ConsoleWriter>());
-            var windowHandle = consoleWriter.FindConsoleWindow();
+            var windowHandle = _consoleWriter.FindConsoleWindow();
 
             if (windowHandle == IntPtr.Zero)
             {
                 return (false, "Could not find console window");
             }
 
-            bool success = consoleWriter.SendCommand(windowHandle, command + Environment.NewLine);
+            bool success = _consoleWriter.SendCommand(windowHandle, command + Environment.NewLine);
 
             if (success)
             {

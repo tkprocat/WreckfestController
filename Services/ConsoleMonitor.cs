@@ -19,6 +19,7 @@ public class ConsoleMonitor : IDisposable
     private int _targetProcessId;
     private bool _isMonitoring;
     private readonly object _lockObject = new();
+    private bool _isReading;
 
     // Line buffer for accumulating incomplete output across polling cycles
     private string _incompleteLineBuffer = "";
@@ -113,10 +114,8 @@ public class ConsoleMonitor : IDisposable
 
             try
             {
-                // WORKAROUND: Since we're a console app, we need to free our own console first
-                // This is not ideal but may work for ASP.NET Core applications
-                // Note: This will disable console output from our own application!
-                // IMPORTANT: Only free console if we have one and it's not already the target process's console
+                // Free any existing console before attaching to the target process's console.
+                // A process can only be attached to one console at a time.
                 if (_consoleHandle == IntPtr.Zero || _consoleHandle == new IntPtr(-1))
                 {
                     try
@@ -233,56 +232,85 @@ public class ConsoleMonitor : IDisposable
 
     private void ReadNewOutput()
     {
-        if (_consoleHandle == IntPtr.Zero)
-            return;
+        IntPtr handle;
+        COORD lastPos;
+        short lastWidth;
+
+        // Capture shared state under lock; prevent overlapping timer callbacks
+        lock (_lockObject)
+        {
+            if (!_isMonitoring || _isReading || _consoleHandle == IntPtr.Zero)
+                return;
+
+            _isReading = true;
+            handle = _consoleHandle;
+            lastPos = _lastPosition;
+            lastWidth = _lastConsoleWidth;
+        }
 
         try
         {
-            // Get current console state
-            if (!GetConsoleScreenBufferInfo(_consoleHandle, out var bufferInfo))
+            // P/Invoke calls run outside the lock to avoid blocking StopMonitoring.
+            // If the console was freed concurrently, these calls will simply fail.
+            if (!GetConsoleScreenBufferInfo(handle, out var bufferInfo))
             {
                 _logger.LogDebug("Failed to get console buffer info");
                 return;
             }
 
             // Check if console was resized
-            if (bufferInfo.dwSize.X != _lastConsoleWidth)
+            if (bufferInfo.dwSize.X != lastWidth)
             {
                 _logger.LogInformation("Console width changed from {OldWidth} to {NewWidth}. Resetting position tracking.",
-                    _lastConsoleWidth, bufferInfo.dwSize.X);
-                _lastConsoleWidth = bufferInfo.dwSize.X;
-                _lastPosition = bufferInfo.dwCursorPosition;
+                    lastWidth, bufferInfo.dwSize.X);
+                lock (_lockObject)
+                {
+                    if (!_isMonitoring) return;
+                    _lastConsoleWidth = bufferInfo.dwSize.X;
+                    _lastPosition = bufferInfo.dwCursorPosition;
+                }
                 // Don't read output this cycle, just update tracking
                 return;
             }
 
             // Check if cursor has moved (indicating new output)
-            if (bufferInfo.dwCursorPosition.Y > _lastPosition.Y ||
-                (bufferInfo.dwCursorPosition.Y == _lastPosition.Y &&
-                 bufferInfo.dwCursorPosition.X > _lastPosition.X))
+            if (bufferInfo.dwCursorPosition.Y > lastPos.Y ||
+                (bufferInfo.dwCursorPosition.Y == lastPos.Y &&
+                 bufferInfo.dwCursorPosition.X > lastPos.X))
             {
                 // Calculate number of characters to read
-                int charsToRead = CalculateCharsToRead(_lastPosition, bufferInfo.dwCursorPosition, bufferInfo.dwSize.X);
+                int charsToRead = CalculateCharsToRead(lastPos, bufferInfo.dwCursorPosition, bufferInfo.dwSize.X);
 
                 if (charsToRead > 0 && charsToRead < 100000) // Sanity check
                 {
                     // Read the characters from the buffer
                     StringBuilder buffer = new StringBuilder(charsToRead + 1);
-                    if (ReadConsoleOutputCharacter(_consoleHandle, buffer,
-                        (uint)charsToRead, _lastPosition, out uint charsRead))
+                    if (ReadConsoleOutputCharacter(handle, buffer,
+                        (uint)charsToRead, lastPos, out uint charsRead))
                     {
                         string output = buffer.ToString(0, (int)charsRead);
                         ProcessOutput(output, bufferInfo.dwSize.X);
                     }
                 }
 
-                // Update position
-                _lastPosition = bufferInfo.dwCursorPosition;
+                // Update position under lock
+                lock (_lockObject)
+                {
+                    if (!_isMonitoring) return;
+                    _lastPosition = bufferInfo.dwCursorPosition;
+                }
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error reading console output");
+        }
+        finally
+        {
+            lock (_lockObject)
+            {
+                _isReading = false;
+            }
         }
     }
 
@@ -315,22 +343,13 @@ public class ConsoleMonitor : IDisposable
         if (string.IsNullOrEmpty(rawOutput))
             return;
 
-        // DEBUG: Dump raw output to file
-        try
+        string fullText;
+        lock (_lockObject)
         {
-            var debugPath = Path.Combine(Path.GetTempPath(), "wreckfest_console_debug.txt");
-            File.AppendAllText(debugPath, $"\n\n=== RAW OUTPUT (Width: {consoleWidth}) at {DateTime.Now:HH:mm:ss.fff} ===\n");
-            File.AppendAllText(debugPath, rawOutput);
-            File.AppendAllText(debugPath, "\n=== END RAW OUTPUT ===\n");
+            // Prepend any incomplete line from previous cycle
+            fullText = _incompleteLineBuffer + rawOutput;
+            _incompleteLineBuffer = ""; // Clear buffer
         }
-        catch
-        {
-            // Ignore debug file errors
-        }
-
-        // Prepend any incomplete line from previous cycle
-        string fullText = _incompleteLineBuffer + rawOutput;
-        _incompleteLineBuffer = ""; // Clear buffer
 
         // Process text: handle both explicit newlines and console width wrapping
         var lines = new List<string>();
@@ -375,7 +394,10 @@ public class ConsoleMonitor : IDisposable
                 else
                 {
                     // At end of buffer - might be incomplete
-                    _incompleteLineBuffer = segment;
+                    lock (_lockObject)
+                    {
+                        _incompleteLineBuffer = segment;
+                    }
                     break;
                 }
             }

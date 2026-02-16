@@ -27,6 +27,14 @@ public class WreckfestWebWebhookService
         return _configuration["WreckfestWeb:WebhookBaseUrl"] ?? "http://localhost:8000/api/webhooks";
     }
 
+    /// <summary>
+    /// Gets the webhook API key from configuration (supports hot-reload)
+    /// </summary>
+    private string? GetWebhookApiKey()
+    {
+        return _configuration["WreckfestWeb:WebhookApiKey"];
+    }
+
     public async Task SendPlayersUpdatedAsync(List<Models.Player> players)
     {
         var payload = new
@@ -161,11 +169,20 @@ public class WreckfestWebWebhookService
     private async Task PostWebhookAsync(string endpoint, object payload)
     {
         var webhookBaseUrl = GetWebhookBaseUrl();
+        var apiKey = GetWebhookApiKey();
         var url = $"{webhookBaseUrl}/{endpoint}";
         var json = JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.PostAsync(url, content);
+        using var request = new HttpRequestMessage(HttpMethod.Post, url);
+        request.Content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        // Add API key header if configured
+        if (!string.IsNullOrWhiteSpace(apiKey))
+        {
+            request.Headers.Add("X-API-Key", apiKey);
+        }
+
+        var response = await _httpClient.SendAsync(request);
 
         if (response.IsSuccessStatusCode)
         {
