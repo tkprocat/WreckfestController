@@ -78,6 +78,7 @@ public class SmartRestartService
     /// <returns>True if restart was initiated, false if already in progress</returns>
     public bool InitiateRestart(Event @event, Action<Event> onComplete)
     {
+        bool startImmediately;
         lock (_stateLock)
         {
             if (_state != SmartRestartState.Idle)
@@ -102,26 +103,32 @@ public class SmartRestartService
             {
                 _logger.LogInformation("No real players online (only bots or empty) - skipping countdown and restarting immediately");
                 _state = SmartRestartState.Pending; // Set state so ExecuteRestartAsync doesn't early-return
-                _ = Task.Run(() => ExecuteRestartAsync());
-                return true;
+                startImmediately = true;
             }
+            else
+            {
+                // Real players are online - start countdown
+                var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
+                _logger.LogInformation("{PlayerCount} real players online - starting {Minutes}-minute countdown", onlinePlayers, CountdownMinutes);
+                _state = SmartRestartState.Warning;
+                _countdownMinutesRemaining = CountdownMinutes;
+                _countdownStartTime = DateTime.UtcNow;
 
-            // Real players are online - start countdown
-            var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
-            _logger.LogInformation("{PlayerCount} real players online - starting {Minutes}-minute countdown", onlinePlayers, CountdownMinutes);
-            _state = SmartRestartState.Warning;
-            _countdownMinutesRemaining = CountdownMinutes;
-            _countdownStartTime = DateTime.UtcNow;
+                // Start countdown timer (fires every minute)
+                _countdownTimer = new System.Threading.Timer(
+                    OnCountdownTick,
+                    null,
+                    TimeSpan.Zero,
+                    TimeSpan.FromMinutes(1));
 
-            // Start countdown timer (fires every minute)
-            _countdownTimer = new System.Threading.Timer(
-                OnCountdownTick,
-                null,
-                TimeSpan.Zero,
-                TimeSpan.FromMinutes(1));
-
-            return true;
+                startImmediately = false;
+            }
         }
+
+        if (startImmediately)
+            _ = Task.Run(() => ExecuteRestartAsync());
+
+        return true;
     }
 
     /// <summary>
@@ -210,41 +217,42 @@ public class SmartRestartService
     /// </summary>
     private void OnLobbyCheckTick(object? state)
     {
+        bool shouldRestart = false;
         lock (_stateLock)
         {
             if (_state != SmartRestartState.Pending)
-            {
                 return;
-            }
 
-            // Check if we've exceeded max wait time
             var waitDuration = DateTime.UtcNow - _waitStartTime;
             if (waitDuration.TotalMinutes >= MaxWaitMinutes)
             {
                 _logger.LogWarning(
                     "Max wait time ({Minutes} minutes) exceeded - forcing restart",
                     MaxWaitMinutes);
-
                 _ = SendServerMessageAsync("Server restarting now (timeout).");
-                _ = Task.Run(() => ExecuteRestartAsync());
-                return;
+                shouldRestart = true;
             }
-
-            // Check if all players left
-            var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
-            if (onlinePlayers == 0)
+            else
             {
-                _logger.LogInformation("All players left - restarting immediately");
-                _ = Task.Run(() => ExecuteRestartAsync());
-                return;
+                var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
+                if (onlinePlayers == 0)
+                {
+                    _logger.LogInformation("All players left - restarting immediately");
+                    shouldRestart = true;
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "Still waiting for lobby. {OnlinePlayers} players online. Waited {Minutes:F1} of {MaxMinutes} minutes.",
+                        onlinePlayers,
+                        waitDuration.TotalMinutes,
+                        MaxWaitMinutes);
+                }
             }
-
-            _logger.LogDebug(
-                "Still waiting for lobby. {OnlinePlayers} players online. Waited {Minutes:F1} of {MaxMinutes} minutes.",
-                onlinePlayers,
-                waitDuration.TotalMinutes,
-                MaxWaitMinutes);
         }
+
+        if (shouldRestart)
+            _ = Task.Run(() => ExecuteRestartAsync());
     }
 
     /// <summary>
@@ -252,6 +260,7 @@ public class SmartRestartService
     /// </summary>
     private void OnTrackChanged(TrackChangeEvent trackChangeEvent)
     {
+        bool shouldRestart = false;
         lock (_stateLock)
         {
             if (_state == SmartRestartState.Pending)
@@ -259,11 +268,13 @@ public class SmartRestartService
                 _logger.LogInformation(
                     "Track changed to {TrackId} - lobby detected, initiating restart",
                     trackChangeEvent.TrackId);
-
                 _ = SendServerMessageAsync("Server restarting now.");
-                _ = Task.Run(() => ExecuteRestartAsync());
+                shouldRestart = true;
             }
         }
+
+        if (shouldRestart)
+            _ = Task.Run(() => ExecuteRestartAsync());
     }
 
     /// <summary>

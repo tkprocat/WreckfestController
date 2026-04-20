@@ -93,22 +93,7 @@ public class ApiServer : IApiServer, IDisposable
             _app.UseAuthorization();
             _app.MapControllers();
 
-            // Start the server in the background
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await _app.RunAsync();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "API server crashed");
-                    _isRunning = false;
-                }
-            });
-
-            // Wait a bit for the server to start
-            await Task.Delay(500);
+            await _app.StartAsync();
 
             _isRunning = true;
             _logger.LogInformation("API server started at {BaseUrl}", BaseUrl);
@@ -146,6 +131,6 @@ public class ApiServer : IApiServer, IDisposable
 
     public void Dispose()
     {
-        StopAsync().GetAwaiter().GetResult();
+        Task.Run(() => StopAsync()).GetAwaiter().GetResult();
     }
 }

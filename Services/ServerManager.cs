@@ -213,27 +213,30 @@ public class ServerManager
 
                 _serverProcess = process;
                 _actualServerPid = process.Id;
-                _startTime = DateTime.Now;
+                _startTime = DateTime.UtcNow;
                 ProcessIdChanged?.Invoke(process.Id);
 
                 // Start monitoring the server output (console or log file)
                 StartOutputMonitoring();
-
-                // Check if process exits immediately
-                if (process.WaitForExit(500))
-                {
-                    var exitCode = process.ExitCode;
-                    _logger.LogError("Server process exited immediately with code: {ExitCode}", exitCode);
-                    _serverProcess = null;
-                    _startTime = null;
-                    return (false, $"Server process exited immediately with code: {exitCode}. Check server arguments and config file.");
-                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to start server");
                 return (false, $"Failed to start server: {ex.Message}");
             }
+        }
+
+        // Check if process exits immediately — done outside the lock to avoid blocking callers during the wait
+        if (process.WaitForExit(500))
+        {
+            var exitCode = process.ExitCode;
+            _logger.LogError("Server process exited immediately with code: {ExitCode}", exitCode);
+            lock (_lock)
+            {
+                _serverProcess = null;
+                _startTime = null;
+            }
+            return (false, $"Server process exited immediately with code: {exitCode}. Check server arguments and config file.");
         }
 
         // Wait outside the lock, check multiple times
@@ -255,7 +258,7 @@ public class ServerManager
                         {
                             ProcessId = actualProcess.Id,
                             ProcessName = actualProcess.ProcessName,
-                            StartTime = _startTime ?? DateTime.Now
+                            StartTime = _startTime ?? DateTime.UtcNow
                         });
                     }
                     catch (Exception ex)
@@ -559,11 +562,11 @@ public class ServerManager
             try
             {
                 var process = Process.GetProcessById(newPid);
-                _startTime = process.StartTime;
+                _startTime = process.StartTime.ToUniversalTime();
             }
             catch
             {
-                _startTime = DateTime.Now;
+                _startTime = DateTime.UtcNow;
             }
 
             var oldPid = oldPids.FirstOrDefault();
@@ -802,7 +805,7 @@ public class ServerManager
             IsRunning = actualProcess != null,
             ProcessId = actualProcess?.Id,
             Uptime = _startTime.HasValue && actualProcess != null
-                ? DateTime.Now - _startTime.Value
+                ? DateTime.UtcNow - _startTime.Value
                 : null,
             CurrentTrack = _currentTrack
         };
@@ -1298,7 +1301,7 @@ public class ServerManager
             TotalPlayers = onlineCount,
             MaxPlayers = 24, // TODO: Get from config or server query
             Players = onlinePlayers,
-            LastUpdated = DateTime.Now
+            LastUpdated = DateTime.UtcNow
         };
     }
 
@@ -1503,7 +1506,7 @@ public class ServerManager
                     {
                         ProcessId = processId,
                         ProcessName = process.ProcessName,
-                        StartTime = _startTime ?? DateTime.Now
+                        StartTime = _startTime ?? DateTime.UtcNow
                     });
                 }
                 catch (Exception ex)

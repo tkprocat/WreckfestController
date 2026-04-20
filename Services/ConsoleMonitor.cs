@@ -413,18 +413,21 @@ public class ConsoleMonitor : IDisposable
 
     private void NotifySubscribers(string output)
     {
+        Action<string>[] subscribers;
         lock (_lockObject)
         {
-            foreach (var subscriber in _outputSubscribers)
+            subscribers = _outputSubscribers.ToArray();
+        }
+
+        foreach (var subscriber in subscribers)
+        {
+            try
             {
-                try
-                {
-                    subscriber(output);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error notifying subscriber");
-                }
+                subscriber(output);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error notifying subscriber");
             }
         }
     }
