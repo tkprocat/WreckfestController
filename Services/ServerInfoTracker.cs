@@ -64,7 +64,7 @@ public class ServerInfoTracker
             if (line.Trim() == "?" || Regex.IsMatch(line, @"^\s*server_name\s*="))
             {
                 _collectingInfoResponse = true;
-                _infoResponseStartTime = DateTime.Now;
+                _infoResponseStartTime = DateTime.UtcNow;
                 _infoResponseLines.Clear();
 
                 // If this line is already a config line, add it
@@ -76,7 +76,7 @@ public class ServerInfoTracker
             }
 
             // If we've been collecting for too long (>2 seconds), abandon it
-            if (_collectingInfoResponse && (DateTime.Now - _infoResponseStartTime).TotalSeconds > 2)
+            if (_collectingInfoResponse && (DateTime.UtcNow - _infoResponseStartTime).TotalSeconds > 2)
             {
                 _logger.LogWarning("Server info response collection timed out, abandoning");
                 _collectingInfoResponse = false;

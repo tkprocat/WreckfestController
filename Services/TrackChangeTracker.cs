@@ -86,6 +86,6 @@ public class TrackChangeEvent
     public TrackChangeEvent(string trackId)
     {
         TrackId = trackId;
-        ChangedAt = DateTime.Now;
+        ChangedAt = DateTime.UtcNow;
     }
 }

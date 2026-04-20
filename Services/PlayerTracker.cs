@@ -86,7 +86,7 @@ public class PlayerTracker
             if (Regex.IsMatch(line, @"Players:\s*\d+/\d+") || line.Trim() == "list")
             {
                 _collectingListResponse = true;
-                _listResponseStartTime = DateTime.Now;
+                _listResponseStartTime = DateTime.UtcNow;
                 _listResponseLines.Clear();
                 _listResponseLines.Add(line);
                 _logger.LogDebug("[LIST] Started collecting list response with: {Line}", line);
@@ -94,10 +94,10 @@ public class PlayerTracker
             }
 
             // If we've been collecting for too long (>2 seconds), abandon it
-            if (_collectingListResponse && (DateTime.Now - _listResponseStartTime).TotalSeconds > 2)
+            if (_collectingListResponse && (DateTime.UtcNow - _listResponseStartTime).TotalSeconds > 2)
             {
                 _logger.LogWarning("[LIST] Collection timed out after {Elapsed:F1}s, abandoning. Collected {Count} lines",
-                    (DateTime.Now - _listResponseStartTime).TotalSeconds, _listResponseLines.Count);
+                    (DateTime.UtcNow - _listResponseStartTime).TotalSeconds, _listResponseLines.Count);
                 _collectingListResponse = false;
                 _listResponseLines.Clear();
             }
@@ -146,7 +146,7 @@ public class PlayerTracker
             if (_players.ContainsKey(playerName))
             {
                 // Player rejoined - update join time
-                _players[playerName].JoinedAt = DateTime.Now;
+                _players[playerName].JoinedAt = DateTime.UtcNow;
                 _logger.LogInformation("{Type} rejoined: {PlayerName}", isBot ? "Bot" : "Player", playerName);
             }
             else
@@ -155,7 +155,7 @@ public class PlayerTracker
                 var player = new Player
                 {
                     Name = playerName,
-                    JoinedAt = DateTime.Now,
+                    JoinedAt = DateTime.UtcNow,
                     IsBot = isBot
                 };
                 _players[playerName] = player;
@@ -306,7 +306,7 @@ public class PlayerTracker
                         _players[playerName] = new Player
                         {
                             Name = playerName,
-                            JoinedAt = DateTime.Now,
+                            JoinedAt = DateTime.UtcNow,
                             IsBot = isBot,
                             IsAdmin = isAdmin,
                             Slot = slot
@@ -335,7 +335,7 @@ public class PlayerTracker
                 }
             }
 
-            _lastListUpdate = DateTime.Now;
+            _lastListUpdate = DateTime.UtcNow;
 
             // Notify subscribers that the player list was updated
             NotifyPlayerEvent(new PlayerTrackerEvent("PlayersUpdated", null));
@@ -398,7 +398,7 @@ public class PlayerTracker
     /// </summary>
     public TimeSpan TimeSinceLastListUpdate()
     {
-        return DateTime.Now - _lastListUpdate;
+        return DateTime.UtcNow - _lastListUpdate;
     }
 
     private void NotifyPlayerEvent(PlayerTrackerEvent playerTrackerEvent)

@@ -281,6 +281,18 @@ public class ConfigService
                     if (track.Weather != null) newLines.Add($"el_weather={track.Weather}");
                 }
 
+                // Skip old event loop lines in the original file, then copy any content that follows
+                for (; i < lines.Length; i++)
+                {
+                    var t = lines[i].Trim();
+                    if (!string.IsNullOrWhiteSpace(t) && !t.StartsWith("#") && !t.StartsWith("el_"))
+                    {
+                        for (int k = i; k < lines.Length; k++)
+                            newLines.Add(lines[k]);
+                        break;
+                    }
+                }
+
                 break; // Stop processing, we've written the new event loop
             }
         }
