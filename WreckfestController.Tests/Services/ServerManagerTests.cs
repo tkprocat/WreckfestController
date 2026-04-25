@@ -187,4 +187,70 @@ public class ServerManagerTests
         var exception = Record.Exception(() => _serverManager.ConsoleOutput -= callback);
         Assert.Null(exception);
     }
+
+    [Fact]
+    public void OnConsoleOutputReceived_WreckfestChatCommandLine_RaisesChatCommand()
+    {
+        // Arrange
+        (string PlayerName, bool IsBot, string Message)? received = null;
+        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+            received = (playerName, isBot, message);
+
+        // Act
+        InvokeOnConsoleOutputReceived(_serverManager, "* 22:42:03 Procat: !vote mixed_1 6");
+
+        // Assert
+        Assert.NotNull(received);
+        Assert.Equal("Procat", received.Value.PlayerName);
+        Assert.False(received.Value.IsBot);
+        Assert.Equal("!vote mixed_1 6", received.Value.Message);
+    }
+
+    [Fact]
+    public void OnConsoleOutputReceived_IndentedChatCommandLineWithPromptMarker_RaisesCleanChatCommand()
+    {
+        // Arrange
+        (string PlayerName, bool IsBot, string Message)? received = null;
+        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+            received = (playerName, isBot, message);
+
+        // Act
+        InvokeOnConsoleOutputReceived(_serverManager, " 19:24:18 Procat: !vote urban06 4                      >");
+
+        // Assert
+        Assert.NotNull(received);
+        Assert.Equal("Procat", received.Value.PlayerName);
+        Assert.False(received.Value.IsBot);
+        Assert.Equal("!vote urban06 4", received.Value.Message);
+    }
+
+    [Theory]
+    [InlineData("*")]
+    [InlineData("/")]
+    public void OnConsoleOutputReceived_ChatCommandLineWithSpinnerMarker_RaisesCleanChatCommand(string marker)
+    {
+        // Arrange
+        (string PlayerName, bool IsBot, string Message)? received = null;
+        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+            received = (playerName, isBot, message);
+
+        // Act
+        InvokeOnConsoleOutputReceived(_serverManager, $" 19:46:56 Procat: !search hill                         {marker}");
+
+        // Assert
+        Assert.NotNull(received);
+        Assert.Equal("Procat", received.Value.PlayerName);
+        Assert.False(received.Value.IsBot);
+        Assert.Equal("!search hill", received.Value.Message);
+    }
+
+    private static void InvokeOnConsoleOutputReceived(ServerManager serverManager, string output)
+    {
+        var method = typeof(ServerManager).GetMethod(
+            "OnConsoleOutputReceived",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        method.Invoke(serverManager, [output]);
+    }
 }

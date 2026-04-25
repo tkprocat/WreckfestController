@@ -351,7 +351,9 @@ public class ConsoleMonitor : IDisposable
             _incompleteLineBuffer = ""; // Clear buffer
         }
 
-        // Process text: handle both explicit newlines and console width wrapping
+        // Process text: handle both explicit newlines and physical console rows.
+        // ReadConsoleOutputCharacter reads screen cells, not newline characters, so
+        // normal console writes often arrive as full-width padded rows.
         var lines = new List<string>();
         int pos = 0;
 
@@ -379,21 +381,22 @@ public class ConsoleMonitor : IDisposable
             }
             else
             {
-                // No newline found - either wrapped line or end of buffer
-                string segment = fullText.Substring(pos, lineEnd - pos).TrimEnd();
+                int segmentLength = lineEnd - pos;
+                string segment = fullText.Substring(pos, segmentLength);
 
-                if (lineEnd < fullText.Length)
+                if (segmentLength == consoleWidth)
                 {
-                    // Not at end of buffer - this is a wrapped line
-                    if (!string.IsNullOrWhiteSpace(segment))
+                    // A complete console row is a complete line even when it has no newline.
+                    string line = segment.TrimEnd();
+                    if (!string.IsNullOrWhiteSpace(line))
                     {
-                        lines.Add(segment);
+                        lines.Add(line);
                     }
                     pos = lineEnd;
                 }
                 else
                 {
-                    // At end of buffer - might be incomplete
+                    // A short trailing segment may be a partial write; complete it next cycle.
                     lock (_lockObject)
                     {
                         _incompleteLineBuffer = segment;
@@ -403,11 +406,9 @@ public class ConsoleMonitor : IDisposable
             }
         }
 
-        // Emit complete lines
-        if (lines.Count > 0)
+        foreach (var line in lines)
         {
-            string output = string.Join(Environment.NewLine, lines);
-            NotifySubscribers(output);
+            NotifySubscribers(line);
         }
     }
 

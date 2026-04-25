@@ -134,6 +134,7 @@ public class PlayerTracker
         // Parse timeout events: "Player 0 timeout (ping: 30320ms), status: ready"
         // followed by "- *eRacer has quit (ping timeout)."
         // The quit line is more reliable, so we rely on that
+
     }
 
     /// <summary>

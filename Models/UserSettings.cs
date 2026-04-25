@@ -15,6 +15,9 @@ public class UserSettings
 
     [JsonPropertyName("WreckfestWeb")]
     public WreckfestWebSettings? WreckfestWeb { get; set; }
+
+    [JsonPropertyName("Vote")]
+    public VoteSettings? Vote { get; set; }
 }
 
 /// <summary>
@@ -48,6 +51,36 @@ public class SteamCmdSettings
 
     [JsonPropertyName("WreckfestAppId")]
     public string? WreckfestAppId { get; set; }
+}
+
+/// <summary>
+/// Vote system configuration settings
+/// </summary>
+public class VoteSettings
+{
+    [JsonPropertyName("Enabled")]
+    public bool Enabled { get; set; } = true;
+
+    [JsonPropertyName("VoteTimeoutSeconds")]
+    public int VoteTimeoutSeconds { get; set; } = 30;
+
+    [JsonPropertyName("MaxLapsAllowed")]
+    public int MaxLapsAllowed { get; set; } = 10;
+
+    [JsonPropertyName("AllowedTracks")]
+    public List<AllowedVoteTrack> AllowedTracks { get; set; } = new();
+}
+
+/// <summary>
+/// Track allowed for player-initiated votes.
+/// </summary>
+public class AllowedVoteTrack
+{
+    [JsonPropertyName("Id")]
+    public string Id { get; set; } = string.Empty;
+
+    [JsonPropertyName("Name")]
+    public string Name { get; set; } = string.Empty;
 }
 
 /// <summary>

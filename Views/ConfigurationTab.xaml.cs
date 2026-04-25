@@ -64,6 +64,9 @@ public partial class ConfigurationTab : UserControl
         // Network settings
         WreckfestWebWebhookUrlTextBox.Text = settings.WreckfestWeb?.WebhookBaseUrl ?? "";
         WreckfestWebApiKeyTextBox.Text = settings.WreckfestWeb?.WebhookApiKey ?? "";
+
+        // Voting settings
+        VotingEnabledCheckBox.IsChecked = settings.Vote?.Enabled ?? true;
     }
 
     private UserSettings GatherFormData()
@@ -102,6 +105,13 @@ public partial class ConfigurationTab : UserControl
             {
                 WebhookBaseUrl = WreckfestWebWebhookUrlTextBox.Text,
                 WebhookApiKey = WreckfestWebApiKeyTextBox.Text
+            },
+            Vote = new VoteSettings
+            {
+                Enabled = VotingEnabledCheckBox.IsChecked ?? true,
+                VoteTimeoutSeconds = _currentSettings.Vote?.VoteTimeoutSeconds ?? 30,
+                MaxLapsAllowed = _currentSettings.Vote?.MaxLapsAllowed ?? 10,
+                AllowedTracks = _currentSettings.Vote?.AllowedTracks ?? new()
             }
         };
     }
@@ -213,6 +223,12 @@ public partial class ConfigurationTab : UserControl
                 {
                     WebhookBaseUrl = "http://localhost:8000/api/webhooks",
                     WebhookApiKey = ""
+                },
+                Vote = new VoteSettings
+                {
+                    Enabled = true,
+                    VoteTimeoutSeconds = 30,
+                    MaxLapsAllowed = 10
                 }
             };
 

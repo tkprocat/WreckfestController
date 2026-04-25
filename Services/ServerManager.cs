@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -14,6 +15,12 @@ public class ServerManager
     /// Event raised when console output is received from the server
     /// </summary>
     public event Action<string>? ConsoleOutput;
+
+    /// <summary>
+    /// Event raised when a player sends a chat command (message starting with !).
+    /// </summary>
+    public event Action<string, bool, string>? ChatCommandReceived;
+
     private readonly object _lock = new();
     private DateTime? _startTime;
     private int? _actualServerPid;
@@ -1013,10 +1020,29 @@ public class ServerManager
             _consoleLogSender.AddLog(line);
 
             // Parse for player events, track changes, and server info
+            ProcessChatCommandLine(line);
             _playerTracker.ProcessLogLine(line);
             _trackChangeTracker.ProcessLogLine(line);
             _serverInfoTracker.ProcessLogLine(line);
         }
+    }
+
+    private void ProcessChatCommandLine(string line)
+    {
+        var normalizedLine = line.Trim();
+        if (Regex.IsMatch(normalizedLine, @"\s+[>*/\\]$"))
+        {
+            normalizedLine = normalizedLine[..^1].TrimEnd();
+        }
+
+        var chatMatch = Regex.Match(normalizedLine, @"^(?:\*\s*)?\d{2}:\d{2}:\d{2}\s+(?:-\s+)?(\*?)(.+?):\s*(!.+)$");
+        if (!chatMatch.Success)
+            return;
+
+        var isBot = chatMatch.Groups[1].Value == "*";
+        var playerName = chatMatch.Groups[2].Value.Trim();
+        var chatMessage = chatMatch.Groups[3].Value.Trim();
+        ChatCommandReceived?.Invoke(playerName, isBot, chatMessage);
     }
 
     /// <summary>
@@ -1257,6 +1283,7 @@ public class ServerManager
                     AddToOutputBuffer(line);
                     NotifyConsoleOutput(line);
                     _consoleLogSender.AddLog(line);
+                    ProcessChatCommandLine(line);
                     _playerTracker.ProcessLogLine(line);
                     _trackChangeTracker.ProcessLogLine(line);
                     _serverInfoTracker.ProcessLogLine(line);

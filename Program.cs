@@ -29,6 +29,9 @@ public class Program
             }
         });
 
+        // Force instantiation so it subscribes to ServerManager.ChatCommandReceived.
+        host.Services.GetRequiredService<VotingService>();
+
         // Create and run WPF application
         var app = new App();
         app.InitializeComponent();
@@ -90,6 +93,7 @@ public class Program
                 services.AddSingleton<ConsoleWriter>();
                 services.AddSingleton<ServerManager>();
                 services.AddSingleton<SettingsService>();
+                services.AddSingleton<VotingService>();
 
                 // Register API server
                 services.AddSingleton<IApiServer, ApiServer>();

@@ -11,6 +11,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Settings File Path Info -->
@@ -201,7 +202,35 @@
             </Border>
 
             <!-- Action Buttons -->
-            <StackPanel Grid.Row="4"
+            <Border Grid.Row="4"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,0,0,15">
+                <StackPanel>
+                    <TextBlock Text="VOTING SETTINGS"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimary}"
+                               Margin="0,0,0,15"/>
+
+                    <CheckBox x:Name="VotingEnabledCheckBox"
+                              Content="Enable voting commands"
+                              IsChecked="True"
+                              Foreground="{StaticResource TextPrimary}"
+                              materialDesign:CheckBoxAssist.CheckBoxSize="20"/>
+                    <TextBlock Text="Allows players to use !vote, !yes, !no, and !search in server chat"
+                               FontSize="10"
+                               Foreground="{StaticResource TextSecondary}"
+                               Margin="32,2,0,0"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Action Buttons -->
+            <StackPanel Grid.Row="5"
                         Orientation="Horizontal"
                         HorizontalAlignment="Right"
                         Margin="0,10,0,0">
@@ -220,7 +249,7 @@
 
             <!-- Status Message -->
             <TextBlock x:Name="StatusMessageText"
-                       Grid.Row="5"
+                       Grid.Row="6"
                        Text=""
                        Foreground="{StaticResource TextSecondary}"
                        FontSize="11"

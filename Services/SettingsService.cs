@@ -136,6 +136,13 @@ public class SettingsService
             {
                 WebhookBaseUrl = _configuration["WreckfestWeb:WebhookBaseUrl"] ?? "http://localhost:8000/api/webhooks",
                 WebhookApiKey = _configuration["WreckfestWeb:WebhookApiKey"] ?? ""
+            },
+            Vote = new VoteSettings
+            {
+                Enabled = _configuration.GetValue("Vote:Enabled", true),
+                VoteTimeoutSeconds = _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30,
+                MaxLapsAllowed = _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10,
+                AllowedTracks = _configuration.GetSection("Vote:AllowedTracks").Get<List<AllowedVoteTrack>>() ?? new()
             }
         };
     }
