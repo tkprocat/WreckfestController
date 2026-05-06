@@ -7,7 +7,7 @@ namespace WreckfestController.Services;
 /// <summary>
 /// Sends commands to console windows using Windows messages
 /// </summary>
-public class ConsoleWriter
+public class ConsoleWriter : IServerInputWriter
 {
     [DllImport("user32.dll")]
     private static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
@@ -93,5 +93,19 @@ public class ConsoleWriter
         }
 
         return SendCommand(windowHandle, command);
+    }
+
+    public virtual Task<(bool Success, string Message)> SendCommandAsync(string command, int processId)
+    {
+        var windowHandle = FindConsoleWindow();
+        if (windowHandle == IntPtr.Zero)
+        {
+            return Task.FromResult((false, "Could not find console window"));
+        }
+
+        var success = SendCommand(windowHandle, command + Environment.NewLine);
+        return Task.FromResult(success
+            ? (true, $"Command sent successfully: {command}")
+            : (false, "Failed to send command to console window"));
     }
 }

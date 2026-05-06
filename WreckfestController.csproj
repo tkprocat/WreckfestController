@@ -21,9 +21,9 @@
     <GenerateAssemblyInformationalVersionAttribute>false</GenerateAssemblyInformationalVersionAttribute>
     <Deterministic>false</Deterministic>
 
-    <!-- Single file publishing configuration -->
+    <!-- Single-file, framework-dependent publishing configuration -->
     <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>true</SelfContained>
+    <SelfContained>false</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
@@ -78,10 +78,12 @@
     <Page Remove="Platforms\**" />
   </ItemGroup>
 
-  <!-- Exclude appsettings.json from publish, include appsettings.example.json -->
+  <!-- Include appsettings.json so published installs retain default vote tracks. -->
   <ItemGroup>
-    <Content Update="appsettings.json" CopyToPublishDirectory="Never" />
-    <Content Update="appsettings.example.json" CopyToPublishDirectory="Always" />
+    <Content Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Update="appsettings.example.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <None Update="appsettings.example.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
   </ItemGroup>
 
   <!-- Auto-generate version based on build date -->
@@ -109,5 +111,37 @@
     </ItemGroup>
   </Target>
 
+  <Target Name="CopyWreckfestConsoleHook" AfterTargets="Build">
+    <ItemGroup>
+      <WreckfestConsoleHookDll Include="NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll"
+                               Condition="Exists('NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WreckfestConsoleHookDll)"
+          DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true"
+          Condition="'@(WreckfestConsoleHookDll)' != ''" />
+  </Target>
+
+  <Target Name="CopyWreckfestConsoleHookToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <WreckfestConsoleHookDll Include="NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll"
+                               Condition="Exists('NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WreckfestConsoleHookDll)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(WreckfestConsoleHookDll)' != '' And '$(PublishDir)' != ''" />
+  </Target>
+
+  <Target Name="CopyAppSettingsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <AppSettingsFiles Include="$(MSBuildProjectDirectory)\appsettings.json" />
+      <AppSettingsFiles Include="$(MSBuildProjectDirectory)\appsettings.example.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AppSettingsFiles)"
+          DestinationFolder="$(PublishDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(AppSettingsFiles)' != '' And '$(PublishDir)' != ''" />
+  </Target>
 
 </Project>

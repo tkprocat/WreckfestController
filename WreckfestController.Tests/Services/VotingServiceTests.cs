@@ -132,6 +132,18 @@ public class VotingServiceTests
     }
 
     [Fact]
+    public async Task MoreCommand_WhenVotingDisabled_SendsDisabledMessage()
+    {
+        var (service, _, messages, _) = CreateDisabledVotingSetup();
+
+        service.ProcessChatCommand("Alice", isBot: false, "!more");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("Voting is currently disabled"));
+        Assert.DoesNotContain(messages, m => m.Contains("No more search results"));
+    }
+
+    [Fact]
     public async Task HelpCommand_WhenVotingDisabled_ReportsDisabled()
     {
         var (service, _, messages, _) = CreateDisabledVotingSetup();
@@ -361,7 +373,7 @@ public class VotingServiceTests
 
         Assert.Contains(_broadcastMessages, m =>
             m.Contains("Matches:") &&
-            m.Contains("Wrecknado (wrecknado_02)"));
+            m.Contains("wrecknado_02"));
     }
 
     [Fact]
@@ -370,7 +382,7 @@ public class VotingServiceTests
         SendChat("Alice", "!search NEW_TRACK");
         await Task.Delay(50);
 
-        Assert.Contains(_broadcastMessages, m => m.Contains("New Track (new_track)"));
+        Assert.Contains(_broadcastMessages, m => m.Contains("new_track"));
     }
 
     [Fact]
@@ -390,12 +402,95 @@ public class VotingServiceTests
         service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
         await Task.Delay(50);
 
+        var combined = string.Join(" ", messages);
+        Assert.Contains("Matches", combined);
+        Assert.Contains("track_1", combined);
+        Assert.Contains("track_5", combined);
+        Assert.DoesNotContain("track_6", combined);
+        Assert.Contains("1 more", combined);
+        Assert.Contains("!more", combined);
+    }
+
+    [Fact]
+    public async Task SearchCommand_SplitsLongResultsIntoChatSafeMessages()
+    {
+        var (service, _, messages, _) = CreateSearchSetup(matchCount: 12);
+
+        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
+        await Task.Delay(50);
+
+        Assert.True(messages.Count >= 2);
+        Assert.All(messages, message => Assert.True(message.Length <= 110, message));
+    }
+
+    [Fact]
+    public async Task SearchCommand_ReturnsOneTrackPerLineWithIdAndName()
+    {
+        var (service, _, messages, _) = CreateSearchSetup();
+
+        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m == "Matches: track_1 - Track 1 Circuit");
+        Assert.Contains(messages, m => m == "Matches: track_5 - Track 5 Circuit");
+    }
+
+    [Fact]
+    public async Task MoreCommand_AfterSearch_ReturnsNextBufferedPage()
+    {
+        var (service, _, messages, _) = CreateSearchSetup(matchCount: 12);
+
+        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
+        service.ProcessChatCommand("Alice", isBot: false, "!more");
+        await Task.Delay(50);
+
+        var combined = string.Join(" ", messages);
+        Assert.Contains("More matches", combined);
+        Assert.Contains("track_6", combined);
+        Assert.Contains("track_10", combined);
+        Assert.DoesNotContain("track_11", combined);
+        Assert.Contains("2 more", combined);
+        Assert.Contains("!more", combined);
+    }
+
+    [Fact]
+    public async Task MoreCommand_WhenBufferRunsOut_ReturnsFinalPageWithoutMoreHint()
+    {
+        var (service, _, messages, _) = CreateSearchSetup(matchCount: 12);
+
+        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
+        service.ProcessChatCommand("Alice", isBot: false, "!more");
+        service.ProcessChatCommand("Alice", isBot: false, "!more");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m == "More matches: track_11 - Track 11 Circuit");
+        Assert.Contains(messages, m => m == "More matches: track_12 - Track 12 Circuit");
+        Assert.DoesNotContain(messages.Skip(messages.Count - 2), m => m.Contains("!more"));
+    }
+
+    [Fact]
+    public async Task MoreCommand_WithoutBufferedResults_SendsNoMoreMessage()
+    {
+        var (service, _, messages, _) = CreateSearchSetup(matchCount: 12);
+
+        service.ProcessChatCommand("Alice", isBot: false, "!more");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("No more search results"));
+    }
+
+    [Fact]
+    public async Task MoreCommand_UsesLatestSharedSearchBuffer()
+    {
+        var (service, _, messages, _) = CreateSearchSetup(matchCount: 12);
+
+        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
+        service.ProcessChatCommand("Bob", isBot: false, "!more");
+        await Task.Delay(50);
+
         Assert.Contains(messages, m =>
-            m.Contains("Matches:") &&
-            m.Contains("Track 1 Circuit (track_1)") &&
-            m.Contains("Track 5 Circuit (track_5)") &&
-            !m.Contains("Track 6 Circuit (track_6)") &&
-            m.Contains("and 1 more"));
+            m.Contains("More matches:") &&
+            m.Contains("track_6"));
     }
 
     [Fact]
@@ -404,12 +499,14 @@ public class VotingServiceTests
         SendChat("Alice", "!help");
         await Task.Delay(50);
 
-        Assert.Contains(_broadcastMessages, m =>
-            m.Contains("!vote <trackId> <laps>") &&
-            m.Contains("!yes") &&
-            m.Contains("!no") &&
-            m.Contains("!search <track name or id>") &&
-            m.Contains("Max laps: 10"));
+        Assert.Contains(_broadcastMessages, m => m.Contains("max laps is 10"));
+        Assert.Contains(_broadcastMessages, m => m.Contains("!vote <trackId> <laps>") && m.Contains("Example: !vote misc_bsv 6"));
+        Assert.Contains(_broadcastMessages, m => m.Contains("!yes") && m.Contains("vote yes"));
+        Assert.Contains(_broadcastMessages, m => m.Contains("!no") && m.Contains("vote no"));
+        Assert.Contains(_broadcastMessages, m => m.Contains("!search <text>") && m.Contains("Example: !search tvtp misc"));
+        Assert.Contains(_broadcastMessages, m => m.Contains("!more"));
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains("!help"));
+        Assert.All(_broadcastMessages.Where(m => m.StartsWith("Help:", StringComparison.Ordinal)), m => Assert.True(m.Length <= 100));
     }
 
     private (VotingService service, PlayerTracker tracker, List<string> messages, Mock<ConfigService> configMock)
@@ -486,7 +583,7 @@ public class VotingServiceTests
     }
 
     private (VotingService service, PlayerTracker tracker, List<string> messages, Mock<ConfigService> configMock)
-        CreateSearchSetup()
+        CreateSearchSetup(int matchCount = 6)
     {
         var values = new Dictionary<string, string?>
         {
@@ -494,7 +591,7 @@ public class VotingServiceTests
             ["Vote:MaxLapsAllowed"] = "10"
         };
 
-        for (var i = 1; i <= 6; i++)
+        for (var i = 1; i <= matchCount; i++)
         {
             values[$"Vote:AllowedTracks:{i - 1}:Id"] = $"track_{i}";
             values[$"Vote:AllowedTracks:{i - 1}:Name"] = $"Track {i} Circuit";

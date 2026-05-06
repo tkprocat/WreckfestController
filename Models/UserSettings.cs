@@ -39,6 +39,12 @@ public class WreckfestServerSettings
 
     [JsonPropertyName("UseConsoleMonitoring")]
     public bool? UseConsoleMonitoring { get; set; }
+
+    [JsonPropertyName("OutputMode")]
+    public string? OutputMode { get; set; }
+
+    [JsonPropertyName("InputMode")]
+    public string? InputMode { get; set; }
 }
 
 /// <summary>

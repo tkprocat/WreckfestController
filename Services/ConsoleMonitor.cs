@@ -8,7 +8,7 @@ namespace WreckfestController.Services;
 /// Monitors a Windows console process output using the Windows Console API.
 /// This provides real-time output monitoring without relying on log files.
 /// </summary>
-public class ConsoleMonitor : IDisposable
+public class ConsoleMonitor : IServerOutputReader, IDisposable
 {
     private readonly ILogger<ConsoleMonitor> _logger;
     private IntPtr _consoleHandle = IntPtr.Zero;
@@ -195,7 +195,7 @@ public class ConsoleMonitor : IDisposable
     /// <summary>
     /// Stops monitoring the console.
     /// </summary>
-    public void StopMonitoring()
+    public virtual void StopMonitoring()
     {
         lock (_lockObject)
         {
@@ -217,6 +217,21 @@ public class ConsoleMonitor : IDisposable
         {
             _outputSubscribers.Add(callback);
         }
+    }
+
+    public event Action<string>? OutputReceived;
+
+    public string Mode => ServerOutputModes.ConsoleReader;
+
+    public Task<bool> StartAsync(int processId)
+    {
+        return Task.FromResult(StartMonitoring(processId));
+    }
+
+    public Task StopAsync()
+    {
+        StopMonitoring();
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -396,10 +411,18 @@ public class ConsoleMonitor : IDisposable
                 }
                 else
                 {
-                    // A short trailing segment may be a partial write; complete it next cycle.
-                    lock (_lockObject)
+                    var line = segment.TrimEnd();
+                    if (LooksLikeCompleteTimestampedLine(line))
                     {
-                        _incompleteLineBuffer = segment;
+                        lines.Add(line);
+                    }
+                    else
+                    {
+                        // A short trailing segment may be a partial write; complete it next cycle.
+                        lock (_lockObject)
+                        {
+                            _incompleteLineBuffer = segment;
+                        }
                     }
                     break;
                 }
@@ -412,8 +435,15 @@ public class ConsoleMonitor : IDisposable
         }
     }
 
+    private static bool LooksLikeCompleteTimestampedLine(string line)
+    {
+        return Regex.IsMatch(line, @"^\s*\*?\s*\d{2}:\d{2}:\d{2}\s+.+");
+    }
+
     private void NotifySubscribers(string output)
     {
+        OutputReceived?.Invoke(output);
+
         Action<string>[] subscribers;
         lock (_lockObject)
         {

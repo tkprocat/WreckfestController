@@ -7,6 +7,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0"
@@ -83,7 +84,39 @@
             </DataGrid.Columns>
         </DataGrid>
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,20">
+        <Grid Grid.Row="2" Margin="0,10,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="120"/>
+            </Grid.RowDefinitions>
+
+            <DockPanel Grid.Row="0" Margin="0,0,0,4">
+                <CheckBox x:Name="ProcessHookOutputCheckBox"
+                          DockPanel.Dock="Right"
+                          Content="FEED PARSER"
+                          Foreground="{StaticResource TextPrimary}"
+                          Checked="OnProcessHookOutputChanged"
+                          Unchecked="OnProcessHookOutputChanged"/>
+                <TextBlock Text="Injected Hook Log"
+                           FontSize="12"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource TextPrimary}"/>
+            </DockPanel>
+            <TextBox Grid.Row="1"
+                     x:Name="HookLogOutput"
+                     Background="{StaticResource BackgroundMedium}"
+                     Foreground="{StaticResource TextPrimary}"
+                     BorderBrush="{StaticResource BorderColor}"
+                     BorderThickness="1"
+                     FontFamily="Consolas"
+                     FontSize="11"
+                     IsReadOnly="True"
+                     TextWrapping="NoWrap"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"/>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,20">
             <Button x:Name="RefreshProcessListButton"
                     Content="REFRESH"
                     Style="{StaticResource MaterialDesignRaisedButton}"
@@ -95,6 +128,14 @@
                     Background="{StaticResource ButtonLightBlue}"
                     Foreground="White"
                     Click="OnAttachToProcessClicked"
+                    Width="110"
+                    Margin="0,0,10,0"
+                    IsEnabled="False"/>
+            <Button x:Name="InjectIntoProcessButton"
+                    Content="INJECT"
+                    Background="{StaticResource ButtonLightBlue}"
+                    Foreground="White"
+                    Click="OnInjectIntoProcessClicked"
                     Width="110"
                     Margin="0,0,10,0"
                     IsEnabled="False"/>

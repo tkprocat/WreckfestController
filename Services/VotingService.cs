@@ -22,6 +22,9 @@ public class VotingService
     private System.Threading.Timer? _twentySecondStatusTimer;
     private System.Threading.Timer? _tenSecondStatusTimer;
     private readonly object _stateLock = new();
+    private const int SearchPageSize = 5;
+    private readonly Queue<AllowedVoteTrack> _searchResultBuffer = new();
+    private readonly object _searchLock = new();
 
     private bool VotingEnabled => _configuration.GetValue("Vote:Enabled", true);
     private int VoteTimeoutSeconds => _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30;
@@ -53,9 +56,14 @@ public class VotingService
         {
             if (VotingEnabled)
             {
-                _ = BroadcastMessage(
-                    $"Commands: !vote <trackId> <laps> - start vote; !yes - vote yes; !no - vote no; " +
-                    $"!search <track name or id> - find track IDs; !help - show commands. Max laps: {MaxLapsAllowed}.");
+                _ = BroadcastMessages([
+                    $"Help: max laps is {MaxLapsAllowed}.",
+                    "Help: !vote <trackId> <laps> - start a vote. Example: !vote misc_bsv 6",
+                    "Help: !yes - vote yes on the active vote.",
+                    "Help: !no - vote no on the active vote.",
+                    "Help: !search <text> - find track IDs. Example: !search tvtp misc",
+                    "Help: !more - show the next search results."
+                ]);
             }
             else
             {
@@ -111,6 +119,10 @@ public class VotingService
         {
             SearchTracks(message.Substring(8).Trim());
         }
+        else if (lower == "!more")
+        {
+            ShowMoreSearchResults();
+        }
     }
 
     private static bool IsVotingCommand(string lower)
@@ -119,7 +131,8 @@ public class VotingService
                lower == "!yes" ||
                lower == "!no" ||
                lower == "!search" ||
-               lower.StartsWith("!search ");
+               lower.StartsWith("!search ") ||
+               lower == "!more";
     }
 
     private AllowedVoteTrack? FindAllowedTrack(string trackId)
@@ -161,23 +174,88 @@ public class VotingService
 
         if (matches.Count == 0)
         {
+            ClearSearchResults();
             _ = BroadcastMessage($"No tracks found matching '{pattern}'.");
             return;
         }
 
-        var result = "Matches: " + string.Join("; ", matches.Take(5).Select(FormatTrackSearchResult));
-        var remainingCount = matches.Count - 5;
-        if (remainingCount > 0)
+        StoreSearchResults(matches.Skip(SearchPageSize));
+        _ = BroadcastMessages(FormatSearchResults("Matches", matches.Take(SearchPageSize), GetBufferedSearchResultCount()));
+    }
+
+    private void ShowMoreSearchResults()
+    {
+        List<AllowedVoteTrack> page;
+        int remainingCount;
+
+        lock (_searchLock)
         {
-            result += $" ...and {remainingCount} more";
+            if (_searchResultBuffer.Count == 0)
+            {
+                _ = BroadcastMessage("No more search results. Use !search <track name or id>.");
+                return;
+            }
+
+            page = new List<AllowedVoteTrack>();
+            while (page.Count < SearchPageSize && _searchResultBuffer.Count > 0)
+            {
+                page.Add(_searchResultBuffer.Dequeue());
+            }
+
+            remainingCount = _searchResultBuffer.Count;
         }
 
-        _ = BroadcastMessage(result);
+        _ = BroadcastMessages(FormatSearchResults("More matches", page, remainingCount));
+    }
+
+    private void StoreSearchResults(IEnumerable<AllowedVoteTrack> remainingMatches)
+    {
+        lock (_searchLock)
+        {
+            _searchResultBuffer.Clear();
+            foreach (var match in remainingMatches)
+            {
+                _searchResultBuffer.Enqueue(match);
+            }
+        }
+    }
+
+    private int GetBufferedSearchResultCount()
+    {
+        lock (_searchLock)
+        {
+            return _searchResultBuffer.Count;
+        }
+    }
+
+    private void ClearSearchResults()
+    {
+        lock (_searchLock)
+        {
+            _searchResultBuffer.Clear();
+        }
+    }
+
+    private static List<string> FormatSearchResults(string label, IEnumerable<AllowedVoteTrack> tracks, int remainingCount)
+    {
+        var messages = tracks
+            .Select(track => $"{label}: {FormatTrackSearchResult(track)}")
+            .ToList();
+
+        if (remainingCount > 0)
+        {
+            messages.Add($"{remainingCount} more. Type !more for next results.");
+        }
+
+        return messages;
     }
 
     private static string FormatTrackSearchResult(AllowedVoteTrack track)
     {
-        return string.IsNullOrWhiteSpace(track.Name) ? track.Id : $"{track.Name} ({track.Id})";
+        if (string.IsNullOrWhiteSpace(track.Name))
+            return track.Id;
+
+        return $"{track.Id} - {track.Name}";
     }
 
     private void StartVote(string initiator, string trackId, int laps)
@@ -351,6 +429,14 @@ public class VotingService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to broadcast message: {Message}", message);
+        }
+    }
+
+    private async Task BroadcastMessages(IEnumerable<string> messages)
+    {
+        foreach (var message in messages)
+        {
+            await BroadcastMessage(message);
         }
     }
 

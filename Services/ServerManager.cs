@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Collections.Concurrent;
 using System.IO;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
@@ -17,6 +16,11 @@ public class ServerManager
     public event Action<string>? ConsoleOutput;
 
     /// <summary>
+    /// Event raised when experimental injected console hook output is received.
+    /// </summary>
+    public event Action<string>? ConsoleHookOutput;
+
+    /// <summary>
     /// Event raised when a player sends a chat command (message starting with !).
     /// </summary>
     public event Action<string, bool, string>? ChatCommandReceived;
@@ -28,13 +32,20 @@ public class ServerManager
     private readonly System.Collections.Concurrent.ConcurrentQueue<(DateTime Timestamp, string Message)> _outputBuffer = new();
     private const int MaxBufferSize = 500;
     private readonly ConsoleMonitor _consoleMonitor;
-    private readonly ConsoleWriter _consoleWriter;
+    private readonly IServerInputWriter _serverInputWriter;
+    private readonly IServerOutputReader _consoleOutputReader;
+    private readonly IInjectedHookOutputReader _injectedHookOutputReader;
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ServerInfoTracker _serverInfoTracker;
     private readonly WreckfestWebWebhookService _webhookService;
     private readonly ConsoleLogWebhookSender _consoleLogSender;
     private string _currentTrack = string.Empty;
+    private static readonly TimeSpan DuplicateChatCommandWindow = TimeSpan.FromSeconds(2);
+    private readonly object _chatCommandDedupLock = new();
+    private string? _lastChatCommandKey;
+    private DateTime _lastChatCommandAtUtc;
+    private bool _useInjectedHookAsPrimaryOutput;
 
     // Log file monitoring fields (used when UseConsoleMonitoring is false)
     private FileSystemWatcher? _logFileWatcher;
@@ -61,6 +72,65 @@ public class ServerManager
         ConsoleWriter consoleWriter,
         WreckfestWebWebhookService webhookService,
         ConsoleLogWebhookSender consoleLogSender)
+        : this(
+            configuration,
+            logger,
+            playerTracker,
+            trackChangeTracker,
+            serverInfoTracker,
+            consoleMonitor,
+            consoleWriter,
+            webhookService,
+            consoleLogSender,
+            consoleWriter,
+            consoleMonitor,
+            new InjectedHookOutputReader(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<InjectedHookOutputReader>.Instance))
+    {
+    }
+
+    public ServerManager(
+        IConfiguration configuration,
+        ILogger<ServerManager> logger,
+        PlayerTracker playerTracker,
+        TrackChangeTracker trackChangeTracker,
+        ServerInfoTracker serverInfoTracker,
+        ConsoleMonitor consoleMonitor,
+        ConsoleWriter consoleWriter,
+        WreckfestWebWebhookService webhookService,
+        ConsoleLogWebhookSender consoleLogSender,
+        IServerInputWriter serverInputWriter,
+        IServerOutputReader consoleOutputReader)
+        : this(
+            configuration,
+            logger,
+            playerTracker,
+            trackChangeTracker,
+            serverInfoTracker,
+            consoleMonitor,
+            consoleWriter,
+            webhookService,
+            consoleLogSender,
+            serverInputWriter,
+            consoleOutputReader,
+            new InjectedHookOutputReader(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<InjectedHookOutputReader>.Instance))
+    {
+    }
+
+    public ServerManager(
+        IConfiguration configuration,
+        ILogger<ServerManager> logger,
+        PlayerTracker playerTracker,
+        TrackChangeTracker trackChangeTracker,
+        ServerInfoTracker serverInfoTracker,
+        ConsoleMonitor consoleMonitor,
+        ConsoleWriter consoleWriter,
+        WreckfestWebWebhookService webhookService,
+        ConsoleLogWebhookSender consoleLogSender,
+        IServerInputWriter serverInputWriter,
+        IServerOutputReader consoleOutputReader,
+        IInjectedHookOutputReader injectedHookOutputReader)
     {
         _configuration = configuration;
         _logger = logger;
@@ -68,12 +138,16 @@ public class ServerManager
         _trackChangeTracker = trackChangeTracker;
         _serverInfoTracker = serverInfoTracker;
         _consoleMonitor = consoleMonitor;
-        _consoleWriter = consoleWriter;
+        _serverInputWriter = serverInputWriter;
+        _consoleOutputReader = consoleOutputReader;
+        _injectedHookOutputReader = injectedHookOutputReader;
         _webhookService = webhookService;
         _consoleLogSender = consoleLogSender;
 
-        // Subscribe to console monitor output
-        _consoleMonitor.SubscribeToOutput(OnConsoleOutputReceived);
+        // Subscribe to selected console-reader output through the output reader interface.
+        _consoleOutputReader.OutputReceived += OnConsoleOutputReceived;
+        _injectedHookOutputReader.OutputReceived += OnInjectedHookOutputReceived;
+        _injectedHookOutputReader.HookOutputReceived += output => ConsoleHookOutput?.Invoke(output);
 
         // Subscribe to player tracker list command requests
         _playerTracker.OnListCommandRequested += OnListCommandRequested;
@@ -772,23 +846,22 @@ public class ServerManager
 
         try
         {
-            var windowHandle = _consoleWriter.FindConsoleWindow();
-
-            if (windowHandle == IntPtr.Zero)
+            var processId = _actualServerPid ?? GetActualServerProcess()?.Id;
+            if (processId == null)
             {
-                return (false, "Could not find console window");
+                return (false, "Server is not running");
             }
 
-            bool success = _consoleWriter.SendCommand(windowHandle, command + Environment.NewLine);
+            var result = await _serverInputWriter.SendCommandAsync(command, processId.Value);
 
-            if (success)
+            if (result.Success)
             {
                 _logger.LogInformation("Successfully sent command to console: {Command}", command);
-                return (true, $"Command sent successfully: {command}");
+                return result;
             }
             else
             {
-                return (false, "Failed to send command to console window");
+                return result;
             }
         }
         catch (Exception ex)
@@ -963,22 +1036,44 @@ public class ServerManager
     }
 
     /// <summary>
-    /// Starts output monitoring using either console monitoring or log file monitoring
-    /// based on the UseConsoleMonitoring user setting.
+    /// Starts output monitoring based on the configured output mode.
     /// </summary>
     private void StartOutputMonitoring()
     {
-        // Check user settings first, fallback to config, default to true (console monitoring)
-        var useConsoleMonitoring = _configuration.GetValue("WreckfestServer:UseConsoleMonitoring", true);
+        var outputMode = GetConfiguredOutputMode();
+        _useInjectedHookAsPrimaryOutput = outputMode == ServerOutputModes.InjectedHook;
 
-        if (useConsoleMonitoring)
+        if (outputMode == ServerOutputModes.ConsoleReader)
         {
             StartConsoleMonitoring();
         }
-        else
+        else if (outputMode == ServerOutputModes.LogFile)
         {
             StartLogFileMonitoring();
         }
+        else if (outputMode == ServerOutputModes.InjectedHook)
+        {
+            _logger.LogInformation("Injected hook output mode selected; waiting for manual hook injection");
+            NotifyConsoleOutput("[Controller] Injected hook output mode selected. Use Process Manager -> INJECT to start output capture.");
+        }
+    }
+
+    private string GetConfiguredOutputMode()
+    {
+        var configuredMode = _configuration["WreckfestServer:OutputMode"];
+        if (!string.IsNullOrWhiteSpace(configuredMode))
+        {
+            return configuredMode.Trim() switch
+            {
+                ServerOutputModes.InjectedHook => ServerOutputModes.InjectedHook,
+                ServerOutputModes.LogFile => ServerOutputModes.LogFile,
+                ServerOutputModes.ConsoleReader => ServerOutputModes.ConsoleReader,
+                _ => ServerOutputModes.ConsoleReader
+            };
+        }
+
+        var useConsoleMonitoring = _configuration.GetValue("WreckfestServer:UseConsoleMonitoring", true);
+        return useConsoleMonitoring ? ServerOutputModes.ConsoleReader : ServerOutputModes.LogFile;
     }
 
     /// <summary>
@@ -988,6 +1083,7 @@ public class ServerManager
     {
         StopConsoleMonitoring();
         StopLogFileMonitoring();
+        _useInjectedHookAsPrimaryOutput = false;
     }
 
     /// <summary>
@@ -1035,14 +1131,44 @@ public class ServerManager
             normalizedLine = normalizedLine[..^1].TrimEnd();
         }
 
-        var chatMatch = Regex.Match(normalizedLine, @"^(?:\*\s*)?\d{2}:\d{2}:\d{2}\s+(?:-\s+)?(\*?)(.+?):\s*(!.+)$");
+        var chatMatch = Regex.Match(normalizedLine, @"^(?:\*\s*)?\d{2}:\d{2}:\d{2}\s+(?:-\s+)?(\*?)([^:]+):\s*(!.*)$");
         if (!chatMatch.Success)
             return;
 
         var isBot = chatMatch.Groups[1].Value == "*";
         var playerName = chatMatch.Groups[2].Value.Trim();
         var chatMessage = chatMatch.Groups[3].Value.Trim();
+        if (ShouldSuppressDuplicateChatCommand(playerName, isBot, chatMessage))
+            return;
+
         ChatCommandReceived?.Invoke(playerName, isBot, chatMessage);
+    }
+
+    private void OnInjectedHookOutputReceived(string output)
+    {
+        if (ProcessConsoleHookOutput)
+        {
+            OnConsoleOutputReceived(output);
+        }
+    }
+
+    private bool ShouldSuppressDuplicateChatCommand(string playerName, bool isBot, string chatMessage)
+    {
+        var key = $"{isBot}|{playerName}|{chatMessage}";
+        var now = DateTime.UtcNow;
+
+        lock (_chatCommandDedupLock)
+        {
+            if (string.Equals(_lastChatCommandKey, key, StringComparison.Ordinal) &&
+                now - _lastChatCommandAtUtc <= DuplicateChatCommandWindow)
+            {
+                return true;
+            }
+
+            _lastChatCommandKey = key;
+            _lastChatCommandAtUtc = now;
+            return false;
+        }
     }
 
     /// <summary>
@@ -1074,7 +1200,7 @@ public class ServerManager
                         return;
                     }
 
-                    bool started = _consoleMonitor.StartMonitoring(_actualServerPid.Value);
+                    bool started = await _consoleOutputReader.StartAsync(_actualServerPid.Value);
 
                     if (started)
                     {
@@ -1114,7 +1240,7 @@ public class ServerManager
     {
         try
         {
-            _consoleMonitor.StopMonitoring();
+            _consoleOutputReader.StopAsync().GetAwaiter().GetResult();
             _logger.LogInformation("Console monitoring stopped");
         }
         catch (Exception ex)
@@ -1549,6 +1675,48 @@ public class ServerManager
             _logger.LogError(ex, $"Failed to attach to process {processId}");
             return (false, $"Failed to attach: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Injects the experimental console hook into an existing Wreckfest server process.
+    /// </summary>
+    public virtual Task<(bool Success, string Message)> InjectConsoleHookAsync(int processId)
+    {
+        _logger.LogInformation("Console hook injection requested for process {ProcessId}", processId);
+
+        try
+        {
+            var process = Process.GetProcessById(processId);
+            if (process.HasExited)
+            {
+                return Task.FromResult((false, $"Process {processId} has exited"));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to validate target process {ProcessId}", processId);
+            return Task.FromResult((false, $"Failed to validate target process {processId}: {ex.Message}"));
+        }
+
+        return _injectedHookOutputReader.InjectAsync(processId);
+    }
+
+    public bool ProcessConsoleHookOutput
+    {
+        get => _useInjectedHookAsPrimaryOutput;
+        set
+        {
+            _useInjectedHookAsPrimaryOutput = value;
+            if (value)
+            {
+                StopConsoleMonitoring();
+            }
+        }
+    }
+
+    public static string NormalizeConsoleHookLine(string line)
+    {
+        return InjectedHookOutputReader.NormalizeLine(line);
     }
 
     /// <summary>

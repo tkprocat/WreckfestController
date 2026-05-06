@@ -106,16 +106,41 @@
                              Foreground="{StaticResource TextPrimary}"
                              Margin="0,0,0,15"/>
 
-                    <!-- Use Console Monitoring -->
-                    <CheckBox x:Name="UseConsoleMonitoringCheckBox"
-                              Content="Use Console Monitoring (recommended)"
-                              IsChecked="True"
+                    <!-- Output Mode -->
+                    <TextBlock Text="Output Mode"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <ComboBox x:Name="OutputModeComboBox"
+                              Style="{StaticResource MaterialDesignOutlinedComboBox}"
                               Foreground="{StaticResource TextPrimary}"
-                              materialDesign:CheckBoxAssist.CheckBoxSize="20"/>
-                    <TextBlock Text="Provides real-time console output including all server messages"
+                              Margin="0,0,0,5">
+                        <ComboBoxItem Content="Console Reader" Tag="ConsoleReader"/>
+                        <ComboBoxItem Content="Injected DLL Hook" Tag="InjectedHook"/>
+                        <ComboBoxItem Content="Log File" Tag="LogFile"/>
+                    </ComboBox>
+                    <TextBlock Text="Choose how server output is captured. Injected DLL Hook requires using INJECT in Process Manager."
                                FontSize="10"
                                Foreground="{StaticResource TextSecondary}"
-                               Margin="32,2,0,0"
+                               Margin="0,2,0,15"
+                               TextWrapping="Wrap"/>
+
+                    <!-- Input Mode -->
+                    <TextBlock Text="Input Mode"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <ComboBox x:Name="InputModeComboBox"
+                              Style="{StaticResource MaterialDesignOutlinedComboBox}"
+                              Foreground="{StaticResource TextPrimary}"
+                              Margin="0,0,0,5">
+                        <ComboBoxItem Content="Console Writer" Tag="ConsoleWriter"/>
+                        <ComboBoxItem Content="Injected DLL Hook" Tag="InjectedHook"/>
+                    </ComboBox>
+                    <TextBlock Text="Choose how commands are sent to the server. Injected DLL Hook is experimental and requires using INJECT in Process Manager."
+                               FontSize="10"
+                               Foreground="{StaticResource TextSecondary}"
+                               Margin="0,2,0,0"
                                TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>

@@ -55,7 +55,8 @@ public partial class ConfigurationTab : UserControl
         LogFilePathTextBox.Text = Path.IsPathRooted(logPath) ? Path.GetFileName(logPath) : logPath;
 
         ServerArgumentsTextBox.Text = settings.WreckfestServer?.ServerArguments ?? "";
-        UseConsoleMonitoringCheckBox.IsChecked = settings.WreckfestServer?.UseConsoleMonitoring ?? true;
+        SelectOutputMode(GetOutputMode(settings.WreckfestServer));
+        SelectInputMode(GetInputMode(settings.WreckfestServer));
 
         // SteamCmd settings
         SteamCmdPathTextBox.Text = settings.SteamCmd?.SteamCmdPath ?? "";
@@ -94,7 +95,9 @@ public partial class ConfigurationTab : UserControl
                 WorkingDirectory = workingDir,
                 ServerArguments = ServerArgumentsTextBox.Text,
                 LogFilePath = logFilePath,
-                UseConsoleMonitoring = UseConsoleMonitoringCheckBox.IsChecked ?? true
+                UseConsoleMonitoring = GetSelectedOutputMode() != ServerOutputModes.LogFile,
+                OutputMode = GetSelectedOutputMode(),
+                InputMode = GetSelectedInputMode()
             },
             SteamCmd = new SteamCmdSettings
             {
@@ -212,7 +215,9 @@ public partial class ConfigurationTab : UserControl
                     ServerArguments = "-s server_config=server_config.cfg",
                     WorkingDirectory = "",
                     LogFilePath = "",
-                    UseConsoleMonitoring = true
+                    UseConsoleMonitoring = true,
+                    OutputMode = ServerOutputModes.ConsoleReader,
+                    InputMode = ServerInputModes.ConsoleWriter
                 },
                 SteamCmd = new SteamCmdSettings
                 {
@@ -243,5 +248,76 @@ public partial class ConfigurationTab : UserControl
         StatusMessageText.Foreground = isError
             ? (System.Windows.Media.Brush)FindResource("ButtonRed")
             : (System.Windows.Media.Brush)FindResource("ButtonGreen");
+    }
+
+    private static string GetOutputMode(WreckfestServerSettings? settings)
+    {
+        if (!string.IsNullOrWhiteSpace(settings?.OutputMode))
+        {
+            return settings.OutputMode;
+        }
+
+        return settings?.UseConsoleMonitoring == false
+            ? ServerOutputModes.LogFile
+            : ServerOutputModes.ConsoleReader;
+    }
+
+    private void SelectOutputMode(string outputMode)
+    {
+        foreach (var item in OutputModeComboBox.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag?.ToString(), outputMode, StringComparison.OrdinalIgnoreCase))
+            {
+                OutputModeComboBox.SelectedItem = item;
+                return;
+            }
+        }
+
+        OutputModeComboBox.SelectedIndex = 0;
+    }
+
+    private string GetSelectedOutputMode()
+    {
+        if (OutputModeComboBox.SelectedItem is ComboBoxItem item &&
+            item.Tag is string outputMode &&
+            !string.IsNullOrWhiteSpace(outputMode))
+        {
+            return outputMode;
+        }
+
+        return ServerOutputModes.ConsoleReader;
+    }
+
+    private static string GetInputMode(WreckfestServerSettings? settings)
+    {
+        return !string.IsNullOrWhiteSpace(settings?.InputMode)
+            ? settings.InputMode
+            : ServerInputModes.ConsoleWriter;
+    }
+
+    private void SelectInputMode(string inputMode)
+    {
+        foreach (var item in InputModeComboBox.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag?.ToString(), inputMode, StringComparison.OrdinalIgnoreCase))
+            {
+                InputModeComboBox.SelectedItem = item;
+                return;
+            }
+        }
+
+        InputModeComboBox.SelectedIndex = 0;
+    }
+
+    private string GetSelectedInputMode()
+    {
+        if (InputModeComboBox.SelectedItem is ComboBoxItem item &&
+            item.Tag is string inputMode &&
+            !string.IsNullOrWhiteSpace(inputMode))
+        {
+            return inputMode;
+        }
+
+        return ServerInputModes.ConsoleWriter;
     }
 }

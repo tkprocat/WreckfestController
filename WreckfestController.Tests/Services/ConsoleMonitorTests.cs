@@ -28,6 +28,21 @@ public class ConsoleMonitorTests
             outputs);
     }
 
+    [Fact]
+    public void ProcessOutput_ShortTimestampedChatLineWithoutNewline_EmitsImmediately()
+    {
+        // Arrange
+        var monitor = new ConsoleMonitor(Mock.Of<ILogger<ConsoleMonitor>>());
+        var outputs = new List<string>();
+        monitor.SubscribeToOutput(outputs.Add);
+
+        // Act
+        InvokeProcessOutput(monitor, "* 12:38:08 Shachor: !vote bonebreaker_valley_main_circuit 6", 120);
+
+        // Assert
+        Assert.Equal(["* 12:38:08 Shachor: !vote bonebreaker_valley_main_circuit 6"], outputs);
+    }
+
     private static void InvokeProcessOutput(ConsoleMonitor monitor, string rawOutput, short consoleWidth)
     {
         var method = typeof(ConsoleMonitor).GetMethod(

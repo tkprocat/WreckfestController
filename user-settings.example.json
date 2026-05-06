@@ -4,7 +4,9 @@
     "ServerArguments": "-s server_config=server_config.cfg",
     "WorkingDirectory": "<path-to-wreckfest-server>",
     "LogFilePath": "<path-to-wreckfest-server>\\log.txt",
-    "UseConsoleMonitoring": true
+    "UseConsoleMonitoring": true,
+    "OutputMode": "ConsoleReader",
+    "InputMode": "ConsoleWriter"
   },
   "SteamCmd": {
     "SteamCmdPath": "<path-to-steamcmd>\\steamcmd.exe",

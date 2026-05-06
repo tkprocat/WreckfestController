@@ -91,6 +91,10 @@ public class Program
                 services.AddSingleton<SmartRestartService>();
                 services.AddSingleton<ConsoleMonitor>();
                 services.AddSingleton<ConsoleWriter>();
+                services.AddSingleton<InjectedHookInputWriter>();
+                services.AddSingleton<IServerInputWriter, ConfiguredServerInputWriter>();
+                services.AddSingleton<IServerOutputReader>(sp => sp.GetRequiredService<ConsoleMonitor>());
+                services.AddSingleton<IInjectedHookOutputReader, InjectedHookOutputReader>();
                 services.AddSingleton<ServerManager>();
                 services.AddSingleton<SettingsService>();
                 services.AddSingleton<VotingService>();

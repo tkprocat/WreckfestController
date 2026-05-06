@@ -81,7 +81,7 @@ public class SettingsService
                 ReadCommentHandling = JsonCommentHandling.Skip
             });
 
-            return settings ?? CreateDefaultSettings();
+            return NormalizeSettings(settings ?? CreateDefaultSettings());
         }
         catch (Exception ex)
         {
@@ -97,6 +97,7 @@ public class SettingsService
     {
         try
         {
+            settings = NormalizeSettings(settings);
             var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions
             {
                 WriteIndented = true
@@ -125,7 +126,9 @@ public class SettingsService
                 ServerArguments = _configuration["WreckfestServer:ServerArguments"] ?? "-s server_config=server_config.cfg",
                 WorkingDirectory = _configuration["WreckfestServer:WorkingDirectory"] ?? "",
                 LogFilePath = _configuration["WreckfestServer:LogFilePath"] ?? "",
-                UseConsoleMonitoring = true  // Default to console monitoring
+                UseConsoleMonitoring = true,  // Compatibility fallback for older settings files
+                OutputMode = _configuration["WreckfestServer:OutputMode"] ?? ServerOutputModes.ConsoleReader,
+                InputMode = _configuration["WreckfestServer:InputMode"] ?? ServerInputModes.ConsoleWriter
             },
             SteamCmd = new SteamCmdSettings
             {
@@ -145,6 +148,29 @@ public class SettingsService
                 AllowedTracks = _configuration.GetSection("Vote:AllowedTracks").Get<List<AllowedVoteTrack>>() ?? new()
             }
         };
+    }
+
+    private UserSettings NormalizeSettings(UserSettings settings)
+    {
+        var defaultTracks = _configuration.GetSection("Vote:AllowedTracks").Get<List<AllowedVoteTrack>>() ?? new();
+
+        settings.Vote ??= new VoteSettings
+        {
+            Enabled = _configuration.GetValue("Vote:Enabled", true),
+            VoteTimeoutSeconds = _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30,
+            MaxLapsAllowed = _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10
+        };
+
+        if (settings.Vote.AllowedTracks.Count == 0 && defaultTracks.Count > 0)
+        {
+            settings.Vote.AllowedTracks = defaultTracks;
+        }
+
+        settings.WreckfestServer ??= new WreckfestServerSettings();
+        settings.WreckfestServer.OutputMode ??= _configuration["WreckfestServer:OutputMode"] ?? ServerOutputModes.ConsoleReader;
+        settings.WreckfestServer.InputMode ??= _configuration["WreckfestServer:InputMode"] ?? ServerInputModes.ConsoleWriter;
+
+        return settings;
     }
 
     /// <summary>

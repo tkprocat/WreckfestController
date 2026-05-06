@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
+using System.Diagnostics;
 using WreckfestController.Services;
 using Xunit;
 
@@ -166,6 +167,142 @@ public class ServerManagerTests
     }
 
     [Fact]
+    public async Task SendCommandAsync_WhenInputWriterInjected_UsesInjectedWriter()
+    {
+        // Arrange
+        var inputWriter = new Mock<IServerInputWriter>();
+        inputWriter
+            .Setup(w => w.SendCommandAsync("status", Process.GetCurrentProcess().Id))
+            .ReturnsAsync((true, "sent by injected input"));
+
+        var outputReader = new Mock<IServerOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
+        outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
+
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
+        var serverManager = new ServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockConsoleMonitor.Object,
+            _mockConsoleWriter.Object,
+            _mockWebhookService.Object,
+            mockConsoleLogSender.Object,
+            inputWriter.Object,
+            outputReader.Object);
+
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
+
+        // Act
+        var result = await serverManager.SendCommandAsync("status");
+
+        // Assert
+        Assert.True(result.Success);
+        Assert.Equal("sent by injected input", result.Message);
+        inputWriter.Verify(w => w.SendCommandAsync("status", Process.GetCurrentProcess().Id), Times.Once);
+    }
+
+    [Fact]
+    public async Task InjectConsoleHookAsync_WhenProcessIdIsInvalid_ReturnsFailure()
+    {
+        // Act
+        var result = await _serverManager.InjectConsoleHookAsync(-1);
+
+        // Assert
+        Assert.False(result.Success);
+        Assert.Contains("Failed to validate target process", result.Message);
+    }
+
+    [Fact]
+    public async Task InjectConsoleHookAsync_WhenProcessIsValid_DelegatesToInjectedHookOutputReader()
+    {
+        // Arrange
+        var inputWriter = new Mock<IServerInputWriter>();
+        var outputReader = new Mock<IServerOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
+        outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
+
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        injectedHookReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+        injectedHookReader
+            .Setup(r => r.InjectAsync(Process.GetCurrentProcess().Id))
+            .ReturnsAsync((true, "injected through reader"));
+
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
+        var serverManager = new ServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockConsoleMonitor.Object,
+            _mockConsoleWriter.Object,
+            _mockWebhookService.Object,
+            mockConsoleLogSender.Object,
+            inputWriter.Object,
+            outputReader.Object,
+            injectedHookReader.Object);
+
+        // Act
+        var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
+
+        // Assert
+        Assert.True(result.Success);
+        Assert.Equal("injected through reader", result.Message);
+        injectedHookReader.Verify(r => r.InjectAsync(Process.GetCurrentProcess().Id), Times.Once);
+    }
+
+    [Fact]
+    public void StartOutputMonitoring_WhenInjectedHookModeConfigured_DoesNotStartConsoleMonitor()
+    {
+        // Arrange
+        _mockConfiguration.Setup(c => c["WreckfestServer:OutputMode"])
+            .Returns(ServerOutputModes.InjectedHook);
+
+        // Act
+        InvokeStartOutputMonitoring(_serverManager);
+
+        // Assert
+        Assert.True(_serverManager.ProcessConsoleHookOutput);
+    }
+
+    [Fact]
+    public void ProcessConsoleHookOutput_WhenEnabled_StopsConsoleMonitor()
+    {
+        // Act
+        _serverManager.ProcessConsoleHookOutput = true;
+
+        // Assert
+        Assert.True(_serverManager.ProcessConsoleHookOutput);
+        _mockConsoleMonitor.Verify(m => m.StopMonitoring(), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("^9* 17:57:22^0 ^8Procat: ^0test", "* 17:57:22 Procat: test")]
+    [InlineData("^:Server message^0", "Server message")]
+    [InlineData("   ^0   ", "")]
+    public void NormalizeConsoleHookLine_StripsColorCodesAndTrims(string input, string expected)
+    {
+        // Act
+        var result = ServerManager.NormalizeConsoleHookLine(input);
+
+        // Assert
+        Assert.Equal(expected, result);
+    }
+
+    [Fact]
     public void SubscribeToOutput_DoesNotThrowException()
     {
         // Arrange
@@ -244,6 +381,68 @@ public class ServerManagerTests
         Assert.Equal("!search hill", received.Value.Message);
     }
 
+    [Fact]
+    public void OnConsoleOutputReceived_ObservedVoteLine_RaisesChatCommand()
+    {
+        // Arrange
+        (string PlayerName, bool IsBot, string Message)? received = null;
+        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+            received = (playerName, isBot, message);
+
+        // Act
+        InvokeOnConsoleOutputReceived(_serverManager, "* 12:38:08 Shachor: !vote bonebreaker_valley_main_circuit 6");
+
+        // Assert
+        Assert.NotNull(received);
+        Assert.Equal("Shachor", received.Value.PlayerName);
+        Assert.False(received.Value.IsBot);
+        Assert.Equal("!vote bonebreaker_valley_main_circuit 6", received.Value.Message);
+    }
+
+    [Fact]
+    public void OnConsoleOutputReceived_DuplicateChatCommandLineWithinShortWindow_RaisesOnce()
+    {
+        // Arrange
+        var receivedCount = 0;
+        _serverManager.ChatCommandReceived += (_, _, _) => receivedCount++;
+
+        // Act
+        InvokeOnConsoleOutputReceived(_serverManager, "* 22:42:03 Procat: !search tvtp misc");
+        InvokeOnConsoleOutputReceived(_serverManager, "* 22:42:03 Procat: !search tvtp misc");
+
+        // Assert
+        Assert.Equal(1, receivedCount);
+    }
+
+    [Fact]
+    public void OnConsoleOutputReceived_ControllerMessageContainingCommands_DoesNotRaiseChatCommand()
+    {
+        // Arrange
+        var receivedCount = 0;
+        _serverManager.ChatCommandReceived += (_, _, _) => receivedCount++;
+
+        // Act
+        InvokeOnConsoleOutputReceived(_serverManager,
+            "* 18:00:12 Monday Night Wrecking EU - Development Server: Commands: !vote <trackId> <laps> - start vote; !yes - vote yes");
+
+        // Assert
+        Assert.Equal(0, receivedCount);
+    }
+
+    [Fact]
+    public void OnConsoleOutputReceived_ChatMessageContainingCommandLater_DoesNotRaiseChatCommand()
+    {
+        // Arrange
+        var receivedCount = 0;
+        _serverManager.ChatCommandReceived += (_, _, _) => receivedCount++;
+
+        // Act
+        InvokeOnConsoleOutputReceived(_serverManager, "* 18:00:12 Procat: please type !help");
+
+        // Assert
+        Assert.Equal(0, receivedCount);
+    }
+
     private static void InvokeOnConsoleOutputReceived(ServerManager serverManager, string output)
     {
         var method = typeof(ServerManager).GetMethod(
@@ -252,5 +451,15 @@ public class ServerManagerTests
 
         Assert.NotNull(method);
         method.Invoke(serverManager, [output]);
+    }
+
+    private static void InvokeStartOutputMonitoring(ServerManager serverManager)
+    {
+        var method = typeof(ServerManager).GetMethod(
+            "StartOutputMonitoring",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        method.Invoke(serverManager, null);
     }
 }
