@@ -36,7 +36,7 @@ public class ConsoleWriter : IServerInputWriter
     /// <summary>
     /// Find console window by class name
     /// </summary>
-    public IntPtr FindConsoleWindow(string? windowTitle = null)
+    public virtual IntPtr FindConsoleWindow(string? windowTitle = null)
     {
         return FindWindow("ConsoleWindowClass", windowTitle);
     }
@@ -44,7 +44,7 @@ public class ConsoleWriter : IServerInputWriter
     /// <summary>
     /// Send a command to the console window (types text and presses Enter)
     /// </summary>
-    public bool SendCommand(IntPtr windowHandle, string command)
+    public virtual bool SendCommand(IntPtr windowHandle, string command)
     {
         if (windowHandle == IntPtr.Zero)
         {
@@ -103,7 +103,7 @@ public class ConsoleWriter : IServerInputWriter
             return Task.FromResult((false, "Could not find console window"));
         }
 
-        var success = SendCommand(windowHandle, command + Environment.NewLine);
+        var success = SendCommand(windowHandle, command);
         return Task.FromResult(success
             ? (true, $"Command sent successfully: {command}")
             : (false, "Failed to send command to console window"));

@@ -769,11 +769,16 @@ public class VotingService
                 initiator, trackId, laps, VoteTimeoutSeconds);
         }
 
-        _ = BroadcastMessages(FormatVoteStartedMessages(initiator, trackId, laps));
+        _ = CompleteVoteStartAsync(initiator, trackId, laps, passedImmediately);
+    }
+
+    private async Task CompleteVoteStartAsync(string initiator, string trackId, int laps, bool passedImmediately)
+    {
+        await BroadcastMessages(FormatVoteStartedMessages(initiator, trackId, laps));
 
         if (passedImmediately)
         {
-            _ = ApplyVotedTrack(trackId, laps);
+            await ApplyVotedTrack(trackId, laps);
         }
     }
 

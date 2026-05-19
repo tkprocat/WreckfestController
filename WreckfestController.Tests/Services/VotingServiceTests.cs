@@ -218,6 +218,21 @@ public class VotingServiceTests
     }
 
     [Fact]
+    public async Task VoteStarted_WhenOnlyInitiatorOnline_SendsBothStartLinesBeforePassedMessage()
+    {
+        var (service, tracker, messages, _) = CreateIsolatedSetup(timeoutSeconds: 30, messageDelayMs: 50);
+        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
+
+        service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
+        await Task.Delay(250);
+
+        Assert.True(messages.Count >= 3);
+        Assert.Equal("Vote: Timeout Track - 3 laps", messages[0]);
+        Assert.Equal("By Alice. Type !yes or !no. Ends in 30s.", messages[1]);
+        Assert.Equal("Vote passed! Next race: timeout_track for 3 laps.", messages[2]);
+    }
+
+    [Fact]
     public async Task LuckyCommand_StartsVoteWithRandomAllowedTrackAndLapCount()
     {
         JoinPlayer("Alice");
@@ -726,14 +741,14 @@ public class VotingServiceTests
     }
 
     private (VotingService service, PlayerTracker tracker, List<string> messages, Mock<ConfigService> configMock)
-        CreateIsolatedSetup(int timeoutSeconds)
+        CreateIsolatedSetup(int timeoutSeconds, int messageDelayMs = 0)
     {
         var messages = new List<string>();
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> {
                 ["Vote:VoteTimeoutSeconds"] = timeoutSeconds.ToString(),
                 ["Vote:MaxLapsAllowed"] = "10",
-                ["Vote:MessageDelayMs"] = "0",
+                ["Vote:MessageDelayMs"] = messageDelayMs.ToString(),
                 ["Vote:AllowedTracks:0:Id"] = "timeout_track",
                 ["Vote:AllowedTracks:0:Name"] = "Timeout Track",
                 ["Vote:AllowedTracks:1:Id"] = "only_initiator_track",
