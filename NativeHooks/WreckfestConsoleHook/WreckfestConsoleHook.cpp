@@ -341,12 +341,19 @@ bool DispatchConsoleCommand(const std::string& rawCommand)
     auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     auto dispatcher = reinterpret_cast<CommandDispatcherFn>(moduleBase + CommandDispatcherRva);
 
-    auto split = commandLine.find_first_of(" \t");
+    auto split = commandLine.find_first_of(" \t=");
     std::string command = split == std::string::npos ? commandLine : commandLine.substr(0, split);
     std::string argument;
     if (split != std::string::npos)
     {
-        argument = TrimCommand(commandLine.substr(split + 1));
+        auto argumentStart = split + 1;
+        while (argumentStart < commandLine.size() &&
+               (commandLine[argumentStart] == ' ' || commandLine[argumentStart] == '\t' || commandLine[argumentStart] == '='))
+        {
+            argumentStart++;
+        }
+
+        argument = TrimCommand(commandLine.substr(argumentStart));
     }
 
     std::vector<char> commandBuffer(command.begin(), command.end());
