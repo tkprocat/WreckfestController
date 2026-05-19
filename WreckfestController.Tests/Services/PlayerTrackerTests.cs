@@ -75,6 +75,25 @@ public class PlayerTrackerTests
     }
 
     [Fact]
+    public void MarkPlayerSeen_WhenChatComesFromUnknownHuman_AddsHumanWithoutRequestingList()
+    {
+        var listRequests = 0;
+        _playerTracker.OnListCommandRequested += () => listRequests++;
+
+        _playerTracker.MarkPlayerSeen("Procat", isBot: false);
+
+        var players = _playerTracker.GetPlayers();
+        var (online, total) = _playerTracker.GetPlayerCount();
+
+        Assert.Single(players);
+        Assert.Equal("Procat", players[0].Name);
+        Assert.False(players[0].IsBot);
+        Assert.Equal(1, online);
+        Assert.Equal(1, total);
+        Assert.Equal(0, listRequests);
+    }
+
+    [Fact]
     public void ProcessLogLine_BotQuitEvent_RemovesPlayer()
     {
         // Arrange

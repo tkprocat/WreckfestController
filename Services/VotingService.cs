@@ -60,6 +60,8 @@ public class VotingService
     {
         if (isBot) return;
 
+        _playerTracker.MarkPlayerSeen(playerName, isBot: false);
+
         var lower = message.ToLowerInvariant().Trim();
 
         if (lower == "!help")

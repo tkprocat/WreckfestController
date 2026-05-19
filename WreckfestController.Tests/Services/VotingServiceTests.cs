@@ -721,6 +721,32 @@ public class VotingServiceTests
     }
 
     [Fact]
+    public async Task DebugCommand_WhenSenderIsMissingFromTracker_CountsSenderAsHuman()
+    {
+        SendChat("Procat", "!debug");
+        await Task.Delay(50);
+
+        Assert.Contains(_broadcastMessages, m =>
+            m.Contains("Debug:", StringComparison.Ordinal) &&
+            m.Contains("humans=1", StringComparison.Ordinal) &&
+            m.Contains("total=1", StringComparison.Ordinal) &&
+            m.Contains("bots=0", StringComparison.Ordinal));
+        Assert.Contains(_broadcastMessages, m =>
+            m.Contains("humanPlayers=?:Procat", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task VoteCommand_WhenSenderIsOnlyKnownHuman_PassesImmediately()
+    {
+        SendChat("Procat", "!vote wrecknado_02 3");
+        await Task.Delay(50);
+
+        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync("laps=3"), Times.Once);
+        Assert.Contains(_broadcastMessages, m => m == "Vote passed! Next race: wrecknado_02 for 3 laps.");
+    }
+
+    [Fact]
     public async Task DebugCommand_DuringVote_ShowsActiveVoteCounts()
     {
         JoinPlayer("Alice");

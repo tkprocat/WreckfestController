@@ -848,6 +848,7 @@ public class ServerManager
 
     public virtual async Task<(bool Success, string Message)> SendCommandAsync(string command)
     {
+        command = command.TrimEnd('\r', '\n');
         if (string.IsNullOrWhiteSpace(command))
         {
             return (false, "Command cannot be empty");

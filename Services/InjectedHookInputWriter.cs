@@ -18,6 +18,7 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
 
     public virtual async Task<(bool Success, string Message)> SendCommandAsync(string command, int processId)
     {
+        command = command.TrimEnd('\r', '\n');
         if (string.IsNullOrWhiteSpace(command))
         {
             return (false, "Command cannot be empty");

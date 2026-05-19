@@ -210,6 +210,88 @@ public class ServerManagerTests
     }
 
     [Fact]
+    public async Task SendCommandAsync_TrimsTrailingLineBreaksBeforeInputWriter()
+    {
+        // Arrange
+        var inputWriter = new Mock<IServerInputWriter>();
+        inputWriter
+            .Setup(w => w.SendCommandAsync("/message hello", Process.GetCurrentProcess().Id))
+            .ReturnsAsync((true, "sent"));
+
+        var outputReader = new Mock<IServerOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
+        outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
+
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
+        var serverManager = new ServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockConsoleMonitor.Object,
+            _mockConsoleWriter.Object,
+            _mockWebhookService.Object,
+            mockConsoleLogSender.Object,
+            inputWriter.Object,
+            outputReader.Object);
+
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
+
+        // Act
+        var result = await serverManager.SendCommandAsync("/message hello\r\n");
+
+        // Assert
+        Assert.True(result.Success);
+        inputWriter.Verify(w => w.SendCommandAsync("/message hello", Process.GetCurrentProcess().Id), Times.Once);
+        inputWriter.Verify(w => w.SendCommandAsync(It.Is<string>(command => command.Contains('\r') || command.Contains('\n')), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SendCommandAsync_WhenOnlyLineBreaks_ReturnsEmptyCommand()
+    {
+        // Arrange
+        var inputWriter = new Mock<IServerInputWriter>();
+        var outputReader = new Mock<IServerOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
+        outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
+
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
+        var serverManager = new ServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockConsoleMonitor.Object,
+            _mockConsoleWriter.Object,
+            _mockWebhookService.Object,
+            mockConsoleLogSender.Object,
+            inputWriter.Object,
+            outputReader.Object);
+
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
+
+        // Act
+        var result = await serverManager.SendCommandAsync("\r\n");
+
+        // Assert
+        Assert.False(result.Success);
+        Assert.Equal("Command cannot be empty", result.Message);
+        inputWriter.Verify(w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SendCommandAsync_WhenCalledConcurrently_SerializesInputWriterCalls()
     {
         // Arrange

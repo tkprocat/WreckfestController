@@ -97,6 +97,12 @@ public class ConsoleWriter : IServerInputWriter
 
     public virtual Task<(bool Success, string Message)> SendCommandAsync(string command, int processId)
     {
+        command = command.TrimEnd('\r', '\n');
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            return Task.FromResult((false, "Command cannot be empty"));
+        }
+
         var windowHandle = FindConsoleWindow();
         if (windowHandle == IntPtr.Zero)
         {

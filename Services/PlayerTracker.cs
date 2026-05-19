@@ -172,6 +172,37 @@ public class PlayerTracker
         RequestListCommand();
     }
 
+    public void MarkPlayerSeen(string playerName, bool isBot)
+    {
+        playerName = playerName.Trim();
+        if (string.IsNullOrWhiteSpace(playerName))
+        {
+            return;
+        }
+
+        lock (_lock)
+        {
+            if (_players.TryGetValue(playerName, out var player))
+            {
+                player.IsBot = isBot;
+                return;
+            }
+
+            var seenPlayer = new Player
+            {
+                Name = playerName,
+                JoinedAt = DateTime.UtcNow,
+                IsBot = isBot
+            };
+
+            _players[playerName] = seenPlayer;
+            NotifyPlayerEvent(new PlayerTrackerEvent("Join", seenPlayer));
+            _logger.LogInformation("{Type} discovered via chat command: {PlayerName}", isBot ? "Bot" : "Player", playerName);
+        }
+
+        _ = SendPlayerListUpdate();
+    }
+
     /// <summary>
     /// Remove a player who left
     /// </summary>
