@@ -747,6 +747,55 @@ public class VotingServiceTests
     }
 
     [Fact]
+    public async Task VoteCommand_RefreshesPlayersFromHookBeforeMajorityCheck()
+    {
+        _mockServerManager
+            .Setup(m => m.TryRefreshPlayersFromHookAsync())
+            .Callback(() => _playerTracker.ProcessHookPlayerSnapshot([
+                new Player { Name = "Procat", Slot = 1, IsBot = false, JoinedAt = DateTime.UtcNow },
+                new Player { Name = "Bob", Slot = 2, IsBot = false, JoinedAt = DateTime.UtcNow },
+                new Player { Name = "Charlie", Slot = 3, IsBot = false, JoinedAt = DateTime.UtcNow }
+            ]))
+            .ReturnsAsync(true);
+
+        SendChat("Procat", "!vote wrecknado_02 3");
+        await Task.Delay(50);
+
+        _mockServerManager.Verify(m => m.TryRefreshPlayersFromHookAsync(), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        Assert.Contains(_broadcastMessages, m => m == "Vote: Wrecknado - 3 laps");
+        Assert.DoesNotContain(_broadcastMessages, m => m.StartsWith("Vote passed!", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task YesCommand_RefreshesPlayersFromHookBeforeEarlyMajorityCheck()
+    {
+        JoinPlayer("Procat");
+        JoinPlayer("Bob");
+        JoinPlayer("Charlie");
+
+        _mockServerManager
+            .SetupSequence(m => m.TryRefreshPlayersFromHookAsync())
+            .ReturnsAsync(true)
+            .Returns(() =>
+            {
+                _playerTracker.ProcessHookPlayerSnapshot([
+                    new Player { Name = "Procat", Slot = 1, IsBot = false, JoinedAt = DateTime.UtcNow },
+                    new Player { Name = "Bob", Slot = 2, IsBot = false, JoinedAt = DateTime.UtcNow }
+                ]);
+                return Task.FromResult(true);
+            });
+
+        SendChat("Procat", "!vote wrecknado_02 3");
+        SendChat("Bob", "!yes");
+        await Task.Delay(50);
+
+        _mockServerManager.Verify(m => m.TryRefreshPlayersFromHookAsync(), Times.Exactly(2));
+        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync("laps=3"), Times.Once);
+    }
+
+    [Fact]
     public async Task DebugCommand_DuringVote_ShowsActiveVoteCounts()
     {
         JoinPlayer("Alice");

@@ -891,6 +891,33 @@ public class ServerManager
         }
     }
 
+    public virtual async Task<bool> TryRefreshPlayersFromHookAsync()
+    {
+        var process = GetActualServerProcess();
+        if (!IsInjectedHookInputMode() || process == null || _serverInputWriter is not IPlayerSnapshotReader playerSnapshotReader)
+        {
+            return false;
+        }
+
+        try
+        {
+            var snapshot = await playerSnapshotReader.ReadPlayerSnapshotAsync(process.Id);
+            if (!snapshot.Success)
+            {
+                _logger.LogDebug("Injected hook player snapshot refresh skipped: {Message}", snapshot.Message);
+                return false;
+            }
+
+            _playerTracker.ProcessHookPlayerSnapshot(snapshot.Players);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Injected hook player snapshot refresh failed");
+            return false;
+        }
+    }
+
     private void NotifyConsoleOutput(string message)
     {
         ConsoleOutput?.Invoke(message);

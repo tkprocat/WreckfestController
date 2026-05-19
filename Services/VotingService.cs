@@ -735,6 +735,8 @@ public class VotingService
 
     private void StartVote(string initiator, string trackId, int laps)
     {
+        RefreshPlayersFromHookIfAvailable();
+
         var passedImmediately = false;
         lock (_stateLock)
         {
@@ -869,6 +871,8 @@ public class VotingService
 
     private void RecordVote(string playerName, bool yes)
     {
+        RefreshPlayersFromHookIfAvailable();
+
         string? trackId;
         int laps;
         bool earlyResult;
@@ -912,6 +916,22 @@ public class VotingService
                 _ = ApplyVotedTrack(trackId!, laps);
             else
                 _ = BroadcastMessage($"Vote failed: majority voted no. Next race unchanged.");
+        }
+    }
+
+    private void RefreshPlayersFromHookIfAvailable()
+    {
+        try
+        {
+            var refreshTask = _serverManager.TryRefreshPlayersFromHookAsync();
+            if (refreshTask != null)
+            {
+                refreshTask.ConfigureAwait(false).GetAwaiter().GetResult();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Unable to refresh players from injected hook before vote check");
         }
     }
 

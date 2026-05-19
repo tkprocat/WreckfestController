@@ -292,6 +292,104 @@ public class ServerManagerTests
     }
 
     [Fact]
+    public async Task TryRefreshPlayersFromHookAsync_WhenInjectedHookSnapshotSucceeds_UpdatesPlayerTracker()
+    {
+        // Arrange
+        _mockConfiguration.Setup(c => c["WreckfestServer:InputMode"]).Returns(ServerInputModes.InjectedHook);
+
+        var inputWriter = new Mock<IServerInputWriter>();
+        inputWriter
+            .As<IPlayerSnapshotReader>()
+            .Setup(w => w.ReadPlayerSnapshotAsync(Process.GetCurrentProcess().Id))
+            .ReturnsAsync((true, "ok", new[]
+            {
+                new Models.Player { Name = "Procat", Slot = 1, IsBot = false, JoinedAt = DateTime.UtcNow },
+                new Models.Player { Name = "eRacer", Slot = 2, IsBot = true, JoinedAt = DateTime.UtcNow }
+            }));
+
+        var outputReader = new Mock<IServerOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
+        outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
+
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
+        var serverManager = new ServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockConsoleMonitor.Object,
+            _mockConsoleWriter.Object,
+            _mockWebhookService.Object,
+            mockConsoleLogSender.Object,
+            inputWriter.Object,
+            outputReader.Object);
+
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
+
+        // Act
+        var refreshed = await serverManager.TryRefreshPlayersFromHookAsync();
+
+        // Assert
+        Assert.True(refreshed);
+        var (humans, total) = _playerTracker.GetPlayerCount();
+        Assert.Equal(1, humans);
+        Assert.Equal(2, total);
+        Assert.Contains(_playerTracker.GetPlayers(), player => player.Name == "Procat" && player.Slot == 1);
+    }
+
+    [Fact]
+    public async Task TryRefreshPlayersFromHookAsync_WhenInputModeIsNotInjectedHook_DoesNotSendListCommand()
+    {
+        // Arrange
+        _mockConfiguration.Setup(c => c["WreckfestServer:InputMode"]).Returns(ServerInputModes.ConsoleWriter);
+
+        var inputWriter = new Mock<IServerInputWriter>();
+        inputWriter
+            .As<IPlayerSnapshotReader>()
+            .Setup(w => w.ReadPlayerSnapshotAsync(It.IsAny<int>()))
+            .ReturnsAsync((true, "ok", Array.Empty<Models.Player>()));
+
+        var outputReader = new Mock<IServerOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
+        outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
+
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
+        var serverManager = new ServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockConsoleMonitor.Object,
+            _mockConsoleWriter.Object,
+            _mockWebhookService.Object,
+            mockConsoleLogSender.Object,
+            inputWriter.Object,
+            outputReader.Object);
+
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
+
+        // Act
+        var refreshed = await serverManager.TryRefreshPlayersFromHookAsync();
+
+        // Assert
+        Assert.False(refreshed);
+        inputWriter.As<IPlayerSnapshotReader>().Verify(w => w.ReadPlayerSnapshotAsync(It.IsAny<int>()), Times.Never);
+        inputWriter.Verify(w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
     public async Task SendCommandAsync_WhenCalledConcurrently_SerializesInputWriterCalls()
     {
         // Arrange
