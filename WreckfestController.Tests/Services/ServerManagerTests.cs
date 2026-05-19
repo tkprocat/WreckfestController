@@ -210,6 +210,59 @@ public class ServerManagerTests
     }
 
     [Fact]
+    public async Task SendCommandAsync_WhenCalledConcurrently_SerializesInputWriterCalls()
+    {
+        // Arrange
+        var activeCalls = 0;
+        var maxActiveCalls = 0;
+        var inputWriter = new Mock<IServerInputWriter>();
+        inputWriter
+            .Setup(w => w.SendCommandAsync(It.IsAny<string>(), Process.GetCurrentProcess().Id))
+            .Returns(async () =>
+            {
+                var current = Interlocked.Increment(ref activeCalls);
+                maxActiveCalls = Math.Max(maxActiveCalls, current);
+                await Task.Delay(50);
+                Interlocked.Decrement(ref activeCalls);
+                return (true, "sent");
+            });
+
+        var outputReader = new Mock<IServerOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
+        outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
+
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
+        var serverManager = new ServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockConsoleMonitor.Object,
+            _mockConsoleWriter.Object,
+            _mockWebhookService.Object,
+            mockConsoleLogSender.Object,
+            inputWriter.Object,
+            outputReader.Object);
+
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
+
+        // Act
+        await Task.WhenAll(
+            serverManager.SendCommandAsync("/message one"),
+            serverManager.SendCommandAsync("/message two"),
+            serverManager.SendCommandAsync("/message three"));
+
+        // Assert
+        Assert.Equal(1, maxActiveCalls);
+    }
+
+    [Fact]
     public async Task InjectConsoleHookAsync_WhenProcessIdIsInvalid_ReturnsFailure()
     {
         // Act

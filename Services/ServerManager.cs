@@ -35,6 +35,7 @@ public class ServerManager
     private readonly IServerInputWriter _serverInputWriter;
     private readonly IServerOutputReader _consoleOutputReader;
     private readonly IInjectedHookOutputReader _injectedHookOutputReader;
+    private readonly SemaphoreSlim _commandSendLock = new(1, 1);
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ServerInfoTracker _serverInfoTracker;
@@ -169,6 +170,19 @@ public class ServerManager
         {
             try
             {
+                var process = GetActualServerProcess();
+                if (IsInjectedHookInputMode() && process != null && _serverInputWriter is IPlayerSnapshotReader playerSnapshotReader)
+                {
+                    var snapshot = await playerSnapshotReader.ReadPlayerSnapshotAsync(process.Id);
+                    if (snapshot.Success)
+                    {
+                        _playerTracker.ProcessHookPlayerSnapshot(snapshot.Players);
+                        return;
+                    }
+
+                    _logger.LogWarning("Failed to read injected hook player snapshot, falling back to list command: {Message}", snapshot.Message);
+                }
+
                 var result = await SendCommandAsync("list");
                 if (!result.Success)
                 {
@@ -844,6 +858,7 @@ public class ServerManager
             return (false, "Server is not running");
         }
 
+        await _commandSendLock.WaitAsync();
         try
         {
             var processId = _actualServerPid ?? GetActualServerProcess()?.Id;
@@ -868,6 +883,10 @@ public class ServerManager
         {
             _logger.LogError(ex, "Error sending command: {Command}", command);
             return (false, $"Error sending command: {ex.Message}");
+        }
+        finally
+        {
+            _commandSendLock.Release();
         }
     }
 
@@ -1056,6 +1075,14 @@ public class ServerManager
             _logger.LogInformation("Injected hook output mode selected; waiting for manual hook injection");
             NotifyConsoleOutput("[Controller] Injected hook output mode selected. Use Process Manager -> INJECT to start output capture.");
         }
+    }
+
+    private bool IsInjectedHookInputMode()
+    {
+        return string.Equals(
+            _configuration["WreckfestServer:InputMode"]?.Trim(),
+            ServerInputModes.InjectedHook,
+            StringComparison.Ordinal);
     }
 
     private string GetConfiguredOutputMode()
@@ -1713,6 +1740,8 @@ public class ServerManager
             }
         }
     }
+
+    public virtual bool IsConsoleHookConnected => _injectedHookOutputReader.IsHookConnected;
 
     public static string NormalizeConsoleHookLine(string line)
     {

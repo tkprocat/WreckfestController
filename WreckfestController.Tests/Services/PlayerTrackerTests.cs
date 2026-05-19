@@ -56,6 +56,25 @@ public class PlayerTrackerTests
     }
 
     [Fact]
+    public void ProcessHookPlayerSnapshot_ReplacesCurrentPlayers()
+    {
+        _playerTracker.ProcessLogLine("16:53:14 - OldPlayer has joined.");
+
+        _playerTracker.ProcessHookPlayerSnapshot(new[]
+        {
+            new Player { Name = "Procat", Slot = 11, IsAdmin = true, JoinedAt = DateTime.UtcNow },
+            new Player { Name = "eRacer", Slot = 1, IsBot = true, JoinedAt = DateTime.UtcNow }
+        });
+
+        var players = _playerTracker.GetPlayers();
+
+        Assert.Equal(2, players.Count);
+        Assert.DoesNotContain(players, p => p.Name == "OldPlayer");
+        Assert.Contains(players, p => p.Name == "Procat" && p.Slot == 11 && p.IsAdmin);
+        Assert.Contains(players, p => p.Name == "eRacer" && p.Slot == 1 && p.IsBot);
+    }
+
+    [Fact]
     public void ProcessLogLine_BotQuitEvent_RemovesPlayer()
     {
         // Arrange

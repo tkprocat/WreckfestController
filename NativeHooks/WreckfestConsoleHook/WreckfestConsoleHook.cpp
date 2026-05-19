@@ -10,10 +10,14 @@ namespace
 {
 constexpr uintptr_t ConsolePrintRva = 0x00F1A050;
 constexpr uintptr_t CommandDispatcherRva = 0x00F18B30;
+constexpr uintptr_t RegistryLookupRva = 0x00E37140;
+constexpr uintptr_t RegistryTablePtrRva = 0x0127E7F8;
+constexpr uintptr_t ServerNamespaceTagRva = 0x065E6308;
 constexpr SIZE_T PatchSize = 12;
 
 using ConsolePrintFn = void(__fastcall*)(const char*, void*, void*, void*);
 using CommandDispatcherFn = void(__fastcall*)(void*);
+using RegistryLookupFn = int(__fastcall*)(const char*, uintptr_t);
 
 CRITICAL_SECTION g_hookLock;
 CRITICAL_SECTION g_outputLock;
@@ -44,6 +48,89 @@ bool InvokeDispatcherNoThrow(CommandDispatcherFn dispatcher, CommandTokens* toke
     }
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
+        return false;
+    }
+}
+
+bool ReadPlayersNoThrow(std::string& response)
+{
+    __try
+    {
+        auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        auto lookup = reinterpret_cast<RegistryLookupFn>(moduleBase + RegistryLookupRva);
+        auto registryTable = *reinterpret_cast<uintptr_t*>(moduleBase + RegistryTablePtrRva);
+        auto serverNamespaceTag = *reinterpret_cast<uintptr_t*>(moduleBase + ServerNamespaceTagRva);
+
+        if (registryTable == 0)
+        {
+            response = "ERR player snapshot registry table unavailable\n";
+            return false;
+        }
+
+        int serverIndex = lookup("SERVER", serverNamespaceTag);
+        if (serverIndex < 0)
+        {
+            response = "ERR player snapshot SERVER lookup failed\n";
+            return false;
+        }
+
+        auto serverObject = *reinterpret_cast<uintptr_t*>(registryTable + static_cast<uintptr_t>(serverIndex) * 0x138 + 0x406040);
+        if (serverObject == 0)
+        {
+            response = "ERR player snapshot SERVER object unavailable\n";
+            return false;
+        }
+
+        auto playerTable = *reinterpret_cast<uintptr_t*>(serverObject + 0x30);
+        if (playerTable == 0)
+        {
+            response = "ERR player snapshot player table unavailable\n";
+            return false;
+        }
+
+        response.clear();
+        response.reserve(2048);
+
+        int count = 0;
+        char line[512] = {};
+        for (int slot = 0; slot < 24; slot++)
+        {
+            auto player = playerTable + static_cast<uintptr_t>(slot) * 0x138;
+            auto status = *reinterpret_cast<unsigned char*>(player + 0xA6);
+            if (status == 0)
+            {
+                continue;
+            }
+
+            auto flags = *reinterpret_cast<unsigned short*>(player + 0x82);
+            auto ping = *reinterpret_cast<short*>(player + 0xA8);
+            auto name = reinterpret_cast<const char*>(player + 0x48);
+            if (name == nullptr || name[0] == '\0')
+            {
+                name = "<unknown>";
+            }
+
+            std::snprintf(
+                line,
+                sizeof(line),
+                "PLAYER slot=%d status=%u flags=%u ping=%d name=%.*s\n",
+                slot + 1,
+                static_cast<unsigned int>(status),
+                static_cast<unsigned int>(flags),
+                static_cast<int>(ping),
+                96,
+                name);
+            response += line;
+            count++;
+        }
+
+        std::snprintf(line, sizeof(line), "OK players count=%d\n", count);
+        response += line;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        response = "ERR player snapshot raised an exception\n";
         return false;
     }
 }
@@ -285,6 +372,21 @@ bool DispatchConsoleCommand(const std::string& rawCommand)
     return true;
 }
 
+std::string HandleInputCommand(const char* buffer)
+{
+    auto commandLine = TrimCommand(buffer == nullptr ? "" : buffer);
+    if (commandLine == "__hook_players")
+    {
+        std::string response;
+        ReadPlayersNoThrow(response);
+        WriteHookLine("WreckfestConsoleHook read player snapshot.");
+        return response;
+    }
+
+    bool dispatched = DispatchConsoleCommand(commandLine);
+    return dispatched ? "OK dispatched\n" : "ERR dispatch failed\n";
+}
+
 DWORD WINAPI InputPipeThread(void*)
 {
     InitializeFallbackLogPath();
@@ -325,10 +427,9 @@ DWORD WINAPI InputPipeThread(void*)
             if (ReadFile(pipe, buffer, sizeof(buffer) - 1, &bytesRead, nullptr) && bytesRead > 0)
             {
                 buffer[bytesRead] = '\0';
-                bool dispatched = DispatchConsoleCommand(buffer);
-                const char* response = dispatched ? "OK dispatched\n" : "ERR dispatch failed\n";
+                auto response = HandleInputCommand(buffer);
                 DWORD written = 0;
-                WriteFile(pipe, response, static_cast<DWORD>(std::strlen(response)), &written, nullptr);
+                WriteFile(pipe, response.c_str(), static_cast<DWORD>(response.size()), &written, nullptr);
             }
             else
             {

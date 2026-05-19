@@ -11,6 +11,7 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
 
     private readonly ILogger<InjectedHookOutputReader> _logger;
     private readonly ConcurrentDictionary<int, CancellationTokenSource> _listeners = new();
+    private readonly ConcurrentDictionary<int, bool> _connectedProcesses = new();
 
     public InjectedHookOutputReader(ILogger<InjectedHookOutputReader> logger)
     {
@@ -22,6 +23,7 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
 
     public string Mode => ServerOutputModes.InjectedHook;
     public bool IsMonitoring => !_listeners.IsEmpty;
+    public bool IsHookConnected => _connectedProcesses.Values.Any(connected => connected);
     public int TargetProcessId { get; private set; }
 
     public Task<bool> StartAsync(int processId)
@@ -114,6 +116,8 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
         {
             existing.Cancel();
         }
+
+        _connectedProcesses.TryRemove(processId, out _);
     }
 
     private async Task ListenAsync(int processId, string pipeName, CancellationToken cancellationToken)
@@ -132,6 +136,7 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
                     PipeOptions.Asynchronous);
 
                 await pipe.WaitForConnectionAsync(cancellationToken);
+                _connectedProcesses[processId] = true;
                 PublishHookOutput(processId, "Injected hook connected.");
 
                 using var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
@@ -152,6 +157,7 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
                     }
                 }
 
+                _connectedProcesses[processId] = false;
                 PublishHookOutput(processId, "Injected hook disconnected.");
             }
             catch (OperationCanceledException)

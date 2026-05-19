@@ -344,6 +344,53 @@ public class PlayerTracker
         }
     }
 
+    public void ProcessHookPlayerSnapshot(IReadOnlyList<Player> snapshotPlayers)
+    {
+        lock (_lock)
+        {
+            var playersInSnapshot = new HashSet<string>();
+
+            foreach (var snapshotPlayer in snapshotPlayers)
+            {
+                if (string.IsNullOrWhiteSpace(snapshotPlayer.Name))
+                {
+                    continue;
+                }
+
+                playersInSnapshot.Add(snapshotPlayer.Name);
+
+                if (_players.TryGetValue(snapshotPlayer.Name, out var player))
+                {
+                    player.Slot = snapshotPlayer.Slot;
+                    player.IsBot = snapshotPlayer.IsBot;
+                    player.IsAdmin = snapshotPlayer.IsAdmin;
+                }
+                else
+                {
+                    snapshotPlayer.JoinedAt = DateTime.UtcNow;
+                    _players[snapshotPlayer.Name] = snapshotPlayer;
+                    var typeDescription = snapshotPlayer.IsBot ? "Bot" : (snapshotPlayer.IsAdmin ? "Admin" : "Player");
+                    _logger.LogInformation("{Type} discovered via injected hook player snapshot: {PlayerName}", typeDescription, snapshotPlayer.Name);
+                }
+            }
+
+            foreach (var player in _players.Values.ToList())
+            {
+                if (!playersInSnapshot.Contains(player.Name))
+                {
+                    _players.TryRemove(player.Name, out _);
+                    _logger.LogDebug("Player removed after injected hook player snapshot: {PlayerName}", player.Name);
+                }
+            }
+
+            _lastListUpdate = DateTime.UtcNow;
+            NotifyPlayerEvent(new PlayerTrackerEvent("PlayersUpdated", null));
+            _logger.LogInformation("Player list updated via injected hook player snapshot. Online players: {Count}", playersInSnapshot.Count);
+        }
+
+        _ = SendPlayerListUpdate();
+    }
+
     /// <summary>
     /// Get current players
     /// </summary>

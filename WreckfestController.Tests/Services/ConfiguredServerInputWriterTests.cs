@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
+using WreckfestController.Models;
 using WreckfestController.Services;
 using Xunit;
 
@@ -52,5 +53,48 @@ public class ConfiguredServerInputWriterTests
         Assert.Equal("sent through console", result.Message);
         consoleWriter.Verify(w => w.SendCommandAsync("status", 1234), Times.Once);
         injectedWriter.Verify(w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReadPlayerSnapshotAsync_WhenInjectedHookInputConfigured_UsesInjectedHookWriter()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["WreckfestServer:InputMode"] = ServerInputModes.InjectedHook
+            })
+            .Build();
+
+        var consoleWriter = new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>());
+        var injectedWriter = new Mock<InjectedHookInputWriter>(Mock.Of<ILogger<InjectedHookInputWriter>>());
+        var players = new[] { new Player { Name = "Procat", Slot = 1 } };
+        injectedWriter
+            .Setup(w => w.ReadPlayerSnapshotAsync(1234))
+            .ReturnsAsync((true, "snapshot", players));
+
+        var writer = new ConfiguredServerInputWriter(configuration, consoleWriter.Object, injectedWriter.Object);
+
+        var result = await writer.ReadPlayerSnapshotAsync(1234);
+
+        Assert.True(result.Success);
+        Assert.Single(result.Players);
+        Assert.Equal("Procat", result.Players[0].Name);
+        injectedWriter.Verify(w => w.ReadPlayerSnapshotAsync(1234), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReadPlayerSnapshotAsync_WhenInputModeMissing_ReturnsFailure()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+        var consoleWriter = new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>());
+        var injectedWriter = new Mock<InjectedHookInputWriter>(Mock.Of<ILogger<InjectedHookInputWriter>>());
+
+        var writer = new ConfiguredServerInputWriter(configuration, consoleWriter.Object, injectedWriter.Object);
+
+        var result = await writer.ReadPlayerSnapshotAsync(1234);
+
+        Assert.False(result.Success);
+        Assert.Empty(result.Players);
+        injectedWriter.Verify(w => w.ReadPlayerSnapshotAsync(It.IsAny<int>()), Times.Never);
     }
 }

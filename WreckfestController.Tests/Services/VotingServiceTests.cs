@@ -81,7 +81,26 @@ public class VotingServiceTests
         SendChat("Alice", "!vote wrecknado_02 10");
         await Task.Delay(50);
 
-        Assert.Contains(_broadcastMessages, m => m.Contains("wrecknado_02") && m.Contains("10 laps"));
+        Assert.Contains(_broadcastMessages, m => m == "Vote: Wrecknado - 10 laps");
+        Assert.Contains(_broadcastMessages, m => m == "By Alice. Type !yes or !no. Ends in 30s.");
+        Assert.DoesNotContain(_broadcastMessages, m => m.StartsWith("Vote started", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task VoteStarted_WithLongTrackName_TruncatesFirstLineToChatLimit()
+    {
+        var (service, tracker, messages, _) = CreateLongTrackNameSetup();
+        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
+        tracker.ProcessLogLine("16:53:14 - Bob has joined.");
+
+        service.ProcessChatCommand("Alice", isBot: false, "!vote long_track 99");
+        await Task.Delay(50);
+
+        var firstLine = Assert.Single(messages, m => m.StartsWith("Vote: ", StringComparison.Ordinal));
+        Assert.EndsWith(" - 99 laps", firstLine);
+        Assert.True(firstLine.Length <= 127, firstLine);
+        Assert.Contains("...", firstLine);
+        Assert.DoesNotContain("long_track", firstLine);
     }
 
     [Fact]
@@ -183,6 +202,82 @@ public class VotingServiceTests
             It.IsAny<string>(), It.IsAny<List<EventLoopTrack>>()), Times.Never);
 
         Assert.Contains(_broadcastMessages, m => m.Contains("Vote passed"));
+    }
+
+    [Fact]
+    public async Task VoteStarted_WhenOnlyInitiatorOnline_PassesImmediately()
+    {
+        JoinPlayer("Alice");
+
+        SendChat("Alice", "!vote wrecknado_02 10");
+        await Task.Delay(100);
+
+        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync("laps=10"), Times.Once);
+        Assert.Contains(_broadcastMessages, m => m.Contains("Vote passed"));
+    }
+
+    [Fact]
+    public async Task LuckyCommand_StartsVoteWithRandomAllowedTrackAndLapCount()
+    {
+        JoinPlayer("Alice");
+        JoinPlayer("Bob");
+
+        SendChat("Alice", "!lucky");
+        SendChat("Bob", "!yes");
+        await Task.Delay(100);
+
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsRegex("^track=(wrecknado_02|new_track|other_track)$")), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsRegex("^laps=([1-9]|10)$")), Times.Once);
+        Assert.Contains(_broadcastMessages, m => m.Contains("Lucky pick:"));
+    }
+
+    [Fact]
+    public void LuckyLapWeight_BiasesTowardThreeToFiveLaps()
+    {
+        Assert.True(GetLuckyLapWeight(4) > GetLuckyLapWeight(3));
+        Assert.Equal(GetLuckyLapWeight(3), GetLuckyLapWeight(5));
+        Assert.True(GetLuckyLapWeight(3) > GetLuckyLapWeight(2));
+        Assert.True(GetLuckyLapWeight(5) > GetLuckyLapWeight(6));
+        Assert.True(GetLuckyLapWeight(2) > GetLuckyLapWeight(1));
+        Assert.True(GetLuckyLapWeight(6) > GetLuckyLapWeight(8));
+    }
+
+    [Fact]
+    public async Task IFeelLuckyCommand_StartsVoteWithRandomAllowedTrackAndLapCount()
+    {
+        JoinPlayer("Alice");
+        JoinPlayer("Bob");
+
+        SendChat("Alice", "!ifeellucky");
+        SendChat("Bob", "!yes");
+        await Task.Delay(100);
+
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsRegex("^track=(wrecknado_02|new_track|other_track)$")), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsRegex("^laps=([1-9]|10)$")), Times.Once);
+        Assert.Contains(_broadcastMessages, m => m.Contains("Lucky pick:"));
+    }
+
+    [Fact]
+    public async Task LuckyCommand_WhenNoAllowedTracksConfigured_SendsWarning()
+    {
+        var (service, _, messages, _) = CreateNoAllowedTracksSetup();
+
+        service.ProcessChatCommand("Alice", isBot: false, "!ifeellucky");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("No tracks configured for lucky vote"));
+        Assert.DoesNotContain(messages, m => m.Contains("Vote started"));
+    }
+
+    private static int GetLuckyLapWeight(int laps)
+    {
+        var method = typeof(VotingService).GetMethod(
+            "GetLuckyLapWeight",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+
+        Assert.NotNull(method);
+        return (int)method.Invoke(null, [laps])!;
     }
 
     [Fact]
@@ -314,6 +409,65 @@ public class VotingServiceTests
     }
 
     [Fact]
+    public async Task VoteCommand_ExactTrackName_StartsVoteForResolvedTrackId()
+    {
+        JoinPlayer("Alice");
+        JoinPlayer("Bob");
+
+        SendChat("Alice", "!vote New Track 7");
+        SendChat("Bob", "!yes");
+        await Task.Delay(100);
+
+        _mockServerManager.Verify(m => m.SendCommandAsync("track=new_track"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync("laps=7"), Times.Once);
+    }
+
+    [Fact]
+    public async Task VoteCommand_AmbiguousTrackName_AsksForNumberedConfirmation()
+    {
+        var (service, _, messages, _) = CreateBirkelandSetup();
+
+        service.ProcessChatCommand("Alice", isBot: false, "!vote Birkeland 1");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("Multiple matches for 'Birkeland'"));
+        Assert.Contains(messages, m => m.Contains("1. misc_birkeland - TVTP Misc Birkeland"));
+        Assert.Contains(messages, m => m.Contains("2. misc_birkeland_reverse - TVTP Misc Birkeland Reverse"));
+        Assert.Contains(messages, m => m.Contains("Type !confirm <number>"));
+        Assert.DoesNotContain(messages, m => m.Contains("Vote started"));
+    }
+
+    [Fact]
+    public async Task ConfirmCommand_StartsPendingVoteForSelectedOption()
+    {
+        var (service, tracker, messages, _) = CreateBirkelandSetup();
+        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
+        tracker.ProcessLogLine("16:53:14 - Bob has joined.");
+
+        service.ProcessChatCommand("Alice", isBot: false, "!vote Birkeland 1");
+        service.ProcessChatCommand("Alice", isBot: false, "!confirm 2");
+        service.ProcessChatCommand("Bob", isBot: false, "!yes");
+        await Task.Delay(100);
+
+        Assert.Contains(messages, m => m == "Vote: TVTP Misc Birkeland Reverse - 1 laps");
+        Assert.Contains(messages, m => m == "By Alice. Type !yes or !no. Ends in 30s.");
+    }
+
+    [Fact]
+    public async Task VoteCommand_MisspelledTrackName_OffersFuzzyConfirmationOptions()
+    {
+        var (service, _, messages, _) = CreateBirkelandSetup();
+
+        service.ProcessChatCommand("Alice", isBot: false, "!vote Birkland 1");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("Possible matches for 'Birkland'"));
+        Assert.Contains(messages, m => m.Contains("misc_birkeland"));
+        Assert.Contains(messages, m => m.Contains("Type !confirm <number>"));
+        Assert.DoesNotContain(messages, m => m.Contains("Vote started"));
+    }
+
+    [Fact]
     public async Task NonBangMessage_DoesNotTriggerVote()
     {
         JoinPlayer("Alice");
@@ -334,14 +488,16 @@ public class VotingServiceTests
     }
 
     [Fact]
-    public async Task InvalidVoteCommand_TrackNotAllowed_SendsAllowedTrackMessage()
+    public async Task InvalidVoteCommand_TrackNotAllowed_SendsShortSearchHint()
     {
         JoinPlayer("Alice");
         SendChat("Alice", "!vote unknown_track 5");
         await Task.Delay(50);
 
         Assert.Contains(_broadcastMessages, m =>
-            m.Contains("unknown_track") && m.Contains("not allowed") && m.Contains("Wrecknado"));
+            m.Contains("unknown_track") && m.Contains("not allowed") && m.Contains("!search <text>"));
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains("Allowed tracks:"));
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains("Wrecknado"));
         Assert.DoesNotContain(_broadcastMessages, m => m.Contains("Vote started"));
     }
 
@@ -506,7 +662,67 @@ public class VotingServiceTests
         Assert.Contains(_broadcastMessages, m => m.Contains("!search <text>") && m.Contains("Example: !search tvtp misc"));
         Assert.Contains(_broadcastMessages, m => m.Contains("!more"));
         Assert.DoesNotContain(_broadcastMessages, m => m.Contains("!help"));
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains("!config"));
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains("!debug"));
         Assert.All(_broadcastMessages.Where(m => m.StartsWith("Help:", StringComparison.Ordinal)), m => Assert.True(m.Length <= 100));
+    }
+
+    [Fact]
+    public async Task ConfigCommand_ShowsConfiguredModesAndHookStatus()
+    {
+        SendChat("Alice", "!config");
+        await Task.Delay(50);
+
+        Assert.Contains(_broadcastMessages, m =>
+            m.Contains("Config:", StringComparison.Ordinal) &&
+            m.Contains("input=InjectedHook", StringComparison.Ordinal) &&
+            m.Contains("output=InjectedHook", StringComparison.Ordinal));
+        Assert.Contains(_broadcastMessages, m =>
+            m.Contains("hookConnected=no", StringComparison.Ordinal) &&
+            m.Contains("outputPrimary=no", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task DebugCommand_ShowsLivePlayerAndVoteState()
+    {
+        _playerTracker.ProcessHookPlayerSnapshot([
+            new Player { Name = "Alice", Slot = 1, IsBot = false, JoinedAt = DateTime.UtcNow },
+            new Player { Name = "eRacer", Slot = 2, IsBot = true, JoinedAt = DateTime.UtcNow },
+            new Player { Name = "BangerBot", Slot = 3, IsBot = true, JoinedAt = DateTime.UtcNow }
+        ]);
+
+        SendChat("Alice", "!debug");
+        await Task.Delay(50);
+
+        Assert.Contains(_broadcastMessages, m =>
+            m.Contains("Debug:", StringComparison.Ordinal) &&
+            m.Contains("humans=1", StringComparison.Ordinal) &&
+            m.Contains("total=3", StringComparison.Ordinal) &&
+            m.Contains("bots=2", StringComparison.Ordinal));
+        Assert.Contains(_broadcastMessages, m =>
+            m.Contains("humanPlayers=1:Alice", StringComparison.Ordinal));
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains("eRacer"));
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains("BangerBot"));
+    }
+
+    [Fact]
+    public async Task DebugCommand_DuringVote_ShowsActiveVoteCounts()
+    {
+        JoinPlayer("Alice");
+        JoinPlayer("Bob");
+        JoinPlayer("Charlie");
+
+        SendChat("Alice", "!vote wrecknado_02 10");
+        SendChat("Alice", "!debug");
+        await Task.Delay(50);
+
+        Assert.Contains(_broadcastMessages, m =>
+            m.Contains("vote=active track=wrecknado_02 laps=10", StringComparison.Ordinal) &&
+            m.Contains("yes=1", StringComparison.Ordinal) &&
+            m.Contains("no=0", StringComparison.Ordinal));
+        Assert.Contains(_broadcastMessages, m =>
+            m.Contains("humans=3", StringComparison.Ordinal) &&
+            m.Contains("total=3", StringComparison.Ordinal));
     }
 
     private (VotingService service, PlayerTracker tracker, List<string> messages, Mock<ConfigService> configMock)
@@ -517,6 +733,7 @@ public class VotingServiceTests
             .AddInMemoryCollection(new Dictionary<string, string?> {
                 ["Vote:VoteTimeoutSeconds"] = timeoutSeconds.ToString(),
                 ["Vote:MaxLapsAllowed"] = "10",
+                ["Vote:MessageDelayMs"] = "0",
                 ["Vote:AllowedTracks:0:Id"] = "timeout_track",
                 ["Vote:AllowedTracks:0:Name"] = "Timeout Track",
                 ["Vote:AllowedTracks:1:Id"] = "only_initiator_track",
@@ -572,6 +789,9 @@ public class VotingServiceTests
             {
                 ["Vote:VoteTimeoutSeconds"] = "30",
                 ["Vote:MaxLapsAllowed"] = "10",
+                ["Vote:MessageDelayMs"] = "0",
+                ["WreckfestServer:InputMode"] = ServerInputModes.InjectedHook,
+                ["WreckfestServer:OutputMode"] = ServerOutputModes.InjectedHook,
                 ["Vote:AllowedTracks:0:Id"] = "wrecknado_02",
                 ["Vote:AllowedTracks:0:Name"] = "Wrecknado",
                 ["Vote:AllowedTracks:1:Id"] = "new_track",
@@ -588,7 +808,8 @@ public class VotingServiceTests
         var values = new Dictionary<string, string?>
         {
             ["Vote:VoteTimeoutSeconds"] = "30",
-            ["Vote:MaxLapsAllowed"] = "10"
+            ["Vote:MaxLapsAllowed"] = "10",
+            ["Vote:MessageDelayMs"] = "0"
         };
 
         for (var i = 1; i <= matchCount; i++)
@@ -639,6 +860,163 @@ public class VotingServiceTests
     }
 
     private (VotingService service, PlayerTracker tracker, List<string> messages, Mock<ConfigService> configMock)
+        CreateLongTrackNameSetup()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Vote:VoteTimeoutSeconds"] = "30",
+                ["Vote:MaxLapsAllowed"] = "99",
+                ["Vote:MessageDelayMs"] = "0",
+                ["Vote:AllowedTracks:0:Id"] = "long_track",
+                ["Vote:AllowedTracks:0:Name"] = new string('A', 150)
+            })
+            .Build();
+
+        var messages = new List<string>();
+        var mockWebhook = new Mock<WreckfestWebWebhookService>(
+            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<HttpClient>());
+
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var serverMock = new Mock<ServerManager>(
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ServerManager>>(),
+            tracker,
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
+            new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>()).Object,
+            new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>()).Object,
+            mockWebhook.Object,
+            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+
+        serverMock
+            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
+            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .ReturnsAsync((true, "ok"));
+
+        var configMock = new Mock<ConfigService>(
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConfigService>>());
+
+        var service = new VotingService(
+            serverMock.Object,
+            tracker,
+            configMock.Object,
+            Mock.Of<ILogger<VotingService>>(),
+            config);
+
+        return (service, tracker, messages, configMock);
+    }
+
+    private (VotingService service, PlayerTracker tracker, List<string> messages, Mock<ConfigService> configMock)
+        CreateBirkelandSetup()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Vote:VoteTimeoutSeconds"] = "30",
+                ["Vote:MaxLapsAllowed"] = "10",
+                ["Vote:MessageDelayMs"] = "0",
+                ["Vote:AllowedTracks:0:Id"] = "misc_birkeland",
+                ["Vote:AllowedTracks:0:Name"] = "TVTP Misc Birkeland",
+                ["Vote:AllowedTracks:1:Id"] = "misc_birkeland_reverse",
+                ["Vote:AllowedTracks:1:Name"] = "TVTP Misc Birkeland Reverse",
+                ["Vote:AllowedTracks:2:Id"] = "misc_birkeland_barriers",
+                ["Vote:AllowedTracks:2:Name"] = "TVTP Misc No Construction Fences",
+                ["Vote:AllowedTracks:3:Id"] = "ovals_birkeland_oval01",
+                ["Vote:AllowedTracks:3:Name"] = "TVTP Ovals Birkeland Oval"
+            })
+            .Build();
+
+        var messages = new List<string>();
+        var mockWebhook = new Mock<WreckfestWebWebhookService>(
+            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<HttpClient>());
+
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var serverMock = new Mock<ServerManager>(
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ServerManager>>(),
+            tracker,
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
+            new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>()).Object,
+            new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>()).Object,
+            mockWebhook.Object,
+            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+
+        serverMock
+            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
+            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .ReturnsAsync((true, "ok"));
+
+        var configMock = new Mock<ConfigService>(
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConfigService>>());
+
+        var service = new VotingService(
+            serverMock.Object,
+            tracker,
+            configMock.Object,
+            Mock.Of<ILogger<VotingService>>(),
+            config);
+
+        return (service, tracker, messages, configMock);
+    }
+
+    private (VotingService service, PlayerTracker tracker, List<string> messages, Mock<ConfigService> configMock)
+        CreateNoAllowedTracksSetup()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Vote:VoteTimeoutSeconds"] = "30",
+                ["Vote:MaxLapsAllowed"] = "10",
+                ["Vote:MessageDelayMs"] = "0"
+            })
+            .Build();
+
+        var messages = new List<string>();
+        var mockWebhook = new Mock<WreckfestWebWebhookService>(
+            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<HttpClient>());
+
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var serverMock = new Mock<ServerManager>(
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ServerManager>>(),
+            tracker,
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
+            new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>()).Object,
+            new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>()).Object,
+            mockWebhook.Object,
+            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+
+        serverMock
+            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
+            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .ReturnsAsync((true, "ok"));
+
+        var configMock = new Mock<ConfigService>(
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConfigService>>());
+
+        var service = new VotingService(
+            serverMock.Object,
+            tracker,
+            configMock.Object,
+            Mock.Of<ILogger<VotingService>>(),
+            config);
+
+        return (service, tracker, messages, configMock);
+    }
+
+    private (VotingService service, PlayerTracker tracker, List<string> messages, Mock<ConfigService> configMock)
         CreateDisabledVotingSetup()
     {
         var config = new ConfigurationBuilder()
@@ -647,6 +1025,7 @@ public class VotingServiceTests
                 ["Vote:Enabled"] = "false",
                 ["Vote:VoteTimeoutSeconds"] = "30",
                 ["Vote:MaxLapsAllowed"] = "10",
+                ["Vote:MessageDelayMs"] = "0",
                 ["Vote:AllowedTracks:0:Id"] = "wrecknado_02",
                 ["Vote:AllowedTracks:0:Name"] = "Wrecknado"
             })
