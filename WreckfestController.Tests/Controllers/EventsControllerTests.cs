@@ -41,8 +41,6 @@ public class EventsControllerTests
         var mockServerInfoTracker = new Mock<ServerInfoTracker>(
             Mock.Of<ILogger<ServerInfoTracker>>());
 
-        var mockConsoleMonitor = new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>());
-        var mockConsoleWriter = new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>());
         var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
             Mock.Of<HttpClient>(),
             Mock.Of<IConfiguration>(),
@@ -54,8 +52,6 @@ public class EventsControllerTests
             mockPlayerTracker.Object,
             mockTrackChangeTracker.Object,
             mockServerInfoTracker.Object,
-            mockConsoleMonitor.Object,
-            mockConsoleWriter.Object,
             mockWebhookServiceForTrackers.Object,
             mockConsoleLogSender.Object);
 

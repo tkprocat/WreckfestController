@@ -37,14 +37,8 @@ public class WreckfestServerSettings
     [JsonPropertyName("LogFilePath")]
     public string? LogFilePath { get; set; }
 
-    [JsonPropertyName("UseConsoleMonitoring")]
-    public bool? UseConsoleMonitoring { get; set; }
-
     [JsonPropertyName("OutputMode")]
     public string? OutputMode { get; set; }
-
-    [JsonPropertyName("InputMode")]
-    public string? InputMode { get; set; }
 }
 
 /// <summary>
@@ -64,8 +58,26 @@ public class SteamCmdSettings
 /// </summary>
 public class VoteSettings
 {
+    /// <summary>
+    /// Legacy on/off flag. Kept in sync with <see cref="Mode"/> so settings files
+    /// written before Mode existed keep resolving correctly.
+    /// </summary>
     [JsonPropertyName("Enabled")]
     public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// Off, Voting or Direct. See <c>Services/VoteModes.cs</c>. Held as a string,
+    /// not an enum, so an unrecognised value degrades instead of throwing.
+    /// </summary>
+    [JsonPropertyName("Mode")]
+    public string Mode { get; set; } = "Voting";
+
+    /// <summary>
+    /// Seconds after a successful direct track change during which further direct
+    /// changes are refused. 0 disables the cooldown.
+    /// </summary>
+    [JsonPropertyName("DirectCooldownSeconds")]
+    public int DirectCooldownSeconds { get; set; } = 30;
 
     [JsonPropertyName("VoteTimeoutSeconds")]
     public int VoteTimeoutSeconds { get; set; } = 30;

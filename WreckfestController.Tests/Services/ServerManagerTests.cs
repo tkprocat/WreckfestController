@@ -15,8 +15,6 @@ public class ServerManagerTests
     private readonly Mock<ILogger<TrackChangeTracker>> _mockTrackChangeTrackerLogger;
     private readonly Mock<ILogger<ServerInfoTracker>> _mockServerInfoTrackerLogger;
     private readonly Mock<WreckfestWebWebhookService> _mockWebhookService;
-    private readonly Mock<ConsoleMonitor> _mockConsoleMonitor;
-    private readonly Mock<ConsoleWriter> _mockConsoleWriter;
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ServerInfoTracker _serverInfoTracker;
@@ -43,8 +41,6 @@ public class ServerManagerTests
         _playerTracker = new PlayerTracker(_mockPlayerTrackerLogger.Object, _mockWebhookService.Object);
         _trackChangeTracker = new TrackChangeTracker(_mockTrackChangeTrackerLogger.Object, _mockWebhookService.Object);
         _serverInfoTracker = new ServerInfoTracker(_mockServerInfoTrackerLogger.Object);
-        _mockConsoleMonitor = new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>());
-        _mockConsoleWriter = new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>());
 
         var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
             Mock.Of<HttpClient>(),
@@ -57,8 +53,6 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object,
-            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object);
     }
@@ -100,8 +94,6 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object,
-            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object);
 
@@ -131,8 +123,6 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object,
-            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object);
 
@@ -175,8 +165,8 @@ public class ServerManagerTests
             .Setup(w => w.SendCommandAsync("status", Process.GetCurrentProcess().Id))
             .ReturnsAsync((true, "sent by injected input"));
 
-        var outputReader = new Mock<IServerOutputReader>();
-        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        var outputReader = new Mock<IInjectedHookOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
@@ -191,8 +181,6 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object,
-            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object,
             inputWriter.Object,
@@ -218,8 +206,8 @@ public class ServerManagerTests
             .Setup(w => w.SendCommandAsync("/message hello", Process.GetCurrentProcess().Id))
             .ReturnsAsync((true, "sent"));
 
-        var outputReader = new Mock<IServerOutputReader>();
-        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        var outputReader = new Mock<IInjectedHookOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
@@ -234,8 +222,6 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object,
-            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object,
             inputWriter.Object,
@@ -257,8 +243,8 @@ public class ServerManagerTests
     {
         // Arrange
         var inputWriter = new Mock<IServerInputWriter>();
-        var outputReader = new Mock<IServerOutputReader>();
-        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        var outputReader = new Mock<IInjectedHookOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
@@ -273,8 +259,6 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object,
-            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object,
             inputWriter.Object,
@@ -295,7 +279,6 @@ public class ServerManagerTests
     public async Task TryRefreshPlayersFromHookAsync_WhenInjectedHookSnapshotSucceeds_UpdatesPlayerTracker()
     {
         // Arrange
-        _mockConfiguration.Setup(c => c["WreckfestServer:InputMode"]).Returns(ServerInputModes.InjectedHook);
 
         var inputWriter = new Mock<IServerInputWriter>();
         inputWriter
@@ -307,8 +290,8 @@ public class ServerManagerTests
                 new Models.Player { Name = "eRacer", Slot = 2, IsBot = true, JoinedAt = DateTime.UtcNow }
             }));
 
-        var outputReader = new Mock<IServerOutputReader>();
-        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        var outputReader = new Mock<IInjectedHookOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
@@ -323,8 +306,6 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object,
-            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object,
             inputWriter.Object,
@@ -344,10 +325,9 @@ public class ServerManagerTests
     }
 
     [Fact]
-    public async Task TryRefreshPlayersFromHookAsync_WhenInputModeIsNotInjectedHook_DoesNotSendListCommand()
+    public async Task TryRefreshPlayersFromHookAsync_ReadsSnapshotAndDoesNotFallBackToListCommand()
     {
         // Arrange
-        _mockConfiguration.Setup(c => c["WreckfestServer:InputMode"]).Returns(ServerInputModes.ConsoleWriter);
 
         var inputWriter = new Mock<IServerInputWriter>();
         inputWriter
@@ -355,8 +335,8 @@ public class ServerManagerTests
             .Setup(w => w.ReadPlayerSnapshotAsync(It.IsAny<int>()))
             .ReturnsAsync((true, "ok", Array.Empty<Models.Player>()));
 
-        var outputReader = new Mock<IServerOutputReader>();
-        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        var outputReader = new Mock<IInjectedHookOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
@@ -371,8 +351,6 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object,
-            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object,
             inputWriter.Object,
@@ -384,8 +362,8 @@ public class ServerManagerTests
         var refreshed = await serverManager.TryRefreshPlayersFromHookAsync();
 
         // Assert
-        Assert.False(refreshed);
-        inputWriter.As<IPlayerSnapshotReader>().Verify(w => w.ReadPlayerSnapshotAsync(It.IsAny<int>()), Times.Never);
+        Assert.True(refreshed);
+        inputWriter.As<IPlayerSnapshotReader>().Verify(w => w.ReadPlayerSnapshotAsync(It.IsAny<int>()), Times.Once);
         inputWriter.Verify(w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()), Times.Never);
     }
 
@@ -407,8 +385,8 @@ public class ServerManagerTests
                 return (true, "sent");
             });
 
-        var outputReader = new Mock<IServerOutputReader>();
-        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        var outputReader = new Mock<IInjectedHookOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
@@ -423,8 +401,6 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object,
-            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object,
             inputWriter.Object,
@@ -458,8 +434,8 @@ public class ServerManagerTests
     {
         // Arrange
         var inputWriter = new Mock<IServerInputWriter>();
-        var outputReader = new Mock<IServerOutputReader>();
-        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.ConsoleReader);
+        var outputReader = new Mock<IInjectedHookOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
@@ -480,12 +456,9 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockConsoleMonitor.Object,
-            _mockConsoleWriter.Object,
             _mockWebhookService.Object,
             mockConsoleLogSender.Object,
             inputWriter.Object,
-            outputReader.Object,
             injectedHookReader.Object);
 
         // Act
@@ -498,7 +471,7 @@ public class ServerManagerTests
     }
 
     [Fact]
-    public void StartOutputMonitoring_WhenInjectedHookModeConfigured_DoesNotStartConsoleMonitor()
+    public void StartOutputMonitoring_EnablesInjectedHookOutput()
     {
         // Arrange
         _mockConfiguration.Setup(c => c["WreckfestServer:OutputMode"])
@@ -512,14 +485,33 @@ public class ServerManagerTests
     }
 
     [Fact]
-    public void ProcessConsoleHookOutput_WhenEnabled_StopsConsoleMonitor()
+    public void ProcessConsoleHookOutput_WhenEnabled_IsReported()
     {
         // Act
         _serverManager.ProcessConsoleHookOutput = true;
 
         // Assert
         Assert.True(_serverManager.ProcessConsoleHookOutput);
-        _mockConsoleMonitor.Verify(m => m.StopMonitoring(), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("Wreckfest 1.308438 64bit - Dedicated Server", "1.308438")]
+    [InlineData("Wreckfest 1.2 64bit - Dedicated Server", "1.2")]
+    [InlineData("Wreckfest 2.0.15.3 64bit - Dedicated Server", "2.0.15.3")]
+    public void ParseServerBuild_ExtractsBuildFromWindowTitle(string title, string expected)
+    {
+        Assert.Equal(expected, ServerManager.ParseServerBuild(title));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("Some Other Console Window")]
+    [InlineData("Wreckfest 64bit - Dedicated Server")]
+    public void ParseServerBuild_ReturnsNull_WhenTitleHasNoBuild(string? title)
+    {
+        Assert.Null(ServerManager.ParseServerBuild(title));
     }
 
     [Theory]
@@ -570,6 +562,7 @@ public class ServerManagerTests
         InvokeOnConsoleOutputReceived(_serverManager, "* 22:42:03 Procat: !vote mixed_1 6");
 
         // Assert
+        WaitForChat(() => received != null);
         Assert.NotNull(received);
         Assert.Equal("Procat", received.Value.PlayerName);
         Assert.False(received.Value.IsBot);
@@ -588,6 +581,7 @@ public class ServerManagerTests
         InvokeOnConsoleOutputReceived(_serverManager, " 19:24:18 Procat: !vote urban06 4                      >");
 
         // Assert
+        WaitForChat(() => received != null);
         Assert.NotNull(received);
         Assert.Equal("Procat", received.Value.PlayerName);
         Assert.False(received.Value.IsBot);
@@ -608,6 +602,7 @@ public class ServerManagerTests
         InvokeOnConsoleOutputReceived(_serverManager, $" 19:46:56 Procat: !search hill                         {marker}");
 
         // Assert
+        WaitForChat(() => received != null);
         Assert.NotNull(received);
         Assert.Equal("Procat", received.Value.PlayerName);
         Assert.False(received.Value.IsBot);
@@ -626,6 +621,7 @@ public class ServerManagerTests
         InvokeOnConsoleOutputReceived(_serverManager, "* 12:38:08 Shachor: !vote bonebreaker_valley_main_circuit 6");
 
         // Assert
+        WaitForChat(() => received != null);
         Assert.NotNull(received);
         Assert.Equal("Shachor", received.Value.PlayerName);
         Assert.False(received.Value.IsBot);
@@ -644,6 +640,9 @@ public class ServerManagerTests
         InvokeOnConsoleOutputReceived(_serverManager, "* 22:42:03 Procat: !search tvtp misc");
 
         // Assert
+        // Wait for the first to arrive, then allow time for a second that must not come.
+        WaitForChat(() => receivedCount > 0);
+        Thread.Sleep(150);
         Assert.Equal(1, receivedCount);
     }
 
@@ -674,6 +673,20 @@ public class ServerManagerTests
 
         // Assert
         Assert.Equal(0, receivedCount);
+    }
+
+    /// <summary>
+    /// Chat commands are dispatched on ServerManager's own worker so the hook output
+    /// reader is never blocked, which means delivery is asynchronous. Poll rather than
+    /// sleeping a fixed amount.
+    /// </summary>
+    private static void WaitForChat(Func<bool> condition, int timeoutMs = 3000)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (!condition() && sw.ElapsedMilliseconds < timeoutMs)
+        {
+            Thread.Sleep(5);
+        }
     }
 
     private static void InvokeOnConsoleOutputReceived(ServerManager serverManager, string output)

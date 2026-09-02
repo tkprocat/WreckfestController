@@ -55,8 +55,6 @@ public partial class ConfigurationTab : UserControl
         LogFilePathTextBox.Text = Path.IsPathRooted(logPath) ? Path.GetFileName(logPath) : logPath;
 
         ServerArgumentsTextBox.Text = settings.WreckfestServer?.ServerArguments ?? "";
-        SelectOutputMode(GetOutputMode(settings.WreckfestServer));
-        SelectInputMode(GetInputMode(settings.WreckfestServer));
 
         // SteamCmd settings
         SteamCmdPathTextBox.Text = settings.SteamCmd?.SteamCmdPath ?? "";
@@ -67,7 +65,7 @@ public partial class ConfigurationTab : UserControl
         WreckfestWebApiKeyTextBox.Text = settings.WreckfestWeb?.WebhookApiKey ?? "";
 
         // Voting settings
-        VotingEnabledCheckBox.IsChecked = settings.Vote?.Enabled ?? true;
+        SelectVoteMode(VoteModes.Normalize(settings.Vote?.Mode, settings.Vote?.Enabled));
     }
 
     private UserSettings GatherFormData()
@@ -95,9 +93,7 @@ public partial class ConfigurationTab : UserControl
                 WorkingDirectory = workingDir,
                 ServerArguments = ServerArgumentsTextBox.Text,
                 LogFilePath = logFilePath,
-                UseConsoleMonitoring = GetSelectedOutputMode() != ServerOutputModes.LogFile,
-                OutputMode = GetSelectedOutputMode(),
-                InputMode = GetSelectedInputMode()
+                OutputMode = ServerOutputModes.InjectedHook
             },
             SteamCmd = new SteamCmdSettings
             {
@@ -111,7 +107,12 @@ public partial class ConfigurationTab : UserControl
             },
             Vote = new VoteSettings
             {
-                Enabled = VotingEnabledCheckBox.IsChecked ?? true,
+                Mode = GetSelectedVoteMode(),
+                // Legacy flag mirrors Mode so older readers stay consistent.
+                Enabled = GetSelectedVoteMode() != VoteModes.Off,
+                // Carried over: these have no UI control, and SaveSettings rewrites the
+                // whole file, so anything not set here would be dropped.
+                DirectCooldownSeconds = _currentSettings.Vote?.DirectCooldownSeconds ?? 30,
                 VoteTimeoutSeconds = _currentSettings.Vote?.VoteTimeoutSeconds ?? 30,
                 MaxLapsAllowed = _currentSettings.Vote?.MaxLapsAllowed ?? 10,
                 AllowedTracks = _currentSettings.Vote?.AllowedTracks ?? new()
@@ -215,9 +216,7 @@ public partial class ConfigurationTab : UserControl
                     ServerArguments = "-s server_config=server_config.cfg",
                     WorkingDirectory = "",
                     LogFilePath = "",
-                    UseConsoleMonitoring = true,
-                    OutputMode = ServerOutputModes.ConsoleReader,
-                    InputMode = ServerInputModes.ConsoleWriter
+                    OutputMode = ServerOutputModes.InjectedHook
                 },
                 SteamCmd = new SteamCmdSettings
                 {
@@ -232,6 +231,8 @@ public partial class ConfigurationTab : UserControl
                 Vote = new VoteSettings
                 {
                     Enabled = true,
+                    Mode = VoteModes.Voting,
+                    DirectCooldownSeconds = 30,
                     VoteTimeoutSeconds = 30,
                     MaxLapsAllowed = 10
                 }
@@ -242,6 +243,33 @@ public partial class ConfigurationTab : UserControl
         }
     }
 
+    private void SelectVoteMode(string mode)
+    {
+        foreach (var item in VoteModeComboBox.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(item.Tag?.ToString(), mode, StringComparison.OrdinalIgnoreCase))
+            {
+                VoteModeComboBox.SelectedItem = item;
+                return;
+            }
+        }
+
+        // Voting is the middle item; select by index rather than recursing.
+        VoteModeComboBox.SelectedIndex = 1;
+    }
+
+    private string GetSelectedVoteMode()
+    {
+        if (VoteModeComboBox.SelectedItem is ComboBoxItem item &&
+            item.Tag is string mode &&
+            !string.IsNullOrWhiteSpace(mode))
+        {
+            return VoteModes.Normalize(mode);
+        }
+
+        return VoteModes.Voting;
+    }
+
     private void ShowStatusMessage(string message, bool isError)
     {
         StatusMessageText.Text = message;
@@ -250,74 +278,4 @@ public partial class ConfigurationTab : UserControl
             : (System.Windows.Media.Brush)FindResource("ButtonGreen");
     }
 
-    private static string GetOutputMode(WreckfestServerSettings? settings)
-    {
-        if (!string.IsNullOrWhiteSpace(settings?.OutputMode))
-        {
-            return settings.OutputMode;
-        }
-
-        return settings?.UseConsoleMonitoring == false
-            ? ServerOutputModes.LogFile
-            : ServerOutputModes.ConsoleReader;
-    }
-
-    private void SelectOutputMode(string outputMode)
-    {
-        foreach (var item in OutputModeComboBox.Items.OfType<ComboBoxItem>())
-        {
-            if (string.Equals(item.Tag?.ToString(), outputMode, StringComparison.OrdinalIgnoreCase))
-            {
-                OutputModeComboBox.SelectedItem = item;
-                return;
-            }
-        }
-
-        OutputModeComboBox.SelectedIndex = 0;
-    }
-
-    private string GetSelectedOutputMode()
-    {
-        if (OutputModeComboBox.SelectedItem is ComboBoxItem item &&
-            item.Tag is string outputMode &&
-            !string.IsNullOrWhiteSpace(outputMode))
-        {
-            return outputMode;
-        }
-
-        return ServerOutputModes.ConsoleReader;
-    }
-
-    private static string GetInputMode(WreckfestServerSettings? settings)
-    {
-        return !string.IsNullOrWhiteSpace(settings?.InputMode)
-            ? settings.InputMode
-            : ServerInputModes.ConsoleWriter;
-    }
-
-    private void SelectInputMode(string inputMode)
-    {
-        foreach (var item in InputModeComboBox.Items.OfType<ComboBoxItem>())
-        {
-            if (string.Equals(item.Tag?.ToString(), inputMode, StringComparison.OrdinalIgnoreCase))
-            {
-                InputModeComboBox.SelectedItem = item;
-                return;
-            }
-        }
-
-        InputModeComboBox.SelectedIndex = 0;
-    }
-
-    private string GetSelectedInputMode()
-    {
-        if (InputModeComboBox.SelectedItem is ComboBoxItem item &&
-            item.Tag is string inputMode &&
-            !string.IsNullOrWhiteSpace(inputMode))
-        {
-            return inputMode;
-        }
-
-        return ServerInputModes.ConsoleWriter;
-    }
 }

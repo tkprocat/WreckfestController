@@ -31,9 +31,7 @@ public class ServerManager
     private readonly ILogger<ServerManager> _logger;
     private readonly System.Collections.Concurrent.ConcurrentQueue<(DateTime Timestamp, string Message)> _outputBuffer = new();
     private const int MaxBufferSize = 500;
-    private readonly ConsoleMonitor _consoleMonitor;
     private readonly IServerInputWriter _serverInputWriter;
-    private readonly IServerOutputReader _consoleOutputReader;
     private readonly IInjectedHookOutputReader _injectedHookOutputReader;
     private readonly SemaphoreSlim _commandSendLock = new(1, 1);
     private readonly PlayerTracker _playerTracker;
@@ -44,17 +42,25 @@ public class ServerManager
     private string _currentTrack = string.Empty;
     private static readonly TimeSpan DuplicateChatCommandWindow = TimeSpan.FromSeconds(2);
     private readonly object _chatCommandDedupLock = new();
+
+    // Chat commands are handled on their own single-consumer worker rather than
+    // inline on the hook's output-reading thread. Handlers block (VotingService
+    // waits on a hook round-trip), and a blocked reader stops draining the output
+    // pipe - which makes the hook's own WriteHookLine/FlushFileBuffers block, so
+    // neither side can progress until a timeout fires. One consumer preserves the
+    // strict command ordering that !yes / !no / !confirm rely on.
+    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message)> _chatCommands =
+        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string)>(
+            new System.Threading.Channels.UnboundedChannelOptions
+            {
+                SingleReader = true,
+                SingleWriter = false
+            });
+    private Task? _chatCommandWorker;
+    private readonly object _chatWorkerLock = new();
     private string? _lastChatCommandKey;
     private DateTime _lastChatCommandAtUtc;
     private bool _useInjectedHookAsPrimaryOutput;
-
-    // Log file monitoring fields (used when UseConsoleMonitoring is false)
-    private FileSystemWatcher? _logFileWatcher;
-    private long _lastLogFilePosition = 0;
-    private string? _currentLogFilePath;
-    private readonly object _logReadLock = new();
-    private System.Threading.Timer? _fileWatcherDebounceTimer;
-    private System.Threading.Timer? _pollingTimer;
 
     /// <summary>
     /// Raised when the server process ID changes (after restart or attach)
@@ -69,8 +75,6 @@ public class ServerManager
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ServerInfoTracker serverInfoTracker,
-        ConsoleMonitor consoleMonitor,
-        ConsoleWriter consoleWriter,
         WreckfestWebWebhookService webhookService,
         ConsoleLogWebhookSender consoleLogSender)
         : this(
@@ -79,12 +83,10 @@ public class ServerManager
             playerTracker,
             trackChangeTracker,
             serverInfoTracker,
-            consoleMonitor,
-            consoleWriter,
             webhookService,
             consoleLogSender,
-            consoleWriter,
-            consoleMonitor,
+            new InjectedHookInputWriter(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<InjectedHookInputWriter>.Instance),
             new InjectedHookOutputReader(
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<InjectedHookOutputReader>.Instance))
     {
@@ -96,24 +98,18 @@ public class ServerManager
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ServerInfoTracker serverInfoTracker,
-        ConsoleMonitor consoleMonitor,
-        ConsoleWriter consoleWriter,
         WreckfestWebWebhookService webhookService,
         ConsoleLogWebhookSender consoleLogSender,
-        IServerInputWriter serverInputWriter,
-        IServerOutputReader consoleOutputReader)
+        IServerInputWriter serverInputWriter)
         : this(
             configuration,
             logger,
             playerTracker,
             trackChangeTracker,
             serverInfoTracker,
-            consoleMonitor,
-            consoleWriter,
             webhookService,
             consoleLogSender,
             serverInputWriter,
-            consoleOutputReader,
             new InjectedHookOutputReader(
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<InjectedHookOutputReader>.Instance))
     {
@@ -125,12 +121,9 @@ public class ServerManager
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ServerInfoTracker serverInfoTracker,
-        ConsoleMonitor consoleMonitor,
-        ConsoleWriter consoleWriter,
         WreckfestWebWebhookService webhookService,
         ConsoleLogWebhookSender consoleLogSender,
         IServerInputWriter serverInputWriter,
-        IServerOutputReader consoleOutputReader,
         IInjectedHookOutputReader injectedHookOutputReader)
     {
         _configuration = configuration;
@@ -138,15 +131,11 @@ public class ServerManager
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
         _serverInfoTracker = serverInfoTracker;
-        _consoleMonitor = consoleMonitor;
         _serverInputWriter = serverInputWriter;
-        _consoleOutputReader = consoleOutputReader;
         _injectedHookOutputReader = injectedHookOutputReader;
         _webhookService = webhookService;
         _consoleLogSender = consoleLogSender;
 
-        // Subscribe to selected console-reader output through the output reader interface.
-        _consoleOutputReader.OutputReceived += OnConsoleOutputReceived;
         _injectedHookOutputReader.OutputReceived += OnInjectedHookOutputReceived;
         _injectedHookOutputReader.HookOutputReceived += output => ConsoleHookOutput?.Invoke(output);
 
@@ -171,7 +160,7 @@ public class ServerManager
             try
             {
                 var process = GetActualServerProcess();
-                if (IsInjectedHookInputMode() && process != null && _serverInputWriter is IPlayerSnapshotReader playerSnapshotReader)
+                if (process != null && _serverInputWriter is IPlayerSnapshotReader playerSnapshotReader)
                 {
                     var snapshot = await playerSnapshotReader.ReadPlayerSnapshotAsync(process.Id);
                     if (snapshot.Success)
@@ -592,18 +581,12 @@ public class ServerManager
             var startTime = DateTime.Now;
             var logCheckInterval = TimeSpan.FromMilliseconds(500);
 
-            // Store initial log position to detect new messages
-            var initialLogPosition = _lastLogFilePosition;
-
             while (DateTime.Now - startTime < timeout)
             {
                 await Task.Delay(logCheckInterval);
 
-                // Check if we've received new log lines indicating restart
-                // The ReadNewLogLines method updates _lastLogFilePosition
-                if (_lastLogFilePosition > initialLogPosition)
+                // Look for restart indicators in hook output received since the command was sent
                 {
-                    // Look for restart indicators in the output buffer
                     var recentMessages = _outputBuffer
                         .Where(m => m.Timestamp > startTime)
                         .Select(m => m.Message)
@@ -894,7 +877,7 @@ public class ServerManager
     public virtual async Task<bool> TryRefreshPlayersFromHookAsync()
     {
         var process = GetActualServerProcess();
-        if (!IsInjectedHookInputMode() || process == null || _serverInputWriter is not IPlayerSnapshotReader playerSnapshotReader)
+        if (process == null || _serverInputWriter is not IPlayerSnapshotReader playerSnapshotReader)
         {
             return false;
         }
@@ -1083,61 +1066,21 @@ public class ServerManager
     }
 
     /// <summary>
-    /// Starts output monitoring based on the configured output mode.
+    /// Starts output monitoring. Output only flows once the console hook has been
+    /// injected into the target process (Process Manager -> INJECT).
     /// </summary>
     private void StartOutputMonitoring()
     {
-        var outputMode = GetConfiguredOutputMode();
-        _useInjectedHookAsPrimaryOutput = outputMode == ServerOutputModes.InjectedHook;
-
-        if (outputMode == ServerOutputModes.ConsoleReader)
-        {
-            StartConsoleMonitoring();
-        }
-        else if (outputMode == ServerOutputModes.LogFile)
-        {
-            StartLogFileMonitoring();
-        }
-        else if (outputMode == ServerOutputModes.InjectedHook)
-        {
-            _logger.LogInformation("Injected hook output mode selected; waiting for manual hook injection");
-            NotifyConsoleOutput("[Controller] Injected hook output mode selected. Use Process Manager -> INJECT to start output capture.");
-        }
-    }
-
-    private bool IsInjectedHookInputMode()
-    {
-        return string.Equals(
-            _configuration["WreckfestServer:InputMode"]?.Trim(),
-            ServerInputModes.InjectedHook,
-            StringComparison.Ordinal);
-    }
-
-    private string GetConfiguredOutputMode()
-    {
-        var configuredMode = _configuration["WreckfestServer:OutputMode"];
-        if (!string.IsNullOrWhiteSpace(configuredMode))
-        {
-            return configuredMode.Trim() switch
-            {
-                ServerOutputModes.InjectedHook => ServerOutputModes.InjectedHook,
-                ServerOutputModes.LogFile => ServerOutputModes.LogFile,
-                ServerOutputModes.ConsoleReader => ServerOutputModes.ConsoleReader,
-                _ => ServerOutputModes.ConsoleReader
-            };
-        }
-
-        var useConsoleMonitoring = _configuration.GetValue("WreckfestServer:UseConsoleMonitoring", true);
-        return useConsoleMonitoring ? ServerOutputModes.ConsoleReader : ServerOutputModes.LogFile;
+        _useInjectedHookAsPrimaryOutput = true;
+        _logger.LogInformation("Injected hook output active; waiting for manual hook injection");
+        NotifyConsoleOutput("[Controller] Use Process Manager -> INJECT to start output capture.");
     }
 
     /// <summary>
-    /// Stops output monitoring (both console and log file monitoring).
+    /// Stops output monitoring.
     /// </summary>
     private void StopOutputMonitoring()
     {
-        StopConsoleMonitoring();
-        StopLogFileMonitoring();
         _useInjectedHookAsPrimaryOutput = false;
     }
 
@@ -1196,7 +1139,48 @@ public class ServerManager
         if (ShouldSuppressDuplicateChatCommand(playerName, isBot, chatMessage))
             return;
 
-        ChatCommandReceived?.Invoke(playerName, isBot, chatMessage);
+        EnqueueChatCommand(playerName, isBot, chatMessage);
+    }
+
+    /// <summary>
+    /// Hands a chat command to the worker. Never blocks the caller - the caller is
+    /// the thread draining the hook output pipe.
+    /// </summary>
+    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage)
+    {
+        EnsureChatCommandWorker();
+        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage)))
+        {
+            _logger.LogWarning("Dropped chat command from {Player}: queue closed", playerName);
+        }
+    }
+
+    private void EnsureChatCommandWorker()
+    {
+        if (_chatCommandWorker != null)
+            return;
+
+        lock (_chatWorkerLock)
+        {
+            _chatCommandWorker ??= Task.Run(ProcessChatCommandQueueAsync);
+        }
+    }
+
+    private async Task ProcessChatCommandQueueAsync()
+    {
+        await foreach (var (player, isBot, message) in _chatCommands.Reader.ReadAllAsync())
+        {
+            try
+            {
+                ChatCommandReceived?.Invoke(player, isBot, message);
+            }
+            catch (Exception ex)
+            {
+                // One bad command must not kill the worker and silently stop all
+                // further chat handling.
+                _logger.LogError(ex, "Chat command handler failed for {Player}: {Message}", player, message);
+            }
+        }
     }
 
     private void OnInjectedHookOutputReceived(string output)
@@ -1223,279 +1207,6 @@ public class ServerManager
             _lastChatCommandKey = key;
             _lastChatCommandAtUtc = now;
             return false;
-        }
-    }
-
-    /// <summary>
-    /// Starts monitoring the server process console using Windows Console API.
-    /// Includes retry logic for slow-starting processes.
-    /// </summary>
-    private void StartConsoleMonitoring()
-    {
-        if (_actualServerPid == null)
-        {
-            _logger.LogWarning("Cannot start console monitoring: No server process ID");
-            return;
-        }
-
-        // Start retry loop in background to not block
-        _ = Task.Run(async () =>
-        {
-            const int maxRetries = 5;
-            const int baseDelayMs = 1000; // Start with 1 second
-
-            for (int attempt = 1; attempt <= maxRetries; attempt++)
-            {
-                try
-                {
-                    // Check if process is still running
-                    if (_actualServerPid == null)
-                    {
-                        _logger.LogWarning("Console monitoring aborted: Server process ID cleared");
-                        return;
-                    }
-
-                    bool started = await _consoleOutputReader.StartAsync(_actualServerPid.Value);
-
-                    if (started)
-                    {
-                        _logger.LogInformation("Console monitoring started for PID: {ProcessId} (attempt {Attempt}/{MaxRetries})",
-                            _actualServerPid, attempt, maxRetries);
-                        return; // Success!
-                    }
-                    else
-                    {
-                        _logger.LogWarning("Failed to start console monitoring for PID: {ProcessId} (attempt {Attempt}/{MaxRetries})",
-                            _actualServerPid, attempt, maxRetries);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Error starting console monitoring (attempt {Attempt}/{MaxRetries})", attempt, maxRetries);
-                }
-
-                // Wait before retry with exponential backoff (unless this was the last attempt)
-                if (attempt < maxRetries)
-                {
-                    var delayMs = baseDelayMs * (1 << (attempt - 1)); // 1s, 2s, 4s, 8s
-                    _logger.LogDebug("Retrying console monitoring in {DelayMs}ms...", delayMs);
-                    await Task.Delay(delayMs);
-                }
-            }
-
-            _logger.LogError("Failed to start console monitoring after {MaxRetries} attempts for PID: {ProcessId}",
-                maxRetries, _actualServerPid);
-        });
-    }
-
-    /// <summary>
-    /// Stops console monitoring.
-    /// </summary>
-    private void StopConsoleMonitoring()
-    {
-        try
-        {
-            _consoleOutputReader.StopAsync().GetAwaiter().GetResult();
-            _logger.LogInformation("Console monitoring stopped");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error stopping console monitoring");
-        }
-    }
-
-    private void StartLogFileMonitoring()
-    {
-        try
-        {
-            var logFilePath = GetLogFilePathFromConfig();
-            if (string.IsNullOrEmpty(logFilePath))
-            {
-                logFilePath = _configuration["WreckfestServer:LogFilePath"];
-            }
-
-            if (string.IsNullOrEmpty(logFilePath))
-            {
-                _logger.LogWarning("Cannot start log file monitoring: LogFilePath not configured");
-                return;
-            }
-
-            _currentLogFilePath = logFilePath;
-
-            // If file exists, get current position to only read new lines
-            if (File.Exists(logFilePath))
-            {
-                var fileInfo = new FileInfo(logFilePath);
-                _lastLogFilePosition = fileInfo.Length;
-                _logger.LogInformation("Starting log file monitoring from position {Position}", _lastLogFilePosition);
-            }
-            else
-            {
-                _lastLogFilePosition = 0;
-                _logger.LogInformation("Log file doesn't exist yet, will monitor when created: {Path}", logFilePath);
-            }
-
-            // Set up FileSystemWatcher
-            var directory = Path.GetDirectoryName(logFilePath);
-            var fileName = Path.GetFileName(logFilePath);
-
-            if (string.IsNullOrEmpty(directory) || string.IsNullOrEmpty(fileName))
-            {
-                _logger.LogWarning("Invalid log file path: {Path}", logFilePath);
-                return;
-            }
-
-            _logFileWatcher = new FileSystemWatcher(directory, fileName)
-            {
-                NotifyFilter = NotifyFilters.LastWrite,
-                InternalBufferSize = 65536 // Increase buffer to reduce missed events
-            };
-
-            _logFileWatcher.Changed += OnLogFileChanged;
-            _logFileWatcher.Created += OnLogFileChanged;
-            _logFileWatcher.EnableRaisingEvents = true;
-
-            // Start periodic polling as a fallback (every 2 seconds)
-            _pollingTimer = new System.Threading.Timer(
-                _ => ReadNewLogLines(),
-                null,
-                TimeSpan.FromSeconds(2),
-                TimeSpan.FromSeconds(2)
-            );
-
-            _logger.LogInformation("Log file monitoring started for: {Path}", logFilePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to start log file monitoring");
-        }
-    }
-
-    private void StopLogFileMonitoring()
-    {
-        try
-        {
-            // Stop and dispose timers
-            if (_fileWatcherDebounceTimer != null)
-            {
-                _fileWatcherDebounceTimer.Dispose();
-                _fileWatcherDebounceTimer = null;
-            }
-
-            if (_pollingTimer != null)
-            {
-                _pollingTimer.Dispose();
-                _pollingTimer = null;
-            }
-
-            if (_logFileWatcher != null)
-            {
-                _logFileWatcher.EnableRaisingEvents = false;
-                _logFileWatcher.Changed -= OnLogFileChanged;
-                _logFileWatcher.Created -= OnLogFileChanged;
-                _logFileWatcher.Dispose();
-                _logFileWatcher = null;
-                _logger.LogInformation("Log file monitoring stopped");
-            }
-
-            _lastLogFilePosition = 0;
-            _currentLogFilePath = null;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error stopping log file monitoring");
-        }
-    }
-
-    private void OnLogFileChanged(object sender, FileSystemEventArgs e)
-    {
-        try
-        {
-            // Debounce the file change events - wait 100ms before reading
-            // This prevents multiple rapid reads for a single logical change
-            _fileWatcherDebounceTimer?.Dispose();
-            _fileWatcherDebounceTimer = new System.Threading.Timer(
-                _ => ReadNewLogLines(),
-                null,
-                TimeSpan.FromMilliseconds(100),
-                Timeout.InfiniteTimeSpan
-            );
-        }
-        catch (Exception ex)
-        {
-            _logger.LogDebug(ex, "Error setting up debounce timer for log file changes");
-        }
-    }
-
-    private void ReadNewLogLines()
-    {
-        if (string.IsNullOrEmpty(_currentLogFilePath) || !File.Exists(_currentLogFilePath))
-        {
-            return;
-        }
-
-        // Use lock to prevent concurrent reads
-        if (!Monitor.TryEnter(_logReadLock, TimeSpan.FromMilliseconds(50)))
-        {
-            // Another read is in progress, skip this one
-            return;
-        }
-
-        try
-        {
-            using var fileStream = new FileStream(_currentLogFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-
-            // Check if file was truncated
-            if (fileStream.Length < _lastLogFilePosition)
-            {
-                _logger.LogInformation("Log file was truncated, resetting position");
-                _lastLogFilePosition = 0;
-            }
-
-            // Seek to last read position
-            fileStream.Seek(_lastLogFilePosition, SeekOrigin.Begin);
-
-            using var reader = new StreamReader(fileStream);
-            string? line;
-            while ((line = reader.ReadLine()) != null)
-            {
-                if (!string.IsNullOrWhiteSpace(line))
-                {
-                    AddToOutputBuffer(line);
-                    NotifyConsoleOutput(line);
-                    _consoleLogSender.AddLog(line);
-                    ProcessChatCommandLine(line);
-                    _playerTracker.ProcessLogLine(line);
-                    _trackChangeTracker.ProcessLogLine(line);
-                    _serverInfoTracker.ProcessLogLine(line);
-                    _logger.LogDebug("Server log: {Line}", line);
-
-                    var trackMatch = System.Text.RegularExpressions.Regex.Match(line, @"Current track loaded!\s*\(([^)]+)\)");
-                    if (trackMatch.Success)
-                    {
-                        _currentTrack = trackMatch.Groups[1].Value;
-                        _logger.LogInformation("Current track updated to: {Track}", _currentTrack);
-                    }
-
-                }
-
-            }
-
-            // Update last position
-            _lastLogFilePosition = fileStream.Position;
-        }
-        catch (IOException ex)
-        {
-            // File might be locked, will try again on next change or next poll
-            _logger.LogDebug(ex, "Temporary error reading log file (file may be locked)");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Error reading new log lines from {Path}", _currentLogFilePath);
-        }
-        finally
-        {
-            Monitor.Exit(_logReadLock);
         }
     }
 
@@ -1693,15 +1404,7 @@ public class ServerManager
             _playerTracker.Clear();
             _trackChangeTracker.Clear();
 
-            // Start monitoring the existing process (with retry logic) only if we're not already monitoring it
-            if (!_consoleMonitor.IsMonitoring || _consoleMonitor.TargetProcessId != processId)
-            {
-                StartConsoleMonitoring();
-            }
-            else
-            {
-                _logger.LogInformation("Already monitoring process {ProcessId}, skipping console monitoring start", processId);
-            }
+            StartOutputMonitoring();
 
             _logger.LogInformation($"Successfully attached to process {processId}");
 
@@ -1746,6 +1449,8 @@ public class ServerManager
             {
                 return Task.FromResult((false, $"Process {processId} has exited"));
             }
+
+            WarnOnUnsupportedBuild(process);
         }
         catch (Exception ex)
         {
@@ -1756,17 +1461,79 @@ public class ServerManager
         return _injectedHookOutputReader.InjectAsync(processId);
     }
 
+    /// <summary>
+    /// Wreckfest reports its build in the console window title, e.g.
+    /// "Wreckfest 1.308438 64bit - Dedicated Server". The hook's offsets are
+    /// derived against one specific build, so surface a mismatch here - before
+    /// injecting - rather than leaving it to the hook's own layout guard.
+    /// This warns rather than blocks: the offsets may well survive a patch.
+    /// </summary>
+    private void WarnOnUnsupportedBuild(Process process)
+    {
+        var build = GetServerBuild(process);
+        if (build == null)
+        {
+            _logger.LogWarning("Could not read Wreckfest build from process {ProcessId} window title", process.Id);
+            return;
+        }
+
+        var supported = _configuration["WreckfestServer:SupportedBuild"]?.Trim();
+        if (string.IsNullOrWhiteSpace(supported))
+        {
+            _logger.LogInformation("Wreckfest build {Build} (no SupportedBuild configured)", build);
+            return;
+        }
+
+        if (string.Equals(build, supported, StringComparison.Ordinal))
+        {
+            _logger.LogInformation("Wreckfest build {Build} matches supported build", build);
+            return;
+        }
+
+        var message = $"[Controller] Wreckfest build {build} does not match supported build {supported}. " +
+                      "Hook offsets were derived for the supported build; injection may fail or misbehave.";
+        _logger.LogWarning(
+            "Wreckfest build {Build} does not match supported build {Supported}",
+            build,
+            supported);
+        NotifyConsoleOutput(message);
+    }
+
+    /// <summary>
+    /// Extracts the build number from a Wreckfest console window title.
+    /// Returns null when the title is unavailable or does not match.
+    /// </summary>
+    public static string? GetServerBuild(Process process)
+    {
+        try
+        {
+            return ParseServerBuild(process.MainWindowTitle);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Parses the build number out of a Wreckfest console window title, e.g.
+    /// "Wreckfest 1.308438 64bit - Dedicated Server" -> "1.308438".
+    /// </summary>
+    public static string? ParseServerBuild(string? windowTitle)
+    {
+        if (string.IsNullOrWhiteSpace(windowTitle))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(windowTitle, @"Wreckfest\s+([0-9]+(?:\.[0-9]+)+)");
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
     public bool ProcessConsoleHookOutput
     {
         get => _useInjectedHookAsPrimaryOutput;
-        set
-        {
-            _useInjectedHookAsPrimaryOutput = value;
-            if (value)
-            {
-                StopConsoleMonitoring();
-            }
-        }
+        set => _useInjectedHookAsPrimaryOutput = value;
     }
 
     public virtual bool IsConsoleHookConnected => _injectedHookOutputReader.IsHookConnected;

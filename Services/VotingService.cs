@@ -7,6 +7,7 @@ public class VotingService
 {
     private enum VoteTrackResolutionKind { None, Exact, Ambiguous, Fuzzy }
     private sealed record VoteTrackResolution(VoteTrackResolutionKind Kind, AllowedVoteTrack? Track, List<AllowedVoteTrack> Options);
+    private enum VotePlayerRefreshResult { UnavailableOrFailed, Refreshed, RefreshedNoHumans }
 
     private readonly ServerManager _serverManager;
     private readonly PlayerTracker _playerTracker;
@@ -17,8 +18,9 @@ public class VotingService
     private enum VoteState { Idle, Active }
     private VoteState _state = VoteState.Idle;
     private string? _votedTrackId;
-    private int _votedLaps;
+    private int? _votedLaps;
     private string? _voteInitiator;
+    private DateTime _voteStartedUtc;
     private readonly HashSet<string> _yesVoters = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _noVoters = new(StringComparer.OrdinalIgnoreCase);
     private System.Threading.Timer? _voteTimer;
@@ -31,11 +33,30 @@ public class VotingService
     private readonly Queue<AllowedVoteTrack> _searchResultBuffer = new();
     private readonly object _searchLock = new();
     private readonly object _pendingVoteLock = new();
+    private readonly object _directChangeLock = new();
+    private DateTime _lastDirectChangeUtc = DateTime.MinValue;
+    private string? _lastDirectChangeBy;
     private List<AllowedVoteTrack> _pendingVoteOptions = new();
     private string? _pendingVoteRequester;
-    private int _pendingVoteLaps;
+    private int? _pendingVoteLaps;
 
-    private bool VotingEnabled => _configuration.GetValue("Vote:Enabled", true);
+    private string VoteMode => VoteModes.Normalize(
+        _configuration["Vote:Mode"],
+        _configuration.GetValue<bool?>("Vote:Enabled"));
+
+    private bool VotingEnabled => VoteMode != VoteModes.Off;
+
+    /// <summary>
+    /// Whether a vote is currently running. One accessor so callers do not read
+    /// <c>_state</c> without the lock.
+    /// </summary>
+    private bool VoteInProgress
+    {
+        get { lock (_stateLock) { return _state == VoteState.Active; } }
+    }
+    private bool DirectModeEnabled => VoteMode == VoteModes.Direct;
+    private int DirectCooldownSeconds =>
+        Math.Clamp(_configuration.GetValue<int?>("Vote:DirectCooldownSeconds") ?? 30, 0, 3600);
     private int VoteTimeoutSeconds => _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30;
     private int MaxLapsAllowed => Math.Max(1, _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10);
     private int MessageDelayMs => Math.Clamp(_configuration.GetValue<int?>("Vote:MessageDelayMs") ?? 250, 0, 5000);
@@ -64,19 +85,25 @@ public class VotingService
 
         var lower = message.ToLowerInvariant().Trim();
 
+        // !track is an alias of !vote; the configured mode decides what the command
+        // does. Rewriting to the canonical form keeps the Substring(6) arithmetic
+        // below correct and means IsVotingCommand needs no knowledge of the alias.
+        if (lower == "!track" || lower.StartsWith("!track "))
+        {
+            message = string.Concat("!vote", message.Trim().AsSpan("!track".Length));
+            lower = message.ToLowerInvariant().Trim();
+        }
+
+        // Before any gating: if the mode changed out of Voting while a vote was live,
+        // retire it now. Otherwise the disabled-command gate below would return first
+        // and the stale vote would linger until its timer fired.
+        CancelVoteIfModeChanged();
+
         if (lower == "!help")
         {
             if (VotingEnabled)
             {
-                _ = BroadcastMessages([
-                    $"Help: max laps is {MaxLapsAllowed}.",
-                    "Help: !vote <trackId> <laps> - start a vote. Example: !vote misc_bsv 6",
-                    "Help: !yes - vote yes on the active vote.",
-                    "Help: !no - vote no on the active vote.",
-                    "Help: !search <text> - find track IDs. Example: !search tvtp misc",
-                    "Help: !more - show the next search results.",
-                    "Help: !lucky - vote on a random track/laps. Alias: !ifeellucky."
-                ]);
+                _ = BroadcastMessages(GetHelpMessages());
             }
             else
             {
@@ -105,25 +132,25 @@ public class VotingService
 
         if (lower.StartsWith("!vote "))
         {
-            var parts = message.Substring(6).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length < 2 || !int.TryParse(parts[^1], out var laps) || laps < 1)
+            // Checked before parsing or track resolution: resolution runs fuzzy matching
+            // and StartVote blocks on a hook round-trip, so reaching the guard down there
+            // wastes that work and can surface the wrong error first.
+            if (RefuseWhileVoteInProgress(playerName))
             {
-                _ = BroadcastMessage($"Usage: !vote <trackId> <laps> (laps must be between 1 and {MaxLapsAllowed})");
                 return;
             }
 
-            if (laps > MaxLapsAllowed)
+            if (!TryParseTrackRequest(message.Substring(6), out var requestedTrack, out var laps, out var parseError))
             {
-                _ = BroadcastMessage($"Invalid laps: must be between 1 and {MaxLapsAllowed}.");
+                _ = BroadcastMessage(parseError!);
                 return;
             }
 
-            var requestedTrack = string.Join(" ", parts[..^1]);
             var resolvedTrack = ResolveVoteTrack(requestedTrack);
             if (resolvedTrack.Kind == VoteTrackResolutionKind.Exact && resolvedTrack.Track != null)
             {
                 ClearPendingVote();
-                StartVote(playerName, resolvedTrack.Track.Id, laps);
+                StartTrackChange(playerName, resolvedTrack.Track.Id, laps);
                 return;
             }
 
@@ -133,12 +160,20 @@ public class VotingService
                 var label = resolvedTrack.Kind == VoteTrackResolutionKind.Fuzzy
                     ? "Possible matches"
                     : "Multiple matches";
-                _ = BroadcastMessages(FormatVoteConfirmationOptions(label, requestedTrack, resolvedTrack.Options));
+                _ = BroadcastMessages(FormatVoteConfirmationOptions(
+                    label,
+                    requestedTrack,
+                    resolvedTrack.Options,
+                    DirectModeEnabled ? "change track" : "start vote"));
                 return;
             }
 
             ClearPendingVote();
             _ = BroadcastMessage($"Track '{requestedTrack}' is not allowed for voting. Use !search <text> to find valid track IDs.");
+        }
+        else if (lower == "!vote")
+        {
+            _ = BroadcastMessage($"Usage: !track <trackId> [laps] (laps must be between 1 and {MaxLapsAllowed})");
         }
         else if (IsLuckyCommand(lower))
         {
@@ -173,6 +208,7 @@ public class VotingService
     private static bool IsVotingCommand(string lower)
     {
         return lower.StartsWith("!vote ") ||
+               lower == "!vote" ||
                lower == "!yes" ||
                lower == "!no" ||
                lower == "!confirm" ||
@@ -186,6 +222,46 @@ public class VotingService
     private static bool IsLuckyCommand(string lower)
     {
         return lower is "!lucky" or "!ifeellucky" or "!ifeeelucky";
+    }
+
+    /// <summary>
+    /// Parses "&lt;track query&gt; [laps]". Laps are optional: when omitted the server keeps
+    /// its current lap count and no laps= command is sent.
+    /// </summary>
+    private bool TryParseTrackRequest(string arguments, out string trackQuery, out int? laps, out string? error)
+    {
+        trackQuery = string.Empty;
+        laps = null;
+        error = null;
+
+        var parts = (arguments ?? string.Empty).Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            error = $"Usage: !track <trackId> [laps] (laps must be between 1 and {MaxLapsAllowed})";
+            return false;
+        }
+
+        // A trailing integer is a lap count only when something precedes it; a lone
+        // number is not a meaningful track query.
+        if (parts.Length > 1 && int.TryParse(parts[^1], out var parsedLaps))
+        {
+            if (parsedLaps < 1 || parsedLaps > MaxLapsAllowed)
+            {
+                error = $"Invalid laps: must be between 1 and {MaxLapsAllowed}.";
+                return false;
+            }
+
+            laps = parsedLaps;
+            parts = parts[..^1];
+        }
+        else if (parts.Length == 1 && int.TryParse(parts[0], out _))
+        {
+            error = $"Usage: !track <trackId> [laps] (laps must be between 1 and {MaxLapsAllowed})";
+            return false;
+        }
+
+        trackQuery = string.Join(" ", parts);
+        return true;
     }
 
     private VoteTrackResolution ResolveVoteTrack(string query)
@@ -247,6 +323,11 @@ public class VotingService
 
     private void StartLuckyVote(string playerName)
     {
+        if (RefuseWhileVoteInProgress(playerName))
+        {
+            return;
+        }
+
         var tracks = GetAllowedTracks();
         if (tracks.Count == 0)
         {
@@ -258,7 +339,7 @@ public class VotingService
         var laps = GetRandomLuckyLapCount();
 
         _ = BroadcastMessage($"Lucky pick: {FormatTrackSearchResult(track)}, {laps} laps.");
-        StartVote(playerName, track.Id, laps);
+        StartTrackChange(playerName, track.Id, laps);
     }
 
     private int GetRandomLuckyLapCount()
@@ -284,7 +365,7 @@ public class VotingService
         return Math.Max(1, 10 - Math.Abs(laps - 4) * 3);
     }
 
-    private void StorePendingVote(string playerName, int laps, List<AllowedVoteTrack> options)
+    private void StorePendingVote(string playerName, int? laps, List<AllowedVoteTrack> options)
     {
         lock (_pendingVoteLock)
         {
@@ -299,7 +380,7 @@ public class VotingService
         lock (_pendingVoteLock)
         {
             _pendingVoteRequester = null;
-            _pendingVoteLaps = 0;
+            _pendingVoteLaps = null;
             _pendingVoteOptions.Clear();
         }
     }
@@ -314,7 +395,7 @@ public class VotingService
         }
 
         AllowedVoteTrack selectedTrack;
-        int laps;
+        int? laps;
         lock (_pendingVoteLock)
         {
             if (_pendingVoteOptions.Count == 0 || _pendingVoteRequester == null)
@@ -338,14 +419,18 @@ public class VotingService
             selectedTrack = _pendingVoteOptions[optionNumber - 1];
             laps = _pendingVoteLaps;
             _pendingVoteRequester = null;
-            _pendingVoteLaps = 0;
+            _pendingVoteLaps = null;
             _pendingVoteOptions.Clear();
         }
 
-        StartVote(playerName, selectedTrack.Id, laps);
+        StartTrackChange(playerName, selectedTrack.Id, laps);
     }
 
-    private static List<string> FormatVoteConfirmationOptions(string label, string query, IReadOnlyList<AllowedVoteTrack> tracks)
+    private static List<string> FormatVoteConfirmationOptions(
+        string label,
+        string query,
+        IReadOnlyList<AllowedVoteTrack> tracks,
+        string confirmAction)
     {
         var messages = new List<string> { $"{label} for '{query}':" };
         for (var i = 0; i < tracks.Count; i++)
@@ -353,23 +438,52 @@ public class VotingService
             messages.Add($"{i + 1}. {FormatTrackSearchResult(tracks[i])}");
         }
 
-        messages.Add("Type !confirm <number> to start vote.");
+        messages.Add($"Type !confirm <number> to {confirmAction}.");
         return messages;
+    }
+
+    private List<string> GetHelpMessages()
+    {
+        // !vote and !track are the same command; advertise whichever verb matches
+        // what the configured mode will actually do.
+        if (DirectModeEnabled)
+        {
+            return
+            [
+                $"Help: max laps is {MaxLapsAllowed}.",
+                "Help: !track <trackId> [laps] - change the track now. Example: !track misc_bsv 6",
+                $"Help: after a change, the next one waits {DirectCooldownSeconds}s (admins bypass).",
+                "Help: !search <text> - find track IDs. Example: !search tvtp misc",
+                "Help: !more - show the next search results.",
+                "Help: !lucky - pick a random track/laps. Alias: !ifeellucky."
+            ];
+        }
+
+        return
+        [
+            $"Help: max laps is {MaxLapsAllowed}.",
+            "Help: !track <trackId> [laps] - start a vote. Example: !track misc_bsv 6",
+            "Help: !yes - vote yes on the active vote.",
+            "Help: !no - vote no on the active vote.",
+            "Help: !search <text> - find track IDs. Example: !search tvtp misc",
+            "Help: !more - show the next search results.",
+            "Help: !lucky - vote on a random track/laps. Alias: !ifeellucky."
+        ];
     }
 
     private List<string> GetConfigMessages()
     {
-        var inputMode = GetConfiguredValue("WreckfestServer:InputMode", ServerInputModes.ConsoleWriter);
-        var outputMode = GetConfiguredValue("WreckfestServer:OutputMode", GetConfiguredOutputModeFallback());
         var hookConnected = _serverManager.IsConsoleHookConnected ? "yes" : "no";
         var outputPrimary = _serverManager.ProcessConsoleHookOutput ? "yes" : "no";
-        var votingEnabled = VotingEnabled ? "enabled" : "disabled";
         var allowedTrackCount = GetAllowedTracks().Count;
+        var modeDetail = DirectModeEnabled
+            ? $"cooldown={DirectCooldownSeconds}s"
+            : $"voteTimeout={VoteTimeoutSeconds}s";
 
         return
         [
-            $"Config: input={inputMode}, output={outputMode}, hookConnected={hookConnected}, outputPrimary={outputPrimary}",
-            $"Config: voting={votingEnabled}, maxLaps={MaxLapsAllowed}, voteTimeout={VoteTimeoutSeconds}s, messageDelay={MessageDelayMs}ms, allowedTracks={allowedTrackCount}"
+            $"Config: hookConnected={hookConnected}, outputPrimary={outputPrimary}",
+            $"Config: mode={VoteMode.ToLowerInvariant()}, {modeDetail}, maxLaps={MaxLapsAllowed}, messageDelay={MessageDelayMs}ms, allowedTracks={allowedTrackCount}"
         ];
     }
 
@@ -419,13 +533,6 @@ public class VotingService
     {
         var value = _configuration[key];
         return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
-    }
-
-    private string GetConfiguredOutputModeFallback()
-    {
-        return _configuration.GetValue("WreckfestServer:UseConsoleMonitoring", true)
-            ? ServerOutputModes.ConsoleReader
-            : ServerOutputModes.LogFile;
     }
 
     private static bool TrackContainsNormalizedQuery(AllowedVoteTrack track, string normalizedQuery)
@@ -733,9 +840,190 @@ public class VotingService
         return $"{track.Id} - {track.Name}";
     }
 
-    private void StartVote(string initiator, string trackId, int laps)
+    /// <summary>
+    /// Replies to the requester and returns true when a vote is already running.
+    /// The authoritative check remains inside StartVote under _stateLock; this one
+    /// exists to fail fast and to say something useful.
+    /// </summary>
+    private bool RefuseWhileVoteInProgress(string playerName)
     {
-        RefreshPlayersFromHookIfAvailable();
+        string? trackId;
+        int? laps;
+        DateTime startedUtc;
+
+        lock (_stateLock)
+        {
+            if (_state != VoteState.Active)
+            {
+                return false;
+            }
+
+            trackId = _votedTrackId;
+            laps = _votedLaps;
+            startedUtc = _voteStartedUtc;
+        }
+
+        var remaining = TimeSpan.FromSeconds(VoteTimeoutSeconds) - (DateTime.UtcNow - startedUtc);
+        var seconds = Math.Max(1, (int)Math.Ceiling(remaining.TotalSeconds));
+        var lapsClause = laps is null ? string.Empty : $" for {laps} laps";
+        var trackName = GetTrackDisplayName(trackId ?? string.Empty);
+
+        var prefix = $"{playerName}: vote in progress - ";
+        var suffix = $"{lapsClause}, {seconds}s left. Type !yes or !no.";
+        var budget = ChatMessageCharacterLimit - prefix.Length - suffix.Length;
+
+        _ = BroadcastMessage($"{prefix}{TruncateToFit(trackName, budget)}{suffix}");
+        return true;
+    }
+
+    /// <summary>
+    /// Single entry point for "make this the next track". Votes on it or applies it
+    /// immediately depending on the configured mode.
+    /// </summary>
+    private void StartTrackChange(string playerName, string trackId, int? laps)
+    {
+        if (!DirectModeEnabled)
+        {
+            StartVote(playerName, trackId, laps);
+            return;
+        }
+
+        // A vote can still be running if the mode was switched to Direct while it was
+        // live. Racing two track= writes would be worse than making the caller wait,
+        // and admins do not bypass this - it is a consistency guard, not a permission.
+        if (VoteInProgress && RefuseWhileVoteInProgress(playerName))
+        {
+            return;
+        }
+
+        _ = ApplyDirectTrackChangeAsync(playerName, trackId, laps);
+    }
+
+    /// <summary>
+    /// Reserves the right to change the track now. Reserving optimistically (rather
+    /// than stamping after the server call) closes the window where two players both
+    /// pass the check; a failed apply rolls the reservation back.
+    /// </summary>
+    private bool TryReserveDirectChange(
+        string playerName,
+        out string? refusal,
+        out DateTime previousUtc,
+        out string? previousBy)
+    {
+        refusal = null;
+
+        lock (_directChangeLock)
+        {
+            previousUtc = _lastDirectChangeUtc;
+            previousBy = _lastDirectChangeBy;
+
+            var cooldown = DirectCooldownSeconds;
+
+            // A lone human has nobody to fight over the track with, so the cooldown
+            // has nothing to protect against. Same threshold StartVote uses to pass a
+            // vote immediately.
+            var soloPlayer = _playerTracker.GetPlayerCount().online <= 1;
+
+            if (cooldown > 0 && !soloPlayer && !IsPrivileged(playerName))
+            {
+                var remaining = TimeSpan.FromSeconds(cooldown) - (DateTime.UtcNow - _lastDirectChangeUtc);
+                if (remaining > TimeSpan.Zero)
+                {
+                    // Round up: telling someone "2s" when 2.9s remain earns them a
+                    // second refusal for waiting exactly as long as they were told.
+                    var seconds = Math.Max(1, (int)Math.Ceiling(remaining.TotalSeconds));
+                    refusal = FormatCooldownRefusal(playerName, seconds);
+                    return false;
+                }
+            }
+
+            _lastDirectChangeUtc = DateTime.UtcNow;
+            _lastDirectChangeBy = playerName;
+            return true;
+        }
+    }
+
+    private void RollBackDirectChange(DateTime previousUtc, string? previousBy)
+    {
+        lock (_directChangeLock)
+        {
+            _lastDirectChangeUtc = previousUtc;
+            _lastDirectChangeBy = previousBy;
+        }
+    }
+
+    private string FormatCooldownRefusal(string playerName, int seconds)
+    {
+        var samePlayer = string.Equals(_lastDirectChangeBy, playerName, StringComparison.OrdinalIgnoreCase);
+        var suffix = $" Try again in {seconds}s.";
+
+        if (samePlayer)
+        {
+            const string middle = ": you just changed the track.";
+            var nameBudget = ChatMessageCharacterLimit - middle.Length - suffix.Length;
+            return $"{TruncateToFit(playerName, nameBudget)}{middle}{suffix}";
+        }
+
+        var other = _lastDirectChangeBy ?? "someone";
+        const string joiner = ": track was just changed by ";
+        // Two unbounded names share the remaining budget.
+        var budget = (ChatMessageCharacterLimit - joiner.Length - suffix.Length - 1) / 2;
+        return $"{TruncateToFit(playerName, budget)}{joiner}{TruncateToFit(other, budget)}.{suffix}";
+    }
+
+    /// <summary>
+    /// Moderators and admins alike bypass the direct-change cooldown and may override
+    /// a change someone else just made.
+    /// </summary>
+    private bool IsPrivileged(string playerName)
+    {
+        return _playerTracker.GetPlayers().Any(p =>
+            p.IsPrivileged &&
+            !p.IsBot &&
+            string.Equals(p.Name, playerName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task ApplyDirectTrackChangeAsync(string playerName, string trackId, int? laps)
+    {
+        if (!TryReserveDirectChange(playerName, out var refusal, out var previousUtc, out var previousBy))
+        {
+            await BroadcastMessage(refusal!);
+            return;
+        }
+
+        var trackDisplayName = GetTrackDisplayName(trackId);
+
+        // Attribution only earns its place when somebody else is around to read it.
+        // Alone, "(set by you)" is noise on a line whose only job is confirming the
+        // server took the request.
+        var attributed = _playerTracker.GetPlayerCount().online > 1;
+
+        var messages = new TrackChangeMessages(
+            (_, appliedLaps) =>
+            {
+                const string prefix = "Next race: ";
+                var lapsPart = appliedLaps is null ? string.Empty : $" ({appliedLaps} laps)";
+                var byPart = attributed ? $" - set by {playerName}" : string.Empty;
+                var budget = ChatMessageCharacterLimit - prefix.Length - lapsPart.Length - byPart.Length;
+                return $"{prefix}{TruncateToFit(trackDisplayName, budget)}{lapsPart}{byPart}";
+            },
+            "Failed to change track.",
+            "Track changed but failed to update laps.");
+
+        if (!await ApplyTrackChange(trackId, laps, messages))
+        {
+            // The server rejected it, so this attempt should not consume the window.
+            RollBackDirectChange(previousUtc, previousBy);
+        }
+    }
+
+    private void StartVote(string initiator, string trackId, int? laps)
+    {
+        if (RefreshPlayersFromHookIfAvailable() == VotePlayerRefreshResult.RefreshedNoHumans)
+        {
+            _ = BroadcastMessage("Vote cancelled: no human players found. Try again in a moment.");
+            return;
+        }
 
         var passedImmediately = false;
         lock (_stateLock)
@@ -750,6 +1038,7 @@ public class VotingService
             _votedTrackId = trackId;
             _votedLaps = laps;
             _voteInitiator = initiator;
+            _voteStartedUtc = DateTime.UtcNow;
             _yesVoters.Clear();
             _noVoters.Clear();
             _yesVoters.Add(initiator);
@@ -776,14 +1065,21 @@ public class VotingService
         _ = CompleteVoteStartAsync(initiator, trackId, laps, passedImmediately);
     }
 
-    private async Task CompleteVoteStartAsync(string initiator, string trackId, int laps, bool passedImmediately)
+    private async Task CompleteVoteStartAsync(string initiator, string trackId, int? laps, bool passedImmediately)
     {
-        await BroadcastMessages(FormatVoteStartedMessages(initiator, trackId, laps));
-
         if (passedImmediately)
         {
-            await ApplyVotedTrack(trackId, laps);
+            // passedImmediately can only be true when the initiator is the sole human
+            // (1 yes is a majority only when humanCount == 1). A vote with one
+            // participant is not a vote, so skip the announcement entirely and apply
+            // it the way direct mode would - no "Type !yes or !no. Ends in 30s." for
+            // something already decided. Note StartVote has already refreshed the
+            // roster and confirmed at least one human, so 0 players still cancels.
+            await ApplyDirectTrackChangeAsync(initiator, trackId, laps);
+            return;
         }
+
+        await BroadcastMessages(FormatVoteStartedMessages(initiator, trackId, laps));
     }
 
     private void ScheduleVoteStatusTimers(int timeoutSeconds)
@@ -806,10 +1102,10 @@ public class VotingService
         }
     }
 
-    private List<string> FormatVoteStartedMessages(string initiator, string trackId, int laps)
+    private List<string> FormatVoteStartedMessages(string initiator, string trackId, int? laps)
     {
         var trackDisplayName = GetTrackDisplayName(trackId);
-        var suffix = $" - {laps} laps";
+        var suffix = laps is null ? string.Empty : $" - {laps} laps";
         var firstLine = $"Vote: {TruncateToFit(trackDisplayName, ChatMessageCharacterLimit - "Vote: ".Length - suffix.Length)}{suffix}";
         var secondLine = FormatVoteStartedInstructionLine(initiator);
 
@@ -871,12 +1167,21 @@ public class VotingService
 
     private void RecordVote(string playerName, bool yes)
     {
-        RefreshPlayersFromHookIfAvailable();
+        if (RefreshPlayersFromHookIfAvailable() == VotePlayerRefreshResult.RefreshedNoHumans)
+        {
+            _ = BroadcastMessage("Vote ignored: no human players found. Try again in a moment.");
+            return;
+        }
 
         string? trackId;
-        int laps;
+        int? laps;
         bool earlyResult;
         bool earlyPassed = false;
+
+        if (CancelVoteIfModeChanged())
+        {
+            return;
+        }
 
         lock (_stateLock)
         {
@@ -919,26 +1224,69 @@ public class VotingService
         }
     }
 
-    private void RefreshPlayersFromHookIfAvailable()
+    private VotePlayerRefreshResult RefreshPlayersFromHookIfAvailable()
     {
         try
         {
             var refreshTask = _serverManager.TryRefreshPlayersFromHookAsync();
             if (refreshTask != null)
             {
-                refreshTask.ConfigureAwait(false).GetAwaiter().GetResult();
+                var refreshed = refreshTask.ConfigureAwait(false).GetAwaiter().GetResult();
+                if (refreshed)
+                {
+                    var playerCount = _playerTracker.GetPlayerCount();
+                    return playerCount.online == 0
+                        ? VotePlayerRefreshResult.RefreshedNoHumans
+                        : VotePlayerRefreshResult.Refreshed;
+                }
             }
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Unable to refresh players from injected hook before vote check");
         }
+
+        return VotePlayerRefreshResult.UnavailableOrFailed;
+    }
+
+    /// <summary>
+    /// Configuration is re-read live, so the mode can change while a vote is running.
+    /// Without this a timer armed under Voting would fire later under Off or Direct and
+    /// silently change the track.
+    /// </summary>
+    private bool CancelVoteIfModeChanged()
+    {
+        if (VoteMode == VoteModes.Voting)
+        {
+            return false;
+        }
+
+        lock (_stateLock)
+        {
+            if (_state != VoteState.Active)
+            {
+                return false;
+            }
+
+            ResetVoteState();
+        }
+
+        _ = BroadcastMessage("Vote cancelled: track change mode changed.");
+        return true;
     }
 
     private void TallyVotes()
     {
+        if (CancelVoteIfModeChanged())
+        {
+            return;
+        }
+
         string? trackId;
-        int laps;
+        int? laps;
+        int humanCount;
+        int yesCount;
+        int noCount;
         bool passed;
 
         lock (_stateLock)
@@ -948,11 +1296,15 @@ public class VotingService
 
             trackId = _votedTrackId!;
             laps = _votedLaps;
-            passed = _yesVoters.Count > _noVoters.Count;
+            yesCount = _yesVoters.Count;
+            noCount = _noVoters.Count;
+            humanCount = _playerTracker.GetPlayerCount().online;
+            passed = HasMajority(yesCount, humanCount);
             ResetVoteState();
         }
 
-        _logger.LogInformation("Vote tally for {TrackId}: {Result}", trackId, passed ? "passed" : "failed");
+        _logger.LogInformation("Vote tally for {TrackId}: {Result} ({YesVotes} yes, {NoVotes} no, {HumanCount} humans)",
+            trackId, passed ? "passed" : "failed", yesCount, noCount, humanCount);
 
         if (passed)
             _ = ApplyVotedTrack(trackId!, laps);
@@ -960,19 +1312,63 @@ public class VotingService
             _ = BroadcastMessage("Vote timed out: not enough yes votes. Next race unchanged.");
     }
 
-    private async Task ApplyVotedTrack(string trackId, int laps)
+    /// <summary>
+    /// User-facing strings for a track change, so the vote and direct paths can share
+    /// one implementation without sharing their wording.
+    /// </summary>
+    private sealed record TrackChangeMessages(
+        Func<string, int?, string> Success,
+        string TrackFailure,
+        string LapsFailure);
+
+    private static readonly TrackChangeMessages VotePassedMessages = new(
+        (trackId, laps) => laps is null
+            ? $"Vote passed! Next race: {trackId}."
+            : $"Vote passed! Next race: {trackId} for {laps} laps.",
+        "Vote passed but failed to update track settings.",
+        "Vote passed but failed to update lap settings.");
+
+    private Task ApplyVotedTrack(string trackId, int? laps) =>
+        ApplyTrackChange(trackId, laps, VotePassedMessages);
+
+    /// <summary>
+    /// Sends the track (and optionally laps) to the server. Returns false when the
+    /// server rejected either command, so callers can avoid recording a change that
+    /// never happened.
+    /// </summary>
+    private async Task<bool> ApplyTrackChange(string trackId, int? laps, TrackChangeMessages messages)
     {
         try
         {
-            await _serverManager.SendCommandAsync($"track={trackId}");
-            await _serverManager.SendCommandAsync($"laps={laps}");
-            _logger.LogInformation("Vote passed: {TrackId} for {Laps} laps sent to server settings", trackId, laps);
-            await BroadcastMessage($"Vote passed! Next race: {trackId} for {laps} laps.");
+            var trackResult = await _serverManager.SendCommandAsync($"track={trackId}");
+            if (!trackResult.Success)
+            {
+                _logger.LogWarning("Failed to apply track {TrackId}: {Message}", trackId, trackResult.Message);
+                await BroadcastMessage(messages.TrackFailure);
+                return false;
+            }
+
+            // Laps omitted: leave the server's current lap count alone.
+            if (laps is int lapCount)
+            {
+                var lapsResult = await _serverManager.SendCommandAsync($"laps={lapCount}");
+                if (!lapsResult.Success)
+                {
+                    _logger.LogWarning("Failed to apply laps {Laps}: {Message}", lapCount, lapsResult.Message);
+                    await BroadcastMessage(messages.LapsFailure);
+                    return false;
+                }
+            }
+
+            _logger.LogInformation("Track change applied: {TrackId} laps={Laps}", trackId, laps);
+            await BroadcastMessage(messages.Success(trackId, laps));
+            return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to apply voted track settings {TrackId}", trackId);
-            await BroadcastMessage("Vote passed but failed to update track settings.");
+            _logger.LogError(ex, "Failed to apply track settings {TrackId}", trackId);
+            await BroadcastMessage(messages.TrackFailure);
+            return false;
         }
     }
 

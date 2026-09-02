@@ -38,8 +38,6 @@ public class VotingServiceTests
             _playerTracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>()).Object,
-            new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>()).Object,
             mockWebhook.Object,
             new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
 
@@ -77,7 +75,9 @@ public class VotingServiceTests
     [Fact]
     public async Task VoteStarted_BroadcastsAnnouncementAndAutoVotesYes()
     {
+        // Two humans: with only one online the vote is skipped entirely.
         JoinPlayer("Alice");
+        JoinPlayer("Bob");
         SendChat("Alice", "!vote wrecknado_02 10");
         await Task.Delay(50);
 
@@ -104,7 +104,7 @@ public class VotingServiceTests
     }
 
     [Fact]
-    public async Task SecondVote_WhileActiveVote_SendsAlreadyInProgressMessage()
+    public async Task SecondVote_WhileActiveVote_TellsRequesterWhatIsPending()
     {
         JoinPlayer("Alice");
         JoinPlayer("Bob");
@@ -112,7 +112,28 @@ public class VotingServiceTests
         SendChat("Bob", "!vote other_track 5");
         await Task.Delay(50);
 
-        Assert.Contains(_broadcastMessages, m => m.Contains("already in progress"));
+        var refusal = Assert.Single(_broadcastMessages, m => m.StartsWith("Bob:", StringComparison.Ordinal));
+        Assert.Contains("vote in progress", refusal, StringComparison.Ordinal);
+        Assert.Contains("Wrecknado", refusal, StringComparison.Ordinal);
+        Assert.Contains("for 10 laps", refusal, StringComparison.Ordinal);
+        Assert.Matches(@"\d+s left", refusal);
+    }
+
+    [Fact]
+    public async Task SecondVote_WhileActiveVote_DoesNotResolveTheRequestedTrack()
+    {
+        JoinPlayer("Alice");
+        JoinPlayer("Bob");
+        SendChat("Alice", "!vote wrecknado_02 10");
+        _broadcastMessages.Clear();
+
+        // A nonsense query must still get the in-progress reply, proving the guard
+        // runs before track resolution rather than after it.
+        SendChat("Bob", "!vote not_a_real_track 5");
+        await Task.Delay(50);
+
+        Assert.Contains(_broadcastMessages, m => m.Contains("vote in progress", StringComparison.Ordinal));
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains("is not allowed for voting", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -205,7 +226,7 @@ public class VotingServiceTests
     }
 
     [Fact]
-    public async Task VoteStarted_WhenOnlyInitiatorOnline_PassesImmediately()
+    public async Task VoteStarted_WhenOnlyInitiatorOnline_AppliesDirectly()
     {
         JoinPlayer("Alice");
 
@@ -214,11 +235,11 @@ public class VotingServiceTests
 
         _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
         _mockServerManager.Verify(m => m.SendCommandAsync("laps=10"), Times.Once);
-        Assert.Contains(_broadcastMessages, m => m.Contains("Vote passed"));
+        Assert.Contains(_broadcastMessages, m => m.StartsWith("Next race:", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task VoteStarted_WhenOnlyInitiatorOnline_SendsBothStartLinesBeforePassedMessage()
+    public async Task VoteStarted_WhenOnlyInitiatorOnline_SendsOnlyTheResultLine()
     {
         var (service, tracker, messages, _) = CreateIsolatedSetup(timeoutSeconds: 30, messageDelayMs: 50);
         tracker.ProcessLogLine("16:53:14 - Alice has joined.");
@@ -226,10 +247,10 @@ public class VotingServiceTests
         service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
         await Task.Delay(250);
 
-        Assert.True(messages.Count >= 3);
-        Assert.Equal("Vote: Timeout Track - 3 laps", messages[0]);
-        Assert.Equal("By Alice. Type !yes or !no. Ends in 30s.", messages[1]);
-        Assert.Equal("Vote passed! Next race: timeout_track for 3 laps.", messages[2]);
+        // A vote with one participant is not a vote: no announcement, no invitation to
+        // vote on something already decided - just the result.
+        var line = Assert.Single(messages);
+        Assert.Equal("Next race: Timeout Track (3 laps)", line);
     }
 
     [Fact]
@@ -328,18 +349,19 @@ public class VotingServiceTests
     }
 
     [Fact]
-    public async Task VoteTimeout_OnlyInitiatorVoted_PassesVote()
+    public async Task VoteTimeout_OnlyInitiatorVotedWithoutMajority_FailsVote()
     {
         var (service, tracker, messages, configMock) = CreateIsolatedSetup(timeoutSeconds: 1);
         tracker.ProcessLogLine("16:53:14 - Alice has joined.");
         tracker.ProcessLogLine("16:53:14 - Bob has joined.");
         service.ProcessChatCommand("Bob", isBot: false, "!vote only_initiator_track 3");
-        // Only Bob auto-votes yes (1 yes, 0 no) → yes > no at timeout
+        // Only Bob auto-votes yes (1 yes, 0 no), which is not a human majority.
 
         await Task.Delay(1500);
 
         configMock.Verify(c => c.WriteEventLoopTracks(
             It.IsAny<string>(), It.IsAny<List<EventLoopTrack>>()), Times.Never);
+        Assert.Contains(messages, m => m.Contains("not enough yes votes"));
     }
 
     [Fact]
@@ -424,6 +446,27 @@ public class VotingServiceTests
     }
 
     [Fact]
+    public async Task VoteApplied_WhenTrackCommandFails_DoesNotReportSuccess()
+    {
+        JoinPlayer("Alice");
+
+        _mockServerManager
+            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
+            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) _broadcastMessages.Add(cmd[9..]); })
+            .ReturnsAsync((string cmd) => cmd == "track=wrecknado_02"
+                ? (false, "track failed")
+                : (true, "ok"));
+
+        SendChat("Alice", "!vote wrecknado_02 3");
+        await Task.Delay(100);
+
+        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync("laps=3"), Times.Never);
+        Assert.DoesNotContain(_broadcastMessages, m => m.StartsWith("Next race:", StringComparison.Ordinal));
+        Assert.Contains(_broadcastMessages, m => m.Contains("Failed to change track"));
+    }
+
+    [Fact]
     public async Task VoteCommand_ExactTrackName_StartsVoteForResolvedTrackId()
     {
         JoinPlayer("Alice");
@@ -493,13 +536,29 @@ public class VotingServiceTests
     }
 
     [Fact]
-    public async Task InvalidVoteCommand_MissingLaps_SendsUsageMessage()
+    public async Task VoteCommand_WithoutLaps_StartsVoteAndLeavesLapsUnchanged()
     {
         JoinPlayer("Alice");
+        JoinPlayer("Bob");
         SendChat("Alice", "!vote wrecknado_02");
         await Task.Delay(50);
 
-        Assert.Contains(_broadcastMessages, m => m.Contains("Usage"));
+        // Laps are optional: the vote starts, and the started-vote line carries no
+        // lap count because the server keeps whatever it already has.
+        Assert.Contains(_broadcastMessages, m => m.Contains("Vote:", StringComparison.Ordinal));
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains("Usage", StringComparison.Ordinal));
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains(" laps", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task VoteCommand_WithOnlyANumber_SendsUsageMessage()
+    {
+        JoinPlayer("Alice");
+        SendChat("Alice", "!vote 5");
+        await Task.Delay(50);
+
+        // A lone number is not a track query.
+        Assert.Contains(_broadcastMessages, m => m.Contains("Usage", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -671,7 +730,7 @@ public class VotingServiceTests
         await Task.Delay(50);
 
         Assert.Contains(_broadcastMessages, m => m.Contains("max laps is 10"));
-        Assert.Contains(_broadcastMessages, m => m.Contains("!vote <trackId> <laps>") && m.Contains("Example: !vote misc_bsv 6"));
+        Assert.Contains(_broadcastMessages, m => m.Contains("!track <trackId> [laps]") && m.Contains("Example: !track misc_bsv 6"));
         Assert.Contains(_broadcastMessages, m => m.Contains("!yes") && m.Contains("vote yes"));
         Assert.Contains(_broadcastMessages, m => m.Contains("!no") && m.Contains("vote no"));
         Assert.Contains(_broadcastMessages, m => m.Contains("!search <text>") && m.Contains("Example: !search tvtp misc"));
@@ -683,16 +742,13 @@ public class VotingServiceTests
     }
 
     [Fact]
-    public async Task ConfigCommand_ShowsConfiguredModesAndHookStatus()
+    public async Task ConfigCommand_ShowsHookStatus()
     {
         SendChat("Alice", "!config");
         await Task.Delay(50);
 
         Assert.Contains(_broadcastMessages, m =>
             m.Contains("Config:", StringComparison.Ordinal) &&
-            m.Contains("input=InjectedHook", StringComparison.Ordinal) &&
-            m.Contains("output=InjectedHook", StringComparison.Ordinal));
-        Assert.Contains(_broadcastMessages, m =>
             m.Contains("hookConnected=no", StringComparison.Ordinal) &&
             m.Contains("outputPrimary=no", StringComparison.Ordinal));
     }
@@ -736,14 +792,15 @@ public class VotingServiceTests
     }
 
     [Fact]
-    public async Task VoteCommand_WhenSenderIsOnlyKnownHuman_PassesImmediately()
+    public async Task VoteCommand_WhenSenderIsOnlyKnownHuman_AppliesDirectlyWithoutAVote()
     {
         SendChat("Procat", "!vote wrecknado_02 3");
         await Task.Delay(50);
 
         _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
         _mockServerManager.Verify(m => m.SendCommandAsync("laps=3"), Times.Once);
-        Assert.Contains(_broadcastMessages, m => m == "Vote passed! Next race: wrecknado_02 for 3 laps.");
+        Assert.Contains(_broadcastMessages, m => m == "Next race: Wrecknado (3 laps)");
+        Assert.DoesNotContain(_broadcastMessages, m => m.Contains("!yes", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -765,6 +822,23 @@ public class VotingServiceTests
         _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
         Assert.Contains(_broadcastMessages, m => m == "Vote: Wrecknado - 3 laps");
         Assert.DoesNotContain(_broadcastMessages, m => m.StartsWith("Vote passed!", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task VoteCommand_WhenHookRefreshReturnsEmptySnapshot_CancelsVote()
+    {
+        _mockServerManager
+            .Setup(m => m.TryRefreshPlayersFromHookAsync())
+            .Callback(() => _playerTracker.ProcessHookPlayerSnapshot([]))
+            .ReturnsAsync(true);
+
+        SendChat("Procat", "!vote wrecknado_02 3");
+        await Task.Delay(50);
+
+        _mockServerManager.Verify(m => m.TryRefreshPlayersFromHookAsync(), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        Assert.Contains(_broadcastMessages, m => m.Contains("no human players found"));
+        Assert.DoesNotContain(_broadcastMessages, m => m == "Vote: Wrecknado - 3 laps");
     }
 
     [Fact]
@@ -846,8 +920,6 @@ public class VotingServiceTests
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>()).Object,
-            new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>()).Object,
             mockWebhook.Object,
             new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
 
@@ -880,7 +952,6 @@ public class VotingServiceTests
                 ["Vote:VoteTimeoutSeconds"] = "30",
                 ["Vote:MaxLapsAllowed"] = "10",
                 ["Vote:MessageDelayMs"] = "0",
-                ["WreckfestServer:InputMode"] = ServerInputModes.InjectedHook,
                 ["WreckfestServer:OutputMode"] = ServerOutputModes.InjectedHook,
                 ["Vote:AllowedTracks:0:Id"] = "wrecknado_02",
                 ["Vote:AllowedTracks:0:Name"] = "Wrecknado",
@@ -925,8 +996,6 @@ public class VotingServiceTests
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>()).Object,
-            new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>()).Object,
             mockWebhook.Object,
             new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
 
@@ -976,8 +1045,6 @@ public class VotingServiceTests
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>()).Object,
-            new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>()).Object,
             mockWebhook.Object,
             new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
 
@@ -1033,8 +1100,6 @@ public class VotingServiceTests
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>()).Object,
-            new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>()).Object,
             mockWebhook.Object,
             new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
 
@@ -1082,8 +1147,6 @@ public class VotingServiceTests
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>()).Object,
-            new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>()).Object,
             mockWebhook.Object,
             new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
 
@@ -1134,8 +1197,6 @@ public class VotingServiceTests
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>()).Object,
-            new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>()).Object,
             mockWebhook.Object,
             new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
 
@@ -1156,5 +1217,429 @@ public class VotingServiceTests
             config);
 
         return (service, tracker, messages, configMock);
+    }
+
+    private (VotingService service, PlayerTracker tracker, List<string> messages,
+             Mock<ServerManager> serverMock, IConfigurationRoot config)
+        CreateModeSetup(string mode)
+    {
+        var values = new Dictionary<string, string?>
+        {
+            ["Vote:Mode"] = mode,
+            ["Vote:VoteTimeoutSeconds"] = "30",
+            ["Vote:MaxLapsAllowed"] = "10",
+            ["Vote:MessageDelayMs"] = "0",
+            ["Vote:DirectCooldownSeconds"] = "30",
+            ["Vote:AllowedTracks:0:Id"] = "wrecknado_02",
+            ["Vote:AllowedTracks:0:Name"] = "Wrecknado",
+            ["Vote:AllowedTracks:1:Id"] = "wrecknado_03",
+            ["Vote:AllowedTracks:1:Name"] = "Wrecknado Reverse"
+        };
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+
+        var messages = new List<string>();
+        var mockWebhook = new Mock<WreckfestWebWebhookService>(
+            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<HttpClient>());
+
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var serverMock = new Mock<ServerManager>(
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ServerManager>>(),
+            tracker,
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
+            mockWebhook.Object,
+            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+
+        serverMock
+            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
+            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .ReturnsAsync((true, "ok"));
+
+        var service = new VotingService(
+            serverMock.Object,
+            tracker,
+            new Mock<ConfigService>(Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConfigService>>()).Object,
+            Mock.Of<ILogger<VotingService>>(),
+            config);
+
+        return (service, tracker, messages, serverMock, config);
+    }
+
+    private static void Join(PlayerTracker tracker, string name) =>
+        tracker.ProcessLogLine($"16:53:14 - {name} has joined.");
+
+    // --- aliasing -----------------------------------------------------------
+
+    [Fact]
+    public async Task TrackCommand_IsAliasOfVote_InVotingMode()
+    {
+        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 10");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m == "Vote: Wrecknado - 10 laps");
+        Assert.Contains(messages, m => m.StartsWith("By Alice.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TrackCommand_IsGatedInOffMode()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Off);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 10");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("disabled", StringComparison.OrdinalIgnoreCase));
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+    }
+
+    // --- direct mode --------------------------------------------------------
+
+    [Fact]
+    public async Task DirectMode_AppliesImmediately_WithoutStartingAVote()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 6");
+        await Task.Delay(50);
+
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync("laps=6"), Times.Once);
+        Assert.DoesNotContain(messages, m => m.Contains("!yes", StringComparison.Ordinal));
+        // Two humans online, so the change is attributed.
+        Assert.Contains(messages, m => m == "Next race: Wrecknado (6 laps) - set by Alice");
+    }
+
+    [Fact]
+    public async Task DirectMode_WithoutLaps_SendsNoLapsCommand()
+    {
+        var (service, tracker, _, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
+        await Task.Delay(50);
+
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+    }
+
+    [Fact]
+    public async Task DirectMode_RejectsLapsAboveMaximum()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 99");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("Invalid laps", StringComparison.Ordinal));
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+    }
+
+    [Fact]
+    public async Task DirectMode_AmbiguousQuery_AppliesOnConfirm()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        // "wreckn" is a substring of both allowed tracks but equals neither name.
+        service.ProcessChatCommand("Alice", false, "!track wreckn 4");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("!confirm", StringComparison.Ordinal));
+        Assert.Contains(messages, m => m.Contains("change track", StringComparison.Ordinal));
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+
+        service.ProcessChatCommand("Alice", false, "!confirm 1");
+        await Task.Delay(50);
+
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync("laps=4"), Times.Once);
+    }
+
+    [Fact]
+    public async Task DirectMode_LuckyCommand_AppliesImmediately()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!lucky");
+        await Task.Delay(50);
+
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Once);
+        Assert.DoesNotContain(messages, m => m.Contains("!yes", StringComparison.Ordinal));
+    }
+
+    // --- direct-mode cooldown ----------------------------------------------
+
+    [Fact]
+    public async Task DirectMode_SecondChangeWithinCooldown_IsRefusedWithSecondsRemaining()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+        messages.Clear();
+
+        service.ProcessChatCommand("Bob", false, "!track wrecknado_03 4");
+        await Task.Delay(50);
+
+        var refusal = Assert.Single(messages);
+        Assert.StartsWith("Bob: track was just changed by Alice.", refusal);
+        Assert.Matches(@"Try again in \d+s\.$", refusal);
+        Assert.DoesNotContain("in 0s", refusal);
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Never);
+    }
+
+    [Fact]
+    public async Task DirectMode_RepeatBySamePlayer_SaysYouRatherThanTheirName()
+    {
+        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+        messages.Clear();
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_03 4");
+        await Task.Delay(50);
+
+        Assert.StartsWith("Alice: you just changed the track.", Assert.Single(messages));
+    }
+
+    [Fact]
+    public async Task DirectMode_SoloHuman_IsNeverRateLimited()
+    {
+        var (service, tracker, _, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_03 4");
+        await Task.Delay(50);
+
+        // Nobody to fight with, so back-to-back changes are fine.
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+    }
+
+    [Fact]
+    public async Task DirectMode_AdminBypassesCooldownAndOverridesAnotherPlayer()
+    {
+        var (service, tracker, _, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        Join(tracker, "Admin");
+        tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+
+        service.ProcessChatCommand("Admin", false, "!track wrecknado_03 4");
+        await Task.Delay(50);
+
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+    }
+
+    [Fact]
+    public async Task DirectMode_ZeroCooldown_DisablesTheLimit()
+    {
+        var (service, tracker, _, serverMock, config) = CreateModeSetup(VoteModes.Direct);
+        config["Vote:DirectCooldownSeconds"] = "0";
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+        service.ProcessChatCommand("Bob", false, "!track wrecknado_03 4");
+        await Task.Delay(50);
+
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+    }
+
+    [Fact]
+    public async Task DirectMode_FailedApply_DoesNotConsumeTheCooldownWindow()
+    {
+        var (service, tracker, _, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        serverMock
+            .Setup(m => m.SendCommandAsync("track=wrecknado_02"))
+            .ReturnsAsync((false, "server said no"));
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+
+        // Alice's attempt failed, so Bob must not be locked out by it.
+        service.ProcessChatCommand("Bob", false, "!track wrecknado_03 4");
+        await Task.Delay(50);
+
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+    }
+
+    // --- live config-reload interlocks --------------------------------------
+
+    [Fact]
+    public async Task ActiveVote_IsCancelled_WhenModeLeavesVoting()
+    {
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        Join(tracker, "Carol");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+        messages.Clear();
+
+        // Configuration is re-read per access, so this takes effect immediately.
+        config["Vote:Mode"] = VoteModes.Off;
+
+        service.ProcessChatCommand("Bob", false, "!yes");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("Vote cancelled", StringComparison.Ordinal));
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+    }
+
+    [Fact]
+    public async Task SwitchingToDirectMidVote_RetiresTheVoteThenAppliesTheChange()
+    {
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        Join(tracker, "Carol");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+
+        config["Vote:Mode"] = VoteModes.Direct;
+        messages.Clear();
+
+        service.ProcessChatCommand("Bob", false, "!track wrecknado_03 4");
+        await Task.Delay(50);
+
+        // The orphaned vote is retired first - leaving it running would let its timer
+        // apply a track change under a mode that no longer votes - and only then does
+        // the direct change go through.
+        Assert.Contains(messages, m => m.Contains("Vote cancelled", StringComparison.Ordinal));
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+    }
+
+    [Fact]
+    public async Task ConfigCommand_ReportsMode_AndCooldownInDirectMode()
+    {
+        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!config");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("mode=direct", StringComparison.Ordinal));
+        Assert.Contains(messages, m => m.Contains("cooldown=30s", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task HelpCommand_InDirectMode_AdvertisesImmediateChangeNotVoting()
+    {
+        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!help");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("change the track now", StringComparison.Ordinal));
+        Assert.DoesNotContain(messages, m => m.Contains("vote yes", StringComparison.Ordinal));
+    }
+
+    // --- early termination on majority --------------------------------------
+
+    [Fact]
+    public async Task TwoNoVotesOfThreePlayers_EndsVoteEarlyAsFailed()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        Join(tracker, "Carol");
+
+        // Alice starts the vote and is auto-counted as a yes, so yes=1.
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+
+        service.ProcessChatCommand("Bob", false, "!no");
+        await Task.Delay(50);
+        Assert.DoesNotContain(messages, m => m.Contains("Vote failed", StringComparison.Ordinal));
+
+        // no=2 of 3 online is a strict majority, so this ends it without waiting
+        // for the 30s timeout.
+        service.ProcessChatCommand("Carol", false, "!no");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("Vote failed: majority voted no", StringComparison.Ordinal));
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+    }
+
+    /// <summary>
+    /// The initiator is auto-counted as a yes, so passing needs one fewer vote than
+    /// blocking does (at 3 players: one ally passes it, but blocking needs everyone
+    /// else). That asymmetry is intentional - the initiator has already stated a
+    /// preference and it keeps rounds moving - not an off-by-one.
+    /// </summary>
+    [Fact]
+    public async Task InitiatorAutoYesPlusOneVote_IsEnoughToPassWithThreePlayers()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        Join(tracker, "Carol");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+
+        // Alice's auto-yes plus Bob's makes yes=2 of 3 - a strict majority.
+        service.ProcessChatCommand("Bob", false, "!yes");
+        await Task.Delay(50);
+
+        Assert.Contains(messages, m => m.Contains("Vote passed", StringComparison.Ordinal));
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+    }
+
+    [Fact]
+    public async Task VoteEndedEarly_IgnoresLateVotes()
+    {
+        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        Join(tracker, "Carol");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50);
+        service.ProcessChatCommand("Bob", false, "!no");
+        service.ProcessChatCommand("Carol", false, "!no");
+        await Task.Delay(50);
+        messages.Clear();
+
+        // The vote is over; a straggler must not restart or re-tally it.
+        service.ProcessChatCommand("Bob", false, "!yes");
+        await Task.Delay(50);
+
+        Assert.Empty(messages);
     }
 }

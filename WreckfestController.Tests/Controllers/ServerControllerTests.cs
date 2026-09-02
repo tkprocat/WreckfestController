@@ -35,8 +35,6 @@ public class ServerControllerTests
         var playerTracker = new PlayerTracker(mockPlayerTrackerLogger.Object, mockWebhookService.Object);
         var trackChangeTracker = new TrackChangeTracker(mockTrackChangeTrackerLogger.Object, mockWebhookService.Object);
         var serverInfoTracker = new ServerInfoTracker(mockServerInfoTrackerLogger.Object);
-        var mockConsoleMonitor = new Mock<ConsoleMonitor>(Mock.Of<ILogger<ConsoleMonitor>>());
-        var mockConsoleWriter = new Mock<ConsoleWriter>(Mock.Of<ILogger<ConsoleWriter>>());
         var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
             Mock.Of<HttpClient>(),
             Mock.Of<IConfiguration>(),
@@ -48,8 +46,6 @@ public class ServerControllerTests
             playerTracker,
             trackChangeTracker,
             serverInfoTracker,
-            mockConsoleMonitor.Object,
-            mockConsoleWriter.Object,
             mockWebhookService.Object,
             mockConsoleLogSender.Object);
         _mockLogger = new Mock<ILogger<ServerController>>();
@@ -178,7 +174,7 @@ public class ServerControllerTests
     }
 
     [Fact]
-    public void GetPlayers_ReturnsPlayerList()
+    public async Task GetPlayers_ReturnsPlayerList()
     {
         // Arrange
         var expectedResponse = new Models.PlayerListResponse
@@ -196,9 +192,11 @@ public class ServerControllerTests
 
         _mockServerManager.Setup(m => m.GetPlayerList())
             .Returns(expectedResponse);
+        _mockServerManager.Setup(m => m.TryRefreshPlayersFromHookAsync())
+            .ReturnsAsync(true);
 
         // Act
-        var result = _controller.GetPlayers();
+        var result = await _controller.GetPlayers();
 
         // Assert
         var okResult = Assert.IsType<OkObjectResult>(result);
@@ -209,5 +207,9 @@ public class ServerControllerTests
         Assert.Contains(playerList.Players, p => p.IsBot);
         Assert.Contains(playerList.Players, p => !p.IsBot);
         _mockServerManager.Verify(m => m.GetPlayerList(), Times.Once);
+        // The endpoint must refresh from the hook snapshot first: hook output only
+        // carries lines printed after injection, so players who joined earlier are
+        // otherwise missing from the tracker.
+        _mockServerManager.Verify(m => m.TryRefreshPlayersFromHookAsync(), Times.Once);
     }
 }

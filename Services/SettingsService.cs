@@ -126,9 +126,7 @@ public class SettingsService
                 ServerArguments = _configuration["WreckfestServer:ServerArguments"] ?? "-s server_config=server_config.cfg",
                 WorkingDirectory = _configuration["WreckfestServer:WorkingDirectory"] ?? "",
                 LogFilePath = _configuration["WreckfestServer:LogFilePath"] ?? "",
-                UseConsoleMonitoring = true,  // Compatibility fallback for older settings files
-                OutputMode = _configuration["WreckfestServer:OutputMode"] ?? ServerOutputModes.ConsoleReader,
-                InputMode = _configuration["WreckfestServer:InputMode"] ?? ServerInputModes.ConsoleWriter
+                OutputMode = ServerOutputModes.InjectedHook
             },
             SteamCmd = new SteamCmdSettings
             {
@@ -143,6 +141,10 @@ public class SettingsService
             Vote = new VoteSettings
             {
                 Enabled = _configuration.GetValue("Vote:Enabled", true),
+                Mode = VoteModes.Normalize(
+                    _configuration["Vote:Mode"],
+                    _configuration.GetValue<bool?>("Vote:Enabled")),
+                DirectCooldownSeconds = _configuration.GetValue<int?>("Vote:DirectCooldownSeconds") ?? 30,
                 VoteTimeoutSeconds = _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30,
                 MaxLapsAllowed = _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10,
                 AllowedTracks = _configuration.GetSection("Vote:AllowedTracks").Get<List<AllowedVoteTrack>>() ?? new()
@@ -157,9 +159,19 @@ public class SettingsService
         settings.Vote ??= new VoteSettings
         {
             Enabled = _configuration.GetValue("Vote:Enabled", true),
+            Mode = VoteModes.Normalize(
+                _configuration["Vote:Mode"],
+                _configuration.GetValue<bool?>("Vote:Enabled")),
+            DirectCooldownSeconds = _configuration.GetValue<int?>("Vote:DirectCooldownSeconds") ?? 30,
             VoteTimeoutSeconds = _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30,
             MaxLapsAllowed = _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10
         };
+
+        // Canonicalise the non-null path too, and keep the legacy Enabled flag mirroring
+        // Mode. SaveSettings rewrites the whole file, so leaving a stale Enabled behind
+        // would let the two disagree.
+        settings.Vote.Mode = VoteModes.Normalize(settings.Vote.Mode, settings.Vote.Enabled);
+        settings.Vote.Enabled = settings.Vote.Mode != VoteModes.Off;
 
         if (settings.Vote.AllowedTracks.Count == 0 && defaultTracks.Count > 0)
         {
@@ -167,8 +179,7 @@ public class SettingsService
         }
 
         settings.WreckfestServer ??= new WreckfestServerSettings();
-        settings.WreckfestServer.OutputMode ??= _configuration["WreckfestServer:OutputMode"] ?? ServerOutputModes.ConsoleReader;
-        settings.WreckfestServer.InputMode ??= _configuration["WreckfestServer:InputMode"] ?? ServerInputModes.ConsoleWriter;
+        settings.WreckfestServer.OutputMode = ServerOutputModes.InjectedHook;
 
         return settings;
     }

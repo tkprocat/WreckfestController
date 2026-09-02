@@ -29,8 +29,6 @@ public class ConfigControllerTests
         var playerTracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhookService.Object);
         var trackChangeTracker = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhookService.Object);
         var serverInfoTracker = new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>());
-        var consoleMonitor = new ConsoleMonitor(Mock.Of<ILogger<ConsoleMonitor>>());
-        var consoleWriter = new ConsoleWriter(Mock.Of<ILogger<ConsoleWriter>>());
         var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
             Mock.Of<HttpClient>(),
             Mock.Of<IConfiguration>(),
@@ -43,8 +41,6 @@ public class ConfigControllerTests
             playerTracker,
             trackChangeTracker,
             serverInfoTracker,
-            consoleMonitor,
-            consoleWriter,
             mockWebhookService.Object,
             consoleLogSender.Object) { CallBase = false };
         _mockLogger = new Mock<ILogger<ConfigController>>();

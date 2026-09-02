@@ -331,6 +331,7 @@ public class PlayerTracker
                         // Update existing player info
                         player.Slot = slot;
                         player.IsAdmin = isAdmin;
+                        player.IsModerator = isModerator;
                     }
                     else
                     {
@@ -341,6 +342,7 @@ public class PlayerTracker
                             JoinedAt = DateTime.UtcNow,
                             IsBot = isBot,
                             IsAdmin = isAdmin,
+                            IsModerator = isModerator,
                             Slot = slot
                         };
                         var typeDescription = isBot ? "Bot" : (isAdmin ? "Admin" : "Player");
@@ -395,6 +397,7 @@ public class PlayerTracker
                     player.Slot = snapshotPlayer.Slot;
                     player.IsBot = snapshotPlayer.IsBot;
                     player.IsAdmin = snapshotPlayer.IsAdmin;
+                    player.IsModerator = snapshotPlayer.IsModerator;
                 }
                 else
                 {

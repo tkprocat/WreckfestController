@@ -116,7 +116,7 @@
    - Manages Wreckfest server process (start/stop/restart)
    - Monitors server console output and logs for player tracking
    - Sends webhooks to Laravel
-   - **Will implement Events System** (see TODO_EVENTS.md)
+   - Implements the Events System
 
 3. **Wreckfest Dedicated Server**
    - Game server process (Wreckfest_x64.exe)
@@ -129,9 +129,9 @@
 ## Tech Stack
 
 ### Framework & Language
-- **.NET 8.0** - Latest LTS version of .NET
-- **ASP.NET Core 8.0** - Web API framework
-- **C# 12** - Language version
+- **.NET 10.0** (`net10.0-windows`) - Target framework
+- **ASP.NET Core 10.0** - Web API framework
+- **C# 14** - Language version
 
 ### Key NuGet Packages
 - **Swashbuckle.AspNetCore** (6.5.0) - Swagger/OpenAPI documentation
@@ -1217,8 +1217,6 @@ Server Lifecycle:
 
 **Status:** ✅ Fully Implemented (January 2025)
 
-**See: [TODO_EVENTS.md](TODO_EVENTS.md)** for detailed implementation checklist.
-
 ### Overview
 
 The Events System allows Laravel to schedule server configurations (name, welcome message, track rotations) that the C# controller **autonomously activates** at the scheduled time with intelligent restart logic that minimizes player disruption.
@@ -1484,8 +1482,6 @@ dotnet test --filter "FullyQualifiedName~EventsControllerTests"
 2. Set **WreckfestController** as startup project (right-click project → Set as Startup Project)
 3. Select **http** or **https** profile from debug dropdown
 4. Press **F5** to run with debugging
-
-**See: [VS2022_TIPS.md](VS2022_TIPS.md)** for shortcuts and tips.
 
 ---
 
@@ -1801,9 +1797,8 @@ taskkill /PID <PID> /F
 
 ### Local Documentation (This Project)
 - **[README.md](README.md)** - Main project documentation
-- **[README_PROJECT_STRUCTURE.md](README_PROJECT_STRUCTURE.md)** - Detailed structure
-- **[VS2022_TIPS.md](VS2022_TIPS.md)** - Visual Studio tips and shortcuts
-- **[TODO_EVENTS.md](TODO_EVENTS.md)** - Events system implementation plan
+- **[INSTALL.md](INSTALL.md)** - Installation and deployment guide
+- **[MATERIALDESIGN.md](MATERIALDESIGN.md)** - Material Design UI guidelines
 - **[CLAUDE_GUIDE.md](CLAUDE_GUIDE.md)** - This file (AI development guide)
 
 ### Laravel WreckfestWeb Project

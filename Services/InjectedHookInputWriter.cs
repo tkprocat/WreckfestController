@@ -7,7 +7,16 @@ namespace WreckfestController.Services;
 
 public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
 {
+    // Player flag bits, confirmed against a live server (Wreckfest 1.308438) by
+    // toggling privileges with /op and /demote and cross-checking the A/M marker in
+    // the "list" output:
+    //   normal player = 2, moderator = 18, admin = 50, bot = 10.
+    // Bit 4 is set for moderators AND admins; bit 5 distinguishes admin from moderator.
+    private const int PlayerFlagPrivileged = 1 << 4;   // 16
+    private const int PlayerFlagAdmin = 1 << 5;        // 32
+
     private const int ConnectTimeoutMs = 1000;
+    private const int ResponseTimeoutMs = 10000;
     private const string PlayerSnapshotCommand = "__hook_players";
     private readonly ILogger<InjectedHookInputWriter> _logger;
 
@@ -31,7 +40,11 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
 
             if (response?.StartsWith("OK", StringComparison.OrdinalIgnoreCase) == true)
             {
-                return (true, $"Command sent through injected hook: {command}");
+                // The hook echoes how it tokenized the command, e.g.
+                // "OK dispatched command=track argument=sandpit_derby_2". Surfacing it
+                // makes setting-style splitting visible instead of silently guessed at.
+                _logger.LogDebug("Injected hook dispatched {Command} as {Response}", command, response);
+                return (true, $"Command sent through injected hook: {response.Trim()}");
             }
 
             return (false, string.IsNullOrWhiteSpace(response)
@@ -81,7 +94,11 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
         }
     }
 
-    private static List<Player> ParsePlayerSnapshot(IReadOnlyList<string> responseLines)
+    /// <summary>
+    /// Parses the hook's PLAYER lines into player records. Public so the
+    /// bot/admin/colour-code handling can be covered directly by tests.
+    /// </summary>
+    public static List<Player> ParsePlayerSnapshot(IReadOnlyList<string> responseLines)
     {
         var players = new List<Player>();
 
@@ -93,19 +110,29 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
                 continue;
             }
 
-            var name = match.Groups[5].Value.Trim();
+            // The hook returns the raw name, which carries Wreckfest colour codes
+            // around the bot marker (e.g. "^2*^0eRacer"). Strip those before testing
+            // for the leading '*', otherwise every bot is counted as a human - which
+            // would skew vote majorities.
+            var name = InjectedHookOutputReader.NormalizeLine(match.Groups[5].Value);
             if (string.IsNullOrWhiteSpace(name))
             {
                 continue;
             }
 
+            var isBot = name.StartsWith('*');
+            var flags = int.Parse(match.Groups[3].Value);
+            var isAdmin = (flags & PlayerFlagAdmin) != 0;
+
             players.Add(new Player
             {
-                Name = name.TrimStart('*'),
+                Name = name.TrimStart('*').Trim(),
                 JoinedAt = DateTime.UtcNow,
-                IsBot = name.StartsWith('*'),
+                IsBot = isBot,
                 Slot = int.Parse(match.Groups[1].Value),
-                IsAdmin = (int.Parse(match.Groups[3].Value) & 1) != 0
+                IsAdmin = isAdmin,
+                // Privileged but not admin means moderator.
+                IsModerator = (flags & PlayerFlagPrivileged) != 0 && !isAdmin
             });
         }
 
@@ -121,30 +148,50 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
             PipeDirection.InOut,
             PipeOptions.Asynchronous);
 
-        using var cancellation = new CancellationTokenSource(ConnectTimeoutMs);
-        await pipe.ConnectAsync(cancellation.Token);
-
-        await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
+        using (var connectCancellation = new CancellationTokenSource(ConnectTimeoutMs))
         {
-            AutoFlush = true
-        };
-        using var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+            await pipe.ConnectAsync(connectCancellation.Token);
+        }
 
-        await writer.WriteLineAsync(command);
+        // Raw byte I/O rather than StreamWriter/StreamReader. The hook serves one
+        // command per connection and then closes its end, so a StreamWriter would
+        // throw "Pipe is broken" when its disposal flushed the already-closed pipe
+        // - turning a completed round-trip into a reported failure.
+        using var responseCancellation = new CancellationTokenSource(ResponseTimeoutMs);
 
-        var responseLines = new List<string>();
+        var payload = Encoding.UTF8.GetBytes(command + "\n");
+        await pipe.WriteAsync(payload, responseCancellation.Token);
+        await pipe.FlushAsync(responseCancellation.Token);
+
+        var buffer = new byte[8192];
+        var received = new MemoryStream();
         while (true)
         {
-            var response = await reader.ReadLineAsync(cancellation.Token);
-            if (response == null)
+            int read;
+            try
+            {
+                read = await pipe.ReadAsync(buffer, responseCancellation.Token);
+            }
+            catch (IOException)
+            {
+                // Server closed its end; whatever we already have is the response.
+                break;
+            }
+
+            if (read <= 0)
             {
                 break;
             }
 
-            responseLines.Add(response);
+            received.Write(buffer, 0, read);
         }
 
-        return responseLines;
+        var text = Encoding.UTF8.GetString(received.ToArray());
+        return text
+            .Split('\n')
+            .Select(line => line.TrimEnd('\r'))
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
     }
 
     private static string GetPipeName(int processId)

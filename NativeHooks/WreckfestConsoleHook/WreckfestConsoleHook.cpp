@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -15,9 +16,38 @@ constexpr uintptr_t RegistryTablePtrRva = 0x0127E7F8;
 constexpr uintptr_t ServerNamespaceTagRva = 0x065E6308;
 constexpr SIZE_T PatchSize = 12;
 
+// Set to the target build's SizeOfImage to hard-pin this hook to one Wreckfest
+// build. 0 means "log the value but do not enforce" - run once, read the
+// reported size from the hook log, then pin it here.
+constexpr DWORD ExpectedImageSize = 0;
+
+enum class LayoutStatus : DWORD
+{
+    Unchecked = 0,
+    Ok = 1,
+    HeadersUnreadable = 2,
+    RvaOutOfRange = 3,
+    RvaNotExecutable = 4,
+    ImageSizeMismatch = 5,
+};
+
+LayoutStatus g_layoutStatus = LayoutStatus::Unchecked;
+DWORD g_observedImageSize = 0;
+
 using ConsolePrintFn = void(__fastcall*)(const char*, void*, void*, void*);
 using CommandDispatcherFn = void(__fastcall*)(void*);
 using RegistryLookupFn = int(__fastcall*)(const char*, uintptr_t);
+
+// Output is queued and written by a dedicated thread. WriteHookLine is called
+// from Wreckfest's own thread (via the hooked print), and a blocking pipe write
+// there lets a slow or stopped controller stall the game server itself. Enqueue,
+// return immediately, and drop the oldest lines if the consumer falls behind.
+constexpr size_t OutputQueueCapacity = 2048;
+std::deque<std::string> g_outputQueue;
+CRITICAL_SECTION g_queueLock;
+HANDLE g_queueEvent = nullptr;
+bool g_writerStarted = false;
+volatile LONG g_droppedLines = 0;
 
 CRITICAL_SECTION g_hookLock;
 CRITICAL_SECTION g_outputLock;
@@ -39,6 +69,100 @@ struct CommandTokens
     void* reserved20 = nullptr;
 };
 
+IMAGE_NT_HEADERS* GetNtHeaders(uintptr_t moduleBase)
+{
+    auto dos = reinterpret_cast<IMAGE_DOS_HEADER*>(moduleBase);
+    if (dos == nullptr || dos->e_magic != IMAGE_DOS_SIGNATURE)
+    {
+        return nullptr;
+    }
+
+    auto nt = reinterpret_cast<IMAGE_NT_HEADERS*>(moduleBase + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE)
+    {
+        return nullptr;
+    }
+
+    return nt;
+}
+
+// True when rva falls inside a section carrying every flag in requiredFlags.
+bool RvaHasSectionFlags(IMAGE_NT_HEADERS* nt, uintptr_t rva, DWORD requiredFlags)
+{
+    auto section = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; i++, section++)
+    {
+        auto start = static_cast<uintptr_t>(section->VirtualAddress);
+        auto size = section->Misc.VirtualSize != 0
+            ? section->Misc.VirtualSize
+            : section->SizeOfRawData;
+
+        if (rva >= start && rva < start + size)
+        {
+            return (section->Characteristics & requiredFlags) == requiredFlags;
+        }
+    }
+
+    return false;
+}
+
+// Verifies every hardcoded RVA still lands somewhere sane before we call or
+// read through it. Without this a patched Wreckfest turns each RVA into a wild
+// pointer, and the SEH guards below cannot tell "wrong function" from "fine".
+LayoutStatus ValidateModuleLayoutNoThrow(uintptr_t moduleBase)
+{
+    __try
+    {
+        auto nt = GetNtHeaders(moduleBase);
+        if (nt == nullptr)
+        {
+            return LayoutStatus::HeadersUnreadable;
+        }
+
+        g_observedImageSize = nt->OptionalHeader.SizeOfImage;
+
+        const uintptr_t codeRvas[] = { ConsolePrintRva, CommandDispatcherRva, RegistryLookupRva };
+        const uintptr_t dataRvas[] = { RegistryTablePtrRva, ServerNamespaceTagRva };
+
+        for (auto rva : codeRvas)
+        {
+            if (rva >= g_observedImageSize)
+            {
+                return LayoutStatus::RvaOutOfRange;
+            }
+
+            if (!RvaHasSectionFlags(nt, rva, IMAGE_SCN_MEM_EXECUTE))
+            {
+                return LayoutStatus::RvaNotExecutable;
+            }
+        }
+
+        for (auto rva : dataRvas)
+        {
+            if (rva >= g_observedImageSize)
+            {
+                return LayoutStatus::RvaOutOfRange;
+            }
+
+            if (!RvaHasSectionFlags(nt, rva, IMAGE_SCN_MEM_READ))
+            {
+                return LayoutStatus::RvaOutOfRange;
+            }
+        }
+
+        if (ExpectedImageSize != 0 && g_observedImageSize != ExpectedImageSize)
+        {
+            return LayoutStatus::ImageSizeMismatch;
+        }
+
+        return LayoutStatus::Ok;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return LayoutStatus::HeadersUnreadable;
+    }
+}
+
 bool InvokeDispatcherNoThrow(CommandDispatcherFn dispatcher, CommandTokens* tokens)
 {
     __try
@@ -54,6 +178,12 @@ bool InvokeDispatcherNoThrow(CommandDispatcherFn dispatcher, CommandTokens* toke
 
 bool ReadPlayersNoThrow(std::string& response)
 {
+    if (g_layoutStatus != LayoutStatus::Ok)
+    {
+        response = "ERR player snapshot module layout not validated\n";
+        return false;
+    }
+
     __try
     {
         auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
@@ -173,7 +303,8 @@ void WriteFallbackLog(const char* text)
     CloseHandle(file);
 }
 
-void WriteHookLine(const char* text)
+// Performs the actual I/O. Only ever called on the writer thread.
+void WriteHookLineBlocking(const char* text)
 {
     if (text == nullptr || *text == '\0')
     {
@@ -200,6 +331,70 @@ void WriteHookLine(const char* text)
 
     WriteFallbackLog(text);
     LeaveCriticalSection(&g_outputLock);
+}
+
+DWORD WINAPI OutputWriterThread(void*)
+{
+    for (;;)
+    {
+        WaitForSingleObject(g_queueEvent, 250);
+
+        for (;;)
+        {
+            std::string line;
+            bool have = false;
+
+            EnterCriticalSection(&g_queueLock);
+            if (!g_outputQueue.empty())
+            {
+                line = std::move(g_outputQueue.front());
+                g_outputQueue.pop_front();
+                have = true;
+            }
+            LeaveCriticalSection(&g_queueLock);
+
+            if (!have)
+            {
+                break;
+            }
+
+            WriteHookLineBlocking(line.c_str());
+        }
+
+        // Surface backpressure rather than losing it silently.
+        LONG dropped = InterlockedExchange(&g_droppedLines, 0);
+        if (dropped > 0)
+        {
+            char note[128] = {};
+            std::snprintf(note, sizeof(note),
+                "WreckfestConsoleHook dropped %ld output line(s): controller not keeping up.",
+                static_cast<long>(dropped));
+            WriteHookLineBlocking(note);
+        }
+    }
+}
+
+// Called from the game's thread. Must never block on I/O.
+void WriteHookLine(const char* text)
+{
+    if (text == nullptr || *text == '\0')
+    {
+        return;
+    }
+
+    EnterCriticalSection(&g_queueLock);
+    if (g_outputQueue.size() >= OutputQueueCapacity)
+    {
+        g_outputQueue.pop_front();
+        InterlockedIncrement(&g_droppedLines);
+    }
+    g_outputQueue.emplace_back(text);
+    LeaveCriticalSection(&g_queueLock);
+
+    if (g_queueEvent != nullptr)
+    {
+        SetEvent(g_queueEvent);
+    }
 }
 
 bool SetPatchBytes(const BYTE* bytes)
@@ -329,12 +524,18 @@ std::string TrimCommand(std::string command)
     return command.substr(first);
 }
 
-bool DispatchConsoleCommand(const std::string& rawCommand)
+bool DispatchConsoleCommand(const std::string& rawCommand, std::string* tokenEcho)
 {
     auto commandLine = TrimCommand(rawCommand);
     if (commandLine.empty())
     {
         WriteHookLine("WreckfestConsoleHook input rejected empty command.");
+        return false;
+    }
+
+    if (g_layoutStatus != LayoutStatus::Ok)
+    {
+        WriteHookLine("WreckfestConsoleHook refused dispatch: module layout not validated.");
         return false;
     }
 
@@ -375,6 +576,11 @@ bool DispatchConsoleCommand(const std::string& rawCommand)
         return false;
     }
 
+    if (tokenEcho != nullptr)
+    {
+        *tokenEcho = "command=" + command + " argument=" + argument;
+    }
+
     WriteHookLine(("WreckfestConsoleHook dispatched command: " + commandLine).c_str());
     return true;
 }
@@ -390,8 +596,14 @@ std::string HandleInputCommand(const char* buffer)
         return response;
     }
 
-    bool dispatched = DispatchConsoleCommand(commandLine);
-    return dispatched ? "OK dispatched\n" : "ERR dispatch failed\n";
+    std::string tokenEcho;
+    bool dispatched = DispatchConsoleCommand(commandLine, &tokenEcho);
+    if (!dispatched)
+    {
+        return "ERR dispatch failed\n";
+    }
+
+    return "OK dispatched " + tokenEcho + "\n";
 }
 
 DWORD WINAPI InputPipeThread(void*)
@@ -466,6 +678,27 @@ DWORD WINAPI HookThread(void*)
     }
 
     auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+
+    g_layoutStatus = ValidateModuleLayoutNoThrow(moduleBase);
+    {
+        char line[256] = {};
+        std::snprintf(
+            line,
+            sizeof(line),
+            "WreckfestConsoleHook module layout status=%lu imageSize=0x%08lX expected=0x%08lX",
+            static_cast<unsigned long>(g_layoutStatus),
+            static_cast<unsigned long>(g_observedImageSize),
+            static_cast<unsigned long>(ExpectedImageSize));
+        WriteHookLine(line);
+    }
+
+    if (g_layoutStatus != LayoutStatus::Ok)
+    {
+        WriteHookLine("WreckfestConsoleHook aborted: offsets do not match this Wreckfest build.");
+        LeaveCriticalSection(&g_hookLock);
+        return 0;
+    }
+
     g_target = reinterpret_cast<void*>(moduleBase + ConsolePrintRva);
 
     std::memcpy(g_originalBytes, g_target, PatchSize);
@@ -486,7 +719,19 @@ DWORD WINAPI HookThread(void*)
 
 extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookVersion()
 {
-    return 1;
+    return 2;
+}
+
+// 1 == Ok. Anything else means the hardcoded offsets did not validate against
+// the running Wreckfest build; see LayoutStatus for the codes.
+extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookLayoutStatus()
+{
+    return static_cast<DWORD>(g_layoutStatus);
+}
+
+extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookImageSize()
+{
+    return g_observedImageSize;
 }
 
 extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookReconnect()
@@ -526,6 +771,45 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookStartInput()
     return 0;
 }
 
+extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookStartOutputWriter()
+{
+    EnterCriticalSection(&g_queueLock);
+    bool alreadyStarted = g_writerStarted;
+    g_writerStarted = true;
+    LeaveCriticalSection(&g_queueLock);
+
+    if (alreadyStarted)
+    {
+        return 0;
+    }
+
+    HANDLE thread = CreateThread(nullptr, 0, OutputWriterThread, nullptr, 0, nullptr);
+    if (thread == nullptr)
+    {
+        EnterCriticalSection(&g_queueLock);
+        g_writerStarted = false;
+        LeaveCriticalSection(&g_queueLock);
+        return GetLastError();
+    }
+
+    CloseHandle(thread);
+    return 0;
+}
+
+extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookInitialize()
+{
+    // Start the writer first so nothing queued during startup sits undrained.
+    WreckfestConsoleHookStartOutputWriter();
+
+    DWORD reconnectResult = WreckfestConsoleHookReconnect();
+    if (reconnectResult != 0)
+    {
+        return reconnectResult;
+    }
+
+    return WreckfestConsoleHookStartInput();
+}
+
 BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH)
@@ -534,10 +818,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
         InitializeCriticalSection(&g_hookLock);
         InitializeCriticalSection(&g_outputLock);
         InitializeCriticalSection(&g_dispatchLock);
+        InitializeCriticalSection(&g_queueLock);
+        g_queueEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         g_locksReady = true;
-
-        WreckfestConsoleHookReconnect();
-        WreckfestConsoleHookStartInput();
     }
     else if (reason == DLL_PROCESS_DETACH)
     {

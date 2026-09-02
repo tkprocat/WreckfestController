@@ -6,6 +6,7 @@ namespace WreckfestController.Services;
 
 internal static class NativeConsoleHookInjector
 {
+    private const string InitializeExportName = "WreckfestConsoleHookInitialize";
     private const uint ProcessCreateThread = 0x0002;
     private const uint ProcessQueryInformation = 0x0400;
     private const uint ProcessVirtualMemoryOperation = 0x0008;
@@ -61,7 +62,7 @@ internal static class NativeConsoleHookInjector
                     processHandle,
                     existingModuleBase,
                     dllPath,
-                    "WreckfestConsoleHookReconnect",
+                    InitializeExportName,
                     timeout,
                     out error);
             }
@@ -140,7 +141,20 @@ internal static class NativeConsoleHookInjector
                 return false;
             }
 
-            return true;
+            var loadedModuleBase = FindRemoteModuleBase(processId, Path.GetFileName(dllPath));
+            if (loadedModuleBase == IntPtr.Zero)
+            {
+                error = "Could not find loaded hook module after LoadLibraryW";
+                return false;
+            }
+
+            return CallRemoteExport(
+                processHandle,
+                loadedModuleBase,
+                dllPath,
+                InitializeExportName,
+                timeout,
+                out error);
         }
         finally
         {

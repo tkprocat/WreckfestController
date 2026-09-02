@@ -6,7 +6,7 @@ This guide will walk you through setting up the WreckfestController API to manag
 
 ### Required Software
 - **Windows Server** or Windows 10/11
-- **.NET 8.0 Runtime** - [Download](https://dotnet.microsoft.com/download/dotnet/8.0)
+- **.NET 10.0 Runtime** - [Download](https://dotnet.microsoft.com/download/dotnet/10.0)
 - **Wreckfest Dedicated Server** - Installed via SteamCmd or Steam
 - **SteamCmd** (optional, for automatic updates) - [Download](https://developer.valvesoftware.com/wiki/SteamCMD)
 
@@ -99,7 +99,7 @@ The API provides endpoints to read and modify this configuration.
 
 ### 4. Run the Application
 
-Navigate to the extracted directory (or `bin/Release/net8.0` if you built from source) and run:
+Navigate to the extracted directory (or `bin/Release/net10.0-windows` if you built from source) and run:
 
 ```bash
 WreckfestController.exe
@@ -245,7 +245,6 @@ After installation, these files will be created/managed:
 
 - **Documentation:** See [CLAUDE_GUIDE.md](./CLAUDE_GUIDE.md) for detailed API documentation
 - **Issues:** Report bugs on the GitHub Issues page
-- **Development:** See [VS2022_TIPS.md](./VS2022_TIPS.md) for development setup
 
 ## Security Considerations
 
