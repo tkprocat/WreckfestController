@@ -1642,4 +1642,182 @@ public class VotingServiceTests
 
         Assert.Empty(messages);
     }
+
+    // --- server-state gates -------------------------------------------------
+
+    private const uint RvaEventLoopCount = 0x1857630;
+    private const uint RvaEventLoopIndex = 0x122B270;
+    private const uint RvaSessionLobby = 0x19146E0;
+    private const uint RvaSessionRacing = 0x19146EC;
+
+    /// <summary>
+    /// Stubs the hook memory reads. Values match what a live server returns:
+    /// index -1 means the event loop is off; lobby/racing are the byte pair
+    /// observed while driving.
+    /// </summary>
+    private static void StubServerState(Mock<ServerManager> server, int count, int index, bool racing)
+    {
+        server.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopCount, 4)).ReturnsAsync(BitConverter.GetBytes(count));
+        server.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopIndex, 4)).ReturnsAsync(BitConverter.GetBytes(index));
+        server.Setup(m => m.ReadHookMemoryAsync(RvaSessionLobby, 1)).ReturnsAsync([(byte)(racing ? 0 : 1)]);
+        server.Setup(m => m.ReadHookMemoryAsync(RvaSessionRacing, 1)).ReturnsAsync([(byte)(racing ? 1 : 0)]);
+    }
+
+    [Fact]
+    public async Task ChatCommands_AreSuppressedDuringARace()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: -1, racing: true);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!help");
+        await Task.Delay(80);
+
+        Assert.DoesNotContain(messages, m => m.StartsWith("Help:", StringComparison.Ordinal));
+        Assert.Contains(messages, m => m.Contains("disabled during a race", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RaceRefusal_IsRateLimited_SoItDoesNotBecomeTheSpam()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: -1, racing: true);
+        Join(tracker, "Alice");
+
+        for (var i = 0; i < 4; i++)
+        {
+            service.ProcessChatCommand("Alice", false, "!help");
+            await Task.Delay(40);
+        }
+
+        Assert.Single(messages, m => m.Contains("disabled during a race", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ChatCommands_WorkWhenNotRacing()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: -1, racing: false);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!help");
+        await Task.Delay(80);
+
+        Assert.Contains(messages, m => m.StartsWith("Help:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task TrackChange_IsRefused_WhileEventLoopIsRunning()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: 0, racing: false);   // index 0 => enabled
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(80);
+
+        Assert.Contains(messages, m => m.Contains("event loop is running", StringComparison.Ordinal));
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+    }
+
+    [Fact]
+    public async Task TrackChange_IsAllowed_WhenEventLoopIsOff()
+    {
+        var (service, tracker, _, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: -1, racing: false);  // index -1 => off
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(80);
+
+        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+    }
+
+    // --- !eventloop ---------------------------------------------------------
+
+    [Fact]
+    public async Task EventLoopCommand_IsSilentForUnprivilegedPlayers()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: 0, racing: false);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!eventloop");
+        await Task.Delay(80);
+
+        // Hidden from !help, so answering back would advertise that it exists.
+        Assert.Empty(messages);
+    }
+
+    [Fact]
+    public async Task EventLoopCommand_ShowsStatusForModerators()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: 2, racing: false);
+        Join(tracker, "Mod");
+        tracker.GetPlayers().Single(p => p.Name == "Mod").IsModerator = true;
+
+        service.ProcessChatCommand("Mod", false, "!eventloop");
+        await Task.Delay(80);
+
+        Assert.Contains(messages, m => m == "Event loop: on (entry 3/4)");
+    }
+
+    [Fact]
+    public async Task EventLoopCommand_SaysSoWhenAlreadyInRequestedState()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: 0, racing: false);   // already on
+        Join(tracker, "Admin");
+        tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
+
+        service.ProcessChatCommand("Admin", false, "!eventloop on");
+        await Task.Delay(80);
+
+        Assert.Contains(messages, m => m.Contains("already on", StringComparison.Ordinal));
+        serverMock.Verify(m => m.SendCommandAsync("/eventloop"), Times.Never);
+    }
+
+    [Fact]
+    public async Task EventLoopCommand_ReportsWhenToggleDidNotTakeEffect()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        // Reads always say "on", so asking for off must detect that nothing changed
+        // rather than claiming success.
+        StubServerState(serverMock, count: 4, index: 0, racing: false);
+        Join(tracker, "Admin");
+        tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
+
+        service.ProcessChatCommand("Admin", false, "!eventloop off");
+        await Task.Delay(120);
+
+        serverMock.Verify(m => m.SendCommandAsync("/eventloop"), Times.Once);
+        Assert.Contains(messages, m => m.Contains("did not change", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PrivilegedCommand_WorksForAnAdminKnownOnlyFromAJoinLine()
+    {
+        // Regression: a join line carries no role, so an admin who has just connected
+        // looks unprivileged until a hook snapshot lands. The privilege check must
+        // refresh first, or the command is silently dropped.
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: 2, racing: false);
+
+        // Tracker knows the player only from the join line - no role information.
+        Join(tracker, "Admin");
+        Assert.False(tracker.GetPlayers().Single(p => p.Name == "Admin").IsPrivileged);
+
+        // The hook snapshot is where the role actually comes from.
+        serverMock.Setup(m => m.TryRefreshPlayersFromHookAsync())
+            .Callback(() => tracker.ProcessHookPlayerSnapshot([
+                new Player { Name = "Admin", Slot = 1, IsBot = false, IsAdmin = true, JoinedAt = DateTime.UtcNow }
+            ]))
+            .ReturnsAsync(true);
+
+        service.ProcessChatCommand("Admin", false, "!eventloop");
+        await Task.Delay(120);
+
+        Assert.Contains(messages, m => m.StartsWith("Event loop:", StringComparison.Ordinal));
+    }
 }

@@ -99,6 +99,32 @@ public class VotingService
         // and the stale vote would linger until its timer fired.
         CancelVoteIfModeChanged();
 
+        // Every reply goes to all players via /message, so a command run mid-race
+        // puts several lines across everyone's screen while they are driving. Suppress
+        // the lot until the race is over. Blocking here is safe: this runs on
+        // ServerManager's chat worker, not on the thread draining the hook pipe.
+        if (IsRacingBlocking())
+        {
+            // The refusal is itself a broadcast, so rate-limit it - otherwise a few
+            // players typing commands reproduces the spam we are preventing.
+            var announce = false;
+            lock (_serverStateLock)
+            {
+                if (DateTime.UtcNow - _lastRaceRefusalUtc > RaceRefusalWindow)
+                {
+                    _lastRaceRefusalUtc = DateTime.UtcNow;
+                    announce = true;
+                }
+            }
+
+            if (announce)
+            {
+                _ = BroadcastMessage("Chat commands are disabled during a race.");
+            }
+
+            return;
+        }
+
         if (lower == "!help")
         {
             if (VotingEnabled)
@@ -121,6 +147,18 @@ public class VotingService
         if (lower == "!debug")
         {
             _ = BroadcastMessages(GetDebugMessages());
+            return;
+        }
+
+        if (lower == "!eventloop" || lower.StartsWith("!eventloop "))
+        {
+            // Unlisted in !help and silent for everyone else: a hidden command that
+            // answers back still advertises its own existence.
+            if (IsPrivileged(playerName))
+            {
+                _ = HandleEventLoopCommandAsync(lower);
+            }
+
             return;
         }
 
@@ -882,6 +920,17 @@ public class VotingService
     /// </summary>
     private void StartTrackChange(string playerName, string trackId, int? laps)
     {
+        // The event loop owns track selection when it is running - Wreckfest rotates
+        // and runs its own end-of-race track vote - so a track set here would just be
+        // overwritten, or fight it. Refuse rather than race the rotation.
+        var loop = ReadEventLoopBlocking();
+        if (loop is { Enabled: true })
+        {
+            _ = BroadcastMessage(
+                "Track changes are disabled while the event loop is running.");
+            return;
+        }
+
         if (!DirectModeEnabled)
         {
             StartVote(playerName, trackId, laps);
@@ -975,8 +1024,220 @@ public class VotingService
     /// Moderators and admins alike bypass the direct-change cooldown and may override
     /// a change someone else just made.
     /// </summary>
+    // Server-state globals, module-relative. Found by decoding the RIP-relative
+    // operands inside the game's own "is the event loop enabled" getter
+    // (FUN_1402dd490 at RVA 0x002DD490), then confirmed live by toggling
+    // /eventloop and watching them move. Build-specific: a Wreckfest patch will
+    // shift them, which is why every read is sanity-checked and falls open.
+    private const uint RvaEventLoopCount = 0x1857630;   // int32: number of el_add entries
+    private const uint RvaEventLoopIndex = 0x122B270;   // int32: current entry, -1 when off
+    private const uint RvaSessionLobby = 0x19146E0;     // byte: 1 in lobby, 0 while racing
+    private const uint RvaSessionRacing = 0x19146EC;    // byte: 1 while racing or voting
+
+    private static readonly TimeSpan ServerStateCacheWindow = TimeSpan.FromSeconds(2);
+    private readonly object _serverStateLock = new();
+    private static readonly TimeSpan RaceRefusalWindow = TimeSpan.FromSeconds(30);
+    private DateTime _lastRaceRefusalUtc = DateTime.MinValue;
+    private DateTime _serverStateReadUtc = DateTime.MinValue;
+    private (bool? EventLoopEnabled, int Index, int Count, bool? Racing) _serverState;
+
+    private sealed record EventLoopState(bool Enabled, int Index, int Count);
+
+    /// <summary>
+    /// Reads event-loop and session state from the running server. Every field is
+    /// nullable-by-convention: a failed or implausible read yields null so callers
+    /// fail open rather than acting on a state we do not actually know.
+    /// </summary>
+    private async Task<(EventLoopState? Loop, bool? Racing)> ReadServerStateAsync()
+    {
+        lock (_serverStateLock)
+        {
+            if (DateTime.UtcNow - _serverStateReadUtc < ServerStateCacheWindow)
+            {
+                var cachedLoop = _serverState.EventLoopEnabled is bool enabled
+                    ? new EventLoopState(enabled, _serverState.Index, _serverState.Count)
+                    : null;
+                return (cachedLoop, _serverState.Racing);
+            }
+        }
+
+        EventLoopState? loop = null;
+        bool? racing = null;
+
+        var countBytes = await _serverManager.ReadHookMemoryAsync(RvaEventLoopCount, 4);
+        var indexBytes = await _serverManager.ReadHookMemoryAsync(RvaEventLoopIndex, 4);
+        if (countBytes?.Length == 4 && indexBytes?.Length == 4)
+        {
+            var count = BitConverter.ToInt32(countBytes);
+            var index = BitConverter.ToInt32(indexBytes);
+
+            // Reject implausible values rather than trusting a stale offset after a
+            // game patch: an entry count outside 0..256, or an index that is neither
+            // -1 nor a valid position, means we are not reading what we think.
+            if (count >= 0 && count <= 256 && index >= -1 && index < Math.Max(count, 1))
+            {
+                loop = new EventLoopState(count > 0 && index > -1, index, count);
+            }
+        }
+
+        var lobbyBytes = await _serverManager.ReadHookMemoryAsync(RvaSessionLobby, 1);
+        var racingBytes = await _serverManager.ReadHookMemoryAsync(RvaSessionRacing, 1);
+        if (lobbyBytes?.Length == 1 && racingBytes?.Length == 1)
+        {
+            // Only the combination positively observed while driving counts as
+            // racing. Lobby, the post-race vote screen and any state not yet mapped
+            // fall through as "not racing", so an unknown state never silences chat.
+            racing = lobbyBytes[0] == 0 && racingBytes[0] == 1;
+        }
+
+        lock (_serverStateLock)
+        {
+            _serverState = (loop?.Enabled, loop?.Index ?? 0, loop?.Count ?? 0, racing);
+            _serverStateReadUtc = DateTime.UtcNow;
+        }
+
+        return (loop, racing);
+    }
+
+    /// <summary>
+    /// True only when the server is positively identified as racing. An unreadable
+    /// or unmapped state returns false so chat keeps working.
+    /// </summary>
+    private bool IsRacingBlocking()
+    {
+        try
+        {
+            var (_, racing) = ReadServerStateAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            return racing == true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read session state; allowing chat command");
+            return false;
+        }
+    }
+
+    private EventLoopState? ReadEventLoopBlocking()
+    {
+        try
+        {
+            var (loop, _) = ReadServerStateAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            return loop;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Could not read event loop state");
+            return null;
+        }
+    }
+
+    private void InvalidateServerState()
+    {
+        lock (_serverStateLock)
+        {
+            _serverStateReadUtc = DateTime.MinValue;
+        }
+    }
+
+    private async Task HandleEventLoopCommandAsync(string lower)
+    {
+        const string prefix = "!eventloop";
+        var argument = lower.Length > prefix.Length ? lower[prefix.Length..].Trim() : string.Empty;
+
+        InvalidateServerState();
+        var (loop, _) = await ReadServerStateAsync();
+        if (loop is null)
+        {
+            await BroadcastMessage("Event loop state unavailable - is the console hook injected?");
+            return;
+        }
+
+        if (argument.Length == 0)
+        {
+            await BroadcastMessages(FormatEventLoopStatus(loop));
+            return;
+        }
+
+        bool desired;
+        switch (argument)
+        {
+            case "on": desired = true; break;
+            case "off": desired = false; break;
+            default:
+                await BroadcastMessage("Usage: !eventloop [on|off]");
+                return;
+        }
+
+        if (loop.Enabled == desired)
+        {
+            await BroadcastMessage($"Event loop is already {(desired ? "on" : "off")}.");
+            return;
+        }
+
+        // The server command is a plain toggle with no argument, so we only send it
+        // once we know the current state differs from what was asked for.
+        var result = await _serverManager.SendCommandAsync("/eventloop");
+        if (!result.Success)
+        {
+            await BroadcastMessage("Failed to change the event loop.");
+            return;
+        }
+
+        // Read back rather than assume: /rotate and the game itself can also change
+        // this, and a toggle that silently did nothing would otherwise look like it
+        // worked.
+        InvalidateServerState();
+        var (after, _) = await ReadServerStateAsync();
+        if (after is null || after.Enabled != desired)
+        {
+            await BroadcastMessage($"Event loop did not change - it is still {(after?.Enabled == true ? "on" : "off")}.");
+            return;
+        }
+
+        await BroadcastMessages(FormatEventLoopStatus(after));
+    }
+
+    private List<string> FormatEventLoopStatus(EventLoopState loop)
+    {
+        var state = loop.Enabled ? "on" : "off";
+        var position = loop.Enabled && loop.Count > 0
+            ? $" (entry {loop.Index + 1}/{loop.Count})"
+            : $" ({loop.Count} entries)";
+
+        var messages = new List<string> { $"Event loop: {state}{position}" };
+
+        try
+        {
+            var tracks = _configService.ReadEventLoopTracks();
+            if (tracks.Count > 0)
+            {
+                const string listPrefix = "Rotation: ";
+                var joined = string.Join(", ", tracks.Select(t => t.Track));
+                messages.Add(listPrefix + TruncateToFit(joined, ChatMessageCharacterLimit - listPrefix.Length));
+            }
+        }
+        catch (Exception ex)
+        {
+            // The rotation is a nicety; never let a config read failure hide the state.
+            _logger.LogDebug(ex, "Could not read event loop tracks for !eventloop");
+        }
+
+        return messages;
+    }
+
+    /// <summary>
+    /// Moderators and admins bypass the direct-change cooldown and may use the
+    /// privileged commands.
+    /// </summary>
+    /// <remarks>
+    /// Refreshes from the hook first. A player's join line carries no role - roles
+    /// only arrive in a hook snapshot - so checking the tracker directly reports a
+    /// freshly joined admin as unprivileged, and the command is silently dropped.
+    /// </remarks>
     private bool IsPrivileged(string playerName)
     {
+        RefreshPlayersFromHookIfAvailable();
+
         return _playerTracker.GetPlayers().Any(p =>
             p.IsPrivileged &&
             !p.IsBot &&

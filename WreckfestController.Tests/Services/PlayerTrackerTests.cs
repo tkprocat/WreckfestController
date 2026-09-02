@@ -529,4 +529,94 @@ public class PlayerTrackerTests
         // Verify slots are assigned
         Assert.All(players, p => Assert.NotNull(p.Slot));
     }
+
+    // --- server-event driven tracking ---------------------------------------
+
+    [Fact]
+    public void ProcessServerEvent_JoinAddsPlayerAndDetectsBotFromMarker()
+    {
+        var tracker = CreateTracker();
+
+        tracker.ProcessServerEvent(new ServerEvent(ServerEvent.PlayerHasJoined, "*eRacer", []));
+        tracker.ProcessServerEvent(new ServerEvent(ServerEvent.PlayerHasJoined, "Procat", []));
+
+        var players = tracker.GetPlayers();
+        Assert.Equal(2, players.Count);
+        Assert.True(players.Single(p => p.Name == "eRacer").IsBot);
+        Assert.False(players.Single(p => p.Name == "Procat").IsBot);
+    }
+
+    [Fact]
+    public void ProcessServerEvent_QuitRemovesPlayerRegardlessOfReason()
+    {
+        foreach (var quitId in new[]
+                 {
+                     ServerEvent.QuitNormal, ServerEvent.QuitTimeout, ServerEvent.QuitBanned,
+                     ServerEvent.QuitInvalid, ServerEvent.QuitBot
+                 })
+        {
+            var tracker = CreateTracker();
+            tracker.ProcessServerEvent(new ServerEvent(ServerEvent.PlayerHasJoined, "Procat", []));
+            tracker.ProcessServerEvent(new ServerEvent(quitId, "Procat", []));
+
+            Assert.DoesNotContain(tracker.GetPlayers(), p => p.Name == "Procat");
+        }
+    }
+
+    [Fact]
+    public void ProcessServerEvent_PrivilegeEventsUpdateRolesImmediately()
+    {
+        // This is the gap that silently broke !eventloop: a join line carries no role,
+        // so without these events a freshly promoted moderator looks unprivileged
+        // until something else refreshes the roster.
+        var tracker = CreateTracker();
+        tracker.ProcessServerEvent(new ServerEvent(ServerEvent.PlayerHasJoined, "Procat", []));
+
+        tracker.ProcessServerEvent(new ServerEvent(ServerEvent.NewModerator, "Procat", []));
+        var player = tracker.GetPlayers().Single(p => p.Name == "Procat");
+        Assert.True(player.IsModerator);
+        Assert.False(player.IsAdmin);
+        Assert.True(player.IsPrivileged);
+
+        tracker.ProcessServerEvent(new ServerEvent(ServerEvent.NewAdmin, "Procat", []));
+        player = tracker.GetPlayers().Single(p => p.Name == "Procat");
+        Assert.True(player.IsAdmin);
+        Assert.True(player.IsPrivileged);
+
+        tracker.ProcessServerEvent(new ServerEvent(ServerEvent.Demoted, "Procat", []));
+        player = tracker.GetPlayers().Single(p => p.Name == "Procat");
+        Assert.False(player.IsPrivileged);
+    }
+
+    [Fact]
+    public void ProcessLogLine_SkipsJoinParsing_WhenServerEventsAreAuthoritative()
+    {
+        var tracker = CreateTracker();
+        tracker.UseServerEvents = true;
+
+        tracker.ProcessLogLine("16:53:14 - Procat has joined.");
+
+        // Would otherwise be double-counted alongside the event.
+        Assert.Empty(tracker.GetPlayers());
+    }
+
+    [Fact]
+    public void ProcessLogLine_StillParsesJoins_WhenEventsAreUnavailable()
+    {
+        var tracker = CreateTracker();
+        tracker.UseServerEvents = false;
+
+        tracker.ProcessLogLine("16:53:14 - Procat has joined.");
+
+        Assert.Contains(tracker.GetPlayers(), p => p.Name == "Procat");
+    }
+
+    private static PlayerTracker CreateTracker()
+    {
+        var webhook = new Mock<WreckfestWebWebhookService>(
+            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<HttpClient>());
+        return new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), webhook.Object);
+    }
 }

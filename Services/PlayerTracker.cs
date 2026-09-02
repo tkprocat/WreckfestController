@@ -103,6 +103,13 @@ public class PlayerTracker
             }
         }
 
+        // Events carry the same joins and quits with more detail, so skip the text
+        // parsing entirely rather than processing each one twice.
+        if (UseServerEvents)
+        {
+            return;
+        }
+
         // Parse join events: "16:53:14 - *eRacer has joined." (bot) or "16:53:14 - Player123 has joined." (human)
         var joinMatch = Regex.Match(line, @"- (\*?)(.+?) has joined\.");
         if (joinMatch.Success)
@@ -170,6 +177,93 @@ public class PlayerTracker
 
         // Request a list command to get full player details (slot, admin status, etc.)
         RequestListCommand();
+    }
+
+    /// <summary>
+    /// Set once the server-event ring is being read successfully. While true the
+    /// join/quit/kick text parsing is skipped, because the events carry the same
+    /// facts plus the role and quit reason that console lines cannot express.
+    /// Left false when the ring is unavailable, so text parsing still covers us.
+    /// </summary>
+    public bool UseServerEvents { get; set; }
+
+    /// <summary>
+    /// Applies one server event. This is the authoritative path: unlike a console
+    /// line, the event carries why a player left and announces privilege changes.
+    /// </summary>
+    public void ProcessServerEvent(ServerEvent serverEvent)
+    {
+        var name = serverEvent.Name.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        var isBot = name.StartsWith('*');
+        var playerName = name.TrimStart('*').Trim();
+        if (string.IsNullOrWhiteSpace(playerName))
+        {
+            return;
+        }
+
+        switch (serverEvent.Id)
+        {
+            case ServerEvent.PlayerHasJoined:
+                PlayerJoined(playerName, isBot);
+                break;
+
+            case ServerEvent.QuitNormal:
+            case ServerEvent.QuitTimeout:
+            case ServerEvent.QuitKicked:
+            case ServerEvent.QuitIdleKick:
+            case ServerEvent.QuitBanned:
+            case ServerEvent.QuitInvalid:
+            case ServerEvent.QuitBot:
+                _logger.LogInformation("{Player} left: {Reason}", playerName, serverEvent.QuitReason);
+                if (serverEvent.Id == ServerEvent.QuitKicked || serverEvent.Id == ServerEvent.QuitIdleKick)
+                {
+                    PlayerKicked(playerName);
+                }
+                else
+                {
+                    PlayerLeft(playerName);
+                }
+                break;
+
+            case ServerEvent.NewModerator:
+                SetPrivilege(playerName, admin: false, moderator: true);
+                break;
+
+            case ServerEvent.NewAdmin:
+                SetPrivilege(playerName, admin: true, moderator: false);
+                break;
+
+            case ServerEvent.Demoted:
+                SetPrivilege(playerName, admin: false, moderator: false);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Applies a privilege change as it happens, rather than waiting for the next
+    /// snapshot. Without this a freshly promoted moderator looks unprivileged until
+    /// something else refreshes the roster.
+    /// </summary>
+    private void SetPrivilege(string playerName, bool admin, bool moderator)
+    {
+        lock (_lock)
+        {
+            if (!_players.TryGetValue(playerName, out var player))
+            {
+                return;
+            }
+
+            player.IsAdmin = admin;
+            player.IsModerator = moderator;
+        }
+
+        var role = admin ? "admin" : moderator ? "moderator" : "player";
+        _logger.LogInformation("{Player} is now {Role}", playerName, role);
     }
 
     public void MarkPlayerSeen(string playerName, bool isBot)

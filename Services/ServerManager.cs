@@ -62,6 +62,15 @@ public class ServerManager
     private DateTime _lastChatCommandAtUtc;
     private bool _useInjectedHookAsPrimaryOutput;
 
+    // Server events come from the game's own ring buffer rather than parsed console
+    // text; see ServerEventReader. Polled rather than pushed, which is why the reader
+    // reports overflow so we can fall back to a full snapshot.
+    private ServerEventReader? _serverEventReader;
+    private System.Threading.Timer? _serverEventTimer;
+    private int _serverEventPollBusy;
+    private bool _serverEventsSeeded;
+    private static readonly TimeSpan ServerEventPollInterval = TimeSpan.FromSeconds(1);
+
     /// <summary>
     /// Raised when the server process ID changes (after restart or attach)
     /// </summary>
@@ -874,6 +883,31 @@ public class ServerManager
         }
     }
 
+    /// <summary>
+    /// Reads module-relative memory from the running server through the hook.
+    /// Returns null when the hook is unavailable, so callers can fail open rather
+    /// than treating "cannot read" as a definite state.
+    /// </summary>
+    public virtual async Task<byte[]?> ReadHookMemoryAsync(uint rva, int size)
+    {
+        var process = GetActualServerProcess();
+        if (process == null || _serverInputWriter is not IHookMemoryReader reader)
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = await reader.ReadModuleMemoryAsync(process.Id, rva, size);
+            return result.Success ? result.Data : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Hook memory read failed at rva 0x{Rva:X8}", rva);
+            return null;
+        }
+    }
+
     public virtual async Task<bool> TryRefreshPlayersFromHookAsync()
     {
         var process = GetActualServerProcess();
@@ -1072,8 +1106,82 @@ public class ServerManager
     private void StartOutputMonitoring()
     {
         _useInjectedHookAsPrimaryOutput = true;
+        StartServerEventPolling();
         _logger.LogInformation("Injected hook output active; waiting for manual hook injection");
         NotifyConsoleOutput("[Controller] Use Process Manager -> INJECT to start output capture.");
+    }
+
+    private void StartServerEventPolling()
+    {
+        StopServerEventPolling();
+
+        _serverEventReader = new ServerEventReader(
+            ReadHookMemoryAsync,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ServerEventReader>.Instance);
+
+        _serverEventTimer = new System.Threading.Timer(
+            _ => _ = PollServerEventsAsync(),
+            null,
+            ServerEventPollInterval,
+            ServerEventPollInterval);
+    }
+
+    private void StopServerEventPolling()
+    {
+        _serverEventTimer?.Dispose();
+        _serverEventTimer = null;
+        _serverEventReader = null;
+        _playerTracker.UseServerEvents = false;
+        _serverEventsSeeded = false;
+    }
+
+    private async Task PollServerEventsAsync()
+    {
+        var reader = _serverEventReader;
+        if (reader == null)
+        {
+            return;
+        }
+
+        // A slow poll must not stack up behind itself.
+        if (Interlocked.Exchange(ref _serverEventPollBusy, 1) == 1)
+        {
+            return;
+        }
+
+        try
+        {
+            var (events, overflowed) = await reader.PollAsync();
+
+            // The first successful poll only adopts the cursor - it deliberately does
+            // not replay history - so anyone already connected produced no event. Seed
+            // the roster from a snapshot once, then let events maintain it.
+            if (!_serverEventsSeeded && reader.HasSynced)
+            {
+                _serverEventsSeeded = true;
+                _playerTracker.UseServerEvents = true;
+                await TryRefreshPlayersFromHookAsync();
+            }
+
+            foreach (var serverEvent in events)
+            {
+                _playerTracker.ProcessServerEvent(serverEvent);
+            }
+
+            if (overflowed)
+            {
+                _logger.LogWarning("Server event ring overflowed; resyncing from a full player snapshot");
+                await TryRefreshPlayersFromHookAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Server event poll failed");
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _serverEventPollBusy, 0);
+        }
     }
 
     /// <summary>
@@ -1082,6 +1190,7 @@ public class ServerManager
     private void StopOutputMonitoring()
     {
         _useInjectedHookAsPrimaryOutput = false;
+        StopServerEventPolling();
     }
 
     /// <summary>

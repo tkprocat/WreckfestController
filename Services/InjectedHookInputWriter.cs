@@ -5,7 +5,7 @@ using WreckfestController.Models;
 
 namespace WreckfestController.Services;
 
-public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
+public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader, IHookMemoryReader
 {
     // Player flag bits, confirmed against a live server (Wreckfest 1.308438) by
     // toggling privileges with /op and /demote and cross-checking the A/M marker in
@@ -18,6 +18,7 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
     private const int ConnectTimeoutMs = 1000;
     private const int ResponseTimeoutMs = 10000;
     private const string PlayerSnapshotCommand = "__hook_players";
+    private const string MemoryReadCommand = "__hook_read";
     private readonly ILogger<InjectedHookInputWriter> _logger;
 
     public InjectedHookInputWriter(ILogger<InjectedHookInputWriter> logger)
@@ -137,6 +138,41 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
         }
 
         return players;
+    }
+
+    /// <summary>
+    /// Reads <paramref name="size"/> bytes at a module-relative address. The hook
+    /// bounds the read against SizeOfImage, so a wrong RVA fails rather than reading
+    /// unrelated process memory.
+    /// </summary>
+    public virtual async Task<(bool Success, string Message, byte[] Data)> ReadModuleMemoryAsync(
+        int processId, uint rva, int size)
+    {
+        try
+        {
+            var lines = await SendPipeCommandAsync($"{MemoryReadCommand} {rva:X} {size}", processId);
+            var response = lines.FirstOrDefault() ?? string.Empty;
+
+            const string marker = "data=";
+            var at = response.IndexOf(marker, StringComparison.Ordinal);
+            if (!response.StartsWith("OK", StringComparison.OrdinalIgnoreCase) || at < 0)
+            {
+                return (false, string.IsNullOrWhiteSpace(response) ? "Hook memory read returned no response" : response, []);
+            }
+
+            var hex = response[(at + marker.Length)..].Trim();
+            if (hex.Length != size * 2)
+            {
+                return (false, $"Hook memory read returned {hex.Length / 2} bytes, expected {size}", []);
+            }
+
+            return (true, "ok", Convert.FromHexString(hex));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Hook memory read failed at rva 0x{Rva:X8}", rva);
+            return (false, $"Hook memory read failed: {ex.Message}", []);
+        }
     }
 
     private static async Task<IReadOnlyList<string>> SendPipeCommandAsync(string command, int processId)

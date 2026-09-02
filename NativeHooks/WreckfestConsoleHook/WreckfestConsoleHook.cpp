@@ -16,6 +16,8 @@ constexpr uintptr_t RegistryTablePtrRva = 0x0127E7F8;
 constexpr uintptr_t ServerNamespaceTagRva = 0x065E6308;
 constexpr SIZE_T PatchSize = 12;
 
+#define NLSTR "\n"
+
 // Set to the target build's SizeOfImage to hard-pin this hook to one Wreckfest
 // build. 0 means "log the value but do not enforce" - run once, read the
 // reported size from the hook log, then pin it here.
@@ -585,9 +587,91 @@ bool DispatchConsoleCommand(const std::string& rawCommand, std::string* tokenEch
     return true;
 }
 
+// Reads module-relative memory for investigation. Deliberately RVA-only and
+// bounded by SizeOfImage: an absolute address would let a typo read anywhere in
+// the process, and this runs inside a live game server. Read-only by design -
+// there is no write counterpart.
+bool ReadModuleMemoryNoThrow(uintptr_t rva, size_t size, std::string& response)
+{
+    if (g_layoutStatus != LayoutStatus::Ok)
+    {
+        response = "ERR read module layout not validated" NLSTR;
+        return false;
+    }
+
+    if (size == 0 || size > 1024)
+    {
+        response = "ERR read size must be 1..1024" NLSTR;
+        return false;
+    }
+
+    if (g_observedImageSize == 0 || rva >= g_observedImageSize ||
+        rva + size > g_observedImageSize)
+    {
+        response = "ERR read out of module bounds" NLSTR;
+        return false;
+    }
+
+    __try
+    {
+        auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        auto p = reinterpret_cast<const unsigned char*>(moduleBase + rva);
+
+        char head[96] = {};
+        std::snprintf(head, sizeof(head), "OK read rva=0x%08llX size=%llu data=",
+            static_cast<unsigned long long>(rva),
+            static_cast<unsigned long long>(size));
+
+        response = head;
+        response.reserve(response.size() + size * 2 + 2);
+
+        char byteText[3] = {};
+        for (size_t i = 0; i < size; i++)
+        {
+            std::snprintf(byteText, sizeof(byteText), "%02x", p[i]);
+            response += byteText;
+        }
+        response += NLSTR;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        response = "ERR read raised an exception" NLSTR;
+        return false;
+    }
+}
+
 std::string HandleInputCommand(const char* buffer)
 {
     auto commandLine = TrimCommand(buffer == nullptr ? "" : buffer);
+
+    // Hook-only commands are handled here and must never reach the game's
+    // dispatcher.
+    if (commandLine.rfind("__hook_read", 0) == 0)
+    {
+        unsigned long long rva = 0;
+        unsigned long long size = 0;
+        if (std::sscanf(commandLine.c_str(), "__hook_read %llx %llu", &rva, &size) != 2)
+        {
+            return "ERR read usage: __hook_read <rvaHex> <size>" NLSTR;
+        }
+
+        std::string response;
+        ReadModuleMemoryNoThrow(static_cast<uintptr_t>(rva), static_cast<size_t>(size), response);
+        return response;
+    }
+
+    if (commandLine == "__hook_info")
+    {
+        char info[160] = {};
+        std::snprintf(info, sizeof(info),
+            "OK info base=0x%llX imageSize=0x%08lX layout=%lu" NLSTR,
+            static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr))),
+            static_cast<unsigned long>(g_observedImageSize),
+            static_cast<unsigned long>(g_layoutStatus));
+        return info;
+    }
+
     if (commandLine == "__hook_players")
     {
         std::string response;
