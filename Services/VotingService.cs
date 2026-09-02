@@ -55,6 +55,16 @@ public class VotingService
         get { lock (_stateLock) { return _state == VoteState.Active; } }
     }
     private bool DirectModeEnabled => VoteMode == VoteModes.Direct;
+    /// <summary>
+    /// Suppress chat commands while a race is running. Off by default: the session
+    /// state is read from two bytes that give at least three observed combinations,
+    /// and a phase that is not actually racing - countdown, loading or results -
+    /// shares the pattern with driving, so the gate blocks chat when it should not.
+    /// Turn on only once the state model is properly mapped.
+    /// </summary>
+    private bool SuppressCommandsDuringRace =>
+        _configuration.GetValue("Vote:SuppressCommandsDuringRace", false);
+
     private int DirectCooldownSeconds =>
         Math.Clamp(_configuration.GetValue<int?>("Vote:DirectCooldownSeconds") ?? 30, 0, 3600);
     private int VoteTimeoutSeconds => _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30;
@@ -103,7 +113,7 @@ public class VotingService
         // puts several lines across everyone's screen while they are driving. Suppress
         // the lot until the race is over. Blocking here is safe: this runs on
         // ServerManager's chat worker, not on the thread draining the hook pipe.
-        if (IsRacingBlocking())
+        if (SuppressCommandsDuringRace && IsRacingBlocking())
         {
             // The refusal is itself a broadcast, so rate-limit it - otherwise a few
             // players typing commands reproduces the spam we are preventing.
@@ -147,6 +157,16 @@ public class VotingService
         if (lower == "!debug")
         {
             _ = BroadcastMessages(GetDebugMessages());
+            return;
+        }
+
+        // Refused here rather than at the point of applying: resolution happens
+        // first, so gating later let an ambiguous query print a five-option list and
+        // only fail at !confirm - maximum chat for a command that was never going to
+        // be allowed.
+        if (IsTrackChangeCommand(lower) && ReadEventLoopBlocking() is { Enabled: true })
+        {
+            _ = BroadcastMessage("Track changes are disabled while the event loop is running.");
             return;
         }
 
@@ -241,6 +261,19 @@ public class VotingService
         {
             ShowMoreSearchResults();
         }
+    }
+
+    /// <summary>
+    /// Commands that end in a track change, and so are pointless while the event
+    /// loop owns track selection.
+    /// </summary>
+    private static bool IsTrackChangeCommand(string lower)
+    {
+        return lower.StartsWith("!vote ") ||
+               lower == "!vote" ||
+               lower == "!confirm" ||
+               lower.StartsWith("!confirm ") ||
+               IsLuckyCommand(lower);
     }
 
     private static bool IsVotingCommand(string lower)

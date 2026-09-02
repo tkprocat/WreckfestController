@@ -1666,7 +1666,8 @@ public class VotingServiceTests
     [Fact]
     public async Task ChatCommands_AreSuppressedDuringARace()
     {
-        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Direct);
+        config["Vote:SuppressCommandsDuringRace"] = "true";
         StubServerState(serverMock, count: 4, index: -1, racing: true);
         Join(tracker, "Alice");
 
@@ -1680,7 +1681,8 @@ public class VotingServiceTests
     [Fact]
     public async Task RaceRefusal_IsRateLimited_SoItDoesNotBecomeTheSpam()
     {
-        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Direct);
+        config["Vote:SuppressCommandsDuringRace"] = "true";
         StubServerState(serverMock, count: 4, index: -1, racing: true);
         Join(tracker, "Alice");
 
@@ -1847,5 +1849,54 @@ public class VotingServiceTests
 
         Assert.Contains(messages, m => m == "Event loop: off (4 entries)");
         Assert.DoesNotContain(messages, m => m.Contains("did not change", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AmbiguousTrackQuery_IsRefusedUpFront_WhileEventLoopIsRunning()
+    {
+        // Regression: the interlock used to sit at the point of applying, which is
+        // only reached on an exact match. An ambiguous query printed a five-option
+        // list and would only have failed later at !confirm.
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: 0, racing: false);   // loop on
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!track wreckn");
+        await Task.Delay(120);
+
+        Assert.Contains(messages, m => m.Contains("event loop is running", StringComparison.Ordinal));
+        Assert.DoesNotContain(messages, m => m.Contains("!confirm", StringComparison.Ordinal));
+        Assert.DoesNotContain(messages, m => m.Contains("Multiple matches", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LuckyCommand_IsRefused_WhileEventLoopIsRunning()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: 0, racing: false);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!lucky");
+        await Task.Delay(120);
+
+        Assert.Contains(messages, m => m.Contains("event loop is running", StringComparison.Ordinal));
+        Assert.DoesNotContain(messages, m => m.Contains("Lucky pick", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RaceSuppression_IsOffByDefault()
+    {
+        // The session-state model is under-determined: a countdown or results phase
+        // shares its byte pattern with racing, so the gate blocked chat when the
+        // player was not driving. Off until the states are properly mapped.
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: -1, racing: true);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!help");
+        await Task.Delay(80);
+
+        Assert.Contains(messages, m => m.StartsWith("Help:", StringComparison.Ordinal));
+        Assert.DoesNotContain(messages, m => m.Contains("disabled during a race", StringComparison.Ordinal));
     }
 }
