@@ -1789,7 +1789,8 @@ public class VotingServiceTests
         tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
 
         service.ProcessChatCommand("Admin", false, "!eventloop off");
-        await Task.Delay(120);
+        // The toggle is polled for up to 8 x 250ms before giving up.
+        await Task.Delay(2600);
 
         serverMock.Verify(m => m.SendCommandAsync("/eventloop"), Times.Once);
         Assert.Contains(messages, m => m.Contains("did not change", StringComparison.Ordinal));
@@ -1819,5 +1820,32 @@ public class VotingServiceTests
         await Task.Delay(120);
 
         Assert.Contains(messages, m => m.StartsWith("Event loop:", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task EventLoopCommand_SucceedsWhenTheToggleLandsAfterAShortDelay()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Admin");
+        tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
+
+        // Starts enabled (index 0); the game applies the toggle a beat after the
+        // command returns, which an immediate read-back would miss.
+        var index = 0;
+        serverMock.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopCount, 4)).ReturnsAsync(BitConverter.GetBytes(4));
+        serverMock.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopIndex, 4))
+            .ReturnsAsync(() => BitConverter.GetBytes(index));
+        serverMock.Setup(m => m.ReadHookMemoryAsync(RvaSessionLobby, 1)).ReturnsAsync([(byte)1]);
+        serverMock.Setup(m => m.ReadHookMemoryAsync(RvaSessionRacing, 1)).ReturnsAsync([(byte)0]);
+
+        serverMock.Setup(m => m.SendCommandAsync("/eventloop"))
+            .Callback(() => _ = Task.Run(async () => { await Task.Delay(400); index = -1; }))
+            .ReturnsAsync((true, "ok"));
+
+        service.ProcessChatCommand("Admin", false, "!eventloop off");
+        await Task.Delay(2000);
+
+        Assert.Contains(messages, m => m == "Event loop: off (4 entries)");
+        Assert.DoesNotContain(messages, m => m.Contains("did not change", StringComparison.Ordinal));
     }
 }

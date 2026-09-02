@@ -1154,7 +1154,7 @@ public class VotingService
 
         if (argument.Length == 0)
         {
-            await BroadcastMessages(FormatEventLoopStatus(loop));
+            await BroadcastMessage(FormatEventLoopStatus(loop));
             return;
         }
 
@@ -1185,55 +1185,55 @@ public class VotingService
 
         // Read back rather than assume: /rotate and the game itself can also change
         // this, and a toggle that silently did nothing would otherwise look like it
-        // worked.
-        InvalidateServerState();
-        var (after, _) = await ReadServerStateAsync();
+        // worked. The game does not apply it synchronously, so poll briefly instead
+        // of reading once - a single immediate read sees the old value and wrongly
+        // reports failure.
+        var after = await WaitForEventLoopStateAsync(desired);
         if (after is null || after.Enabled != desired)
         {
             await BroadcastMessage($"Event loop did not change - it is still {(after?.Enabled == true ? "on" : "off")}.");
             return;
         }
 
-        await BroadcastMessages(FormatEventLoopStatus(after));
+        await BroadcastMessage(FormatEventLoopStatus(after));
     }
 
-    private List<string> FormatEventLoopStatus(EventLoopState loop)
+    private async Task<EventLoopState?> WaitForEventLoopStateAsync(bool desired)
+    {
+        EventLoopState? latest = null;
+
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            await Task.Delay(250);
+            InvalidateServerState();
+
+            var (loop, _) = await ReadServerStateAsync();
+            latest = loop ?? latest;
+
+            if (loop?.Enabled == desired)
+            {
+                return loop;
+            }
+        }
+
+        return latest;
+    }
+
+    /// <summary>
+    /// One line only. A real rotation does not fit in the 127-character chat limit,
+    /// and truncating it just loses the tail; the entry position already says where
+    /// the loop is, and server_config.cfg is where the full list lives.
+    /// </summary>
+    private static string FormatEventLoopStatus(EventLoopState loop)
     {
         var state = loop.Enabled ? "on" : "off";
         var position = loop.Enabled && loop.Count > 0
             ? $" (entry {loop.Index + 1}/{loop.Count})"
             : $" ({loop.Count} entries)";
 
-        var messages = new List<string> { $"Event loop: {state}{position}" };
-
-        try
-        {
-            var tracks = _configService.ReadEventLoopTracks();
-            if (tracks.Count > 0)
-            {
-                const string listPrefix = "Rotation: ";
-                var joined = string.Join(", ", tracks.Select(t => t.Track));
-                messages.Add(listPrefix + TruncateToFit(joined, ChatMessageCharacterLimit - listPrefix.Length));
-            }
-        }
-        catch (Exception ex)
-        {
-            // The rotation is a nicety; never let a config read failure hide the state.
-            _logger.LogDebug(ex, "Could not read event loop tracks for !eventloop");
-        }
-
-        return messages;
+        return $"Event loop: {state}{position}";
     }
 
-    /// <summary>
-    /// Moderators and admins bypass the direct-change cooldown and may use the
-    /// privileged commands.
-    /// </summary>
-    /// <remarks>
-    /// Refreshes from the hook first. A player's join line carries no role - roles
-    /// only arrive in a hook snapshot - so checking the tracker directly reports a
-    /// freshly joined admin as unprivileged, and the command is silently dropped.
-    /// </remarks>
     private bool IsPrivileged(string playerName)
     {
         RefreshPlayersFromHookIfAvailable();
