@@ -148,50 +148,6 @@ public class ServerManager
         _injectedHookOutputReader.OutputReceived += OnInjectedHookOutputReceived;
         _injectedHookOutputReader.HookOutputReceived += output => ConsoleHookOutput?.Invoke(output);
 
-        // Subscribe to player tracker list command requests
-        _playerTracker.OnListCommandRequested += OnListCommandRequested;
-    }
-
-    /// <summary>
-    /// Handles player tracker requests to send a list command
-    /// </summary>
-    private void OnListCommandRequested()
-    {
-        if (!IsRunning)
-        {
-            _logger.LogDebug("Ignoring list command request - server is not running");
-            return;
-        }
-
-        // Fire and forget - we don't want to block the player tracker
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                var process = GetActualServerProcess();
-                if (process != null && _serverInputWriter is IPlayerSnapshotReader playerSnapshotReader)
-                {
-                    var snapshot = await playerSnapshotReader.ReadPlayerSnapshotAsync(process.Id);
-                    if (snapshot.Success)
-                    {
-                        _playerTracker.ProcessHookPlayerSnapshot(snapshot.Players);
-                        return;
-                    }
-
-                    _logger.LogWarning("Failed to read injected hook player snapshot, falling back to list command: {Message}", snapshot.Message);
-                }
-
-                var result = await SendCommandAsync("list");
-                if (!result.Success)
-                {
-                    _logger.LogWarning("Failed to send list command: {Message}", result.Message);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error sending list command");
-            }
-        });
     }
 
     private Process? GetActualServerProcess()
@@ -1166,6 +1122,11 @@ public class ServerManager
             foreach (var serverEvent in events)
             {
                 _playerTracker.ProcessServerEvent(serverEvent);
+            }
+
+            if (events.Count > 0)
+            {
+                await TryRefreshPlayersFromHookAsync();
             }
 
             if (overflowed)
