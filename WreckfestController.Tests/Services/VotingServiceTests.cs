@@ -70,7 +70,7 @@ public class VotingServiceTests
     }
 
     private void JoinPlayer(string name) =>
-        _playerTracker.ProcessLogLine($"16:53:14 - {name} has joined.");
+        _playerTracker.Seed(name);
 
     [Fact]
     public async Task VoteStarted_BroadcastsAnnouncementAndAutoVotesYes()
@@ -90,8 +90,7 @@ public class VotingServiceTests
     public async Task VoteStarted_WithLongTrackName_TruncatesFirstLineToChatLimit()
     {
         var (service, tracker, messages, _) = CreateLongTrackNameSetup();
-        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
-        tracker.ProcessLogLine("16:53:14 - Bob has joined.");
+        tracker.Seed("Alice", "Bob");
 
         service.ProcessChatCommand("Alice", isBot: false, "!vote long_track 99");
         await Task.Delay(50);
@@ -242,7 +241,7 @@ public class VotingServiceTests
     public async Task VoteStarted_WhenOnlyInitiatorOnline_SendsOnlyTheResultLine()
     {
         var (service, tracker, messages, _) = CreateIsolatedSetup(timeoutSeconds: 30, messageDelayMs: 50);
-        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
+        tracker.Seed("Alice");
 
         service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
         await Task.Delay(250);
@@ -338,8 +337,7 @@ public class VotingServiceTests
     public async Task VoteTimeout_YesLeads_PassesVote()
     {
         var (service, tracker, messages, configMock) = CreateIsolatedSetup(timeoutSeconds: 1);
-        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
-        tracker.ProcessLogLine("16:53:14 - Bob has joined.");
+        tracker.Seed("Alice", "Bob");
         service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
 
         await Task.Delay(1500);
@@ -352,8 +350,7 @@ public class VotingServiceTests
     public async Task VoteTimeout_OnlyInitiatorVotedWithoutMajority_FailsVote()
     {
         var (service, tracker, messages, configMock) = CreateIsolatedSetup(timeoutSeconds: 1);
-        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
-        tracker.ProcessLogLine("16:53:14 - Bob has joined.");
+        tracker.Seed("Alice", "Bob");
         service.ProcessChatCommand("Bob", isBot: false, "!vote only_initiator_track 3");
         // Only Bob auto-votes yes (1 yes, 0 no), which is not a human majority.
 
@@ -368,8 +365,7 @@ public class VotingServiceTests
     public async Task VoteTimeout_Tied_FailsVote()
     {
         var (service, tracker, messages, configMock) = CreateIsolatedSetup(timeoutSeconds: 1);
-        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
-        tracker.ProcessLogLine("16:53:14 - Bob has joined.");
+        tracker.Seed("Alice", "Bob");
         service.ProcessChatCommand("Alice", isBot: false, "!vote tie_track 3"); // Alice auto-yes
         service.ProcessChatCommand("Bob", isBot: false, "!no"); // 1 yes, 1 no → tie
 
@@ -385,8 +381,7 @@ public class VotingServiceTests
     public async Task VoteStatus_WhenTwentySecondsRemain_BroadcastsPassingStatus()
     {
         var (service, tracker, messages, _) = CreateIsolatedSetup(timeoutSeconds: 21);
-        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
-        tracker.ProcessLogLine("16:53:14 - Bob has joined.");
+        tracker.Seed("Alice", "Bob");
 
         service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
         await Task.Delay(1500);
@@ -401,8 +396,7 @@ public class VotingServiceTests
     public async Task VoteStatus_WhenTenSecondsRemain_BroadcastsFailingStatus()
     {
         var (service, tracker, messages, _) = CreateIsolatedSetup(timeoutSeconds: 11);
-        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
-        tracker.ProcessLogLine("16:53:14 - Bob has joined.");
+        tracker.Seed("Alice", "Bob");
 
         service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
         service.ProcessChatCommand("Bob", isBot: false, "!no");
@@ -418,9 +412,7 @@ public class VotingServiceTests
     public async Task VoteStatus_WhenVoteEndsEarly_DoesNotBroadcastPendingStatus()
     {
         var (service, tracker, messages, _) = CreateIsolatedSetup(timeoutSeconds: 21);
-        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
-        tracker.ProcessLogLine("16:53:14 - Bob has joined.");
-        tracker.ProcessLogLine("16:53:14 - Charlie has joined.");
+        tracker.Seed("Alice", "Bob", "Charlie");
 
         service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
         service.ProcessChatCommand("Bob", isBot: false, "!yes");
@@ -499,8 +491,7 @@ public class VotingServiceTests
     public async Task ConfirmCommand_StartsPendingVoteForSelectedOption()
     {
         var (service, tracker, messages, _) = CreateBirkelandSetup();
-        tracker.ProcessLogLine("16:53:14 - Alice has joined.");
-        tracker.ProcessLogLine("16:53:14 - Bob has joined.");
+        tracker.Seed("Alice", "Bob");
 
         service.ProcessChatCommand("Alice", isBot: false, "!vote Birkeland 1");
         service.ProcessChatCommand("Alice", isBot: false, "!confirm 2");
@@ -1270,7 +1261,7 @@ public class VotingServiceTests
     }
 
     private static void Join(PlayerTracker tracker, string name) =>
-        tracker.ProcessLogLine($"16:53:14 - {name} has joined.");
+        tracker.Seed(name);
 
     // --- aliasing -----------------------------------------------------------
 

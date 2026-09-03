@@ -58,7 +58,7 @@ public class PlayerTrackerTests
     [Fact]
     public void ProcessHookPlayerSnapshot_ReplacesCurrentPlayers()
     {
-        _playerTracker.ProcessLogLine("16:53:14 - OldPlayer has joined.");
+        _playerTracker.Seed("OldPlayer");
 
         _playerTracker.ProcessHookPlayerSnapshot(new[]
         {
@@ -216,7 +216,7 @@ public class PlayerTrackerTests
     public void ProcessListResponse_UpdatesExistingPlayers()
     {
         // Arrange
-        _playerTracker.ProcessLogLine("16:53:14 - Player123 has joined.");
+        _playerTracker.Seed("Player123");
         var lines = new[]
         {
             "Players: 1/24",
@@ -236,9 +236,7 @@ public class PlayerTrackerTests
     public void GetPlayerCount_ReturnsCorrectCounts()
     {
         // Arrange
-        _playerTracker.ProcessLogLine("16:53:14 - Player1 has joined.");
-        _playerTracker.ProcessLogLine("16:53:15 - Player2 has joined.");
-        _playerTracker.ProcessLogLine("16:53:16 - Player3 has joined.");
+        _playerTracker.Seed("Player1", "Player2", "Player3");
         _playerTracker.ProcessLogLine("16:55:00 - Player3 has quit.");
 
         // Act
@@ -276,8 +274,7 @@ public class PlayerTrackerTests
     public void Clear_RemovesAllPlayers()
     {
         // Arrange
-        _playerTracker.ProcessLogLine("16:53:14 - Player1 has joined.");
-        _playerTracker.ProcessLogLine("16:53:15 - Player2 has joined.");
+        _playerTracker.Seed("Player1", "Player2");
 
         // Act
         _playerTracker.Clear();
