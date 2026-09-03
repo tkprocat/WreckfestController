@@ -2,8 +2,11 @@
 
 .NET 10 WPF desktop app + hosted ASP.NET Core API for controlling a Wreckfest dedicated server.
 
-See `CLAUDE_GUIDE.md` for architecture, API endpoints and component detail.
 See `docs/finding-rvas.md` before touching any hardcoded game offset.
+
+`CLAUDE_GUIDE.md` is ~1800 lines and **stale** — it still describes ASP.NET Core 8, "51+
+tests" (there are 246) and predates the hook-only I/O work. Do not read it wholesale; grep
+it for a specific topic, and trust the code over it.
 
 ## Build and test
 
