@@ -13,13 +13,13 @@ public class EventsController : ControllerBase
 {
     private readonly EventStorageService _storageService;
     private readonly SmartRestartService _smartRestartService;
-    private readonly LaravelWebhookService _webhookService;
+    private readonly WreckfestWebWebhookService _webhookService;
     private readonly ILogger<EventsController> _logger;
 
     public EventsController(
         EventStorageService storageService,
         SmartRestartService smartRestartService,
-        LaravelWebhookService webhookService,
+        WreckfestWebWebhookService webhookService,
         ILogger<EventsController> logger)
     {
         _storageService = storageService;
@@ -126,7 +126,7 @@ public class EventsController : ControllerBase
                 e.ServerConfig,
                 e.Tracks,
                 e.CollectionName,
-                e.RecurringPattern,
+                e.Repeat,
                 StartsIn = FormatTimeUntil(e.StartTime, now),
                 StartsInMinutes = (e.StartTime - now).TotalMinutes
             }).ToList();
@@ -235,9 +235,14 @@ public class EventsController : ControllerBase
                 eventToActivate.Id);
 
             // 2. Initiate smart restart to apply the event's configuration
+            // Capture individual services rather than `this` so the controller instance is not kept alive
+            // by SmartRestartService for the duration of the restart (which can take several minutes).
+            var storageService = _storageService;
+            var webhookService = _webhookService;
+            var logger = _logger;
             var restartInitiated = _smartRestartService.InitiateRestart(
                 eventToActivate,
-                OnManualEventActivated);
+                @event => OnManualEventActivated(@event, storageService, webhookService, logger));
 
             if (!restartInitiated)
             {
@@ -274,65 +279,45 @@ public class EventsController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Callback invoked when a manually activated event completes activation.
-    /// Marks the event as active in the schedule and sends webhook to Laravel.
-    /// </summary>
-    private void OnManualEventActivated(Event @event)
+    private static void OnManualEventActivated(
+        Event @event,
+        EventStorageService storageService,
+        WreckfestWebWebhookService webhookService,
+        ILogger logger)
     {
         try
         {
-            _logger.LogInformation(
+            logger.LogInformation(
                 "Manual event activation completed for {EventName} (ID: {EventId})",
                 @event.Name,
                 @event.Id);
 
-            // 3. Mark the event as active in the schedule
-            var schedule = _storageService.LoadSchedule();
+            var schedule = storageService.LoadSchedule();
             var activated = schedule.ActivateEvent(@event.Id);
 
             if (!activated)
             {
-                _logger.LogWarning(
+                logger.LogWarning(
                     "Event {EventName} (ID {EventId}) not found in schedule when marking as active",
                     @event.Name,
                     @event.Id);
             }
             else
             {
-                // Save updated schedule with active flag
-                var saved = _storageService.SaveSchedule(schedule);
+                var saved = storageService.SaveSchedule(schedule);
                 if (saved)
-                {
-                    _logger.LogInformation(
-                        "Marked event {EventName} (ID {EventId}) as active in schedule",
-                        @event.Name,
-                        @event.Id);
-                }
+                    logger.LogInformation("Marked event {EventName} (ID {EventId}) as active in schedule", @event.Name, @event.Id);
                 else
-                {
-                    _logger.LogError(
-                        "Failed to save schedule after marking event {EventName} (ID {EventId}) as active",
-                        @event.Name,
-                        @event.Id);
-                }
+                    logger.LogError("Failed to save schedule after marking event {EventName} (ID {EventId}) as active", @event.Name, @event.Id);
             }
 
-            // 4. Call back to Laravel webhook
-            _ = _webhookService.SendEventActivatedAsync(@event.Id, @event.Name);
+            _ = webhookService.SendEventActivatedAsync(@event.Id, @event.Name);
 
-            _logger.LogInformation(
-                "Manual event activation workflow completed for {EventName} (ID {EventId})",
-                @event.Name,
-                @event.Id);
+            logger.LogInformation("Manual event activation workflow completed for {EventName} (ID {EventId})", @event.Name, @event.Id);
         }
         catch (Exception ex)
         {
-            _logger.LogError(
-                ex,
-                "Error in manual event activation callback for {EventName} (ID {EventId})",
-                @event.Name,
-                @event.Id);
+            logger.LogError(ex, "Error in manual event activation callback for {EventName} (ID {EventId})", @event.Name, @event.Id);
         }
     }
 
@@ -402,13 +387,13 @@ public class EventsController : ControllerBase
                 }
             }
 
-            // Validate recurring pattern if present
-            if (evt.RecurringPattern != null)
+            // Validate repeat schedule if present
+            if (evt.Repeat != null)
             {
-                if (evt.RecurringPattern.Type == RecurringType.Weekly &&
-                    (evt.RecurringPattern.Days == null || evt.RecurringPattern.Days.Count == 0))
+                if (evt.Repeat.IsWeekly &&
+                    (evt.Repeat.Days == null || evt.Repeat.Days.Count == 0))
                 {
-                    errors.Add($"Event {i} (ID {evt.Id}): Weekly recurring events must specify at least one day");
+                    errors.Add($"Event {i} (ID {evt.Id}): Weekly repeating events must specify at least one day");
                 }
             }
         }

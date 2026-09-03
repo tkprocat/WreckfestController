@@ -27,7 +27,7 @@ public class RecurringEventServiceTests
             Id = 1,
             Name = "One-time Event",
             StartTime = DateTime.UtcNow,
-            RecurringPattern = null
+            Repeat = null
         };
 
         // Act
@@ -47,10 +47,10 @@ public class RecurringEventServiceTests
             Id = 1,
             Name = "Daily Event",
             StartTime = baseTime,
-            RecurringPattern = new RecurringPattern
+            Repeat = new RepeatSchedule
             {
-                Type = RecurringType.Daily,
-                Time = new TimeSpan(15, 0, 0) // 3:00 PM
+                Frequency = "daily",
+                Time = "15:00" // 3:00 PM
             }
         };
 
@@ -74,10 +74,10 @@ public class RecurringEventServiceTests
             Id = 1,
             Name = "Daily Event",
             StartTime = baseTime,
-            RecurringPattern = new RecurringPattern
+            Repeat = new RepeatSchedule
             {
-                Type = RecurringType.Daily,
-                Time = new TimeSpan(15, 0, 0) // 3:00 PM
+                Frequency = "daily",
+                Time = "15:00" // 3:00 PM
             }
         };
 
@@ -101,11 +101,11 @@ public class RecurringEventServiceTests
             Id = 1,
             Name = "Weekly Wednesday Event",
             StartTime = wednesday,
-            RecurringPattern = new RecurringPattern
+            Repeat = new RepeatSchedule
             {
-                Type = RecurringType.Weekly,
+                Frequency = "weekly",
                 Days = new List<int> { 3 }, // Wednesday
-                Time = new TimeSpan(15, 0, 0) // 3:00 PM
+                Time = "15:00" // 3:00 PM
             }
         };
 
@@ -129,11 +129,11 @@ public class RecurringEventServiceTests
             Id = 1,
             Name = "Weekly Wednesday Event",
             StartTime = wednesday,
-            RecurringPattern = new RecurringPattern
+            Repeat = new RepeatSchedule
             {
-                Type = RecurringType.Weekly,
+                Frequency = "weekly",
                 Days = new List<int> { 3 }, // Wednesday
-                Time = new TimeSpan(15, 0, 0) // 3:00 PM
+                Time = "15:00" // 3:00 PM
             }
         };
 
@@ -158,11 +158,11 @@ public class RecurringEventServiceTests
             Id = 1,
             Name = "Weekly Friday Event",
             StartTime = monday,
-            RecurringPattern = new RecurringPattern
+            Repeat = new RepeatSchedule
             {
-                Type = RecurringType.Weekly,
+                Frequency = "weekly",
                 Days = new List<int> { 5 }, // Friday
-                Time = new TimeSpan(15, 0, 0) // 3:00 PM
+                Time = "15:00" // 3:00 PM
             }
         };
 
@@ -187,11 +187,11 @@ public class RecurringEventServiceTests
             Id = 1,
             Name = "Multi-day Event",
             StartTime = monday,
-            RecurringPattern = new RecurringPattern
+            Repeat = new RepeatSchedule
             {
-                Type = RecurringType.Weekly,
+                Frequency = "weekly",
                 Days = new List<int> { 3, 5 }, // Wednesday and Friday
-                Time = new TimeSpan(15, 0, 0) // 3:00 PM
+                Time = "15:00" // 3:00 PM
             }
         };
 
@@ -213,11 +213,11 @@ public class RecurringEventServiceTests
             Id = 1,
             Name = "Invalid Weekly Event",
             StartTime = DateTime.UtcNow,
-            RecurringPattern = new RecurringPattern
+            Repeat = new RepeatSchedule
             {
-                Type = RecurringType.Weekly,
+                Frequency = "weekly",
                 Days = new List<int>(), // No days specified
-                Time = new TimeSpan(15, 0, 0)
+                Time = "15:00"
             }
         };
 
@@ -229,41 +229,17 @@ public class RecurringEventServiceTests
     }
 
     [Fact]
-    public void CalculateNextInstance_OccurrencesLimitReached_ReturnsNull()
+    public void GetRepeatDescription_DailySchedule()
     {
         // Arrange
-        var evt = new Event
+        var repeat = new RepeatSchedule
         {
-            Id = 1,
-            Name = "Limited Event",
-            StartTime = DateTime.UtcNow,
-            RecurringPattern = new RecurringPattern
-            {
-                Type = RecurringType.Daily,
-                Time = new TimeSpan(15, 0, 0),
-                Occurrences = 0 // Limit reached
-            }
+            Frequency = "daily",
+            Time = "15:30"
         };
 
         // Act
-        var result = _service.CalculateNextInstance(evt);
-
-        // Assert
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public void GetRecurringDescription_DailyPattern()
-    {
-        // Arrange
-        var pattern = new RecurringPattern
-        {
-            Type = RecurringType.Daily,
-            Time = new TimeSpan(15, 30, 0)
-        };
-
-        // Act
-        var description = _service.GetRecurringDescription(pattern);
+        var description = _service.GetRepeatDescription(repeat);
 
         // Assert
         Assert.Contains("Daily", description);
@@ -271,18 +247,18 @@ public class RecurringEventServiceTests
     }
 
     [Fact]
-    public void GetRecurringDescription_WeeklyPattern()
+    public void GetRepeatDescription_WeeklySchedule()
     {
         // Arrange
-        var pattern = new RecurringPattern
+        var repeat = new RepeatSchedule
         {
-            Type = RecurringType.Weekly,
+            Frequency = "weekly",
             Days = new List<int> { 1, 3, 5 }, // Mon, Wed, Fri
-            Time = new TimeSpan(20, 0, 0)
+            Time = "20:00"
         };
 
         // Act
-        var description = _service.GetRecurringDescription(pattern);
+        var description = _service.GetRepeatDescription(repeat);
 
         // Assert
         Assert.Contains("Weekly", description);
@@ -293,13 +269,13 @@ public class RecurringEventServiceTests
     }
 
     [Fact]
-    public void GetRecurringDescription_NullPattern()
+    public void GetRepeatDescription_NullSchedule()
     {
         // Act
-        var description = _service.GetRecurringDescription(null!);
+        var description = _service.GetRepeatDescription(null);
 
         // Assert
-        Assert.Equal("Does not recur", description);
+        Assert.Equal("Does not repeat", description);
     }
 
     [Fact]
@@ -315,7 +291,7 @@ public class RecurringEventServiceTests
             Id = 1,
             Name = "One-time Event",
             StartTime = DateTime.UtcNow,
-            RecurringPattern = null
+            Repeat = null
         };
 
         // Act
@@ -339,11 +315,11 @@ public class RecurringEventServiceTests
             Id = 1,
             Name = "Weekly Monday Event",
             StartTime = friday,
-            RecurringPattern = new RecurringPattern
+            Repeat = new RepeatSchedule
             {
-                Type = RecurringType.Weekly,
+                Frequency = "weekly",
                 Days = new List<int> { 1 }, // Monday
-                Time = new TimeSpan(15, 0, 0) // 3:00 PM
+                Time = "15:00" // 3:00 PM
             }
         };
 

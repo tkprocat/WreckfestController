@@ -15,7 +15,7 @@ Part of the WreckfestWeb ecosystem - integrates with [WreckfestWeb](https://gith
 - **🔄 SteamCmd Integration** - Automatic server updates
 - **📡 WreckfestWeb Webhooks** - Player events, track changes, event activation
 - **📝 Swagger UI** - Interactive API documentation
-- **✅ Comprehensive Tests** - 79+ unit tests covering all functionality
+- **✅ Comprehensive Tests** - 169+ unit tests covering all functionality
 
 ## Installation
 
@@ -28,11 +28,11 @@ Part of the WreckfestWeb ecosystem - integrates with [WreckfestWeb](https://gith
 ## Requirements
 
 ### For Pre-compiled Releases
-- .NET 8.0 Runtime ([Download](https://dotnet.microsoft.com/download/dotnet/8.0))
+- .NET 10.0 Runtime ([Download](https://dotnet.microsoft.com/download/dotnet/10.0))
 - Wreckfest Dedicated Server
 
 ### For Building from Source
-- .NET 8.0 SDK or later
+- .NET 10.0 SDK or later
 - Visual Studio 2022 (recommended) or Visual Studio Code
 - Wreckfest Dedicated Server
 
@@ -88,8 +88,6 @@ For detailed configuration options, see [INSTALL.md](INSTALL.md).
 - Use F5 to start debugging
 - Step through code with F10 (Step Over) or F11 (Step Into)
 - View variables in the Locals, Autos, and Watch windows
-
-**💡 For more Visual Studio 2022 tips and shortcuts, see [VS2022_TIPS.md](VS2022_TIPS.md)**
 
 ## Running the Application
 
@@ -328,7 +326,7 @@ All tests should pass before committing:
 dotnet test
 ```
 
-Current test coverage: 51+ tests covering:
+Current test coverage: 169+ tests covering:
 - Server control operations
 - Player tracking (including multi-word names)
 - Configuration management

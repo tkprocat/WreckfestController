@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using WreckfestController.Controllers;
@@ -12,6 +13,7 @@ namespace WreckfestController.Tests.Controllers;
 public class ConfigControllerTests
 {
     private readonly Mock<ConfigService> _mockConfigService;
+    private readonly Mock<ServerManager> _mockServerManager;
     private readonly Mock<ILogger<ConfigController>> _mockLogger;
     private readonly ConfigController _controller;
 
@@ -20,9 +22,29 @@ public class ConfigControllerTests
         var mockConfiguration = new Mock<Microsoft.Extensions.Configuration.IConfiguration>();
         var mockConfigLogger = new Mock<ILogger<ConfigService>>();
 
+        var mockWebhookService = new Mock<WreckfestWebWebhookService>(
+            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<HttpClient>());
+        var playerTracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhookService.Object);
+        var trackChangeTracker = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhookService.Object);
+        var serverInfoTracker = new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>());
+        var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
         _mockConfigService = new Mock<ConfigService>(mockConfiguration.Object, mockConfigLogger.Object) { CallBase = false };
+        _mockServerManager = new Mock<ServerManager>(
+            Mock.Of<Microsoft.Extensions.Configuration.IConfiguration>(),
+            Mock.Of<ILogger<ServerManager>>(),
+            playerTracker,
+            trackChangeTracker,
+            serverInfoTracker,
+            mockWebhookService.Object,
+            consoleLogSender.Object) { CallBase = false };
         _mockLogger = new Mock<ILogger<ConfigController>>();
-        _controller = new ConfigController(_mockConfigService.Object, _mockLogger.Object);
+        _controller = new ConfigController(_mockConfigService.Object, _mockServerManager.Object, _mockLogger.Object);
     }
 
     [Fact]

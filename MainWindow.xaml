@@ -1,0 +1,104 @@
+<Window x:Class="WreckfestController.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        xmlns:views="clr-namespace:WreckfestController.Views"
+        Title="Wreckfest Server Console" Height="720" Width="1280"
+        Background="Transparent"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        ResizeMode="CanResizeWithGrip">
+    <Border Background="{StaticResource BackgroundDark}"
+            BorderBrush="#ff8c00"
+            BorderThickness="1"
+            CornerRadius="8">
+        <materialDesign:DialogHost Identifier="RootDialog">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/> <!-- Custom titlebar -->
+                    <RowDefinition Height="*"/>    <!-- Main content -->
+                </Grid.RowDefinitions>
+
+            <!-- Custom Titlebar -->
+            <Grid Grid.Row="0"
+                  Background="{StaticResource BackgroundMedium}"
+                  Height="35"
+                  MouseLeftButtonDown="Window_MouseLeftButtonDown">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Title with icon -->
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0">
+                    <materialDesign:PackIcon Kind="Wrench"
+                                            Width="16" Height="16"
+                                            Foreground="{StaticResource TextPrimary}"
+                                            VerticalAlignment="Center"
+                                            Margin="0,0,8,0"/>
+                    <TextBlock x:Name="TitleBarText" Text="Wreckfest Server Console"
+                               Foreground="{StaticResource TextPrimary}"
+                               VerticalAlignment="Center"
+                               FontSize="13"/>
+                </StackPanel>
+
+                <!-- Window control buttons -->
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button x:Name="MinimizeButton"
+                            Content="─"
+                            Click="MinimizeButton_Click"
+                            Width="46" Height="35"
+                            Style="{StaticResource MaterialDesignFlatButton}"
+                            Foreground="{StaticResource TextPrimary}"/>
+                    <Button x:Name="MaximizeButton"
+                            Content="□"
+                            Click="MaximizeButton_Click"
+                            Width="46" Height="35"
+                            Style="{StaticResource MaterialDesignFlatButton}"
+                            Foreground="{StaticResource TextPrimary}"/>
+                    <Button x:Name="CloseButton"
+                            Content="✕"
+                            Click="CloseButton_Click"
+                            Width="46" Height="35"
+                            Style="{StaticResource MaterialDesignFlatButton}"
+                            Foreground="{StaticResource TextPrimary}"/>
+                </StackPanel>
+            </Grid>
+
+            <!-- Main Content -->
+            <TabControl Grid.Row="1" Background="{StaticResource BackgroundDark}" Margin="10">
+                <!-- Server Control Tab -->
+                <TabItem Header="Server Control">
+                    <ContentControl x:Name="ServerControlTabContent"/>
+                </TabItem>
+
+                <!-- Players Tab -->
+                <TabItem Header="Players">
+                    <ContentControl x:Name="PlayersTabContent"/>
+                </TabItem>
+
+                <!-- Controller Log Tab -->
+                <TabItem Header="Controller Log">
+                    <ContentControl x:Name="ControllerLogTabContent"/>
+                </TabItem>
+
+                <!-- Event Scheduler Tab -->
+                <TabItem Header="Event Scheduler">
+                    <ContentControl x:Name="EventSchedulerTabContent"/>
+                </TabItem>
+
+                <!-- Process Manager Tab -->
+                <TabItem Header="Process Manager">
+                    <ContentControl x:Name="StatusTabContent"/>
+                </TabItem>
+
+                <!-- Configuration Tab -->
+                <TabItem Header="Configuration">
+                    <ContentControl x:Name="ConfigurationTabContent"/>
+                </TabItem>
+            </TabControl>
+
+            </Grid> <!-- Root Grid with titlebar -->
+        </materialDesign:DialogHost>
+    </Border> <!-- Window border -->
+</Window>

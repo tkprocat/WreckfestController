@@ -1,0 +1,79 @@
+<UserControl x:Class="WreckfestController.Views.ControllerLogTab"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             Background="{StaticResource BackgroundDark}">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+            <materialDesign:PackIcon Kind="TextBox"
+                                    Width="24"
+                                    Height="24"
+                                    Foreground="{StaticResource BlueColor}"
+                                    VerticalAlignment="Center"
+                                    Margin="0,0,10,0"/>
+            <TextBlock Text="Controller Log"
+                      FontSize="16"
+                      FontWeight="Bold"
+                      Foreground="{StaticResource TextPrimary}"
+                      VerticalAlignment="Center"/>
+            <TextBlock x:Name="LogCountText"
+                      Text="(0 entries)"
+                      FontSize="12"
+                      Foreground="{StaticResource TextSecondary}"
+                      VerticalAlignment="Center"
+                      Margin="10,0,0,0"/>
+        </StackPanel>
+
+        <!-- Log Display -->
+        <Border Grid.Row="1"
+                BorderBrush="{StaticResource BorderColor}"
+                BorderThickness="1"
+                Background="{StaticResource BackgroundMedium}">
+            <ScrollViewer x:Name="LogScrollView"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto">
+                <TextBox x:Name="LogTextBox"
+                        FontFamily="Consolas"
+                        FontSize="12"
+                        Foreground="{StaticResource TextPrimary}"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        IsReadOnly="True"
+                        TextWrapping="NoWrap"
+                        VerticalAlignment="Top"
+                        Padding="10"
+                        VerticalScrollBarVisibility="Disabled"
+                        HorizontalScrollBarVisibility="Disabled"/>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Controls -->
+        <StackPanel Grid.Row="2"
+                   Orientation="Horizontal"
+                   HorizontalAlignment="Right"
+                   Margin="0,10,0,0">
+            <!-- Auto-scroll checkbox -->
+            <CheckBox x:Name="AutoScrollCheckBox"
+                     Content="Auto-scroll"
+                     IsChecked="True"
+                     Foreground="{StaticResource TextPrimary}"
+                     VerticalAlignment="Center"
+                     Margin="0,0,15,0"/>
+
+            <!-- Clear button -->
+            <Button Content="CLEAR LOG"
+                   Background="{StaticResource BorderColor}"
+                   Foreground="White"
+                   Click="OnClearLogClicked"
+                   Padding="15,8"
+                   FontWeight="SemiBold"/>
+        </StackPanel>
+    </Grid>
+</UserControl>

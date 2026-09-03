@@ -1,20 +1,58 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <LangVersion>14.0</LangVersion>
 
-    <!-- Single file publishing configuration -->
+    <!-- Disable auto-generated Main method from App.xaml -->
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+
+    <!-- Application info -->
+    <ApplicationTitle>Wreckfest Controller</ApplicationTitle>
+    <Version>1.0.0</Version>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <GenerateAssemblyVersionAttribute>false</GenerateAssemblyVersionAttribute>
+    <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
+    <GenerateAssemblyInformationalVersionAttribute>false</GenerateAssemblyInformationalVersionAttribute>
+    <Deterministic>false</Deterministic>
+
+    <!-- Single-file, framework-dependent publishing configuration -->
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>false</SelfContained>
-    <IncludeNativeLibrariesForSelfContained>true</IncludeNativeLibrariesForSelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+  </PropertyGroup>
+
+  <!-- Release configuration: exclude debug symbols and unnecessary files -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <!-- Disable OpenAPI document generation during build -->
+  <PropertyGroup>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
-    <PackageReference Include="System.Management" Version="8.0.0" />
+    <!-- Windows Services support -->
+    <PackageReference Include="MaterialDesignThemes" Version="5.3.2" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.11" />
+
+    <!-- System packages -->
+    <PackageReference Include="System.Management" Version="10.0.11" />
+  </ItemGroup>
+
+  <!-- Framework references for ASP.NET Core -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
@@ -24,5 +62,75 @@
     <None Remove="WreckfestController.Tests\**" />
   </ItemGroup>
 
+  <!-- Exclude old MAUI files and directories -->
+  <ItemGroup>
+    <Compile Remove="UI\**" />
+    <Compile Remove="Resources\**" />
+    <Compile Remove="Platforms\**" />
+    <EmbeddedResource Remove="UI\**" />
+    <EmbeddedResource Remove="Resources\**" />
+    <EmbeddedResource Remove="Platforms\**" />
+    <None Remove="UI\**" />
+    <None Remove="Resources\**" />
+    <None Remove="Platforms\**" />
+    <Page Remove="UI\**" />
+    <Page Remove="Resources\**" />
+    <Page Remove="Platforms\**" />
+  </ItemGroup>
+
+  <!-- Include appsettings.json so published installs retain default vote tracks. -->
+  <ItemGroup>
+    <Content Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <Content Update="appsettings.example.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+    <None Update="appsettings.example.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Always" />
+  </ItemGroup>
+
+  <!-- Auto-generate version based on build date -->
+  <Target Name="GenerateVersionInfo" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <BuildDate>$([System.DateTime]::UtcNow.ToString("yyyy.MMdd.HHmm"))</BuildDate>
+      <VersionPrefix>1.0</VersionPrefix>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <AssemblyAttributes Include="AssemblyVersion">
+        <_Parameter1>$(VersionPrefix).0.0</_Parameter1>
+      </AssemblyAttributes>
+      <AssemblyAttributes Include="AssemblyFileVersion">
+        <_Parameter1>$(BuildDate)</_Parameter1>
+      </AssemblyAttributes>
+      <AssemblyAttributes Include="AssemblyInformationalVersion">
+        <_Parameter1>$(VersionPrefix).$(BuildDate)</_Parameter1>
+      </AssemblyAttributes>
+    </ItemGroup>
+
+    <WriteCodeFragment Language="C#" OutputFile="$(IntermediateOutputPath)VersionInfo.cs" AssemblyAttributes="@(AssemblyAttributes)" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)VersionInfo.cs" />
+    </ItemGroup>
+  </Target>
+
+  <Target Name="CopyWreckfestConsoleHook" AfterTargets="Build">
+    <ItemGroup>
+      <WreckfestConsoleHookDll Include="NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll" Condition="Exists('NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WreckfestConsoleHookDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="'@(WreckfestConsoleHookDll)' != ''" />
+  </Target>
+
+  <Target Name="CopyWreckfestConsoleHookToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <WreckfestConsoleHookDll Include="NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll" Condition="Exists('NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WreckfestConsoleHookDll)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'@(WreckfestConsoleHookDll)' != '' And '$(PublishDir)' != ''" />
+  </Target>
+
+  <Target Name="CopyAppSettingsToPublish" AfterTargets="Publish">
+    <ItemGroup>
+      <AppSettingsFiles Include="$(MSBuildProjectDirectory)\appsettings.json" />
+      <AppSettingsFiles Include="$(MSBuildProjectDirectory)\appsettings.example.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AppSettingsFiles)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'@(AppSettingsFiles)' != '' And '$(PublishDir)' != ''" />
+  </Target>
 
 </Project>

@@ -12,6 +12,7 @@ public class SmartRestartService
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ConfigService _configService;
+    private readonly WreckfestWebWebhookService _webhookService;
     private readonly ILogger<SmartRestartService> _logger;
 
     private SmartRestartState _state = SmartRestartState.Idle;
@@ -33,16 +34,18 @@ public class SmartRestartService
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ConfigService configService,
+        WreckfestWebWebhookService webhookService,
         ILogger<SmartRestartService> logger)
     {
         _serverManager = serverManager;
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
         _configService = configService;
+        _webhookService = webhookService;
         _logger = logger;
 
         // Subscribe to track changes
-        _trackChangeTracker.SubscribeToTrackChange(OnTrackChanged);
+        _trackChangeTracker.TrackChanged += OnTrackChanged;
     }
 
     /// <summary>
@@ -75,6 +78,7 @@ public class SmartRestartService
     /// <returns>True if restart was initiated, false if already in progress</returns>
     public bool InitiateRestart(Event @event, Action<Event> onComplete)
     {
+        bool startImmediately;
         lock (_stateLock)
         {
             if (_state != SmartRestartState.Idle)
@@ -94,31 +98,37 @@ public class SmartRestartService
             _pendingEvent = @event;
             _onRestartCompleteCallback = onComplete;
 
-            // Check if anyone is online
-            var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
-
-            if (onlinePlayers == 0)
+            // Check if any real players are online (excludes bots)
+            if (!_playerTracker.HasPlayersOnline())
             {
-                _logger.LogInformation("No players online - restarting immediately");
-                _ = Task.Run(() => ExecuteRestartAsync());
-                return true;
+                _logger.LogInformation("No real players online (only bots or empty) - skipping countdown and restarting immediately");
+                _state = SmartRestartState.Pending; // Set state so ExecuteRestartAsync doesn't early-return
+                startImmediately = true;
             }
+            else
+            {
+                // Real players are online - start countdown
+                var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
+                _logger.LogInformation("{PlayerCount} real players online - starting {Minutes}-minute countdown", onlinePlayers, CountdownMinutes);
+                _state = SmartRestartState.Warning;
+                _countdownMinutesRemaining = CountdownMinutes;
+                _countdownStartTime = DateTime.UtcNow;
 
-            // Players are online - start countdown
-            _logger.LogInformation("{PlayerCount} players online - starting {Minutes}-minute countdown", onlinePlayers, CountdownMinutes);
-            _state = SmartRestartState.Warning;
-            _countdownMinutesRemaining = CountdownMinutes;
-            _countdownStartTime = DateTime.UtcNow;
+                // Start countdown timer (fires every minute)
+                _countdownTimer = new System.Threading.Timer(
+                    OnCountdownTick,
+                    null,
+                    TimeSpan.Zero,
+                    TimeSpan.FromMinutes(1));
 
-            // Start countdown timer (fires every minute)
-            _countdownTimer = new System.Threading.Timer(
-                OnCountdownTick,
-                null,
-                TimeSpan.Zero,
-                TimeSpan.FromMinutes(1));
-
-            return true;
+                startImmediately = false;
+            }
         }
+
+        if (startImmediately)
+            _ = Task.Run(() => ExecuteRestartAsync());
+
+        return true;
     }
 
     /// <summary>
@@ -137,6 +147,25 @@ public class SmartRestartService
 
                 _ = SendServerMessageAsync(message);
 
+                // Send webhook notification
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _webhookService.SendServerRestartPendingAsync(new Models.ServerRestartPendingEvent
+                        {
+                            MinutesRemaining = _countdownMinutesRemaining,
+                            EventName = _pendingEvent?.Name,
+                            EventId = _pendingEvent?.Id,
+                            ScheduledRestartTime = _countdownStartTime.AddMinutes(CountdownMinutes)
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Failed to send server restart pending webhook");
+                    }
+                });
+
                 _countdownMinutesRemaining--;
 
                 if (_countdownMinutesRemaining == 0)
@@ -152,6 +181,25 @@ public class SmartRestartService
 
                     // Send final message
                     _ = SendServerMessageAsync("Server will restart at the next lobby.");
+
+                    // Send webhook notification for pending state (0 minutes)
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await _webhookService.SendServerRestartPendingAsync(new Models.ServerRestartPendingEvent
+                            {
+                                MinutesRemaining = 0,
+                                EventName = _pendingEvent?.Name,
+                                EventId = _pendingEvent?.Id,
+                                ScheduledRestartTime = DateTime.UtcNow
+                            });
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Failed to send server restart pending webhook");
+                        }
+                    });
 
                     // Start checking for lobby opportunity
                     _countdownTimer = new System.Threading.Timer(
@@ -169,41 +217,42 @@ public class SmartRestartService
     /// </summary>
     private void OnLobbyCheckTick(object? state)
     {
+        bool shouldRestart = false;
         lock (_stateLock)
         {
             if (_state != SmartRestartState.Pending)
-            {
                 return;
-            }
 
-            // Check if we've exceeded max wait time
             var waitDuration = DateTime.UtcNow - _waitStartTime;
             if (waitDuration.TotalMinutes >= MaxWaitMinutes)
             {
                 _logger.LogWarning(
                     "Max wait time ({Minutes} minutes) exceeded - forcing restart",
                     MaxWaitMinutes);
-
                 _ = SendServerMessageAsync("Server restarting now (timeout).");
-                _ = Task.Run(() => ExecuteRestartAsync());
-                return;
+                shouldRestart = true;
             }
-
-            // Check if all players left
-            var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
-            if (onlinePlayers == 0)
+            else
             {
-                _logger.LogInformation("All players left - restarting immediately");
-                _ = Task.Run(() => ExecuteRestartAsync());
-                return;
+                var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
+                if (onlinePlayers == 0)
+                {
+                    _logger.LogInformation("All players left - restarting immediately");
+                    shouldRestart = true;
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "Still waiting for lobby. {OnlinePlayers} players online. Waited {Minutes:F1} of {MaxMinutes} minutes.",
+                        onlinePlayers,
+                        waitDuration.TotalMinutes,
+                        MaxWaitMinutes);
+                }
             }
-
-            _logger.LogDebug(
-                "Still waiting for lobby. {OnlinePlayers} players online. Waited {Minutes:F1} of {MaxMinutes} minutes.",
-                onlinePlayers,
-                waitDuration.TotalMinutes,
-                MaxWaitMinutes);
         }
+
+        if (shouldRestart)
+            _ = Task.Run(() => ExecuteRestartAsync());
     }
 
     /// <summary>
@@ -211,6 +260,7 @@ public class SmartRestartService
     /// </summary>
     private void OnTrackChanged(TrackChangeEvent trackChangeEvent)
     {
+        bool shouldRestart = false;
         lock (_stateLock)
         {
             if (_state == SmartRestartState.Pending)
@@ -218,11 +268,13 @@ public class SmartRestartService
                 _logger.LogInformation(
                     "Track changed to {TrackId} - lobby detected, initiating restart",
                     trackChangeEvent.TrackId);
-
                 _ = SendServerMessageAsync("Server restarting now.");
-                _ = Task.Run(() => ExecuteRestartAsync());
+                shouldRestart = true;
             }
         }
+
+        if (shouldRestart)
+            _ = Task.Run(() => ExecuteRestartAsync());
     }
 
     /// <summary>
@@ -261,12 +313,12 @@ public class SmartRestartService
         try
         {
             _logger.LogInformation(
-                "Restarting server for event: {EventName} (ID: {EventId})",
+                "Executing restart for event: {EventName} (ID: {EventId})",
                 eventToActivate.Name,
                 eventToActivate.Id);
 
-            // Restart the server
-            var restartResult = await _serverManager.RestartServerAsync();
+            // Restart the server using in-game /restart command (faster and cleaner)
+            var restartResult = await _serverManager.RestartServerViaCommandAsync();
             if (!restartResult.Success)
             {
                 _logger.LogError("Server restart failed: {Message}", restartResult.Message);
@@ -278,14 +330,6 @@ public class SmartRestartService
 
             // Wait a moment for server to stabilize
             await Task.Delay(2000);
-
-            // Apply event configuration
-            var configApplied = await ApplyEventConfigurationAsync(eventToActivate);
-            if (!configApplied)
-            {
-                _logger.LogError("Failed to apply event configuration");
-                // Continue anyway - restart succeeded
-            }
 
             _logger.LogInformation("Event {EventName} activated successfully", eventToActivate.Name);
 
@@ -306,75 +350,6 @@ public class SmartRestartService
         {
             _logger.LogError(ex, "Error during restart execution");
             ResetState();
-        }
-    }
-
-    /// <summary>
-    /// Applies the event's server configuration
-    /// </summary>
-    private async Task<bool> ApplyEventConfigurationAsync(Event @event)
-    {
-        try
-        {
-            _logger.LogInformation("Applying configuration for event: {EventName}", @event.Name);
-
-            // Read current config
-            var currentConfig = _configService.ReadBasicConfig();
-
-            // Apply server config overrides if present
-            if (@event.ServerConfig != null)
-            {
-                var eventConfig = @event.ServerConfig;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.ServerName))
-                    currentConfig.ServerName = eventConfig.ServerName;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.WelcomeMessage))
-                    currentConfig.WelcomeMessage = eventConfig.WelcomeMessage;
-
-                if (eventConfig.Password != null)
-                    currentConfig.Password = eventConfig.Password;
-
-                if (eventConfig.MaxPlayers.HasValue)
-                    currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value;
-
-                if (eventConfig.Bots.HasValue)
-                    currentConfig.Bots = eventConfig.Bots.Value;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.AiDifficulty))
-                    currentConfig.AiDifficulty = eventConfig.AiDifficulty;
-
-                if (eventConfig.Laps.HasValue)
-                    currentConfig.Laps = eventConfig.Laps.Value;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.VehicleDamage))
-                    currentConfig.VehicleDamage = eventConfig.VehicleDamage;
-
-                if (eventConfig.LobbyCountdown.HasValue)
-                    currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value;
-
-                // Write updated config
-                _configService.WriteBasicConfig(currentConfig);
-                _logger.LogInformation("Server configuration updated");
-            }
-
-            // Apply track rotation if present
-            if (@event.Tracks != null && @event.Tracks.Count > 0)
-            {
-                var collectionName = string.IsNullOrWhiteSpace(@event.CollectionName)
-                    ? $"Event: {@event.Name}"
-                    : @event.CollectionName;
-
-                _configService.WriteEventLoopTracks(collectionName, @event.Tracks);
-                _logger.LogInformation("Track rotation updated with {Count} tracks", @event.Tracks.Count);
-            }
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error applying event configuration");
-            return false;
         }
     }
 

@@ -58,10 +58,11 @@ public class Event
     public string CollectionName { get; set; } = string.Empty;
 
     /// <summary>
-    /// Optional recurring pattern for automatic rescheduling after activation
+    /// Optional recurring schedule for automatic rescheduling after activation.
+    /// Null for single-occurrence events.
     /// </summary>
-    [JsonPropertyName("recurringPattern")]
-    public RecurringPattern? RecurringPattern { get; set; }
+    [JsonPropertyName("repeat")]
+    public RepeatSchedule? Repeat { get; set; }
 }
 
 /// <summary>
@@ -128,49 +129,53 @@ public class EventServerConfig
 }
 
 /// <summary>
-/// Defines how an event should recur after activation
+/// Defines how an event should recur after activation.
+/// Matches the Laravel event schedule format.
 /// </summary>
-public class RecurringPattern
+public class RepeatSchedule
 {
     /// <summary>
-    /// Type of recurrence (daily, weekly)
+    /// Frequency of recurrence: "daily" or "weekly"
     /// </summary>
-    [JsonPropertyName("type")]
-    public RecurringType Type { get; set; }
+    [JsonPropertyName("frequency")]
+    public string Frequency { get; set; } = "weekly";
 
     /// <summary>
     /// For weekly recurrence: list of days (0=Sunday, 1=Monday, ..., 6=Saturday)
-    /// For daily recurrence: empty or all days
+    /// For daily recurrence: can be empty or omitted
     /// </summary>
     [JsonPropertyName("days")]
-    public List<int> Days { get; set; } = new();
+    public List<int>? Days { get; set; }
 
     /// <summary>
-    /// Time of day (local time) when event should activate
+    /// Time of day when event should activate (format: "HH:MM")
     /// </summary>
     [JsonPropertyName("time")]
-    public TimeSpan Time { get; set; }
+    public string Time { get; set; } = "00:00";
 
     /// <summary>
-    /// Number of times to recur (null = infinite)
+    /// Parses the Time string into a TimeSpan
     /// </summary>
-    [JsonPropertyName("occurrences")]
-    public int? Occurrences { get; set; }
-}
-
-/// <summary>
-/// Type of recurring pattern
-/// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum RecurringType
-{
-    /// <summary>
-    /// Event recurs every day at the specified time
-    /// </summary>
-    Daily,
+    [JsonIgnore]
+    public TimeSpan TimeAsTimeSpan
+    {
+        get
+        {
+            if (TimeSpan.TryParse(Time, out var result))
+                return result;
+            return TimeSpan.Zero;
+        }
+    }
 
     /// <summary>
-    /// Event recurs on specific days of the week
+    /// Returns true if this is a daily recurring schedule
     /// </summary>
-    Weekly
+    [JsonIgnore]
+    public bool IsDaily => Frequency?.Equals("daily", StringComparison.OrdinalIgnoreCase) == true;
+
+    /// <summary>
+    /// Returns true if this is a weekly recurring schedule
+    /// </summary>
+    [JsonIgnore]
+    public bool IsWeekly => Frequency?.Equals("weekly", StringComparison.OrdinalIgnoreCase) == true;
 }

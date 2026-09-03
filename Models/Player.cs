@@ -7,10 +7,12 @@ public class Player
     public int? Score { get; set; }  // Player score from server list command
     public string? Vehicle { get; set; }  // Vehicle name from server list command
     public DateTime JoinedAt { get; set; }
-    public DateTime? LastSeenAt { get; set; }
-    public DateTime? LastOcrUpdate { get; set; }  // Timestamp of last OCR data update
-    public bool IsOnline { get; set; }
     public bool IsBot { get; set; }  // True if player is a bot (name prefixed with *)
+    public bool IsAdmin { get; set; }  // True if player is an admin (orange A suffix in list)
+    public bool IsModerator { get; set; }  // True if player is a moderator (green M suffix in list)
+
+    /// <summary>True for moderators and admins alike.</summary>
+    public bool IsPrivileged => IsAdmin || IsModerator;
     public int? Slot { get; set; }  // Player slot number if available
 }
 

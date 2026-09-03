@@ -1,0 +1,31 @@
+<Application x:Class="WreckfestController.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Material Design -->
+                <materialDesign:BundledTheme BaseTheme="Dark" PrimaryColor="Blue" SecondaryColor="Cyan" />
+                <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesign3.Defaults.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Custom colors for backward compatibility -->
+            <SolidColorBrush x:Key="BackgroundDark" Color="#0D1117"/>
+            <SolidColorBrush x:Key="BackgroundMedium" Color="#1E1E1E"/>
+            <SolidColorBrush x:Key="BorderColor" Color="#555555"/>
+            <SolidColorBrush x:Key="TextPrimary" Color="#C9D1D9"/>
+            <SolidColorBrush x:Key="TextSecondary" Color="#888888"/>
+            <SolidColorBrush x:Key="GreenColor" Color="#51CF66"/>
+            <SolidColorBrush x:Key="RedColor" Color="#FF6B6B"/>
+            <SolidColorBrush x:Key="YellowColor" Color="#FFD43B"/>
+            <SolidColorBrush x:Key="BlueColor" Color="#74C0FC"/>
+            <SolidColorBrush x:Key="ButtonGreen" Color="#238636"/>
+
+            <!-- Button-specific colors -->
+            <SolidColorBrush x:Key="ButtonRed" Color="#DC3545"/>
+            <SolidColorBrush x:Key="ButtonOrange" Color="#FD7E14"/>
+            <SolidColorBrush x:Key="ButtonLightBlue" Color="#74C0FC"/>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

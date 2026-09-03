@@ -13,7 +13,7 @@ public class EventsControllerTests
 {
     private readonly Mock<EventStorageService> _mockStorage;
     private readonly Mock<SmartRestartService> _mockSmartRestart;
-    private readonly Mock<LaravelWebhookService> _mockWebhook;
+    private readonly Mock<WreckfestWebWebhookService> _mockWebhook;
     private readonly Mock<ILogger<EventsController>> _mockLogger;
     private readonly EventsController _controller;
 
@@ -25,8 +25,8 @@ public class EventsControllerTests
             Mock.Of<ILogger<EventStorageService>>());
 
         // Setup SmartRestartService mock with all required dependencies
-        var mockWebhookServiceForTrackers = new Mock<LaravelWebhookService>(
-            Mock.Of<ILogger<LaravelWebhookService>>(),
+        var mockWebhookServiceForTrackers = new Mock<WreckfestWebWebhookService>(
+            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
             Mock.Of<IConfiguration>(),
             Mock.Of<HttpClient>());
 
@@ -38,13 +38,23 @@ public class EventsControllerTests
             Mock.Of<ILogger<TrackChangeTracker>>(),
             mockWebhookServiceForTrackers.Object);
 
+        var mockServerInfoTracker = new Mock<ServerInfoTracker>(
+            Mock.Of<ILogger<ServerInfoTracker>>());
+
+        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
         var mockServerManager = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ServerManager>>(),
-            Mock.Of<ILoggerFactory>(),
             mockPlayerTracker.Object,
-            mockTrackChangeTracker.Object);
-        
+            mockTrackChangeTracker.Object,
+            mockServerInfoTracker.Object,
+            mockWebhookServiceForTrackers.Object,
+            mockConsoleLogSender.Object);
+
         var mockConfigService = new Mock<ConfigService>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ConfigService>>());
@@ -54,11 +64,12 @@ public class EventsControllerTests
             mockPlayerTracker.Object,
             mockTrackChangeTracker.Object,
             mockConfigService.Object,
+            mockWebhookServiceForTrackers.Object,
             Mock.Of<ILogger<SmartRestartService>>());
 
-        // Setup LaravelWebhookService mock
-        _mockWebhook = new Mock<LaravelWebhookService>(
-            Mock.Of<ILogger<LaravelWebhookService>>(),
+        // Setup WreckfestWebWebhookService mock
+        _mockWebhook = new Mock<WreckfestWebWebhookService>(
+            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
             Mock.Of<IConfiguration>(),
             Mock.Of<HttpClient>());
 
@@ -168,9 +179,9 @@ public class EventsControllerTests
                     Name = "Test Event",
                     StartTime = DateTime.UtcNow.AddHours(1),
                     Tracks = new List<EventLoopTrack>(),
-                    RecurringPattern = new RecurringPattern
+                    Repeat = new RepeatSchedule
                     {
-                        Type = RecurringType.Weekly,
+                        Frequency = "weekly",
                         Days = new List<int>() // No days specified for weekly
                     }
                 }

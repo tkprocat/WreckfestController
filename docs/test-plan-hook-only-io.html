@@ -1,0 +1,667 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  html{color-scheme:light dark}
+  body{margin:0}
+  img{max-width:100%}
+  [hidden]{display:none!important}
+</style>
+<title>Hook-Only Cutover</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+:root{
+  --ground:#F5F7F8;
+  --surface:#FFFFFF;
+  --surface-2:#EDF1F2;
+  --ink:#12191B;
+  --muted:#5B686C;
+  --faint:#8A979B;
+  --line:#DCE3E5;
+  --line-strong:#C4CFD2;
+  --accent:#0F5C6B;
+  --accent-soft:#E2EDEF;
+  --pass:#2E7D32;
+  --warn:#A15C00;
+  --fail:#AE2318;
+  --pass-bg:#E7F2E8;
+  --warn-bg:#F8EEDF;
+  --fail-bg:#F8E7E5;
+  --shadow:0 1px 2px rgba(18,25,27,.06),0 8px 24px -12px rgba(18,25,27,.18);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0D1214;
+    --surface:#141C1F;
+    --surface-2:#1B2529;
+    --ink:#E7EEF0;
+    --muted:#94A5AA;
+    --faint:#6E8085;
+    --line:#243035;
+    --line-strong:#33434A;
+    --accent:#5EBCCC;
+    --accent-soft:#123037;
+    --pass:#6FC776;
+    --warn:#E0A33C;
+    --fail:#F08A80;
+    --pass-bg:#122B18;
+    --warn-bg:#2E2312;
+    --fail-bg:#301715;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0D1214;
+  --surface:#141C1F;
+  --surface-2:#1B2529;
+  --ink:#E7EEF0;
+  --muted:#94A5AA;
+  --faint:#6E8085;
+  --line:#243035;
+  --line-strong:#33434A;
+  --accent:#5EBCCC;
+  --accent-soft:#123037;
+  --pass:#6FC776;
+  --warn:#E0A33C;
+  --fail:#F08A80;
+  --pass-bg:#122B18;
+  --warn-bg:#2E2312;
+  --fail-bg:#301715;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px -12px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--ground);
+  color:var(--ink);
+  font-family:"Barlow",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:16px;
+  line-height:1.6;
+  margin:0;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:960px;margin:0 auto;padding:0 24px 96px}
+
+/* ---------- masthead ---------- */
+.mast{
+  border-bottom:2px solid var(--ink);
+  padding:56px 0 20px;
+  margin-bottom:8px;
+}
+.eyebrow{
+  font-family:"Barlow Condensed",sans-serif;
+  font-weight:600;
+  font-size:14px;
+  letter-spacing:.16em;
+  text-transform:uppercase;
+  color:var(--accent);
+  margin:0 0 10px;
+}
+h1{
+  font-family:"Barlow Condensed",sans-serif;
+  font-weight:700;
+  font-size:clamp(40px,7vw,68px);
+  line-height:.98;
+  letter-spacing:-.005em;
+  text-transform:uppercase;
+  text-wrap:balance;
+  margin:0 0 14px;
+}
+.standfirst{
+  font-size:17px;
+  color:var(--muted);
+  max-width:64ch;
+  margin:0 0 4px;
+}
+.standfirst strong{color:var(--ink);font-weight:600}
+
+/* ---------- progress rail ---------- */
+.rail{
+  position:sticky;top:0;z-index:20;
+  background:var(--ground);
+  border-bottom:1px solid var(--line);
+  padding:12px 0;
+  margin-bottom:36px;
+}
+.rail-in{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.meter{
+  flex:1 1 220px;height:8px;min-width:160px;
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  border-radius:2px;overflow:hidden;
+}
+.meter span{
+  display:block;height:100%;width:0%;
+  background:var(--accent);
+  transition:width .25s ease;
+}
+.count{
+  font-family:"JetBrains Mono",ui-monospace,monospace;
+  font-size:13px;font-variant-numeric:tabular-nums;
+  color:var(--muted);white-space:nowrap;
+}
+.count b{color:var(--ink);font-weight:600}
+button.reset{
+  font-family:"Barlow Condensed",sans-serif;
+  font-weight:600;font-size:13px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);background:transparent;
+  border:1px solid var(--line-strong);border-radius:2px;
+  padding:5px 12px;cursor:pointer;
+}
+button.reset:hover{color:var(--ink);border-color:var(--ink)}
+button.reset:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- verified strip ---------- */
+.verified{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-left:3px solid var(--pass);
+  border-radius:2px;
+  padding:20px 22px;
+  margin-bottom:44px;
+  box-shadow:var(--shadow);
+}
+.verified h2{
+  font-family:"Barlow Condensed",sans-serif;
+  font-weight:700;font-size:19px;letter-spacing:.05em;text-transform:uppercase;
+  margin:0 0 4px;
+}
+.verified .sub{color:var(--muted);font-size:14px;margin:0 0 16px}
+.tbl-scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th{
+  font-family:"Barlow Condensed",sans-serif;
+  font-weight:600;font-size:13px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--faint);text-align:left;
+  padding:0 14px 8px 0;border-bottom:1px solid var(--line);
+}
+td{padding:9px 14px 9px 0;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+.ok{color:var(--pass);font-weight:600;white-space:nowrap}
+.note-size{
+  margin:16px 0 0;padding-top:14px;border-top:1px dashed var(--line-strong);
+  font-size:14.5px;color:var(--muted);
+}
+
+/* ---------- phases ---------- */
+.phase{margin-bottom:52px;scroll-margin-top:80px}
+.phase-head{
+  display:flex;align-items:baseline;gap:14px;
+  padding-bottom:10px;margin-bottom:4px;
+  border-bottom:1px solid var(--line-strong);
+  flex-wrap:wrap;
+}
+.pnum{
+  font-family:"JetBrains Mono",monospace;
+  font-size:13px;font-weight:600;
+  color:var(--accent);
+  border:1px solid var(--accent);
+  border-radius:2px;padding:2px 7px;
+  white-space:nowrap;
+}
+.phase-head h2{
+  font-family:"Barlow Condensed",sans-serif;
+  font-weight:700;font-size:27px;letter-spacing:.01em;text-transform:uppercase;
+  margin:0;flex:1 1 auto;
+}
+.tag{
+  font-family:"Barlow Condensed",sans-serif;
+  font-weight:600;font-size:12px;letter-spacing:.1em;text-transform:uppercase;
+  padding:3px 9px;border-radius:2px;white-space:nowrap;
+}
+.tag.risk{background:var(--fail-bg);color:var(--fail)}
+.tag.gate{background:var(--warn-bg);color:var(--warn)}
+.tag.quick{background:var(--accent-soft);color:var(--accent)}
+.phase-intro{color:var(--muted);font-size:15px;margin:12px 0 20px;max-width:68ch}
+
+/* ---------- checks ---------- */
+.check{
+  display:grid;grid-template-columns:auto 1fr;gap:14px;
+  padding:14px 0;border-bottom:1px solid var(--line);
+  align-items:start;
+}
+.check:last-of-type{border-bottom:0}
+.check input[type=checkbox]{
+  appearance:none;-webkit-appearance:none;
+  width:19px;height:19px;margin:3px 0 0;
+  border:1.5px solid var(--line-strong);border-radius:2px;
+  background:var(--surface);cursor:pointer;flex:none;
+  position:relative;transition:background .12s,border-color .12s;
+}
+.check input[type=checkbox]:hover{border-color:var(--accent)}
+.check input[type=checkbox]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.check input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+.check input[type=checkbox]:checked::after{
+  content:"";position:absolute;left:5.5px;top:1.5px;
+  width:5px;height:10px;
+  border:solid var(--surface);border-width:0 2px 2px 0;
+  transform:rotate(42deg);
+}
+.body{min-width:0}
+.act{margin:0}
+.act .n{
+  font-family:"JetBrains Mono",monospace;
+  font-size:13px;color:var(--faint);margin-right:8px;
+  font-variant-numeric:tabular-nums;
+}
+.check input:checked ~ .body .act{color:var(--muted)}
+.check input:checked ~ .body .act .n{text-decoration:line-through}
+.expect{
+  margin:8px 0 0;padding:9px 12px;
+  background:var(--surface-2);
+  border-left:2px solid var(--accent);
+  border-radius:0 2px 2px 0;
+  font-size:14.5px;
+}
+.expect b{
+  font-family:"Barlow Condensed",sans-serif;
+  font-weight:600;letter-spacing:.09em;text-transform:uppercase;
+  font-size:12.5px;color:var(--accent);
+  display:block;margin-bottom:2px;
+}
+.expect.bad{border-left-color:var(--fail);background:var(--fail-bg)}
+.expect.bad b{color:var(--fail)}
+
+code{
+  font-family:"JetBrains Mono",ui-monospace,monospace;
+  font-size:.855em;
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  border-radius:2px;padding:1px 5px;
+  overflow-wrap:anywhere;
+}
+.expect code{background:var(--surface);}
+
+/* ---------- callout ---------- */
+.callout{
+  background:var(--warn-bg);
+  border:1px solid var(--warn);
+  border-radius:2px;padding:16px 18px;margin:0 0 20px;
+  font-size:15px;
+}
+.callout h3{
+  font-family:"Barlow Condensed",sans-serif;
+  font-weight:700;font-size:15px;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--warn);margin:0 0 6px;
+}
+.callout p{margin:0 0 8px}
+.callout p:last-child{margin:0}
+
+/* ---------- watch list ---------- */
+.watch{
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:2px;padding:22px 24px;box-shadow:var(--shadow);
+}
+.watch ul{margin:0;padding-left:20px}
+.watch li{margin-bottom:11px}
+.watch li:last-child{margin-bottom:0}
+
+.closing{
+  margin-top:44px;padding-top:20px;
+  border-top:2px solid var(--ink);
+  color:var(--muted);font-size:15px;max-width:68ch;
+}
+.closing strong{color:var(--ink);font-weight:600}
+
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+}
+@media (max-width:620px){
+  .mast{padding-top:36px}
+  .wrap{padding:0 18px 64px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <p class="eyebrow">WreckfestController &middot; Verification Sheet</p>
+    <h1>Hook-Only Cutover</h1>
+    <p class="standfirst">
+      Console read/write and the log-file output mode are gone. The injected DLL hook is now the
+      <strong>only</strong> input and output path. Injection stays <strong>manual</strong> &mdash; before you
+      hit INJECT, the controller can start, stop and attach to a server but has no console I/O. That is expected.
+    </p>
+  </header>
+
+  <div class="rail">
+    <div class="rail-in">
+      <div class="meter"><span id="bar"></span></div>
+      <p class="count"><b id="done">0</b> / <span id="total">0</span> checks</p>
+      <button class="reset" id="reset" type="button">Reset</button>
+    </div>
+  </div>
+
+  <section class="verified">
+    <h2>Already verified</h2>
+    <p class="sub">Confirmed during implementation. Don't spend bench time here.</p>
+    <div class="tbl-scroll">
+      <table>
+        <thead><tr><th>Check</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Automated suite</td><td class="ok">165 / 165 pass</td></tr>
+          <tr><td>Main project build</td><td class="ok">Clean</td></tr>
+          <tr><td>Native hook build (Debug + Release)</td><td class="ok">Clean, no warnings</td></tr>
+          <tr><td>All 5 RVAs vs. real <code>Wreckfest_x64.exe</code></td><td class="ok">Pass</td></tr>
+          <tr><td>Stale <code>user-settings.json</code> keys</td><td class="ok">Skipped safely</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note-size">
+      Code RVAs resolve into <code>.text</code>, data RVAs into <code>.data</code>. Observed
+      <code>SizeOfImage</code> for this build: <code>0x0B43A000</code> (188,981,248 bytes).
+    </p>
+  </section>
+
+  <!-- PHASE 1 -->
+  <section class="phase" id="p1">
+    <div class="phase-head">
+      <span class="pnum">01</span>
+      <h2>Cold start, no injection</h2>
+      <span class="tag quick">~15 min</span>
+    </div>
+    <p class="phase-intro">The degraded state you signed up for. Confirm it fails <em>cleanly</em> rather than crashing.</p>
+
+    <label class="check"><input type="checkbox" data-k="c1"><span class="body">
+      <p class="act"><span class="n">1</span>Launch the controller and open the Configuration tab.</p>
+      <p class="expect"><b>Expect</b>A "Server I/O" note. No Output Mode or Input Mode dropdowns.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c2"><span class="body">
+      <p class="act"><span class="n">2</span>Server Control &rarr; START.</p>
+      <p class="expect"><b>Expect</b>Process starts, status Running, PID populated.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c3"><span class="body">
+      <p class="act"><span class="n">3</span>Read the console pane.</p>
+      <p class="expect"><b>Expect</b>Exactly one line: <code>[Controller] Use Process Manager -&gt; INJECT to start output capture.</code> &mdash; and nothing after it.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c4"><span class="body">
+      <p class="act"><span class="n">4</span>Send any command, e.g. <code>list</code>.</p>
+      <p class="expect"><b>Expect</b>A clean failure: <code>Injected hook input failed: …</code> or <code>… timed out on &lt;pipe&gt;</code>.</p>
+      <p class="expect bad"><b>Fail signal</b>Any unhandled exception, UI freeze, or a command that reports success with no hook attached.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c5"><span class="body">
+      <p class="act"><span class="n">5</span>Hit <code>GET /api/server/status</code>, then <code>GET /api/server/logfile?lines=50</code>.</p>
+      <p class="expect"><b>Expect</b>Status correct; the logfile endpoint <em>still returns content</em>. It was deliberately kept when the log-file monitoring mode was removed.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c6"><span class="body">
+      <p class="act"><span class="n">6</span>STOP.</p>
+      <p class="expect"><b>Expect</b>Process tree killed, status Stopped.</p>
+    </span></label>
+  </section>
+
+  <!-- PHASE 2 -->
+  <section class="phase" id="p2">
+    <div class="phase-head">
+      <span class="pnum">02</span>
+      <h2>Injection and core I/O</h2>
+      <span class="tag gate">Gate</span>
+    </div>
+    <p class="phase-intro">Nothing downstream of here can pass until check 8 reads <code>status=1</code>.</p>
+
+    <label class="check"><input type="checkbox" data-k="c7"><span class="body">
+      <p class="act"><span class="n">7</span>Server running &rarr; Process Manager &rarr; select PID &rarr; INJECT.</p>
+      <p class="expect"><b>Expect</b>Success dialog; the <code>ProcessHookOutput</code> checkbox auto-checks.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c8"><span class="body">
+      <p class="act"><span class="n">8</span>Read the hook log for the layout line.</p>
+      <p class="expect"><b>Expect</b><code>WreckfestConsoleHook module layout status=1 imageSize=0x0B43A000 expected=0x00000000</code><br><b style="display:inline;margin:0">status=1</b> is the pass code. Anything else means the guard rejected the build and nothing will dispatch.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c9"><span class="body">
+      <p class="act"><span class="n">9</span>Watch the console pane.</p>
+      <p class="expect"><b>Expect</b>Live server output streaming.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c10"><span class="body">
+      <p class="act"><span class="n">10</span>Have players join and leave.</p>
+      <p class="expect"><b>Expect</b>Players tab updates; bots excluded from human counts.</p>
+    </span></label>
+  </section>
+
+  <!-- PHASE 3 -->
+  <section class="phase" id="p3">
+    <div class="phase-head">
+      <span class="pnum">03</span>
+      <h2>Command surface &amp; tokenization echo</h2>
+    </div>
+    <p class="phase-intro">
+      Every command now returns the hook's own split. Verify the echo, <em>then</em> verify the command actually
+      took effect in-game &mdash; the echo proves tokenization, not application.
+    </p>
+
+    <div class="tbl-scroll" style="margin-bottom:18px">
+      <table>
+        <thead><tr><th>Command</th><th>Expected echo</th></tr></thead>
+        <tbody>
+          <tr><td><code>list</code></td><td><code>OK dispatched command=list argument=</code></td></tr>
+          <tr><td><code>?</code></td><td><code>command=? argument=</code></td></tr>
+          <tr><td><code>track=sandpit_derby_2</code></td><td><code>command=track argument=sandpit_derby_2</code></td></tr>
+          <tr><td><code>laps=3</code></td><td><code>command=laps argument=3</code></td></tr>
+          <tr><td><code>/message hello world</code></td><td><code>command=/message argument=hello world</code></td></tr>
+          <tr><td><code>/kick 3</code></td><td><code>command=/kick argument=3</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <label class="check"><input type="checkbox" data-k="c11"><span class="body">
+      <p class="act"><span class="n">11</span>Run every command in the table and compare the returned echo.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c12"><span class="body">
+      <p class="act"><span class="n">12</span>Scrutinise the two <code>=</code> cases specifically.</p>
+      <p class="expect"><b>Expect</b><code>command=track</code> &mdash; <em>not</em> <code>command=track=sandpit…</code>. This is exactly the regression <code>b4b8f2c</code> fixed, and the reason the echo exists.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c13"><span class="body">
+      <p class="act"><span class="n">13</span>Edge case: send <code>/message =foo</code>.</p>
+      <p class="expect"><b>Expect</b>Argument arrives as <code>foo</code> &mdash; the leading <code>=</code> is consumed by the skip loop. Known and cosmetic; confirm it affects nothing else.</p>
+    </span></label>
+  </section>
+
+  <!-- PHASE 4 -->
+  <section class="phase" id="p4">
+    <div class="phase-head">
+      <span class="pnum">04</span>
+      <h2>Behavioral changes</h2>
+      <span class="tag risk">Highest risk</span>
+    </div>
+    <p class="phase-intro">
+      These three are code I changed rather than deleted, and none of them is covered by the automated suite.
+      If you only have time for one phase, make it this one.
+    </p>
+
+    <label class="check"><input type="checkbox" data-k="c14"><span class="body">
+      <p class="act"><span class="n">14</span><strong>Attach path.</strong> Start a server <em>outside</em> the controller &rarr; ATTACH &rarr; INJECT.</p>
+      <p class="expect"><b>Expect</b>Attach succeeds; output flows after injection. <code>AttachToExistingProcess</code> now calls <code>StartOutputMonitoring()</code> instead of unconditionally starting console monitoring.</p>
+    </span></label>
+
+    <div class="callout">
+      <h3>Read before check 15</h3>
+      <p><code>/restart</code> spawns a <strong>new PID</strong>, so the hook dies with the old process. Restart detection
+      scans <code>_outputBuffer</code>, which the dead hook no longer fills &mdash; so it <strong>will</strong> time out at 30s,
+      log <code>Restart completion not detected via logs within timeout, proceeding with PID detection anyway</code>,
+      then continue via PID diffing.</p>
+      <p>This is <strong>not a regression.</strong> The old code also always timed out in hook mode, because
+      <code>_lastLogFilePosition</code> never advanced when log monitoring wasn't running. The timeout is non-fatal.</p>
+    </div>
+
+    <label class="check"><input type="checkbox" data-k="c15"><span class="body">
+      <p class="act"><span class="n">15</span><strong>Restart via command.</strong> Trigger a <code>/restart</code>.</p>
+      <p class="expect"><b>Expect</b>Restart succeeds, new PID tracked, roughly 32s elapsed. You must <strong>re-INJECT into the new PID</strong> to regain output.</p>
+      <p class="expect bad"><b>Fail signal</b><code>No new process detected</code>, or the new PID never gets tracked.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c16"><span class="body">
+      <p class="act"><span class="n">16</span><strong>Output toggle.</strong> Uncheck <code>ProcessConsoleHookOutput</code> mid-session, then re-check it.</p>
+      <p class="expect"><b>Expect</b>Output stops feeding the trackers, then resumes. No console-monitor teardown happens any more.</p>
+    </span></label>
+  </section>
+
+  <!-- PHASE 5 -->
+  <section class="phase" id="p5">
+    <div class="phase-head">
+      <span class="pnum">05</span>
+      <h2>Version guard negative test</h2>
+      <span class="tag gate">Decision</span>
+    </div>
+    <p class="phase-intro">The guard is unproven until you've watched it reject something.</p>
+
+    <label class="check"><input type="checkbox" data-k="c17"><span class="body">
+      <p class="act"><span class="n">17</span>Temporarily set <code>ConsolePrintRva</code> out of range (e.g. <code>0x7F000000</code>), rebuild, inject.</p>
+      <p class="expect"><b>Expect</b><code>status=3</code> (RvaOutOfRange) &middot; <code>WreckfestConsoleHook aborted: offsets do not match this Wreckfest build</code> &middot; no hook install &middot; commands refused with <code>refused dispatch: module layout not validated</code> &middot; <code>__hook_players</code> returns <code>ERR player snapshot module layout not validated</code>.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c18"><span class="body">
+      <p class="act"><span class="n">18</span>Revert the RVA and rebuild.</p>
+      <p class="expect"><b>Expect</b><code>status=1</code> again.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c19"><span class="body">
+      <p class="act"><span class="n">19</span><strong>Decide on pinning.</strong> Currently <code>ExpectedImageSize = 0</code> (log-only).</p>
+      <p class="expect"><b>The trade</b>Setting it to <code>0x0B43A000</code> gives exact-build detection &mdash; any Wreckfest patch blocks injection instead of running on shifted offsets. The cost: anyone on a <em>different</em> Wreckfest build is blocked too. Ship the DLL on the releases page &rarr; leave it <code>0</code>. Local server only &rarr; pin it.</p>
+    </span></label>
+  </section>
+
+  <!-- PHASE 6 -->
+  <section class="phase" id="p6">
+    <div class="phase-head">
+      <span class="pnum">06</span>
+      <h2>Voting, end to end</h2>
+      <span class="tag quick">Needs players</span>
+    </div>
+    <p class="phase-intro">The highest-value integration path &mdash; it exercises <code>track=</code>, <code>laps=</code> and <code>/message</code> together. Batch it with a session you were running anyway.</p>
+
+    <label class="check"><input type="checkbox" data-k="c20"><span class="body">
+      <p class="act"><span class="n">20</span>With 2+ humans: <code>!vote</code> &rarr; <code>!confirm &lt;n&gt;</code> &rarr; <code>!yes</code> / <code>!no</code>.</p>
+      <p class="expect"><b>Expect</b>Majority counts human players only; bots excluded.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c21"><span class="body">
+      <p class="act"><span class="n">21</span>Single human on the server.</p>
+      <p class="expect"><b>Expect</b>The immediate-pass path still fires.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c22"><span class="body">
+      <p class="act"><span class="n">22</span>On a passing vote, watch the dispatch order.</p>
+      <p class="expect"><b>Expect</b><code>track=</code> then <code>laps=</code>, in order. They're two separate calls, so a brief half-applied window is expected. Track changes in-game.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c23"><span class="body">
+      <p class="act"><span class="n">23</span>Run <code>!config</code>.</p>
+      <p class="expect"><b>Expect</b><code>Config: hookConnected=yes, outputPrimary=yes</code>. The <code>input=</code> / <code>output=</code> fields are gone.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c24"><span class="body">
+      <p class="act"><span class="n">24</span>Check broadcast message lengths.</p>
+      <p class="expect"><b>Expect</b>Everything stays under Wreckfest's 127-character limit.</p>
+    </span></label>
+  </section>
+
+  <!-- PHASE 7 -->
+  <section class="phase" id="p7">
+    <div class="phase-head">
+      <span class="pnum">07</span>
+      <h2>Settings migration</h2>
+      <span class="tag quick">~5 min</span>
+    </div>
+    <p class="phase-intro">Your live settings file still carries <code>UseConsoleMonitoring</code> and <code>InputMode</code>, which no longer exist on the model.</p>
+
+    <label class="check"><input type="checkbox" data-k="c25"><span class="body">
+      <p class="act"><span class="n">25</span>Open the Configuration tab against the existing <code>user-settings.json</code>.</p>
+      <p class="expect"><b>Expect</b>No error; values populate. Unknown keys are skipped on deserialize.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c26"><span class="body">
+      <p class="act"><span class="n">26</span>Save settings, then reopen the file.</p>
+      <p class="expect"><b>Expect</b>Both stale keys dropped; <code>OutputMode</code> forced to <code>InjectedHook</code>.</p>
+    </span></label>
+
+    <label class="check"><input type="checkbox" data-k="c27"><span class="body">
+      <p class="act"><span class="n">27</span>Delete <code>user-settings.json</code> and restart.</p>
+      <p class="expect"><b>Expect</b>Defaults regenerate carrying <code>OutputMode: InjectedHook</code> and nothing else.</p>
+    </span></label>
+  </section>
+
+  <!-- WATCH LIST -->
+  <section class="phase" id="watch">
+    <div class="phase-head">
+      <span class="pnum">&#9888;</span>
+      <h2>Regression watch list</h2>
+    </div>
+    <p class="phase-intro">Not numbered &mdash; these aren't steps. They're the things most likely to bite that don't look in scope.</p>
+    <div class="watch">
+      <ul>
+        <li><code>GET /api/server/logfile</code> still works. WreckfestWeb's log viewer depends on it, and it survived the log-file removal on purpose.</li>
+        <li>Webhooks <code>server-started</code>, <code>server-stopped</code>, <code>server-restarted</code> and <code>server-attached</code> all still fire.</li>
+        <li><code>SmartRestartService</code> countdown messages use the same <code>/message</code> dispatch path as voting &mdash; but fire <em>unattended</em> during a scheduled event.</li>
+        <li>Multi-instance deserves one pass with two servers running. The old <code>ConsoleWriter.FindConsoleWindow()</code> grabbed <em>any</em> console window; the hook is per-process by pipe name, so this should now be correct where it previously wasn't.</li>
+      </ul>
+    </div>
+  </section>
+
+  <p class="closing">
+    <strong>Suggested order.</strong> Phases 1&ndash;3 give you confidence in about an hour without a populated server.
+    Phase 4 deserves the most attention &mdash; those changes are unproven live. Phase 6 needs real players.
+    Ticks are saved in this browser only.
+  </p>
+
+</div>
+
+<script>
+(function(){
+  var KEY = "wf-hook-cutover-v1";
+  var boxes = Array.prototype.slice.call(document.querySelectorAll(".check input[type=checkbox]"));
+  var bar = document.getElementById("bar");
+  var done = document.getElementById("done");
+  document.getElementById("total").textContent = boxes.length;
+
+  function load(){
+    try{
+      var raw = localStorage.getItem(KEY);
+      if(!raw) return {};
+      return JSON.parse(raw) || {};
+    }catch(e){ return {}; }
+  }
+  function save(state){
+    try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){}
+  }
+  function paint(){
+    var n = boxes.filter(function(b){ return b.checked; }).length;
+    done.textContent = n;
+    bar.style.width = boxes.length ? (n / boxes.length * 100) + "%" : "0%";
+  }
+
+  var state = load();
+  boxes.forEach(function(b){
+    if(state[b.dataset.k]) b.checked = true;
+    b.addEventListener("change", function(){
+      var s = load();
+      if(b.checked){ s[b.dataset.k] = 1; } else { delete s[b.dataset.k]; }
+      save(s);
+      paint();
+    });
+  });
+  paint();
+
+  document.getElementById("reset").addEventListener("click", function(){
+    boxes.forEach(function(b){ b.checked = false; });
+    save({});
+    paint();
+  });
+})();
+</script>
+
+</body>
+</html>

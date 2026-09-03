@@ -1,101 +1,141 @@
-using Microsoft.AspNetCore.Builder;
+using System.Windows;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using WreckfestController.Services;
-using WreckfestController.WebSockets;
 
-var builder = WebApplication.CreateBuilder(args);
+namespace WreckfestController;
 
-// Configure Kestrel to use settings from appsettings.json
-var urls = builder.Configuration["Kestrel:Urls"];
-if (!string.IsNullOrEmpty(urls))
+public class Program
 {
-    builder.WebHost.UseUrls(urls);
+    [STAThread]
+    public static void Main(string[] args)
+    {
+        var host = CreateHostBuilder(args).Build();
+
+        // Start the embedded API server in background
+        Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(1000); // Wait for app initialization
+                var apiServer = host.Services.GetRequiredService<IApiServer>();
+                await apiServer.StartAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to start API server: {ex}");
+            }
+        });
+
+        // Force instantiation so it subscribes to ServerManager.ChatCommandReceived.
+        host.Services.GetRequiredService<VotingService>();
+
+        // Create and run WPF application
+        var app = new App();
+        app.InitializeComponent();
+
+        // Create MainWindow with dependency injection
+        var mainWindow = host.Services.GetRequiredService<MainWindow>();
+        app.MainWindow = mainWindow;
+        mainWindow.Show();
+
+        app.Run();
+    }
+
+    public static IHostBuilder CreateHostBuilder(string[] args) =>
+        Host.CreateDefaultBuilder(args)
+            .ConfigureAppConfiguration((context, config) =>
+            {
+                // For single-file apps, use the directory where the exe is located
+                // Environment.ProcessPath gives us the actual exe path even in single-file mode
+                var exeDirectory = Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory;
+                config.SetBasePath(exeDirectory);
+
+                // appsettings.json is optional - app works with defaults if not present
+                config.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
+                config.AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", optional: true);
+
+                // Build temporary configuration to get UserSettingsPath
+                var tempConfig = config.Build();
+                var userSettingsPath = ResolveUserSettingsPath(tempConfig);
+
+                // Add user settings with override priority
+                config.AddJsonFile(userSettingsPath, optional: true, reloadOnChange: true);
+            })
+            .ConfigureServices((context, services) =>
+            {
+                // Register GUI logger provider
+                var guiLoggerProvider = new GuiLoggerProvider();
+                services.AddSingleton(guiLoggerProvider);
+                services.AddLogging(builder =>
+                {
+#if DEBUG
+                    builder.AddDebug();
+#endif
+                    builder.AddProvider(guiLoggerProvider);
+                });
+
+                // Register core services
+                services.AddHttpClient<WreckfestWebWebhookService>();
+                services.AddHttpClient<ConsoleLogWebhookSender>();
+                services.AddSingleton<PlayerTracker>();
+                services.AddSingleton<TrackChangeTracker>();
+                services.AddSingleton<ServerInfoTracker>();
+                services.AddSingleton<WreckfestWebWebhookService>();
+                services.AddSingleton<ConsoleLogWebhookSender>();
+                services.AddSingleton<ConfigService>();
+                services.AddSingleton<EventStorageService>();
+                services.AddSingleton<RecurringEventService>();
+                services.AddSingleton<SmartRestartService>();
+                services.AddSingleton<InjectedHookInputWriter>();
+                services.AddSingleton<IServerInputWriter>(sp => sp.GetRequiredService<InjectedHookInputWriter>());
+                services.AddSingleton<IInjectedHookOutputReader, InjectedHookOutputReader>();
+                services.AddSingleton<ServerManager>();
+                services.AddSingleton<SettingsService>();
+                services.AddSingleton<VotingService>();
+
+                // Register API server
+                services.AddSingleton<IApiServer, ApiServer>();
+
+                // Register UI
+                services.AddSingleton<MainWindow>();
+
+                // Register hosted services (background services)
+                services.AddHostedService<EventSchedulerService>();
+            });
+
+    /// <summary>
+    /// Resolves the user settings file path based on configuration
+    /// </summary>
+    private static string ResolveUserSettingsPath(IConfiguration configuration)
+    {
+        var configuredPath = configuration["UserSettingsPath"];
+
+        if (string.IsNullOrWhiteSpace(configuredPath))
+        {
+            // Default to %LocalAppData%\WreckfestController\user-settings.json
+            var appDataPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "WreckfestController"
+            );
+            Directory.CreateDirectory(appDataPath);
+            return Path.Combine(appDataPath, "user-settings.json");
+        }
+        else
+        {
+            // Use configured path (expand environment variables)
+            var expandedPath = Environment.ExpandEnvironmentVariables(configuredPath);
+
+            // Ensure directory exists
+            var directory = Path.GetDirectoryName(expandedPath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            return expandedPath;
+        }
+    }
 }
-
-// Add services to the container.
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
-// Register HTTP client
-builder.Services.AddHttpClient<LaravelWebhookService>();
-
-// Register services as singletons
-builder.Services.AddSingleton<WreckfestController.Services.PlayerTracker>();
-builder.Services.AddSingleton<WreckfestController.Services.TrackChangeTracker>();
-builder.Services.AddSingleton<LaravelWebhookService>();
-builder.Services.AddSingleton<ServerManager>();
-builder.Services.AddSingleton<WreckfestController.Services.ConfigService>();
-builder.Services.AddSingleton<WreckfestController.Services.EventStorageService>();
-builder.Services.AddSingleton<WreckfestController.Services.RecurringEventService>();
-builder.Services.AddSingleton<WreckfestController.Services.SmartRestartService>();
-
-// Register hosted services (background services)
-builder.Services.AddHostedService<WreckfestController.Services.EventSchedulerService>();
-
-var app = builder.Build();
-
-// Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
-
-// Enable WebSockets
-app.UseWebSockets();
-
-// WebSocket middleware for console streaming
-app.Use(async (context, next) =>
-{
-    if (context.Request.Path == "/ws/console")
-    {
-        if (context.WebSockets.IsWebSocketRequest)
-        {
-            var serverManager = context.RequestServices.GetRequiredService<ServerManager>();
-            using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-            var handler = new ConsoleWebSocketHandler(webSocket, serverManager);
-            await handler.HandleAsync();
-        }
-        else
-        {
-            context.Response.StatusCode = 400;
-        }
-    }
-    else if (context.Request.Path == "/ws/players")
-    {
-        if (context.WebSockets.IsWebSocketRequest)
-        {
-            var playerTracker = context.RequestServices.GetRequiredService<PlayerTracker>();
-            using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-            var handler = new PlayerTrackerWebSocketHandler(webSocket, playerTracker);
-            await handler.HandleAsync();
-        }
-        else
-        {
-            context.Response.StatusCode = 400;
-        }
-    }
-    else if (context.Request.Path == "/ws/track-changes")
-    {
-        if (context.WebSockets.IsWebSocketRequest)
-        {
-            var trackChangeTracker = context.RequestServices.GetRequiredService<TrackChangeTracker>();
-            using var webSocket = await context.WebSockets.AcceptWebSocketAsync();
-            var handler = new TrackChangeWebSocketHandler(webSocket, trackChangeTracker);
-            await handler.HandleAsync();
-        }
-        else
-        {
-            context.Response.StatusCode = 400;
-        }
-    }
-    else
-    {
-        await next();
-    }
-});
-
-app.UseAuthorization();
-app.MapControllers();
-
-app.Run();

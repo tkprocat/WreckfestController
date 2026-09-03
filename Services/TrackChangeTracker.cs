@@ -1,17 +1,20 @@
-using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
 namespace WreckfestController.Services;
 
 public class TrackChangeTracker
 {
-    private readonly ConcurrentBag<Action<TrackChangeEvent>> _trackChangeSubscribers = new();
     private readonly ILogger<TrackChangeTracker> _logger;
-    private readonly LaravelWebhookService _webhookService;
+    private readonly WreckfestWebWebhookService _webhookService;
     private string? _currentTrack = null;
     private readonly object _lock = new();
 
-    public TrackChangeTracker(ILogger<TrackChangeTracker> logger, LaravelWebhookService webhookService)
+    /// <summary>
+    /// Event raised when the track changes
+    /// </summary>
+    public event Action<TrackChangeEvent>? TrackChanged;
+
+    public TrackChangeTracker(ILogger<TrackChangeTracker> logger, WreckfestWebWebhookService webhookService)
     {
         _logger = logger;
         _webhookService = webhookService;
@@ -30,20 +33,20 @@ public class TrackChangeTracker
         if (trackChangeMatch.Success)
         {
             var trackId = trackChangeMatch.Groups[1].Value;
-            TrackChanged(trackId);
+            OnTrackChanged(trackId);
         }
     }
 
     /// <summary>
     /// Handle track change event
     /// </summary>
-    private void TrackChanged(string trackId)
+    private void OnTrackChanged(string trackId)
     {
         lock (_lock)
         {
             _currentTrack = trackId;
             _logger.LogInformation("Track changed to: {TrackId}", trackId);
-            NotifyTrackChangeSubscribers(new TrackChangeEvent(trackId));
+            TrackChanged?.Invoke(new TrackChangeEvent(trackId));
 
             // Send webhook to Laravel
             _ = _webhookService.SendTrackChangedAsync(trackId);
@@ -73,31 +76,6 @@ public class TrackChangeTracker
         }
     }
 
-    public void SubscribeToTrackChange(Action<TrackChangeEvent> trackChangeEvent)
-    {
-        _trackChangeSubscribers.Add(trackChangeEvent);
-    }
-
-    public void UnsubscribeFromTrackChange(Action<TrackChangeEvent> trackChangeEvent)
-    {
-        // ConcurrentBag doesn't support removal, but we can handle it by checking if callback is null
-        // For simplicity, we'll keep the subscriber list as is
-    }
-
-    private void NotifyTrackChangeSubscribers(TrackChangeEvent trackChangeEvent)
-    {
-        foreach (var subscriber in _trackChangeSubscribers)
-        {
-            try
-            {
-                subscriber(trackChangeEvent);
-            }
-            catch
-            {
-                // Ignore subscriber errors
-            }
-        }
-    }
 }
 
 public class TrackChangeEvent
@@ -108,6 +86,6 @@ public class TrackChangeEvent
     public TrackChangeEvent(string trackId)
     {
         TrackId = trackId;
-        ChangedAt = DateTime.Now;
+        ChangedAt = DateTime.UtcNow;
     }
 }

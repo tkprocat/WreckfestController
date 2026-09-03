@@ -1,0 +1,158 @@
+<UserControl x:Class="WreckfestController.Views.ProcessManagerTab"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes">
+    <Grid Margin="10" Background="{StaticResource BackgroundDark}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="Running Wreckfest Server Processes"
+                   FontSize="14"
+                   FontWeight="Bold"
+                   Foreground="{StaticResource TextPrimary}"
+                   Margin="0,0,0,10" />
+
+        <DataGrid Grid.Row="1"
+                  x:Name="ProcessListGrid"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  SelectionMode="Single"
+                  Background="{StaticResource BackgroundDark}"
+                  Foreground="{StaticResource TextPrimary}"
+                  GridLinesVisibility="Horizontal"
+                  HeadersVisibility="Column"
+                  RowBackground="{StaticResource BackgroundDark}"
+                  AlternatingRowBackground="{StaticResource BackgroundMedium}"
+                  BorderBrush="{StaticResource BorderColor}"
+                  BorderThickness="1"
+                  SelectionChanged="OnProcessSelected">
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Background" Value="#2C5282"/>
+                            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsSelected" Value="True"/>
+                                <Condition Property="IsFocused" Value="False"/>
+                            </MultiTrigger.Conditions>
+                            <Setter Property="Background" Value="#2C5282"/>
+                            <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                        </MultiTrigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.ColumnHeaderStyle>
+                <Style TargetType="DataGridColumnHeader">
+                    <Setter Property="Background" Value="{StaticResource BackgroundMedium}"/>
+                    <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                    <Setter Property="FontWeight" Value="Bold"/>
+                    <Setter Property="Padding" Value="8,4"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource BorderColor}"/>
+                    <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                </Style>
+            </DataGrid.ColumnHeaderStyle>
+            <DataGrid.CellStyle>
+                <Style TargetType="DataGridCell">
+                    <Setter Property="Background" Value="Transparent"/>
+                    <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource BorderColor}"/>
+                    <Setter Property="Padding" Value="8,4"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Background" Value="#2C5282"/>
+                            <Setter Property="Foreground" Value="White"/>
+                            <Setter Property="BorderBrush" Value="#3E6BA8"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
+            </DataGrid.CellStyle>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="PID" Binding="{Binding ProcessId}" Width="80"/>
+                <DataGridTextColumn Header="Config File" Binding="{Binding ConfigFile}" Width="*"/>
+                <DataGridTextColumn Header="Uptime" Binding="{Binding UptimeString}" Width="120"/>
+                <DataGridTextColumn Header="Memory (MB)" Binding="{Binding MemoryUsageMB}" Width="120"/>
+                <DataGridTextColumn Header="Status" Binding="{Binding StatusString}" Width="100"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <Grid Grid.Row="2" Margin="0,10,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="120"/>
+            </Grid.RowDefinitions>
+
+            <DockPanel Grid.Row="0" Margin="0,0,0,4">
+                <CheckBox x:Name="ProcessHookOutputCheckBox"
+                          DockPanel.Dock="Right"
+                          Content="FEED PARSER"
+                          Foreground="{StaticResource TextPrimary}"
+                          Checked="OnProcessHookOutputChanged"
+                          Unchecked="OnProcessHookOutputChanged"/>
+                <TextBlock Text="Injected Hook Log"
+                           FontSize="12"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource TextPrimary}"/>
+            </DockPanel>
+            <TextBox Grid.Row="1"
+                     x:Name="HookLogOutput"
+                     Background="{StaticResource BackgroundMedium}"
+                     Foreground="{StaticResource TextPrimary}"
+                     BorderBrush="{StaticResource BorderColor}"
+                     BorderThickness="1"
+                     FontFamily="Consolas"
+                     FontSize="11"
+                     IsReadOnly="True"
+                     TextWrapping="NoWrap"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"/>
+        </Grid>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,20">
+            <Button x:Name="RefreshProcessListButton"
+                    Content="REFRESH"
+                    Style="{StaticResource MaterialDesignRaisedButton}"
+                    Click="OnRefreshProcessListClicked"
+                    Width="110"
+                    Margin="0,0,10,0"/>
+            <Button x:Name="AttachToProcessButton"
+                    Content="ATTACH"
+                    Background="{StaticResource ButtonLightBlue}"
+                    Foreground="White"
+                    Click="OnAttachToProcessClicked"
+                    Width="110"
+                    Margin="0,0,10,0"
+                    IsEnabled="False"/>
+            <Button x:Name="InjectIntoProcessButton"
+                    Content="INJECT"
+                    Background="{StaticResource ButtonLightBlue}"
+                    Foreground="White"
+                    Click="OnInjectIntoProcessClicked"
+                    Width="110"
+                    Margin="0,0,10,0"
+                    IsEnabled="False"/>
+            <Button x:Name="KillProcessButton"
+                    Content="KILL PROCESS"
+                    Background="{StaticResource ButtonRed}"
+                    Foreground="White"
+                    Click="OnKillProcessClicked"
+                    Width="130"
+                    Margin="0,0,10,0"
+                    IsEnabled="False"/>
+            <Button x:Name="StartNewServerButton"
+                    Content="START NEW SERVER"
+                    Background="{StaticResource ButtonGreen}"
+                    Foreground="White"
+                    Click="OnStartNewServerClicked"
+                    Width="160"/>
+        </StackPanel>
+    </Grid>
+</UserControl>

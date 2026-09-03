@@ -1,0 +1,267 @@
+<UserControl x:Class="WreckfestController.Views.ConfigurationTab"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <Grid Margin="10" Background="{StaticResource BackgroundDark}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- Settings File Path Info -->
+            <Border Grid.Row="0"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="10"
+                    Margin="0,0,0,20">
+                <StackPanel>
+                    <TextBlock Text="Settings Location"
+                               FontSize="12"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextSecondary}"
+                               Margin="0,0,0,5"/>
+                    <TextBlock x:Name="SettingsPathText"
+                               Text="Loading..."
+                               FontSize="11"
+                               Foreground="{StaticResource TextPrimary}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Server Settings Section -->
+            <Border Grid.Row="1"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,0,0,15">
+                <StackPanel>
+                    <TextBlock Text="SERVER SETTINGS"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimary}"
+                               Margin="0,0,0,15"/>
+
+                    <!-- Working Directory -->
+                    <TextBlock Text="Working Directory"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <Grid Margin="0,0,0,15">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="WorkingDirectoryTextBox"
+                                 Grid.Column="0"
+                                 materialDesign:HintAssist.Hint="Server installation folder"
+                                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                 Foreground="{StaticResource TextPrimary}"
+                                 Margin="0,0,10,0"/>
+                        <Button Grid.Column="1"
+                                Content="BROWSE"
+                                Click="OnBrowseWorkingDirectoryClicked"
+                                Width="100"/>
+                    </Grid>
+
+                    <!-- Server Executable -->
+                    <TextBlock Text="Server Executable"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="ServerPathTextBox"
+                             materialDesign:HintAssist.Hint="Wreckfest_x64.exe"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- Log File Name -->
+                    <TextBlock Text="Log File Name (optional)"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="LogFilePathTextBox"
+                             materialDesign:HintAssist.Hint="log.txt (leave empty to auto-detect)"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- Server Arguments -->
+                    <TextBlock Text="Server Arguments"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="ServerArgumentsTextBox"
+                             materialDesign:HintAssist.Hint="-s server_config=server_config.cfg"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- Server I/O -->
+                    <TextBlock Text="Server I/O"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBlock Text="Console output and commands both run through the injected DLL hook. Use INJECT in Process Manager after the server is running to start capture and enable commands."
+                               FontSize="10"
+                               Foreground="{StaticResource TextSecondary}"
+                               Margin="0,2,0,0"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <!-- SteamCmd Settings Section -->
+            <Border Grid.Row="2"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,0,0,15">
+                <StackPanel>
+                    <TextBlock Text="STEAMCMD SETTINGS"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimary}"
+                               Margin="0,0,0,15"/>
+
+                    <!-- SteamCmd Path -->
+                    <TextBlock Text="SteamCmd Executable Path"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="SteamCmdPathTextBox"
+                             materialDesign:HintAssist.Hint="Path to steamcmd.exe"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- Wreckfest App ID -->
+                    <TextBlock Text="Wreckfest App ID"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="WreckfestAppIdTextBox"
+                             materialDesign:HintAssist.Hint="361580"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Network Settings Section -->
+            <Border Grid.Row="3"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,0,0,15">
+                <StackPanel>
+                    <TextBlock Text="NETWORK SETTINGS"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimary}"
+                               Margin="0,0,0,15"/>
+
+                    <!-- WreckfestWeb Webhook URL -->
+                    <TextBlock Text="WreckfestWeb Webhook Base URL"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="WreckfestWebWebhookUrlTextBox"
+                             materialDesign:HintAssist.Hint="http://localhost:8000/api/webhooks"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"
+                             Margin="0,0,0,15"/>
+
+                    <!-- WreckfestWeb API Key -->
+                    <TextBlock Text="WreckfestWeb API Key"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <TextBox x:Name="WreckfestWebApiKeyTextBox"
+                             materialDesign:HintAssist.Hint="64-character hex key for webhook authentication"
+                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                             Foreground="{StaticResource TextPrimary}"/>
+                    <TextBlock Text="Required for authenticating webhook requests to WreckfestWeb (X-API-Key header)"
+                               FontSize="10"
+                               Foreground="{StaticResource TextSecondary}"
+                               Margin="0,5,0,0"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Action Buttons -->
+            <Border Grid.Row="4"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,0,0,15">
+                <StackPanel>
+                    <TextBlock Text="VOTING SETTINGS"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimary}"
+                               Margin="0,0,0,15"/>
+
+                    <TextBlock Text="Track Change Mode"
+                               Foreground="{StaticResource TextSecondary}"
+                               FontSize="12"
+                               Margin="0,0,0,5"/>
+                    <ComboBox x:Name="VoteModeComboBox"
+                              Style="{StaticResource MaterialDesignOutlinedComboBox}"
+                              Foreground="{StaticResource TextPrimary}"
+                              Margin="0,0,0,5">
+                        <ComboBoxItem Content="Off - track commands disabled" Tag="Off"/>
+                        <ComboBoxItem Content="Voting - players vote on track changes" Tag="Voting"/>
+                        <ComboBoxItem Content="Direct - !track changes the track immediately" Tag="Direct"/>
+                    </ComboBox>
+                    <TextBlock Text="Players use !vote or !track in server chat - they are the same command. Voting puts the choice to the server; Direct applies it at once, with a short cooldown between changes that admins bypass."
+                               FontSize="10"
+                               Foreground="{StaticResource TextSecondary}"
+                               Margin="0,2,0,0"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Action Buttons -->
+            <StackPanel Grid.Row="5"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Margin="0,10,0,0">
+                <Button x:Name="ResetButton"
+                        Content="RESET TO DEFAULTS"
+                        Click="OnResetClicked"
+                        Width="160"
+                        Margin="0,0,10,0"/>
+                <Button x:Name="SaveButton"
+                        Content="SAVE SETTINGS"
+                        Background="{StaticResource ButtonGreen}"
+                        Foreground="White"
+                        Click="OnSaveClicked"
+                        Width="140"/>
+            </StackPanel>
+
+            <!-- Status Message -->
+            <TextBlock x:Name="StatusMessageText"
+                       Grid.Row="6"
+                       Text=""
+                       Foreground="{StaticResource TextSecondary}"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       Margin="0,15,0,0"
+                       HorizontalAlignment="Right"/>
+        </Grid>
+    </ScrollViewer>
+</UserControl>
