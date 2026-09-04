@@ -1208,17 +1208,6 @@ public class ServerManager
     }
 
     /// <summary>
-    /// Set once the injected hook has delivered a structured chat record that parsed.
-    /// While true the console-text parsing below is skipped, because the record
-    /// carries the same message with sender and body kept apart rather than
-    /// reconstructed from a formatted line.
-    ///
-    /// It stays false until a record actually arrives, so a hook that is not
-    /// injected, out of date, or running against a build where the chat handler moved
-    /// leaves the text path carrying chat exactly as it did before. Chat is the whole
-    /// vote transport; this must never be a flag anyone can turn on optimistically.
-    /// </summary>
-    /// <summary>
     /// Chat arrives as a structured record from the injected hook, never by reading
     /// the console line back. The old regex guessed where the sender ended with
     /// [^:]+, so a player whose name contained a colon could never trigger a command.
