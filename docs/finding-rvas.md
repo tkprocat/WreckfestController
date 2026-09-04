@@ -21,6 +21,7 @@ timestamp `0x6509731D`).
 | `RegistryLookupRva` | `0x00E37140` | registry namespace lookup, used to reach the SERVER object |
 | `RegistryTablePtrRva` | `0x0127E7F8` | pointer to the registry table |
 | `ServerNamespaceTagRva` | `0x065E6308` | tag for the SERVER namespace |
+| `ChatHandlerRva` | `0x0038FC10` | unified input handler for the server console and player chat; the hook patches this too |
 
 `Services/VotingService.cs`:
 
@@ -34,6 +35,66 @@ timestamp `0x6509731D`).
 Everything else the project needs is reached through the command dispatcher, on
 purpose: one offset buys every console command, so each extra one is recurring
 maintenance.
+
+## Chat handler and the input ring
+
+Found during the live chat investigation, confirmed against **Wreckfest
+1.308438** (`SizeOfImage 0x0B43A000`); the module base was observed at
+`0x7FF726C20000` across four launches.
+
+### Chat handler
+
+| Constant | RVA | What it is |
+| --- | --- | --- |
+| `ChatHandlerRva` | `0x0038FC10` | `FUN_14038fc10(int ringIndex, char* text, void* serverObject)` - unified input handler for server console *and* player chat |
+| chat print wrapper | `0x000F1AB7A` | calls `ConsolePrint`; note the command path uses a *different* wrapper at `0x000F1B7CB` |
+
+It formats its console line with `"^8%s%s^0%s"`, which matches the captured
+output `^9* 21:12:07^0 ^8Procat: ^0Hello world!`.
+
+Messages beginning `/` break out to the command dispatcher *before* formatting.
+`!` messages do **not**, which is why the controller's chat commands are visible
+as ordinary chat.
+
+### Input ring array
+
+| Constant | RVA | What it is |
+| --- | --- | --- |
+| `RvaInputRingBase` | `0x19149A0` | start of the array; 24 entries, stride `0x1010` |
+| - | `+0x00` / `+0x08` | cumulative byte cursor (both updated, kept equal) |
+| - | `+0x10` | 4096-byte data window, masked `& 0xfff` |
+
+The layout self-checks: `0x19149A0 + 24 * 0x1010 = 0x192CB20`, and the
+server-event ring cursor already documented at `0x192CB28` begins 8 bytes later.
+24 is `max_players`.
+
+Behaviour, verified live:
+
+- Messages **accumulate**, newline-delimited, NUL-padded past the cursor.
+- The cursor is cumulative and counts the trailing newline (`Hello` plus a
+  newline -> 6; that plus a 127-character message and another newline -> 134).
+- The longest accepted message is **127 characters**, matching the limit in
+  `docs/test-plan-hook-only-io.md`.
+- Content is stored verbatim - no truncation or transformation.
+- A reader must trust the cursor rather than scanning for NULs, because stale
+  bytes persist past it after a wrap.
+
+**The index space is not the player table's.** Entry 0 is the server console
+(observed holding a newline-terminated `/bot` five times). A single human
+reported as `slot=1` by the hook (player-table index 0) used ring index **10**, and kept index 10 across
+a full server restart, so it is not connection order either. This mapping is
+**unresolved**. It is also not resolvable from outside the process: the player
+table is a heap pointer and `__hook_read` is deliberately bounded to module
+memory. That is why the structured chat work hooks the handler - which computes
+the player-table index internally - rather than polling this ring.
+
+### Player struct, cross-confirmed
+
+The decompiled chat handler walks `serverObject + 0x30` -> player table, stride
+`0x138`, name at `+0x48` - byte-for-byte identical to `ReadPlayersNoThrow` in
+`NativeHooks/WreckfestConsoleHook/WreckfestConsoleHook.cpp`. Two independent
+sources agree, so `param_3` is the SERVER object. The hook additionally uses
+`+0xA6` status, `+0x82` flags, `+0xA8` ping.
 
 ## Tooling
 
@@ -164,3 +225,9 @@ rather than trying to enumerate every case.
   disconnect. Investigate with nobody on the server.
 - **`dotnet run --no-build` skips copying the hook DLL into `bin/`**, so a
   freshly built hook is silently not the one injected.
+- **The MCPx64dbg plugin wedges reproducibly on `Debug/Run` after a breakpoint
+  hit.** The endpoint stops answering and its listener on 8888 disappears
+  entirely, which needs an x64dbg restart. Clear the breakpoint and resume from
+  the GUI (F9) instead. Worth restating the related trap, which cost time during
+  the chat investigation: pass the **endpoint path** (`Debug/Run`,
+  `Is_Debugging`), not the wrapper name (`DebugRun`, `IsDebugging`).

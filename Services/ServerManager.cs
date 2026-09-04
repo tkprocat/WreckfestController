@@ -1199,8 +1199,28 @@ public class ServerManager
         }
     }
 
+    /// <summary>
+    /// Set once the injected hook has delivered a structured chat record that parsed.
+    /// While true the console-text parsing below is skipped, because the record
+    /// carries the same message with sender and body kept apart rather than
+    /// reconstructed from a formatted line.
+    ///
+    /// It stays false until a record actually arrives, so a hook that is not
+    /// injected, out of date, or running against a build where the chat handler moved
+    /// leaves the text path carrying chat exactly as it did before. Chat is the whole
+    /// vote transport; this must never be a flag anyone can turn on optimistically.
+    /// </summary>
+    public bool UseHookChat { get; private set; }
+
     private void ProcessChatCommandLine(string line)
     {
+        // The structured record for this same message has already been handled, and
+        // reached us first: the hook emits it ahead of the console line it pairs with.
+        if (UseHookChat)
+        {
+            return;
+        }
+
         var normalizedLine = line.Trim();
         if (Regex.IsMatch(normalizedLine, @"\s+[>*/\\]$"))
         {
@@ -1263,10 +1283,54 @@ public class ServerManager
 
     private void OnInjectedHookOutputReceived(string output)
     {
+        // Demuxed ahead of the text fanout. A structured record is not console
+        // output: it must not reach the output buffer, the console webhook or the
+        // chat regex, and it is consumed whether or not it parsed.
+        if (TryProcessHookChatRecord(output))
+        {
+            return;
+        }
+
         if (ProcessConsoleHookOutput)
         {
             OnConsoleOutputReceived(output);
         }
+    }
+
+    /// <summary>
+    /// Handles one structured chat record from the injected hook. Returns true when
+    /// the line was a record - including a malformed one, which is dropped rather
+    /// than leaked into the console text path.
+    /// </summary>
+    private bool TryProcessHookChatRecord(string output)
+    {
+        if (!HookChatRecord.LooksLikeRecord(output))
+        {
+            return false;
+        }
+
+        var record = HookChatRecord.TryParse(output);
+        if (record == null)
+        {
+            // Deliberately does not set UseHookChat: a hook that emits garbage must
+            // not switch chat off the text path it is failing to replace.
+            _logger.LogWarning("Discarded a malformed structured chat record from the injected hook");
+            return true;
+        }
+
+        UseHookChat = true;
+
+        // The controller only acts on ! commands; ordinary chat still proves the hook
+        // works, which is why the flag is set before this check rather than after.
+        if (!record.Message.StartsWith('!'))
+        {
+            return true;
+        }
+
+        // No duplicate suppression here. ShouldSuppressDuplicateChatCommand exists to
+        // undo console echo, and a record is emitted once per message.
+        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message);
+        return true;
     }
 
     private bool ShouldSuppressDuplicateChatCommand(string playerName, bool isBot, string chatMessage)

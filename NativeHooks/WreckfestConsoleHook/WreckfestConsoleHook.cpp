@@ -15,6 +15,17 @@ constexpr uintptr_t CommandDispatcherRva = 0x00F18B30;
 constexpr uintptr_t RegistryLookupRva = 0x00E37140;
 constexpr uintptr_t RegistryTablePtrRva = 0x0127E7F8;
 constexpr uintptr_t ServerNamespaceTagRva = 0x065E6308;
+// FUN_14038fc10(int ringIndex, char* text, void* serverObject): the unified input
+// handler for the server console and for player chat. See docs/finding-rvas.md.
+constexpr uintptr_t ChatHandlerRva = 0x0038FC10;
+
+// Framing for structured records on the output pipe. Picked so a record can never
+// be mistaken for a console line: DC2 opens, DC3 closes, US separates fields.
+constexpr char RecordStart = '\x12';
+constexpr char RecordEnd = '\x13';
+constexpr char FieldSeparator = '\x1f';
+constexpr size_t MaxChatNameLength = 96;
+constexpr size_t MaxChatMessageLength = 256;
 
 #define NLSTR "\n"
 
@@ -40,6 +51,14 @@ using ConsolePrintFn = void(__fastcall*)(const char*, void*, void*, void*);
 using CommandDispatcherFn = void(__fastcall*)(void*);
 using RegistryLookupFn = int(__fastcall*)(const char*, uintptr_t);
 
+// The decompile shows three parameters. A fourth register argument is declared and
+// forwarded anyway: on x64 __fastcall the first four arguments live in rcx/rdx/r8/r9,
+// and forwarding r9 untouched costs nothing while protecting us if the real
+// signature is wider than Ghidra rendered it. The return type is likewise unknown -
+// uintptr_t passes rax through unchanged, so a void function is unharmed and a
+// value-returning one keeps working.
+using ChatHandlerFn = uintptr_t(__fastcall*)(uintptr_t, const char*, uintptr_t, uintptr_t);
+
 // Output is queued and written by a dedicated thread. WriteHookLine is called
 // from Wreckfest's own thread (via the hooked print), and a blocking pipe write
 // there lets a slow or stopped controller stall the game server itself. Enqueue,
@@ -59,8 +78,26 @@ bool g_hookInstalled = false;
 bool g_inputStarted = false;
 ConsolePrintFn g_originalConsolePrint = nullptr;
 void* g_target = nullptr;
+bool g_chatHookInstalled = false;
+ChatHandlerFn g_chatOriginal = nullptr;
+void* g_chatTarget = nullptr;
 HANDLE g_pipe = INVALID_HANDLE_VALUE;
 wchar_t g_fallbackLogPath[MAX_PATH] = {};
+
+// Set for the duration of one chat-handler call, on the calling thread only. The
+// game formats and prints the chat line from inside that call, so the hooked
+// ConsolePrint below runs nested on this same thread and can pair the console line
+// it is given with the raw message text captured here. Thread-local rather than
+// global because several game threads can be inside the handler at once.
+struct PendingChat
+{
+    bool active = false;
+    bool emitted = false;
+    int ringIndex = -1;
+    std::string rawText;
+};
+
+thread_local PendingChat t_pendingChat;
 
 struct CommandTokens
 {
@@ -123,7 +160,7 @@ LayoutStatus ValidateModuleLayoutNoThrow(uintptr_t moduleBase)
 
         g_observedImageSize = nt->OptionalHeader.SizeOfImage;
 
-        const uintptr_t codeRvas[] = { ConsolePrintRva, CommandDispatcherRva, RegistryLookupRva };
+        const uintptr_t codeRvas[] = { ConsolePrintRva, CommandDispatcherRva, RegistryLookupRva, ChatHandlerRva };
         const uintptr_t dataRvas[] = { RegistryTablePtrRva, ServerNamespaceTagRva };
 
         for (auto rva : codeRvas)
@@ -405,8 +442,25 @@ bool RestoreHook()
     return MH_DisableHook(g_target) == MH_OK;
 }
 
+bool RestoreChatHook()
+{
+    return MH_DisableHook(g_chatTarget) == MH_OK;
+}
+
+bool InstallHook();
+void TryEmitStructuredChat(const char* consoleLine);
+
+
 void __fastcall HookedConsolePrint(const char* text, void* arg2, void* arg3, void* arg4)
 {
+    // Emitted before the plain text line so the controller sees the structured
+    // record first. That ordering is what lets it flip UseHookChat and then skip
+    // the text parse for this very message instead of handling it twice.
+    if (t_pendingChat.active && !t_pendingChat.emitted)
+    {
+        TryEmitStructuredChat(text);
+    }
+
     WriteHookLine(text);
 
     // The trampoline holds the relocated original prologue plus a jump back past
@@ -438,6 +492,203 @@ bool InstallHook()
 
     g_hookInstalled = true;
     return true;
+}
+
+bool InstallChatHook();
+
+// Copies a C string out of game memory without trusting it. A short-lived pointer
+// into a freed buffer would otherwise take the whole server down.
+bool CopyGameStringNoThrow(const char* text, size_t maxLength, std::string& out)
+{
+    out.clear();
+
+    __try
+    {
+        if (text == nullptr)
+        {
+            return false;
+        }
+
+        for (size_t i = 0; i < maxLength; i++)
+        {
+            char c = text[i];
+            if (c == '\0')
+            {
+                break;
+            }
+
+            out.push_back(c);
+        }
+
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        out.clear();
+        return false;
+    }
+}
+
+// Hooked at the function's entry rather than at the internal format call site.
+// The entry is the only place a 12-byte prologue patch is the same shape as the
+// ConsolePrint one, so it reuses the restore -> call original -> repatch discipline
+// unchanged; patching mid-function would need an offset into the body that nobody
+// has confirmed against a live build, and docs/finding-rvas.md is explicit that an
+// unconfirmed offset must not be invented. The cost of entry is that the
+// player-table index is not resolved yet - param_1 is the input-ring index, whose
+// mapping to the player table is unresolved - so the sender's name is recovered by
+// pairing with the console line the handler prints while we are still inside it.
+// See TryEmitStructuredChat.
+uintptr_t __fastcall HookedChatHandler(uintptr_t ringIndex, const char* text, uintptr_t serverObject, uintptr_t arg4)
+{
+    // Saved and restored rather than simply cleared, so a nested call (the console
+    // path re-entering the handler) cannot lose the outer call's state.
+    PendingChat saved = t_pendingChat;
+
+    t_pendingChat.active = true;
+    t_pendingChat.emitted = false;
+    t_pendingChat.ringIndex = static_cast<int>(ringIndex);
+    CopyGameStringNoThrow(text, MaxChatMessageLength, t_pendingChat.rawText);
+
+    EnterCriticalSection(&g_hookLock);
+    // Trampoline: the chat handler's entry point stays patched for the life of the
+    // hook, so nothing here rewrites live code and no other game thread can execute
+    // a half-written instruction stream.
+    auto original = g_chatOriginal;
+    uintptr_t result = original(ringIndex, text, serverObject, arg4);
+
+    LeaveCriticalSection(&g_hookLock);
+
+    t_pendingChat = saved;
+    return result;
+}
+
+bool InstallChatHook()
+{
+    if (MH_CreateHook(
+            g_chatTarget,
+            reinterpret_cast<LPVOID>(&HookedChatHandler),
+            reinterpret_cast<LPVOID*>(&g_chatOriginal)) != MH_OK)
+    {
+        return false;
+    }
+
+    if (MH_EnableHook(g_chatTarget) != MH_OK)
+    {
+        MH_RemoveHook(g_chatTarget);
+        g_chatOriginal = nullptr;
+        return false;
+    }
+
+    g_chatHookInstalled = true;
+    return true;
+}
+
+// Control bytes would break the record framing, and the pipe is line-delimited, so
+// anything below space becomes '?' rather than being dropped: a mangled character
+// is visible, a silently shortened message is not.
+std::string SanitizeRecordField(const std::string& value, size_t maxLength)
+{
+    std::string sanitized;
+    sanitized.reserve(value.size() < maxLength ? value.size() : maxLength);
+
+    for (size_t i = 0; i < value.size() && sanitized.size() < maxLength; i++)
+    {
+        auto c = static_cast<unsigned char>(value[i]);
+        sanitized.push_back(c < 0x20 || c == 0x7F ? '?' : value[i]);
+    }
+
+    return sanitized;
+}
+
+void TrimTrailingSpaces(std::string& value)
+{
+    while (!value.empty() && (value.back() == ' ' || value.back() == '\t'))
+    {
+        value.pop_back();
+    }
+}
+
+// The handler formats its line with "^8%s%s^0%s", the last %s being the raw message
+// we captured at entry. Stripping that exact string as a suffix - rather than
+// searching for a delimiter - is what makes a name containing a colon survive; the
+// console-text regex it replaces cannot do that, which is the bug this exists to fix.
+void TryEmitStructuredChat(const char* consoleLine)
+{
+    std::string line;
+    if (!CopyGameStringNoThrow(consoleLine, 1024, line))
+    {
+        return;
+    }
+
+    const std::string& raw = t_pendingChat.rawText;
+    if (raw.empty() || line.size() <= raw.size())
+    {
+        return;
+    }
+
+    // Not the formatted chat line for this message (the handler prints other things).
+    if (line.compare(line.size() - raw.size(), raw.size(), raw) != 0)
+    {
+        return;
+    }
+
+    std::string head = line.substr(0, line.size() - raw.size());
+    if (head.size() < 2 || head.compare(head.size() - 2, 2, "^0") != 0)
+    {
+        return;
+    }
+
+    head.erase(head.size() - 2);
+
+    auto nameStart = head.rfind("^8");
+    if (nameStart == std::string::npos)
+    {
+        return;
+    }
+
+    std::string name = head.substr(nameStart + 2);
+
+    // "%s%s" is the name followed by its ": " separator; peel that back off. Only one
+    // trailing colon is removed, so a name that itself contains colons is preserved.
+    TrimTrailingSpaces(name);
+    if (!name.empty() && name.back() == ':')
+    {
+        name.pop_back();
+    }
+    TrimTrailingSpaces(name);
+
+    bool isBot = false;
+    if (!name.empty() && name.front() == '*')
+    {
+        isBot = true;
+        name.erase(0, 1);
+    }
+
+    if (name.empty())
+    {
+        return;
+    }
+
+    std::string record;
+    record.reserve(raw.size() + name.size() + 32);
+    record.push_back(RecordStart);
+    record += "CHAT";
+    record.push_back(FieldSeparator);
+
+    char indexText[16] = {};
+    std::snprintf(indexText, sizeof(indexText), "%d", t_pendingChat.ringIndex);
+    record += indexText;
+    record.push_back(FieldSeparator);
+    record += isBot ? "1" : "0";
+    record.push_back(FieldSeparator);
+    record += SanitizeRecordField(name, MaxChatNameLength);
+    record.push_back(FieldSeparator);
+    record += SanitizeRecordField(raw, MaxChatMessageLength);
+    record.push_back(RecordEnd);
+
+    t_pendingChat.emitted = true;
+    WriteHookLine(record.c_str());
 }
 
 void InitializeFallbackLogPath()
@@ -784,6 +1035,20 @@ DWORD WINAPI HookThread(void*)
     {
         WriteHookLine("WreckfestConsoleHook failed to install console print hook.");
     }
+
+    // Structured chat is additive: if this fails the controller simply never sees a
+    // CHAT record and keeps parsing console text, so it must not abort the install.
+    g_chatTarget = reinterpret_cast<void*>(moduleBase + ChatHandlerRva);
+
+    if (InstallChatHook())
+    {
+        WriteHookLine("WreckfestConsoleHook installed chat handler hook.");
+    }
+    else
+    {
+        WriteHookLine("WreckfestConsoleHook failed to install chat handler hook; chat stays on console text.");
+        g_chatTarget = nullptr;
+    }
     LeaveCriticalSection(&g_hookLock);
 
     return 0;
@@ -897,14 +1162,27 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
     }
     else if (reason == DLL_PROCESS_DETACH)
     {
-        if (g_hookInstalled && g_target != nullptr)
+        if ((g_hookInstalled && g_target != nullptr) || (g_chatHookInstalled && g_chatTarget != nullptr))
         {
             EnterCriticalSection(&g_hookLock);
-            RestoreHook();
-            MH_RemoveHook(g_target);
+            if (g_hookInstalled && g_target != nullptr)
+            {
+                RestoreHook();
+                MH_RemoveHook(g_target);
+                g_hookInstalled = false;
+                g_originalConsolePrint = nullptr;
+            }
+
+            if (g_chatHookInstalled && g_chatTarget != nullptr)
+            {
+                RestoreChatHook();
+                MH_RemoveHook(g_chatTarget);
+                g_chatHookInstalled = false;
+                g_chatOriginal = nullptr;
+            }
+
+            // One MinHook instance backs both hooks, so uninitialise once, after both.
             MH_Uninitialize();
-            g_hookInstalled = false;
-            g_originalConsolePrint = nullptr;
             LeaveCriticalSection(&g_hookLock);
         }
 

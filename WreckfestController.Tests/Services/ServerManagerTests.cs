@@ -776,6 +776,248 @@ public class ServerManagerTests
         Assert.Equal(0, receivedCount);
     }
 
+    [Fact]
+    public void OnInjectedHookOutputReceived_StructuredChatRecord_RaisesChatCommandAndEnablesHookChat()
+    {
+        // Arrange
+        (string PlayerName, bool IsBot, string Message)? received = null;
+        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+            received = (playerName, isBot, message);
+        Assert.False(_serverManager.UseHookChat);
+
+        // Act
+        InvokeOnInjectedHookOutputReceived(
+            _serverManager,
+            BuildChatRecord("3", "0", "Procat", "!vote mixed_1 6"));
+
+        // Assert
+        WaitForChat(() => received != null);
+        Assert.NotNull(received);
+        Assert.Equal("Procat", received!.Value.PlayerName);
+        Assert.False(received.Value.IsBot);
+        Assert.Equal("!vote mixed_1 6", received.Value.Message);
+        Assert.True(_serverManager.UseHookChat);
+    }
+
+    [Fact]
+    public void OnInjectedHookOutputReceived_BotChatRecord_RaisesChatCommandWithBotFlag()
+    {
+        // Arrange
+        (string PlayerName, bool IsBot, string Message)? received = null;
+        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+            received = (playerName, isBot, message);
+
+        // Act
+        InvokeOnInjectedHookOutputReceived(
+            _serverManager,
+            BuildChatRecord("8", "1", "eRacer", "!yes"));
+
+        // Assert
+        WaitForChat(() => received != null);
+        Assert.NotNull(received);
+        Assert.True(received!.Value.IsBot);
+        Assert.Equal("eRacer", received.Value.PlayerName);
+    }
+
+    /// <summary>
+    /// The reason issue #7 exists: the console regex matches the sender with [^:]+,
+    /// so this player's votes are silently dropped. The record keeps the name whole.
+    /// </summary>
+    [Fact]
+    public void OnInjectedHookOutputReceived_SenderNameContainingColon_RaisesChatCommandTheTextPathDrops()
+    {
+        // Arrange
+        var receivedCount = 0;
+        (string PlayerName, bool IsBot, string Message)? received = null;
+        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+        {
+            receivedCount++;
+            received = (playerName, isBot, message);
+        };
+
+        // Act - the console line for this player matches nothing at all.
+        InvokeOnConsoleOutputReceived(_serverManager, "* 22:42:03 Foo:Bar: !vote mixed_1 6");
+        Thread.Sleep(150);
+        Assert.Equal(0, receivedCount);
+
+        InvokeOnInjectedHookOutputReceived(
+            _serverManager,
+            BuildChatRecord("10", "0", "Foo:Bar", "!vote mixed_1 6"));
+
+        // Assert
+        WaitForChat(() => received != null);
+        Assert.NotNull(received);
+        Assert.Equal("Foo:Bar", received!.Value.PlayerName);
+        Assert.Equal("!vote mixed_1 6", received.Value.Message);
+    }
+
+    [Fact]
+    public void OnInjectedHookOutputReceived_MaximumLengthMessage_RaisesChatCommandIntact()
+    {
+        // Arrange - 127 characters is the game's cap; see docs/finding-rvas.md.
+        var message = "!say " + new string('x', 122);
+        Assert.Equal(127, message.Length);
+
+        (string PlayerName, bool IsBot, string Message)? received = null;
+        _serverManager.ChatCommandReceived += (playerName, isBot, msg) =>
+            received = (playerName, isBot, msg);
+
+        // Act
+        InvokeOnInjectedHookOutputReceived(
+            _serverManager,
+            BuildChatRecord("1", "0", "Procat", message));
+
+        // Assert
+        WaitForChat(() => received != null);
+        Assert.NotNull(received);
+        Assert.Equal(message, received!.Value.Message);
+    }
+
+    [Fact]
+    public void OnInjectedHookOutputReceived_BeforeAnyRecord_TextFallbackStillRaisesChatCommands()
+    {
+        // Arrange
+        (string PlayerName, bool IsBot, string Message)? received = null;
+        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+            received = (playerName, isBot, message);
+        _serverManager.ProcessConsoleHookOutput = true;
+
+        // Act
+        InvokeOnInjectedHookOutputReceived(_serverManager, "* 22:42:03 Procat: !vote mixed_1 6");
+
+        // Assert
+        WaitForChat(() => received != null);
+        Assert.NotNull(received);
+        Assert.Equal("Procat", received!.Value.PlayerName);
+        Assert.False(_serverManager.UseHookChat);
+    }
+
+    [Fact]
+    public void OnInjectedHookOutputReceived_AfterAValidRecord_ConsoleTextIsNoLongerParsedForChat()
+    {
+        // Arrange
+        var receivedCount = 0;
+        _serverManager.ChatCommandReceived += (_, _, _) => receivedCount++;
+
+        // Act
+        InvokeOnInjectedHookOutputReceived(
+            _serverManager,
+            BuildChatRecord("1", "0", "Procat", "!vote mixed_1 6"));
+        WaitForChat(() => receivedCount > 0);
+
+        // The console line the hook prints for that same message arrives next, and
+        // must not be handled a second time. Nor must any later one.
+        InvokeOnConsoleOutputReceived(_serverManager, "* 22:42:03 Procat: !vote mixed_1 6");
+        InvokeOnConsoleOutputReceived(_serverManager, "* 22:43:11 Procat: !yes");
+        Thread.Sleep(150);
+
+        // Assert
+        Assert.Equal(1, receivedCount);
+        Assert.True(_serverManager.UseHookChat);
+    }
+
+    [Theory]
+    [InlineData("markerOnly")]
+    [InlineData("noTerminator")]
+    [InlineData("truncatedMidField")]
+    [InlineData("missingMessageField")]
+    [InlineData("unparsableSlot")]
+    [InlineData("unparsableBotFlag")]
+    [InlineData("emptyName")]
+    public void OnInjectedHookOutputReceived_MalformedRecord_IsDroppedWithoutEnablingHookChat(string scenario)
+    {
+        // Arrange
+        var receivedCount = 0;
+        var consoleLines = 0;
+        _serverManager.ChatCommandReceived += (_, _, _) => receivedCount++;
+        _serverManager.ConsoleOutput += _ => consoleLines++;
+        _serverManager.ProcessConsoleHookOutput = true;
+
+        var separator = HookChatRecord.FieldSeparator;
+        var wellFormed = BuildChatRecord("1", "0", "Procat", "!vote mixed_1 6");
+        var malformed = scenario switch
+        {
+            "markerOnly" => HookChatRecord.Marker,
+            "noTerminator" => wellFormed[..^1],
+            "truncatedMidField" => wellFormed[..(wellFormed.Length / 2)],
+            "missingMessageField" =>
+                $"{HookChatRecord.Marker}{separator}1{separator}0{separator}Procat{HookChatRecord.RecordEnd}",
+            "unparsableSlot" => BuildChatRecord("notanumber", "0", "Procat", "!yes"),
+            "unparsableBotFlag" => BuildChatRecord("1", "maybe", "Procat", "!yes"),
+            "emptyName" => BuildChatRecord("1", "0", "   ", "!yes"),
+            _ => throw new ArgumentOutOfRangeException(nameof(scenario))
+        };
+
+        // Act
+        var exception = Xunit.Record.Exception(
+            () => InvokeOnInjectedHookOutputReceived(_serverManager, malformed));
+
+        // Assert
+        Assert.Null(exception);
+        Thread.Sleep(100);
+        Assert.Equal(0, receivedCount);
+        Assert.False(_serverManager.UseHookChat);
+
+        // A record, even a broken one, is ours: it must not leak into console output.
+        Assert.Equal(0, consoleLines);
+
+        // State is intact - the text fallback still carries chat afterwards.
+        InvokeOnConsoleOutputReceived(_serverManager, "* 22:42:03 Procat: !vote mixed_1 6");
+        WaitForChat(() => receivedCount > 0);
+        Assert.Equal(1, receivedCount);
+    }
+
+    [Fact]
+    public void OnInjectedHookOutputReceived_OrdinaryChatRecord_EnablesHookChatButRaisesNothing()
+    {
+        // Arrange
+        var receivedCount = 0;
+        _serverManager.ChatCommandReceived += (_, _, _) => receivedCount++;
+
+        // Act - not a ! command, but it still proves the hook is emitting records.
+        InvokeOnInjectedHookOutputReceived(
+            _serverManager,
+            BuildChatRecord("1", "0", "Procat", "hello world"));
+
+        // Assert
+        Thread.Sleep(100);
+        Assert.Equal(0, receivedCount);
+        Assert.True(_serverManager.UseHookChat);
+    }
+
+    [Fact]
+    public void OnInjectedHookOutputReceived_StructuredRecord_IsNotFannedOutAsConsoleText()
+    {
+        // Arrange
+        var consoleLines = new List<string>();
+        _serverManager.ConsoleOutput += line => consoleLines.Add(line);
+        _serverManager.ProcessConsoleHookOutput = true;
+
+        // Act
+        InvokeOnInjectedHookOutputReceived(
+            _serverManager,
+            BuildChatRecord("1", "0", "Procat", "!yes"));
+
+        // Assert
+        Assert.Empty(consoleLines);
+    }
+
+    private static string BuildChatRecord(string slot, string isBot, string name, string message)
+    {
+        var separator = HookChatRecord.FieldSeparator;
+        return $"{HookChatRecord.Marker}{separator}{slot}{separator}{isBot}{separator}{name}{separator}{message}{HookChatRecord.RecordEnd}";
+    }
+
+    private static void InvokeOnInjectedHookOutputReceived(ServerManager serverManager, string output)
+    {
+        var method = typeof(ServerManager).GetMethod(
+            "OnInjectedHookOutputReceived",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+        Assert.NotNull(method);
+        method.Invoke(serverManager, [output]);
+    }
+
     private TestServerManager CreateTestServerManager(IInjectedHookOutputReader injectedHookReader, string? build)
     {
         var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
