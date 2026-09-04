@@ -63,9 +63,11 @@ over a named pipe, sends commands through the game's own dispatcher, and exposes
 Nothing works until the hook is injected (Process Manager -> INJECT).
 
 Joins, quits and privilege changes come from the game's server-event ring
-(`Services/ServerEventReader.cs`), not from text. Chat still arrives as console text and
-is parsed in `ServerManager.ProcessChatCommandLine` — replacing that is tracked work, so
-prefer structured sources over new regexes.
+(`Services/ServerEventReader.cs`), not from text. Chat comes from the hook too, as a
+structured record carrying the sender and message separately; `Services/HookChatRecord.cs`
+interprets it. Console text is never parsed for chat — a line that looks like a chat
+command but arrived without a record is logged, not acted on. Prefer structured sources
+over new regexes.
 
 ## Conventions
 

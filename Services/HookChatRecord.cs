@@ -5,11 +5,11 @@ namespace WreckfestController.Services;
 /// <summary>
 /// One chat message as the injected hook observed it.
 ///
-/// The console line is lossy: sender and message are concatenated with ": ", so the
-/// only way back is to work out where the name ends. The regex in
-/// <c>ServerManager.ProcessChatCommandLine</c> guesses with <c>[^:]+</c>, which means
-/// a player whose name contains a colon can never trigger a chat command. The hook
-/// sees the message before the game formats it, so the two can be separated properly.
+/// The console line is lossy: sender and message are concatenated with ": ", so
+/// reading it back means guessing where the name ends. The regex this replaced guessed
+/// with <c>[^:]+</c>, which meant a player whose name contained a colon could never
+/// trigger a chat command. The hook sees the message before the game formats it, so the
+/// two arrive separately and no guess is needed.
 ///
 /// Wire format, one record per line on the existing output pipe:
 /// <code>
