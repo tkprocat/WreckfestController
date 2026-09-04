@@ -14,34 +14,86 @@ public class Program
     {
         var host = CreateHostBuilder(args).Build();
 
-        // Start the embedded API server in background
-        Task.Run(async () =>
+        try
         {
+            // Start hosted services, including EventSchedulerService, before entering
+            // the WPF message loop.
+            //
+            // Guarded because EventSchedulerService.StartAsync does real work up front -
+            // it loads the schedule file and scans for missed events synchronously - and
+            // this runs before MainWindow is shown. An unreadable or corrupt schedule
+            // would otherwise kill the app with no UI to report it. Losing the scheduler
+            // is bad; losing the whole controller because of it is worse.
             try
             {
-                await Task.Delay(1000); // Wait for app initialization
-                var apiServer = host.Services.GetRequiredService<IApiServer>();
-                await apiServer.StartAsync();
+                host.Start();
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Failed to start API server: {ex}");
+                ReportHostStartFailure(host, ex);
             }
-        });
 
-        // Force instantiation so it subscribes to ServerManager.ChatCommandReceived.
-        host.Services.GetRequiredService<VotingService>();
+            // Start the embedded API server in background
+            Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(1000); // Wait for app initialization
+                    var apiServer = host.Services.GetRequiredService<IApiServer>();
+                    await apiServer.StartAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to start API server: {ex}");
+                }
+            });
 
-        // Create and run WPF application
-        var app = new App();
-        app.InitializeComponent();
+            // Force instantiation so it subscribes to ServerManager.ChatCommandReceived.
+            host.Services.GetRequiredService<VotingService>();
 
-        // Create MainWindow with dependency injection
-        var mainWindow = host.Services.GetRequiredService<MainWindow>();
-        app.MainWindow = mainWindow;
-        mainWindow.Show();
+            // Create and run WPF application
+            var app = new App();
+            app.InitializeComponent();
 
-        app.Run();
+            // Create MainWindow with dependency injection
+            var mainWindow = host.Services.GetRequiredService<MainWindow>();
+            app.MainWindow = mainWindow;
+            mainWindow.Show();
+
+            app.Run();
+        }
+        finally
+        {
+            try
+            {
+                host.StopAsync().GetAwaiter().GetResult();
+            }
+            finally
+            {
+                host.Dispose();
+            }
+        }
+    }
+
+    // The host failed to start, so hosted services - the event scheduler above all -
+    // are not running: scheduled events will not activate until the app is restarted.
+    // Everything reached through the DI container still works, so the app carries on.
+    private static void ReportHostStartFailure(IHost host, Exception ex)
+    {
+        Console.WriteLine($"Failed to start hosted services: {ex}");
+
+        try
+        {
+            host.Services.GetService<ILoggerFactory>()
+                ?.CreateLogger(typeof(Program))
+                .LogError(
+                    ex,
+                    "Hosted services failed to start; continuing without them. Scheduled events will not activate.");
+        }
+        catch
+        {
+            // The container itself is unusable, so the console line above is all we get.
+        }
     }
 
     public static IHostBuilder CreateHostBuilder(string[] args) =>
