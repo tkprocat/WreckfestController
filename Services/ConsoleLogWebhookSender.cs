@@ -35,7 +35,9 @@ public class ConsoleLogWebhookSender : IDisposable
         if (!WebhookConfiguration.IsEnabled(configuration))
         {
             _logger.LogInformation(
-                "Outbound webhooks are disabled (Webhooks:Enabled is false); console log webhooks will not be sent.");
+                WebhookConfiguration.IsFlagSet(configuration)
+                    ? "Outbound webhooks not sent: Webhooks:Enabled is true but Webhooks:ApiKey is blank."
+                    : "Outbound webhooks are disabled (Webhooks:Enabled is false).");
             _webhookUrl = string.Empty;
             return;
         }

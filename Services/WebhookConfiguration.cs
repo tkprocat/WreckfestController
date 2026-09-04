@@ -15,7 +15,21 @@ public static class WebhookConfiguration
     /// default, so an unconfigured install would POST to an endpoint nobody asked for.
     /// </summary>
     public static bool IsEnabled(IConfiguration configuration) =>
+        IsFlagSet(configuration) && HasApiKey(configuration);
+
+    /// <summary>True when Webhooks:Enabled parses as true.</summary>
+    public static bool IsFlagSet(IConfiguration configuration) =>
         bool.TryParse(configuration["Webhooks:Enabled"], out var enabled) && enabled;
+
+    /// <summary>
+    /// True when an outbound key is configured. Sending without one would post
+    /// console output and player events to the endpoint unauthenticated.
+    /// </summary>
+    public static bool HasApiKey(IConfiguration configuration) =>
+        !string.IsNullOrWhiteSpace(GetApiKeyRaw(configuration));
+
+    private static string? GetApiKeyRaw(IConfiguration configuration) =>
+        configuration["Webhooks:ApiKey"] ?? configuration["WreckfestWeb:WebhookApiKey"];
 
     public static string? GetBaseUrl(IConfiguration configuration, ILogger logger)
     {

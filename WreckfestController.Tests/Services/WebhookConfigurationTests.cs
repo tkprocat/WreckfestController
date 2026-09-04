@@ -137,7 +137,8 @@ public class WebhookConfigurationTests
             WebhookConfiguration.IsEnabled(Build(new Dictionary<string, string?>
             {
                 ["Webhooks:Enabled"] = value,
-                ["Webhooks:BaseUrl"] = "https://example.invalid/webhooks"
+                ["Webhooks:BaseUrl"] = "https://example.invalid/webhooks",
+                ["Webhooks:ApiKey"] = "secret"
             })));
     }
 
@@ -163,4 +164,66 @@ public class WebhookConfigurationTests
 
     private static IConfiguration Build(Dictionary<string, string?> values) =>
         new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+
+    // Enabled alone is not enough: a blank key would mean posting unauthenticated
+    // outbound, and serving nothing but 401s inbound.
+    [Fact]
+    public void Webhooks_AreDisabled_WhenEnabledButKeyIsBlank()
+    {
+        Assert.False(WebhookConfiguration.IsEnabled(Build(new Dictionary<string, string?>
+        {
+            ["Webhooks:Enabled"] = "true",
+            ["Webhooks:BaseUrl"] = "https://example.invalid/webhooks",
+            ["Webhooks:ApiKey"] = "   "
+        })));
+    }
+
+    [Fact]
+    public void Webhooks_AreEnabled_WhenFlagSetAndKeyPresent()
+    {
+        Assert.True(WebhookConfiguration.IsEnabled(Build(new Dictionary<string, string?>
+        {
+            ["Webhooks:Enabled"] = "true",
+            ["Webhooks:ApiKey"] = "secret"
+        })));
+    }
+
+    [Fact]
+    public void Webhooks_AcceptALegacyKey_WhenDecidingIfEnabled()
+    {
+        Assert.True(WebhookConfiguration.IsEnabled(Build(new Dictionary<string, string?>
+        {
+            ["Webhooks:Enabled"] = "true",
+            ["WreckfestWeb:WebhookApiKey"] = "legacy-secret"
+        })));
+    }
+
+    [Fact]
+    public void Api_IsDisabled_WhenEnabledButKeyIsBlank()
+    {
+        Assert.False(ApiServer.IsEnabled(Build(new Dictionary<string, string?>
+        {
+            ["Api:Enabled"] = "true",
+            ["Api:Key"] = "   "
+        })));
+    }
+
+    [Fact]
+    public void Api_IsEnabled_WhenFlagSetAndKeyPresent()
+    {
+        Assert.True(ApiServer.IsEnabled(Build(new Dictionary<string, string?>
+        {
+            ["Api:Enabled"] = "true",
+            ["Api:Key"] = "secret"
+        })));
+    }
+
+    [Fact]
+    public void Api_IsDisabled_WhenKeyPresentButFlagUnset()
+    {
+        Assert.False(ApiServer.IsEnabled(Build(new Dictionary<string, string?>
+        {
+            ["Api:Key"] = "secret"
+        })));
+    }
 }
