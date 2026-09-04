@@ -3,22 +3,31 @@
 WreckfestController pushes events to an HTTP endpoint as they happen. Any endpoint
 that can receive a JSON POST works — nothing here assumes a particular consumer.
 
-Webhooks are optional. With no base URL configured they are disabled and the
-application runs normally.
+Webhooks are optional and off by default. The application runs normally with them
+disabled.
 
 ## Configuration
 
 ```json
 "Webhooks": {
+  "Enabled": false,
   "BaseUrl": "https://example.invalid/api/webhooks",
   "ApiKey": ""
 }
 ```
 
+Webhooks are **opt-in**, and are sent only when `Enabled` is `true` **and** `ApiKey`
+is non-blank. Either missing means nothing is sent, with a startup line saying which
+condition failed. This matters because the base URL falls back to a built-in default
+when unset, so without the flag an unconfigured install would POST to an endpoint
+nobody asked for — and without the key it would do so unauthenticated.
+
 | Setting | Meaning |
 | --- | --- |
+| `Enabled` | Must be `true` for anything to be sent |
+| `ApiKey` | Must be non-blank, or nothing is sent |
 | `BaseUrl` | Prefix for every webhook path below |
-| `ApiKey` | Sent as `X-API-Key` on each request when set |
+| `ApiKey` | Sent as `X-API-Key` on each request |
 
 Both are also editable from the Configuration tab.
 

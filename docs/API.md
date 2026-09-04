@@ -22,8 +22,8 @@ A missing or non-matching key returns **401** with no body.
 
 There is deliberately **no local exemption** — loopback requests need the key too.
 
-If `Api:Key` is empty or unset, *every* API request returns 401 and a warning is
-logged at startup. The desktop application still runs; only the HTTP API is inert.
+If `Api:Key` is empty or unset the API does not start at all. The desktop
+application still runs; only the HTTP API is absent.
 
 > The key is read once when the API server starts, so changing it requires a
 > restart.
@@ -32,6 +32,7 @@ logged at startup. The desktop application still runs; only the HTTP API is iner
 
 ```json
 "Api": {
+  "Enabled": false,
   "Key": "",
   "AllowRemote": false,
   "HttpPort": 5100,
@@ -39,8 +40,15 @@ logged at startup. The desktop application still runs; only the HTTP API is iner
 }
 ```
 
+The API is **opt-in**, and starts only when `Enabled` is `true` **and** `Key` is
+non-blank. Either missing means no port is bound at all, with a startup line saying
+which condition failed. Binding a port that could only answer 401 would serve
+nothing and still take the port from another instance.
+
 | Setting | Effect |
 | --- | --- |
+| `Enabled: false` (default) | the API does not start; no port is bound |
+| `Enabled: true`, `Key` blank | the API does not start either |
 | `AllowRemote: false` (default) | binds `127.0.0.1` only |
 | `AllowRemote: true` | binds `0.0.0.0` |
 | `HttpPort` / `HttpsPort` | defaults 5100 / 5101 |
@@ -109,7 +117,8 @@ including server control, configuration updates, track rotation and player list.
 
 With `AllowRemote: false`, a client must also run on the same host.
 
-Existing integrations must be updated to send the header.
+Existing integrations must be updated to send the header, and `Api:Enabled` must
+be set to `true` — the API no longer starts by default.
 
 ## Header casing
 
