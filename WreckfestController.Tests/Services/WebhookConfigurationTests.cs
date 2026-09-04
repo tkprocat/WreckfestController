@@ -226,4 +226,52 @@ public class WebhookConfigurationTests
             ["Api:Key"] = "secret"
         })));
     }
+
+    // Regression: user-settings.json is a configuration source, and the Configuration
+    // tab persists this section through WreckfestWebSettings, whose properties are
+    // named WebhookBaseUrl/WebhookApiKey. Reading only the canonical names left every
+    // UI-configured install with webhooks silently disabled.
+    [Fact]
+    public void GetBaseUrl_ReadsTheNamePersistedByTheSettingsUi()
+    {
+        Assert.Equal(
+            "https://ui.example/webhooks",
+            GetBaseUrl(new Dictionary<string, string?>
+            {
+                ["Webhooks:WebhookBaseUrl"] = "https://ui.example/webhooks"
+            }));
+    }
+
+    [Fact]
+    public void GetApiKey_ReadsTheNamePersistedByTheSettingsUi()
+    {
+        Assert.Equal(
+            "ui-secret",
+            GetApiKey(new Dictionary<string, string?>
+            {
+                ["Webhooks:WebhookApiKey"] = "ui-secret"
+            }));
+    }
+
+    [Fact]
+    public void CanonicalNameWins_OverThePersistedName()
+    {
+        Assert.Equal(
+            "https://canonical.example/webhooks",
+            GetBaseUrl(new Dictionary<string, string?>
+            {
+                ["Webhooks:BaseUrl"] = "https://canonical.example/webhooks",
+                ["Webhooks:WebhookBaseUrl"] = "https://ui.example/webhooks"
+            }));
+    }
+
+    [Fact]
+    public void Webhooks_AreEnabled_WhenOnlyTheUiPersistedKeyIsPresent()
+    {
+        Assert.True(WebhookConfiguration.IsEnabled(Build(new Dictionary<string, string?>
+        {
+            ["Webhooks:Enabled"] = "true",
+            ["Webhooks:WebhookApiKey"] = "ui-secret"
+        })));
+    }
 }
