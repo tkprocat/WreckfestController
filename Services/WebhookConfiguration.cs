@@ -29,11 +29,37 @@ public static class WebhookConfiguration
         !string.IsNullOrWhiteSpace(GetApiKeyRaw(configuration));
 
     private static string? GetApiKeyRaw(IConfiguration configuration) =>
-        configuration["Webhooks:ApiKey"] ?? configuration["WreckfestWeb:WebhookApiKey"];
+        FirstNonBlank(
+            configuration["Webhooks:ApiKey"],
+            configuration["Webhooks:WebhookApiKey"],
+            configuration["WreckfestWeb:WebhookApiKey"]);
+
+    private static string? FirstNonBlank(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
 
     public static string? GetBaseUrl(IConfiguration configuration, ILogger logger)
     {
         var baseUrl = configuration["Webhooks:BaseUrl"];
+        if (!string.IsNullOrWhiteSpace(baseUrl))
+        {
+            return baseUrl;
+        }
+
+        // user-settings.json is a configuration source (Program.cs), and it persists
+        // this section through WreckfestWebSettings, whose properties are still named
+        // WebhookBaseUrl/WebhookApiKey. Anything saved from the Configuration tab
+        // therefore arrives under these keys rather than the canonical ones.
+        baseUrl = configuration["Webhooks:WebhookBaseUrl"];
         if (!string.IsNullOrWhiteSpace(baseUrl))
         {
             return baseUrl;
@@ -59,6 +85,13 @@ public static class WebhookConfiguration
     public static string? GetApiKey(IConfiguration configuration, ILogger logger)
     {
         var apiKey = configuration["Webhooks:ApiKey"];
+        if (!string.IsNullOrWhiteSpace(apiKey))
+        {
+            return apiKey;
+        }
+
+        // As above: the name the Configuration tab actually writes.
+        apiKey = configuration["Webhooks:WebhookApiKey"];
         if (!string.IsNullOrWhiteSpace(apiKey))
         {
             return apiKey;
