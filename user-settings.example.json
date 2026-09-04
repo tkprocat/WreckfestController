@@ -12,8 +12,8 @@
     "SteamCmdPath": "<path-to-steamcmd>\\steamcmd.exe",
     "WreckfestAppId": "361580"
   },
-  "WreckfestWeb": {
-    "WebhookBaseUrl": "https://your-laravel-app.com/api/webhooks",
+  "Webhooks": {
+    "WebhookBaseUrl": "https://your-webhook-endpoint.example/api/webhooks",
     "WebhookApiKey": "your-64-character-hex-key-here"
   },
   "Vote": {

@@ -24,7 +24,7 @@ public class WreckfestWebWebhookService
     /// </summary>
     private string GetWebhookBaseUrl()
     {
-        return _configuration["WreckfestWeb:WebhookBaseUrl"] ?? "http://localhost:8000/api/webhooks";
+        return WebhookConfiguration.GetBaseUrl(_configuration, _logger) ?? WebhookConfiguration.DefaultBaseUrl;
     }
 
     /// <summary>
@@ -32,7 +32,7 @@ public class WreckfestWebWebhookService
     /// </summary>
     private string? GetWebhookApiKey()
     {
-        return _configuration["WreckfestWeb:WebhookApiKey"];
+        return WebhookConfiguration.GetApiKey(_configuration, _logger);
     }
 
     public async Task SendPlayersUpdatedAsync(List<Models.Player> players)
@@ -168,6 +168,11 @@ public class WreckfestWebWebhookService
 
     private async Task PostWebhookAsync(string endpoint, object payload)
     {
+        if (!WebhookConfiguration.IsEnabled(_configuration))
+        {
+            return;
+        }
+
         var webhookBaseUrl = GetWebhookBaseUrl();
         var apiKey = GetWebhookApiKey();
         var url = $"{webhookBaseUrl}/{endpoint}";

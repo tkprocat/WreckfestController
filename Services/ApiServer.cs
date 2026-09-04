@@ -43,6 +43,13 @@ public class ApiServer : IApiServer, IDisposable
     /// Builds the listen URLs. Ports are configurable so several controller
     /// instances can manage separate servers on one Windows host.
     /// </summary>
+    /// <summary>
+    /// The HTTP API is opt-in. When disabled no port is bound at all, which also
+    /// keeps several controller instances on one host from contending for ports.
+    /// </summary>
+    public static bool IsEnabled(IConfiguration configuration) =>
+        bool.TryParse(configuration["Api:Enabled"], out var enabled) && enabled;
+
     public static string GetListenUrls(
         bool allowRemote,
         int httpPort = DefaultHttpPort,
@@ -92,6 +99,14 @@ public class ApiServer : IApiServer, IDisposable
             var builder = WebApplication.CreateBuilder();
 
             var configuration = _serviceProvider.GetRequiredService<IConfiguration>();
+
+            if (!IsEnabled(configuration))
+            {
+                _logger.LogInformation(
+                    "HTTP API is disabled (Api:Enabled is false). No port will be bound.");
+                return;
+            }
+
             var allowRemote = configuration.GetValue<bool>("Api:AllowRemote");
             var httpPort = ResolvePort(configuration, "Api:HttpPort", DefaultHttpPort);
             var httpsPort = ResolvePort(configuration, "Api:HttpsPort", DefaultHttpsPort);

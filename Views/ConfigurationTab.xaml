@@ -172,27 +172,27 @@
                                Foreground="{StaticResource TextPrimary}"
                                Margin="0,0,0,15"/>
 
-                    <!-- WreckfestWeb Webhook URL -->
-                    <TextBlock Text="WreckfestWeb Webhook Base URL"
+                    <!-- Webhook URL -->
+                    <TextBlock Text="Webhook Base URL"
                                Foreground="{StaticResource TextSecondary}"
                                FontSize="12"
                                Margin="0,0,0,5"/>
-                    <TextBox x:Name="WreckfestWebWebhookUrlTextBox"
+                    <TextBox x:Name="WebhookUrlTextBox"
                              materialDesign:HintAssist.Hint="http://localhost:8000/api/webhooks"
                              Style="{StaticResource MaterialDesignOutlinedTextBox}"
                              Foreground="{StaticResource TextPrimary}"
                              Margin="0,0,0,15"/>
 
-                    <!-- WreckfestWeb API Key -->
-                    <TextBlock Text="WreckfestWeb API Key"
+                    <!-- Webhook API Key -->
+                    <TextBlock Text="Webhook API Key"
                                Foreground="{StaticResource TextSecondary}"
                                FontSize="12"
                                Margin="0,0,0,5"/>
-                    <TextBox x:Name="WreckfestWebApiKeyTextBox"
+                    <TextBox x:Name="WebhookApiKeyTextBox"
                              materialDesign:HintAssist.Hint="64-character hex key for webhook authentication"
                              Style="{StaticResource MaterialDesignOutlinedTextBox}"
                              Foreground="{StaticResource TextPrimary}"/>
-                    <TextBlock Text="Required for authenticating webhook requests to WreckfestWeb (X-API-Key header)"
+                    <TextBlock Text="Sent with webhook requests in the X-API-Key header"
                                FontSize="10"
                                Foreground="{StaticResource TextSecondary}"
                                Margin="0,5,0,0"
