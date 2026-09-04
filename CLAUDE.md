@@ -16,6 +16,17 @@ dotnet test
 dotnet test --filter-class WreckfestController.Tests.Services.PlayerTrackerTests
 ```
 
+`dotnet build` also builds the injected C++ hook. The csproj shells out to full
+MSBuild (located via `vswhere`) for `NativeHooks/WreckfestConsoleHook/WreckfestConsoleHook.vcxproj`,
+because the .NET SDK does not ship the C++ targets - a plain `ProjectReference`
+to a `.vcxproj` fails with `MSB4278` and takes the whole C# build down with it.
+The step is skipped when the DLL is newer than its sources, and the build now
+**fails** rather than silently shipping an app that cannot inject. Building
+requires Visual Studio with the Desktop development with C++ workload.
+
+MinHook is vendored under `NativeHooks/WreckfestConsoleHook/third_party/minhook`
+so the build needs no network.
+
 ### Never pass `--nologo` to `dotnet test`
 
 The test project is **xunit.v3 on Microsoft.Testing.Platform** (`global.json` selects the

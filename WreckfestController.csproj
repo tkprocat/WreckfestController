@@ -111,18 +111,59 @@
     </ItemGroup>
   </Target>
 
+  <PropertyGroup>
+    <NativeHookDir>$(MSBuildProjectDirectory)\NativeHooks\WreckfestConsoleHook</NativeHookDir>
+    <NativeHookProject>$(NativeHookDir)\WreckfestConsoleHook.vcxproj</NativeHookProject>
+    <NativeHookDll>$(NativeHookDir)\bin\$(Configuration)\WreckfestConsoleHook.dll</NativeHookDll>
+    <VsWherePath>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</VsWherePath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <NativeHookSource Include="$(NativeHookDir)\WreckfestConsoleHook.cpp" />
+    <NativeHookSource Include="$(NativeHookProject)" />
+    <NativeHookSource Include="$(NativeHookDir)\third_party\minhook\**\*.c" />
+    <NativeHookSource Include="$(NativeHookDir)\third_party\minhook\**\*.h" />
+  </ItemGroup>
+
+  <!--
+    The injected hook is a C++ DLL. The .NET SDK does not ship the C++ MSBuild
+    targets, so `dotnet build` cannot import a .vcxproj directly - a plain
+    ProjectReference fails with MSB4278 and takes the whole C# build down with it.
+    Locating full MSBuild and shelling out keeps `dotnet build` and `dotnet test`
+    working while still producing the DLL automatically.
+
+    Inputs/Outputs make this a no-op once the DLL is newer than its sources, so
+    the common case costs nothing.
+  -->
+  <Target Name="BuildWreckfestConsoleHook" BeforeTargets="BeforeBuild"
+          Inputs="@(NativeHookSource)" Outputs="$(NativeHookDll)">
+    <Error Condition="!Exists('$(VsWherePath)')"
+           Text="Cannot build the native console hook: vswhere.exe not found at $(VsWherePath). Visual Studio with the Desktop development with C++ workload is required." />
+
+    <Exec Command="&quot;$(VsWherePath)&quot; -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe"
+          ConsoleToMSBuild="true" StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="FullMSBuildPath" />
+    </Exec>
+
+    <Error Condition="'$(FullMSBuildPath)' == '' Or !Exists('$(FullMSBuildPath)')"
+           Text="Cannot build the native console hook: MSBuild.exe was not found. Install the Desktop development with C++ workload in Visual Studio." />
+
+    <Message Importance="high" Text="Building native console hook ($(Configuration)|x64)..." />
+    <Exec Command="&quot;$(FullMSBuildPath)&quot; &quot;$(NativeHookProject)&quot; -p:Configuration=$(Configuration) -p:Platform=x64 -v:minimal -nologo" />
+  </Target>
+
   <Target Name="CopyWreckfestConsoleHook" AfterTargets="Build">
-    <ItemGroup>
-      <WreckfestConsoleHookDll Include="NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll" Condition="Exists('NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll')" />
-    </ItemGroup>
-    <Copy SourceFiles="@(WreckfestConsoleHookDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="'@(WreckfestConsoleHookDll)' != ''" />
+    <!-- Fail loudly. Silently skipping produced an app that launched fine and
+         could never inject, with no error anywhere. -->
+    <Error Condition="!Exists('$(NativeHookDll)')"
+           Text="The native console hook DLL was not produced at $(NativeHookDll). The application cannot inject without it." />
+    <Copy SourceFiles="$(NativeHookDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="CopyWreckfestConsoleHookToPublish" AfterTargets="Publish">
-    <ItemGroup>
-      <WreckfestConsoleHookDll Include="NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll" Condition="Exists('NativeHooks\WreckfestConsoleHook\build\$(Configuration)\WreckfestConsoleHook.dll')" />
-    </ItemGroup>
-    <Copy SourceFiles="@(WreckfestConsoleHookDll)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'@(WreckfestConsoleHookDll)' != '' And '$(PublishDir)' != ''" />
+    <Error Condition="!Exists('$(NativeHookDll)')"
+           Text="The native console hook DLL was not produced at $(NativeHookDll). Refusing to publish an application that cannot inject." />
+    <Copy SourceFiles="$(NativeHookDll)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
   </Target>
 
   <Target Name="CopyAppSettingsToPublish" AfterTargets="Publish">
