@@ -40,8 +40,18 @@ public class ServerManager
     private readonly WreckfestWebWebhookService _webhookService;
     private readonly ConsoleLogWebhookSender _consoleLogSender;
     private string _currentTrack = string.Empty;
-    private static readonly TimeSpan DuplicateChatCommandWindow = TimeSpan.FromSeconds(2);
-    private readonly object _chatCommandDedupLock = new();
+
+    /// <summary>
+    /// The message from the last record handled. The hook emits a record ahead of the
+    /// console line it pairs with, so this suppresses the report for that line.
+    /// Compared by containment because the record carried the line before colour
+    /// codes were stripped, while the console line arrives after.
+    /// </summary>
+    private string? _lastRecordMessage;
+
+    /// <summary>Recognises a chat line well enough to notice one that produced no record.</summary>
+    private static readonly Regex ChatLineShape =
+        new(@"^(?:\*\s*)?\d{2}:\d{2}:\d{2}\s+(?:-\s+)?\*?[^:]+:\s*!", RegexOptions.Compiled);
 
     // Chat commands are handled on their own single-consumer worker rather than
     // inline on the hook's output-reading thread. Handlers block (VotingService
@@ -58,8 +68,6 @@ public class ServerManager
             });
     private Task? _chatCommandWorker;
     private readonly object _chatWorkerLock = new();
-    private string? _lastChatCommandKey;
-    private DateTime _lastChatCommandAtUtc;
     private bool _useInjectedHookAsPrimaryOutput;
 
     // Server events come from the game's own ring buffer rather than parsed console
@@ -1193,31 +1201,50 @@ public class ServerManager
             _consoleLogSender.AddLog(line);
 
             // Parse chat commands, track changes, and server info.
-            ProcessChatCommandLine(line);
+            ReportChatLineWithoutRecord(line);
             _trackChangeTracker.ProcessLogLine(line);
             _serverInfoTracker.ProcessLogLine(line);
         }
     }
 
-    private void ProcessChatCommandLine(string line)
+    /// <summary>
+    /// Set once the injected hook has delivered a structured chat record that parsed.
+    /// While true the console-text parsing below is skipped, because the record
+    /// carries the same message with sender and body kept apart rather than
+    /// reconstructed from a formatted line.
+    ///
+    /// It stays false until a record actually arrives, so a hook that is not
+    /// injected, out of date, or running against a build where the chat handler moved
+    /// leaves the text path carrying chat exactly as it did before. Chat is the whole
+    /// vote transport; this must never be a flag anyone can turn on optimistically.
+    /// </summary>
+    /// <summary>
+    /// Chat arrives as a structured record from the injected hook, never by reading
+    /// the console line back. The old regex guessed where the sender ended with
+    /// [^:]+, so a player whose name contained a colon could never trigger a command.
+    ///
+    /// This only reports. Console text and records travel the same hook pipe, so a
+    /// text fallback could never cover the hook being down - it only ever covered the
+    /// record extraction failing, and it is exactly then that a silently dropped
+    /// command is most expensive. A line that looks like chat and had no record is
+    /// therefore logged, not parsed.
+    /// </summary>
+    private void ReportChatLineWithoutRecord(string line)
     {
-        var normalizedLine = line.Trim();
-        if (Regex.IsMatch(normalizedLine, @"\s+[>*/\\]$"))
+        if (_lastRecordMessage != null && line.Contains(_lastRecordMessage, StringComparison.Ordinal))
         {
-            normalizedLine = normalizedLine[..^1].TrimEnd();
+            _lastRecordMessage = null;
+            return;
         }
 
-        var chatMatch = Regex.Match(normalizedLine, @"^(?:\*\s*)?\d{2}:\d{2}:\d{2}\s+(?:-\s+)?(\*?)([^:]+):\s*(!.*)$");
-        if (!chatMatch.Success)
+        if (!ChatLineShape.IsMatch(line))
+        {
             return;
+        }
 
-        var isBot = chatMatch.Groups[1].Value == "*";
-        var playerName = chatMatch.Groups[2].Value.Trim();
-        var chatMessage = chatMatch.Groups[3].Value.Trim();
-        if (ShouldSuppressDuplicateChatCommand(playerName, isBot, chatMessage))
-            return;
-
-        EnqueueChatCommand(playerName, isBot, chatMessage);
+        _logger.LogWarning(
+            "A chat line arrived with no structured record from the hook, so no command was raised: {Line}",
+            line);
     }
 
     /// <summary>
@@ -1263,29 +1290,82 @@ public class ServerManager
 
     private void OnInjectedHookOutputReceived(string output)
     {
+        // Demuxed ahead of the text fanout. A structured record is not console
+        // output: it must not reach the output buffer, the console webhook or the
+        // chat regex, and it is consumed whether or not it parsed.
+        if (TryProcessHookChatRecord(output))
+        {
+            return;
+        }
+
         if (ProcessConsoleHookOutput)
         {
             OnConsoleOutputReceived(output);
         }
     }
 
-    private bool ShouldSuppressDuplicateChatCommand(string playerName, bool isBot, string chatMessage)
+    /// <summary>
+    /// Handles one structured chat record from the injected hook. Returns true when
+    /// the line was a record - including a malformed one, which is dropped rather
+    /// than leaked into the console output fanout.
+    /// </summary>
+    private bool TryProcessHookChatRecord(string output)
     {
-        var key = $"{isBot}|{playerName}|{chatMessage}";
-        var now = DateTime.UtcNow;
-
-        lock (_chatCommandDedupLock)
+        if (!HookChatRecord.LooksLikeRecord(output))
         {
-            if (string.Equals(_lastChatCommandKey, key, StringComparison.Ordinal) &&
-                now - _lastChatCommandAtUtc <= DuplicateChatCommandWindow)
-            {
-                return true;
-            }
-
-            _lastChatCommandKey = key;
-            _lastChatCommandAtUtc = now;
             return false;
         }
+
+        var record = HookChatRecord.TryParse(output);
+        if (record == null)
+        {
+            _logger.LogWarning("Discarded a malformed structured chat record from the injected hook");
+            return true;
+        }
+
+        // Remembered so the console line this record pairs with is not reported as
+        // having arrived without one.
+        _lastRecordMessage = record.Message;
+
+        // The hook's length caps are byte counts while the game limits chat by
+        // characters, so a multi-byte message can be cut mid-sequence. Report the two
+        // counts side by side when they disagree, and flag any replacement character
+        // that survived decoding - both are things we want to see before deciding
+        // whether the caps need raising.
+        var messageBytes = System.Text.Encoding.UTF8.GetByteCount(record.Message);
+        var nameBytes = System.Text.Encoding.UTF8.GetByteCount(record.PlayerName);
+        if (messageBytes != record.Message.Length || nameBytes != record.PlayerName.Length)
+        {
+            _logger.LogInformation(
+                "Non-ASCII chat record: name=[{Name}] ({NameChars} chars / {NameBytes} bytes) " +
+                "message=[{Message}] ({MessageChars} chars / {MessageBytes} bytes) replacementChars={Replacements}",
+                record.PlayerName,
+                record.PlayerName.Length,
+                nameBytes,
+                record.Message,
+                record.Message.Length,
+                messageBytes,
+                record.PlayerName.Count(c => c == '�') + record.Message.Count(c => c == '�'));
+        }
+
+        // Brackets so leading or trailing whitespace is visible: both bugs found
+        // during live testing were invisible characters on these two fields.
+        _logger.LogDebug(
+            "Hook chat record parsed: ring={RingIndex} bot={IsBot} name=[{Name}] message=[{Message}]",
+            record.RingIndex,
+            record.IsBot,
+            record.PlayerName,
+            record.Message);
+
+        if (!record.Message.StartsWith('!'))
+        {
+            return true;
+        }
+
+        // No duplicate suppression needed: the hook emits one record per message,
+        // where the console echo the old path had to undo did not exist.
+        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message);
+        return true;
     }
 
     public virtual Models.PlayerListResponse GetPlayerList()
