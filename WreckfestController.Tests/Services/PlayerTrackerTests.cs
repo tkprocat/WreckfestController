@@ -155,4 +155,175 @@ public class PlayerTrackerTests
             Mock.Of<HttpClient>());
         return new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), webhook.Object);
     }
+
+    [Fact]
+    public void ProcessLogLine_BotJoinEvent_AddsBot()
+    {
+        // Arrange
+        var logLine = "16:53:14 - *eRacer has joined.";
+
+        // Act
+        _playerTracker.ProcessLogLine(logLine);
+
+        // Assert
+        var players = _playerTracker.GetPlayers();
+        Assert.Single(players);
+        Assert.Equal("eRacer", players[0].Name);
+        Assert.True(players[0].IsBot);
+    }
+
+    [Fact]
+    public void ProcessLogLine_HumanJoinEvent_AddsHuman()
+    {
+        // Arrange
+        var logLine = "16:53:14 - Player123 has joined.";
+
+        // Act
+        _playerTracker.ProcessLogLine(logLine);
+
+        // Assert
+        var players = _playerTracker.GetPlayers();
+        Assert.Single(players);
+        Assert.Equal("Player123", players[0].Name);
+        Assert.False(players[0].IsBot);
+    }
+
+    [Fact]
+    public void ProcessLogLine_BotQuitEvent_RemovesPlayer()
+    {
+        // Arrange
+        _playerTracker.ProcessLogLine("16:53:14 - *eRacer has joined.");
+        var logLine = "16:55:00 - *eRacer has quit (ping timeout).";
+
+        // Act
+        _playerTracker.ProcessLogLine(logLine);
+
+        // Assert
+        var players = _playerTracker.GetPlayers();
+        Assert.Empty(players);
+    }
+
+    [Fact]
+    public void ProcessLogLine_HumanQuitEvent_RemovesPlayer()
+    {
+        // Arrange
+        _playerTracker.ProcessLogLine("16:53:14 - Player123 has joined.");
+        var logLine = "16:55:00 - Player123 has quit.";
+
+        // Act
+        _playerTracker.ProcessLogLine(logLine);
+
+        // Assert
+        var players = _playerTracker.GetPlayers();
+        Assert.Empty(players);
+    }
+
+    [Fact]
+    public void ProcessLogLine_PlayerRejoins_TracksPlayer()
+    {
+        // Arrange
+        _playerTracker.ProcessLogLine("16:53:14 - Player123 has joined.");
+        _playerTracker.ProcessLogLine("16:55:00 - Player123 has quit.");
+
+        // Act
+        _playerTracker.ProcessLogLine("17:00:00 - Player123 has joined.");
+
+        // Assert
+        var players = _playerTracker.GetPlayers();
+        Assert.Single(players);
+    }
+
+    [Fact]
+    public void ProcessLogLine_EmptyLine_DoesNothing()
+    {
+        // Act
+        _playerTracker.ProcessLogLine("");
+        _playerTracker.ProcessLogLine("   ");
+
+        // Assert
+        var players = _playerTracker.GetPlayers();
+        Assert.Empty(players);
+    }
+
+    [Fact]
+    public void ProcessLogLine_UnrelatedLine_DoesNothing()
+    {
+        // Act
+        _playerTracker.ProcessLogLine("Some random log line");
+        _playerTracker.ProcessLogLine("16:53:14 - Server started");
+
+        // Assert
+        var players = _playerTracker.GetPlayers();
+        Assert.Empty(players);
+    }
+
+    [Fact]
+    public void ProcessLogLine_BotWithSpacesJoinEvent_AddsBot()
+    {
+        // Arrange
+        var logLine = "16:53:14 - *Ultimate Night of Super Se has joined.";
+
+        // Act
+        _playerTracker.ProcessLogLine(logLine);
+
+        // Assert
+        var players = _playerTracker.GetPlayers();
+        Assert.Single(players);
+        Assert.Equal("Ultimate Night of Super Se", players[0].Name);
+        Assert.True(players[0].IsBot);
+    }
+
+    [Fact]
+    public void ProcessLogLine_HumanWithSpacesJoinEvent_AddsHuman()
+    {
+        // Arrange
+        var logLine = "16:53:14 - Pro Gamer 123 has joined.";
+
+        // Act
+        _playerTracker.ProcessLogLine(logLine);
+
+        // Assert
+        var players = _playerTracker.GetPlayers();
+        Assert.Single(players);
+        Assert.Equal("Pro Gamer 123", players[0].Name);
+        Assert.False(players[0].IsBot);
+    }
+
+    [Fact]
+    public void ProcessLogLine_BotWithSpacesQuitEvent_RemovesPlayer()
+    {
+        // Arrange
+        _playerTracker.ProcessLogLine("16:53:14 - *Ultimate Night of Super Se has joined.");
+        var logLine = "16:55:00 - *Ultimate Night of Super Se has quit (ping timeout).";
+
+        // Act
+        _playerTracker.ProcessLogLine(logLine);
+
+        // Assert
+        var players = _playerTracker.GetPlayers();
+        Assert.Empty(players);
+    }
+
+    [Fact]
+    public void ProcessLogLine_SkipsJoinParsing_WhenServerEventsAreAuthoritative()
+    {
+        var tracker = CreateTracker();
+        tracker.UseServerEvents = true;
+
+        tracker.ProcessLogLine("16:53:14 - Procat has joined.");
+
+        // Would otherwise be double-counted alongside the event.
+        Assert.Empty(tracker.GetPlayers());
+    }
+
+    [Fact]
+    public void ProcessLogLine_StillParsesJoins_WhenEventsAreUnavailable()
+    {
+        var tracker = CreateTracker();
+        tracker.UseServerEvents = false;
+
+        tracker.ProcessLogLine("16:53:14 - Procat has joined.");
+
+        Assert.Contains(tracker.GetPlayers(), p => p.Name == "Procat");
+    }
 }
