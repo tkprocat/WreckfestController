@@ -63,16 +63,17 @@ Edit `appsettings.json` and update the following settings:
 
 Only needed if you want automatic server updates via the API.
 
-#### WreckfestWeb Webhook Configuration
+#### Webhook Configuration
 ```json
-"Laravel": {
-  "WebhookBaseUrl": "https://your-wreckfestweb-domain.com/api/webhooks"
+"Webhooks": {
+  "BaseUrl": "https://your-webhook-endpoint.example/api/webhooks",
+  "ApiKey": "replace-with-the-endpoint-api-key"
 }
 ```
 
-**Required for WreckfestWeb integration.** Set this to your WreckfestWeb installation's webhook endpoint URL.
+Set this to the endpoint that receives controller notifications. `ApiKey` is sent with outbound requests in the `X-API-Key` header; it is separate from the inbound `Api:Key`.
 
-If running standalone without WreckfestWeb, webhooks will be disabled but the API will still function for server control.
+If no webhook base URL is configured, console-log webhooks are disabled and the API still functions for server control.
 
 #### Network Configuration
 ```json
@@ -214,21 +215,22 @@ Logs are written to the console by default. Configure logging in `appsettings.js
 }
 ```
 
-## WreckfestWeb Integration
+## Webhook Integration
 
-When integrated with WreckfestWeb ([https://github.com/tkprocat/WreckfestWeb](https://github.com/tkprocat/WreckfestWeb)), the API sends webhooks for:
+The controller sends webhooks to any configured endpoint for:
 - Player join/leave events
 - Track changes
 - Event activation
 
-Configure your WreckfestWeb webhook endpoint in `appsettings.json`:
+Configure the outbound webhook endpoint in `appsettings.json`:
 ```json
-"Laravel": {
-  "WebhookBaseUrl": "https://your-wreckfestweb-domain.com/api/webhooks"
+"Webhooks": {
+  "BaseUrl": "https://your-webhook-endpoint.example/api/webhooks",
+  "ApiKey": "replace-with-the-endpoint-api-key"
 }
 ```
 
-WreckfestController sends data to these WreckfestWeb endpoints:
+The controller sends data to these endpoint paths:
 - `POST /api/webhooks/player-joined`
 - `POST /api/webhooks/player-left`
 - `POST /api/webhooks/track-changed`

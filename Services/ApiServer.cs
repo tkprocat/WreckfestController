@@ -43,6 +43,24 @@ public class ApiServer : IApiServer, IDisposable
     /// Builds the listen URLs. Ports are configurable so several controller
     /// instances can manage separate servers on one Windows host.
     /// </summary>
+    /// <summary>
+    /// The HTTP API is opt-in. When disabled no port is bound at all, which also
+    /// keeps several controller instances on one host from contending for ports.
+    /// </summary>
+    public static bool IsEnabled(IConfiguration configuration) =>
+        IsFlagSet(configuration) && HasApiKey(configuration);
+
+    /// <summary>True when Api:Enabled parses as true.</summary>
+    public static bool IsFlagSet(IConfiguration configuration) =>
+        bool.TryParse(configuration["Api:Enabled"], out var enabled) && enabled;
+
+    /// <summary>
+    /// True when an inbound key is configured. Without one every request would be
+    /// rejected, so binding the port would serve nothing but 401s.
+    /// </summary>
+    public static bool HasApiKey(IConfiguration configuration) =>
+        !string.IsNullOrWhiteSpace(configuration["Api:Key"]);
+
     public static string GetListenUrls(
         bool allowRemote,
         int httpPort = DefaultHttpPort,
@@ -92,16 +110,21 @@ public class ApiServer : IApiServer, IDisposable
             var builder = WebApplication.CreateBuilder();
 
             var configuration = _serviceProvider.GetRequiredService<IConfiguration>();
+
+            if (!IsEnabled(configuration))
+            {
+                _logger.LogInformation(
+                    IsFlagSet(configuration)
+                        ? "HTTP API not started: Api:Enabled is true but Api:Key is blank. No port will be bound."
+                        : "HTTP API is disabled (Api:Enabled is false). No port will be bound.");
+                return;
+            }
+
             var allowRemote = configuration.GetValue<bool>("Api:AllowRemote");
             var httpPort = ResolvePort(configuration, "Api:HttpPort", DefaultHttpPort);
             var httpsPort = ResolvePort(configuration, "Api:HttpsPort", DefaultHttpsPort);
             var urls = GetListenUrls(allowRemote, httpPort, httpsPort);
             var apiKey = configuration["Api:Key"];
-
-            if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                _logger.LogWarning("API is disabled because Api:Key is not configured. Every API request will return 401 Unauthorized until a key is configured.");
-            }
 
             // Filter out HTTPS URLs if no valid certificate is available
             // This prevents startup errors when running as a WPF app

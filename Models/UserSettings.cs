@@ -13,7 +13,13 @@ public class UserSettings
     [JsonPropertyName("SteamCmd")]
     public SteamCmdSettings? SteamCmd { get; set; }
 
+    [JsonPropertyName("Webhooks")]
+    public WreckfestWebSettings? Webhooks { get; set; }
+
+    // Kept only to deserialize existing user-settings.json files. SettingsService
+    // moves this value to Webhooks while loading the file.
     [JsonPropertyName("WreckfestWeb")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public WreckfestWebSettings? WreckfestWeb { get; set; }
 
     [JsonPropertyName("Vote")]
@@ -102,7 +108,7 @@ public class AllowedVoteTrack
 }
 
 /// <summary>
-/// WreckfestWeb webhook configuration settings
+/// Outbound webhook configuration settings
 /// </summary>
 public class WreckfestWebSettings
 {

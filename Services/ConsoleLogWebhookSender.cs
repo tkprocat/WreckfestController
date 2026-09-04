@@ -5,13 +5,14 @@ using System.Text.Json;
 namespace WreckfestController.Services;
 
 /// <summary>
-/// Buffers console log lines and sends them in batches to Laravel via webhook.
+/// Buffers console log lines and sends them in batches via webhook.
 /// This replaces the WebSocket-based log streaming with a simpler HTTP-based approach.
 /// </summary>
 public class ConsoleLogWebhookSender : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly string _webhookUrl;
+    private readonly string? _webhookApiKey;
     private readonly List<string> _logBuffer;
     private readonly object _bufferLock = new();
     private readonly Timer? _flushTimer;
@@ -31,11 +32,22 @@ public class ConsoleLogWebhookSender : IDisposable
         _logger = logger;
         _logBuffer = new List<string>();
 
-        // Get webhook URL from configuration
-        var baseUrl = configuration["Laravel:WebhookBaseUrl"];
-        if (string.IsNullOrEmpty(baseUrl))
+        if (!WebhookConfiguration.IsEnabled(configuration))
         {
-            _logger.LogWarning("Laravel:WebhookBaseUrl not configured, console log webhooks disabled");
+            _logger.LogInformation(
+                WebhookConfiguration.IsFlagSet(configuration)
+                    ? "Outbound webhooks not sent: Webhooks:Enabled is true but Webhooks:ApiKey is blank."
+                    : "Outbound webhooks are disabled (Webhooks:Enabled is false).");
+            _webhookUrl = string.Empty;
+            return;
+        }
+
+        // Get webhook settings from configuration
+        var baseUrl = WebhookConfiguration.GetBaseUrl(configuration, logger);
+        _webhookApiKey = WebhookConfiguration.GetApiKey(configuration, logger);
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            _logger.LogWarning("Webhooks:BaseUrl not configured, console log webhooks disabled");
             _webhookUrl = string.Empty;
             return;
         }
@@ -69,7 +81,7 @@ public class ConsoleLogWebhookSender : IDisposable
     }
 
     /// <summary>
-    /// Timer callback - flushes logs to Laravel
+    /// Timer callback - flushes buffered logs
     /// </summary>
     private void FlushLogs(object? state)
     {
@@ -77,7 +89,7 @@ public class ConsoleLogWebhookSender : IDisposable
     }
 
     /// <summary>
-    /// Sends buffered logs to Laravel webhook
+    /// Sends buffered logs to the webhook endpoint
     /// </summary>
     private async Task FlushLogsAsync()
     {
@@ -99,9 +111,17 @@ public class ConsoleLogWebhookSender : IDisposable
         {
             var payload = new { logs = logsToSend };
             var json = JsonSerializer.Serialize(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var request = new HttpRequestMessage(HttpMethod.Post, _webhookUrl)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            };
 
-            var response = await _httpClient.PostAsync(_webhookUrl, content);
+            if (!string.IsNullOrWhiteSpace(_webhookApiKey))
+            {
+                request.Headers.Add("X-API-Key", _webhookApiKey);
+            }
+
+            var response = await _httpClient.SendAsync(request);
 
             if (!response.IsSuccessStatusCode)
             {
@@ -112,7 +132,7 @@ public class ConsoleLogWebhookSender : IDisposable
             }
             else
             {
-                _logger.LogDebug("Sent {Count} console log lines to Laravel", logsToSend.Count);
+                _logger.LogDebug("Sent {Count} console log lines via webhook", logsToSend.Count);
             }
         }
         catch (HttpRequestException ex)

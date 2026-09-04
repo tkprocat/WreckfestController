@@ -61,8 +61,8 @@ public partial class ConfigurationTab : UserControl
         WreckfestAppIdTextBox.Text = settings.SteamCmd?.WreckfestAppId ?? "";
 
         // Network settings
-        WreckfestWebWebhookUrlTextBox.Text = settings.WreckfestWeb?.WebhookBaseUrl ?? "";
-        WreckfestWebApiKeyTextBox.Text = settings.WreckfestWeb?.WebhookApiKey ?? "";
+        WebhookUrlTextBox.Text = settings.Webhooks?.WebhookBaseUrl ?? "";
+        WebhookApiKeyTextBox.Text = settings.Webhooks?.WebhookApiKey ?? "";
 
         // Voting settings
         SelectVoteMode(VoteModes.Normalize(settings.Vote?.Mode, settings.Vote?.Enabled));
@@ -100,10 +100,10 @@ public partial class ConfigurationTab : UserControl
                 SteamCmdPath = SteamCmdPathTextBox.Text,
                 WreckfestAppId = WreckfestAppIdTextBox.Text
             },
-            WreckfestWeb = new WreckfestWebSettings
+            Webhooks = new WreckfestWebSettings
             {
-                WebhookBaseUrl = WreckfestWebWebhookUrlTextBox.Text,
-                WebhookApiKey = WreckfestWebApiKeyTextBox.Text
+                WebhookBaseUrl = WebhookUrlTextBox.Text,
+                WebhookApiKey = WebhookApiKeyTextBox.Text
             },
             Vote = new VoteSettings
             {
@@ -223,7 +223,7 @@ public partial class ConfigurationTab : UserControl
                     SteamCmdPath = "",
                     WreckfestAppId = "361580"
                 },
-                WreckfestWeb = new WreckfestWebSettings
+                Webhooks = new WreckfestWebSettings
                 {
                     WebhookBaseUrl = "http://localhost:8000/api/webhooks",
                     WebhookApiKey = ""
