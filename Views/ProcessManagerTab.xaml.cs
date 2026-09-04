@@ -80,11 +80,16 @@ public partial class ProcessManagerTab : UserControl
 
     private void OnProcessSelected(object sender, SelectionChangedEventArgs e)
     {
-        // Enable/disable buttons based on selection
-        var hasSelection = ProcessListGrid.SelectedItem != null;
+        UpdateProcessActionButtons();
+    }
+
+    private void UpdateProcessActionButtons()
+    {
+        var selectedProcess = ProcessListGrid.SelectedItem as ServerProcessInfo;
+        var hasSelection = selectedProcess != null;
         AttachToProcessButton.IsEnabled = hasSelection;
-        InjectIntoProcessButton.IsEnabled = hasSelection;
         KillProcessButton.IsEnabled = hasSelection;
+        InjectIntoProcessButton.IsEnabled = _serverManager.CanInjectInto(selectedProcess?.ProcessId);
     }
 
     private void OnConsoleHookOutput(string output)
@@ -123,6 +128,7 @@ public partial class ProcessManagerTab : UserControl
             {
                 _updateWindowTitle();
                 RefreshProcessList();
+                UpdateProcessActionButtons();
                 await DialogService.ShowSuccessAsync($"Successfully attached to process {selectedProcess.ProcessId}",
                     "Success");
             }
@@ -146,13 +152,13 @@ public partial class ProcessManagerTab : UserControl
         try
         {
             InjectIntoProcessButton.IsEnabled = false;
-            ProcessHookOutputCheckBox.IsChecked = true;
-            _serverManager.ProcessConsoleHookOutput = true;
 
             var result = await _serverManager.InjectConsoleHookAsync(selectedProcess.ProcessId);
 
             if (result.Success)
             {
+                ProcessHookOutputCheckBox.IsChecked = true;
+                _serverManager.ProcessConsoleHookOutput = true;
                 await DialogService.ShowSuccessAsync(result.Message, "Injection Complete");
             }
             else
@@ -167,7 +173,7 @@ public partial class ProcessManagerTab : UserControl
         }
         finally
         {
-            InjectIntoProcessButton.IsEnabled = ProcessListGrid.SelectedItem != null;
+            UpdateProcessActionButtons();
         }
     }
 

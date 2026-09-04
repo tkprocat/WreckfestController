@@ -463,6 +463,7 @@ public class ServerManagerTests
             inputWriter.Object,
             injectedHookReader.Object,
             "1.308438");
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
 
         // Act
         var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
@@ -480,6 +481,7 @@ public class ServerManagerTests
             .Returns("1.308438");
         var injectedHookReader = new Mock<IInjectedHookOutputReader>();
         var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.999999");
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
 
         var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
 
@@ -496,6 +498,7 @@ public class ServerManagerTests
             .Returns("1.308438");
         var injectedHookReader = new Mock<IInjectedHookOutputReader>();
         var serverManager = CreateTestServerManager(injectedHookReader.Object, null);
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
 
         var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
 
@@ -510,6 +513,7 @@ public class ServerManagerTests
     {
         var injectedHookReader = new Mock<IInjectedHookOutputReader>();
         var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
 
         var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
 
@@ -517,6 +521,54 @@ public class ServerManagerTests
         Assert.Contains("1.308438", result.Message);
         Assert.Contains("<not configured>", result.Message);
         injectedHookReader.Verify(r => r.InjectAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InjectConsoleHookAsync_WhenNoProcessIsAttached_RefusesWithoutInjecting()
+    {
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+
+        var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
+
+        Assert.False(result.Success);
+        Assert.Contains("Injection refused", result.Message);
+        Assert.Contains("no process is attached", result.Message);
+        injectedHookReader.Verify(r => r.InjectAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InjectConsoleHookAsync_WhenRequestedProcessIsNotAttached_RefusesWithoutInjecting()
+    {
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+        var attachedProcessId = Process.GetCurrentProcess().Id;
+        Assert.True(serverManager.AttachToExistingProcess(attachedProcessId).Success);
+
+        using var requestedProcess = Process.Start(new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = "/c ping 127.0.0.1 -n 10 > nul",
+            CreateNoWindow = true,
+            UseShellExecute = false
+        })!;
+
+        try
+        {
+            var result = await serverManager.InjectConsoleHookAsync(requestedProcess.Id);
+
+            Assert.False(result.Success);
+            Assert.Contains($"attached process is {attachedProcessId}", result.Message);
+            Assert.Contains($"requested process is {requestedProcess.Id}", result.Message);
+            injectedHookReader.Verify(r => r.InjectAsync(It.IsAny<int>()), Times.Never);
+        }
+        finally
+        {
+            if (!requestedProcess.HasExited)
+            {
+                requestedProcess.Kill(true);
+            }
+        }
     }
 
     [Fact]
@@ -808,5 +860,48 @@ public class ServerManagerTests
 
         Assert.NotNull(method);
         method.Invoke(serverManager, null);
+    }
+
+    // Nothing selected and nothing attached must not qualify. Comparing the two
+    // nullable ints directly would make that case read as a match, which enabled
+    // the INJECT button in the application's initial state.
+    [Fact]
+    public void CanInjectInto_WhenNothingSelectedAndNothingAttached_ReturnsFalse()
+    {
+        Assert.Null(_serverManager.AttachedProcessId);
+
+        Assert.False(_serverManager.CanInjectInto(null));
+    }
+
+    [Fact]
+    public void CanInjectInto_WhenNothingAttached_ReturnsFalseForAnyProcess()
+    {
+        Assert.False(_serverManager.CanInjectInto(Process.GetCurrentProcess().Id));
+    }
+
+    [Fact]
+    public void CanInjectInto_WhenNothingSelectedButProcessAttached_ReturnsFalse()
+    {
+        _serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
+
+        Assert.False(_serverManager.CanInjectInto(null));
+    }
+
+    [Fact]
+    public void CanInjectInto_WhenSelectionMatchesAttachedProcess_ReturnsTrue()
+    {
+        var pid = Process.GetCurrentProcess().Id;
+        _serverManager.AttachToExistingProcess(pid);
+
+        Assert.True(_serverManager.CanInjectInto(pid));
+    }
+
+    [Fact]
+    public void CanInjectInto_WhenSelectionDiffersFromAttachedProcess_ReturnsFalse()
+    {
+        var pid = Process.GetCurrentProcess().Id;
+        _serverManager.AttachToExistingProcess(pid);
+
+        Assert.False(_serverManager.CanInjectInto(pid + 1));
     }
 }
