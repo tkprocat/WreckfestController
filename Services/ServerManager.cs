@@ -78,6 +78,17 @@ public class ServerManager
 
     public bool IsRunning => GetActualServerProcess() != null;
 
+    public int? AttachedProcessId => GetActualServerProcess()?.Id;
+
+    /// <summary>
+    /// Injection is only allowed into the process that is already attached, so the
+    /// tracked PID and the hooked process cannot diverge. A null candidate never
+    /// qualifies - comparing two nulls would otherwise read as a match when nothing
+    /// is selected and nothing is attached.
+    /// </summary>
+    public bool CanInjectInto(int? candidateProcessId) =>
+        candidateProcessId.HasValue && candidateProcessId == AttachedProcessId;
+
     public ServerManager(
         IConfiguration configuration,
         ILogger<ServerManager> logger,
@@ -1515,6 +1526,19 @@ public class ServerManager
             if (process.HasExited)
             {
                 return Task.FromResult((false, $"Process {processId} has exited"));
+            }
+
+            var attachedProcessId = AttachedProcessId;
+            if (!attachedProcessId.HasValue)
+            {
+                return Task.FromResult((false,
+                    $"Injection refused: no process is attached; requested process is {processId}."));
+            }
+
+            if (attachedProcessId.Value != processId)
+            {
+                return Task.FromResult((false,
+                    $"Injection refused: attached process is {attachedProcessId.Value}; requested process is {processId}."));
             }
 
             var buildCheck = EnsureSupportedBuild(process);
