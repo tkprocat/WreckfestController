@@ -6,6 +6,7 @@
 #include <deque>
 #include <string>
 #include <vector>
+#include <MinHook.h>
 
 namespace
 {
@@ -14,7 +15,6 @@ constexpr uintptr_t CommandDispatcherRva = 0x00F18B30;
 constexpr uintptr_t RegistryLookupRva = 0x00E37140;
 constexpr uintptr_t RegistryTablePtrRva = 0x0127E7F8;
 constexpr uintptr_t ServerNamespaceTagRva = 0x065E6308;
-constexpr SIZE_T PatchSize = 12;
 
 #define NLSTR "\n"
 
@@ -57,7 +57,7 @@ CRITICAL_SECTION g_dispatchLock;
 bool g_locksReady = false;
 bool g_hookInstalled = false;
 bool g_inputStarted = false;
-BYTE g_originalBytes[PatchSize] = {};
+ConsolePrintFn g_originalConsolePrint = nullptr;
 void* g_target = nullptr;
 HANDLE g_pipe = INVALID_HANDLE_VALUE;
 wchar_t g_fallbackLogPath[MAX_PATH] = {};
@@ -399,56 +399,40 @@ void WriteHookLine(const char* text)
     }
 }
 
-bool SetPatchBytes(const BYTE* bytes)
-{
-    DWORD oldProtect = 0;
-    if (!VirtualProtect(g_target, PatchSize, PAGE_EXECUTE_READWRITE, &oldProtect))
-    {
-        return false;
-    }
-
-    std::memcpy(g_target, bytes, PatchSize);
-    FlushInstructionCache(GetCurrentProcess(), g_target, PatchSize);
-
-    DWORD ignored = 0;
-    VirtualProtect(g_target, PatchSize, oldProtect, &ignored);
-    return true;
-}
-
 bool RestoreHook()
 {
-    return SetPatchBytes(g_originalBytes);
+    // MinHook owns the patch. Disabling restores the entry point in one step.
+    return MH_DisableHook(g_target) == MH_OK;
 }
-
-bool InstallHook();
 
 void __fastcall HookedConsolePrint(const char* text, void* arg2, void* arg3, void* arg4)
 {
     WriteHookLine(text);
 
-    EnterCriticalSection(&g_hookLock);
-    RestoreHook();
-
-    auto original = reinterpret_cast<ConsolePrintFn>(g_target);
-    original(text, arg2, arg3, arg4);
-
-    InstallHook();
-    LeaveCriticalSection(&g_hookLock);
+    // The trampoline holds the relocated original prologue plus a jump back past
+    // the patch, so the entry point is never rewritten while the game runs. There
+    // is nothing to restore and nothing to re-patch, so no lock is needed here and
+    // no other thread can observe a half-written instruction stream.
+    if (g_originalConsolePrint != nullptr)
+    {
+        g_originalConsolePrint(text, arg2, arg3, arg4);
+    }
 }
 
 bool InstallHook()
 {
-    BYTE patch[PatchSize] = {
-        0x48, 0xB8,                         // mov rax, imm64
-        0, 0, 0, 0, 0, 0, 0, 0,
-        0xFF, 0xE0                          // jmp rax
-    };
-
-    auto hookAddress = reinterpret_cast<uintptr_t>(&HookedConsolePrint);
-    std::memcpy(patch + 2, &hookAddress, sizeof(hookAddress));
-
-    if (!SetPatchBytes(patch))
+    if (MH_CreateHook(
+            g_target,
+            reinterpret_cast<LPVOID>(&HookedConsolePrint),
+            reinterpret_cast<LPVOID*>(&g_originalConsolePrint)) != MH_OK)
     {
+        return false;
+    }
+
+    if (MH_EnableHook(g_target) != MH_OK)
+    {
+        MH_RemoveHook(g_target);
+        g_originalConsolePrint = nullptr;
         return false;
     }
 
@@ -785,7 +769,12 @@ DWORD WINAPI HookThread(void*)
 
     g_target = reinterpret_cast<void*>(moduleBase + ConsolePrintRva);
 
-    std::memcpy(g_originalBytes, g_target, PatchSize);
+    if (MH_Initialize() != MH_OK)
+    {
+        WriteHookLine("WreckfestConsoleHook failed to initialize MinHook.");
+        LeaveCriticalSection(&g_hookLock);
+        return 0;
+    }
 
     if (InstallHook())
     {
@@ -912,6 +901,10 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
         {
             EnterCriticalSection(&g_hookLock);
             RestoreHook();
+            MH_RemoveHook(g_target);
+            MH_Uninitialize();
+            g_hookInstalled = false;
+            g_originalConsolePrint = nullptr;
             LeaveCriticalSection(&g_hookLock);
         }
 
