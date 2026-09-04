@@ -65,12 +65,10 @@ public partial class PlayersTab : UserControl
         }
     }
 
-    private void OnRefreshClicked(object sender, RoutedEventArgs e)
+    private async void OnRefreshClicked(object sender, RoutedEventArgs e)
     {
-        // Request a list command from the server to get fresh data
-        _playerTracker.RequestListCommand(force: true);
+        await _serverManager.TryRefreshPlayersFromHookAsync();
 
-        // Also refresh the UI immediately with current data
         RefreshPlayerList();
     }
 
@@ -84,8 +82,7 @@ public partial class PlayersTab : UserControl
             {
                 _logger.LogWarning("Failed to kick player: {Message}", result.Message);
             }
-            // Refresh player list after action
-            _playerTracker.RequestListCommand(force: true);
+            await _serverManager.TryRefreshPlayersFromHookAsync();
         }
     }
 
@@ -99,8 +96,7 @@ public partial class PlayersTab : UserControl
             {
                 _logger.LogWarning("Failed to ban player: {Message}", result.Message);
             }
-            // Refresh player list after action
-            _playerTracker.RequestListCommand(force: true);
+            await _serverManager.TryRefreshPlayersFromHookAsync();
         }
     }
 
@@ -114,8 +110,7 @@ public partial class PlayersTab : UserControl
             {
                 _logger.LogWarning("Failed to promote player: {Message}", result.Message);
             }
-            // Refresh player list after action
-            _playerTracker.RequestListCommand(force: true);
+            await _serverManager.TryRefreshPlayersFromHookAsync();
         }
     }
 
@@ -129,8 +124,7 @@ public partial class PlayersTab : UserControl
             {
                 _logger.LogWarning("Failed to demote player: {Message}", result.Message);
             }
-            // Refresh player list after action
-            _playerTracker.RequestListCommand(force: true);
+            await _serverManager.TryRefreshPlayersFromHookAsync();
         }
     }
 }

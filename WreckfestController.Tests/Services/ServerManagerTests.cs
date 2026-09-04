@@ -430,9 +430,11 @@ public class ServerManagerTests
     }
 
     [Fact]
-    public async Task InjectConsoleHookAsync_WhenProcessIsValid_DelegatesToInjectedHookOutputReader()
+    public async Task InjectConsoleHookAsync_WhenBuildMatches_DelegatesToInjectedHookOutputReader()
     {
         // Arrange
+        _mockConfiguration.Setup(c => c["WreckfestServer:SupportedBuild"])
+            .Returns("1.308438");
         var inputWriter = new Mock<IServerInputWriter>();
         var outputReader = new Mock<IInjectedHookOutputReader>();
         outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
@@ -450,7 +452,7 @@ public class ServerManagerTests
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
-        var serverManager = new ServerManager(
+        var serverManager = new TestServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
             _playerTracker,
@@ -459,7 +461,8 @@ public class ServerManagerTests
             _mockWebhookService.Object,
             mockConsoleLogSender.Object,
             inputWriter.Object,
-            injectedHookReader.Object);
+            injectedHookReader.Object,
+            "1.308438");
 
         // Act
         var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
@@ -468,6 +471,52 @@ public class ServerManagerTests
         Assert.True(result.Success);
         Assert.Equal("injected through reader", result.Message);
         injectedHookReader.Verify(r => r.InjectAsync(Process.GetCurrentProcess().Id), Times.Once);
+    }
+
+    [Fact]
+    public async Task InjectConsoleHookAsync_WhenBuildMismatches_RefusesWithoutInjecting()
+    {
+        _mockConfiguration.Setup(c => c["WreckfestServer:SupportedBuild"])
+            .Returns("1.308438");
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.999999");
+
+        var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
+
+        Assert.False(result.Success);
+        Assert.Contains("1.999999", result.Message);
+        Assert.Contains("1.308438", result.Message);
+        injectedHookReader.Verify(r => r.InjectAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InjectConsoleHookAsync_WhenBuildIsUnreadable_RefusesWithoutInjecting()
+    {
+        _mockConfiguration.Setup(c => c["WreckfestServer:SupportedBuild"])
+            .Returns("1.308438");
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, null);
+
+        var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
+
+        Assert.False(result.Success);
+        Assert.Contains("<unreadable>", result.Message);
+        Assert.Contains("1.308438", result.Message);
+        injectedHookReader.Verify(r => r.InjectAsync(It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task InjectConsoleHookAsync_WhenSupportedBuildIsNotConfigured_RefusesWithoutInjecting()
+    {
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+
+        var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
+
+        Assert.False(result.Success);
+        Assert.Contains("1.308438", result.Message);
+        Assert.Contains("<not configured>", result.Message);
+        injectedHookReader.Verify(r => r.InjectAsync(It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
@@ -673,6 +722,58 @@ public class ServerManagerTests
 
         // Assert
         Assert.Equal(0, receivedCount);
+    }
+
+    private TestServerManager CreateTestServerManager(IInjectedHookOutputReader injectedHookReader, string? build)
+    {
+        var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
+        return new TestServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockWebhookService.Object,
+            consoleLogSender.Object,
+            Mock.Of<IServerInputWriter>(),
+            injectedHookReader,
+            build);
+    }
+
+    private sealed class TestServerManager : ServerManager
+    {
+        private readonly string? _build;
+
+        public TestServerManager(
+            IConfiguration configuration,
+            ILogger<ServerManager> logger,
+            PlayerTracker playerTracker,
+            TrackChangeTracker trackChangeTracker,
+            ServerInfoTracker serverInfoTracker,
+            WreckfestWebWebhookService webhookService,
+            ConsoleLogWebhookSender consoleLogSender,
+            IServerInputWriter serverInputWriter,
+            IInjectedHookOutputReader injectedHookOutputReader,
+            string? build)
+            : base(
+                configuration,
+                logger,
+                playerTracker,
+                trackChangeTracker,
+                serverInfoTracker,
+                webhookService,
+                consoleLogSender,
+                serverInputWriter,
+                injectedHookOutputReader)
+        {
+            _build = build;
+        }
+
+        protected override string? GetServerBuild(Process process) => _build;
     }
 
     /// <summary>
