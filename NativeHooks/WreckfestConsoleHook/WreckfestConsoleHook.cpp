@@ -455,8 +455,9 @@ void TryEmitStructuredChat(const char* consoleLine);
 void __fastcall HookedConsolePrint(const char* text, void* arg2, void* arg3, void* arg4)
 {
     // Emitted before the plain text line so the controller sees the structured
-    // record first. That ordering is what lets it flip UseHookChat and then skip
-    // the text parse for this very message instead of handling it twice.
+    // record first. There is no text fallback to skip any more, but the controller
+    // warns about a chat-shaped console line that arrived without a record, so the
+    // record has to land first or every message trips that warning.
     if (t_pendingChat.active && !t_pendingChat.emitted)
     {
         TryEmitStructuredChat(text);
