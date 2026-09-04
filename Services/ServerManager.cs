@@ -1320,7 +1320,9 @@ public class ServerManager
 
         UseHookChat = true;
 
-        _logger.LogInformation(
+        // Brackets so leading or trailing whitespace is visible: both bugs found
+        // during live testing were invisible characters on these two fields.
+        _logger.LogDebug(
             "Hook chat record parsed: ring={RingIndex} bot={IsBot} name=[{Name}] message=[{Message}]",
             record.RingIndex,
             record.IsBot,
