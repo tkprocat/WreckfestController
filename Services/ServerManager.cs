@@ -1087,7 +1087,6 @@ public class ServerManager
         _serverEventTimer?.Dispose();
         _serverEventTimer = null;
         _serverEventReader = null;
-        _playerTracker.UseServerEvents = false;
         _serverEventsSeeded = false;
     }
 
@@ -1115,7 +1114,6 @@ public class ServerManager
             if (!_serverEventsSeeded && reader.HasSynced)
             {
                 _serverEventsSeeded = true;
-                _playerTracker.UseServerEvents = true;
                 await TryRefreshPlayersFromHookAsync();
             }
 
@@ -1183,9 +1181,8 @@ public class ServerManager
             // Send to webhook for Laravel
             _consoleLogSender.AddLog(line);
 
-            // Parse for player events, track changes, and server info
+            // Parse chat commands, track changes, and server info.
             ProcessChatCommandLine(line);
-            _playerTracker.ProcessLogLine(line);
             _trackChangeTracker.ProcessLogLine(line);
             _serverInfoTracker.ProcessLogLine(line);
         }
@@ -1520,7 +1517,11 @@ public class ServerManager
                 return Task.FromResult((false, $"Process {processId} has exited"));
             }
 
-            WarnOnUnsupportedBuild(process);
+            var buildCheck = EnsureSupportedBuild(process);
+            if (!buildCheck.Success)
+            {
+                return Task.FromResult(buildCheck);
+            }
         }
         catch (Exception ex)
         {
@@ -1534,46 +1535,50 @@ public class ServerManager
     /// <summary>
     /// Wreckfest reports its build in the console window title, e.g.
     /// "Wreckfest 1.308438 64bit - Dedicated Server". The hook's offsets are
-    /// derived against one specific build, so surface a mismatch here - before
-    /// injecting - rather than leaving it to the hook's own layout guard.
-    /// This warns rather than blocks: the offsets may well survive a patch.
+    /// derived against one specific build, so refuse injection when the target
+    /// build cannot be verified to match.
     /// </summary>
-    private void WarnOnUnsupportedBuild(Process process)
+    private (bool Success, string Message) EnsureSupportedBuild(Process process)
     {
         var build = GetServerBuild(process);
+        var supported = _configuration["WreckfestServer:SupportedBuild"]?.Trim();
+
         if (build == null)
         {
             _logger.LogWarning("Could not read Wreckfest build from process {ProcessId} window title", process.Id);
-            return;
+            return (false,
+                $"Injection refused: detected Wreckfest build <unreadable>; supported build is {FormatSupportedBuild(supported)}.");
         }
 
-        var supported = _configuration["WreckfestServer:SupportedBuild"]?.Trim();
         if (string.IsNullOrWhiteSpace(supported))
         {
-            _logger.LogInformation("Wreckfest build {Build} (no SupportedBuild configured)", build);
-            return;
+            _logger.LogWarning("Wreckfest build {Build} cannot be verified because no SupportedBuild is configured", build);
+            return (false,
+                $"Injection refused: detected Wreckfest build {build}; supported build is <not configured>.");
         }
 
         if (string.Equals(build, supported, StringComparison.Ordinal))
         {
             _logger.LogInformation("Wreckfest build {Build} matches supported build", build);
-            return;
+            return (true, string.Empty);
         }
 
-        var message = $"[Controller] Wreckfest build {build} does not match supported build {supported}. " +
-                      "Hook offsets were derived for the supported build; injection may fail or misbehave.";
+        var message = $"Injection refused: detected Wreckfest build {build} does not match supported build {supported}.";
         _logger.LogWarning(
-            "Wreckfest build {Build} does not match supported build {Supported}",
+            "Wreckfest build {Build} does not match supported build {Supported}; refusing injection because hook offsets may be unsafe",
             build,
             supported);
-        NotifyConsoleOutput(message);
+        return (false, message);
     }
+
+    private static string FormatSupportedBuild(string? supportedBuild) =>
+        string.IsNullOrWhiteSpace(supportedBuild) ? "<not configured>" : supportedBuild;
 
     /// <summary>
     /// Extracts the build number from a Wreckfest console window title.
     /// Returns null when the title is unavailable or does not match.
     /// </summary>
-    public static string? GetServerBuild(Process process)
+    protected virtual string? GetServerBuild(Process process)
     {
         try
         {

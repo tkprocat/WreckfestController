@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text.RegularExpressions;
 using WreckfestController.Models;
 
 namespace WreckfestController.Services;
@@ -20,55 +19,6 @@ public class PlayerTracker
     {
         _logger = logger;
         _webhookService = webhookService;
-    }
-
-    /// <summary>
-    /// Parse a log line and update player tracking
-    /// </summary>
-    public void ProcessLogLine(string line)
-    {
-        if (string.IsNullOrWhiteSpace(line))
-            return;
-
-        // Events carry the same joins and quits with more detail, so skip the text
-        // parsing entirely rather than processing each one twice.
-        if (UseServerEvents)
-        {
-            return;
-        }
-
-        // Parse join events: "16:53:14 - *eRacer has joined." (bot) or "16:53:14 - Player123 has joined." (human)
-        var joinMatch = Regex.Match(line, @"- (\*?)(.+?) has joined\.");
-        if (joinMatch.Success)
-        {
-            var isBot = joinMatch.Groups[1].Value == "*";
-            var playerName = joinMatch.Groups[2].Value;
-            PlayerJoined(playerName, isBot);
-            return;
-        }
-
-        // Parse quit/leave events: "16:53:14 - *eRacer has quit (ping timeout)." (bot) or "16:53:14 - Player123 has quit." (human)
-        var quitMatch = Regex.Match(line, @"- (\*?)(.+?) has quit");
-        if (quitMatch.Success)
-        {
-            var playerName = quitMatch.Groups[2].Value;
-            PlayerLeft(playerName);
-            return;
-        }
-
-        // Parse kick events: "* 08:38:42 - *AleXi8293 kicked." (bot) or "* 08:38:42 - Player123 kicked." (human)
-        var kickMatch = Regex.Match(line, @"- (\*?)(.+?) kicked\.");
-        if (kickMatch.Success)
-        {
-            var playerName = kickMatch.Groups[2].Value;
-            PlayerKicked(playerName);
-            return;
-        }
-
-        // Parse timeout events: "Player 0 timeout (ping: 30320ms), status: ready"
-        // followed by "- *eRacer has quit (ping timeout)."
-        // The quit line is more reliable, so we rely on that
-
     }
 
     /// <summary>
@@ -102,14 +52,6 @@ public class PlayerTracker
             }
         }
     }
-
-    /// <summary>
-    /// Set once the server-event ring is being read successfully. While true the
-    /// join/quit/kick text parsing is skipped, because the events carry the same
-    /// facts plus the role and quit reason that console lines cannot express.
-    /// Left false when the ring is unavailable, so text parsing still covers us.
-    /// </summary>
-    public bool UseServerEvents { get; set; }
 
     /// <summary>
     /// Applies one server event. This is the authoritative path: unlike a console
