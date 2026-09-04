@@ -922,7 +922,8 @@ public class ServerManagerTests
     [InlineData("truncatedMidField")]
     [InlineData("missingMessageField")]
     [InlineData("unparsableSlot")]
-    [InlineData("unparsableBotFlag")]
+    [InlineData("consoleLineWithoutNameMarker")]
+    [InlineData("consoleLineMissingTheMessage")]
     [InlineData("emptyName")]
     public void OnInjectedHookOutputReceived_MalformedRecord_IsDroppedWithoutEnablingHookChat(string scenario)
     {
@@ -943,7 +944,10 @@ public class ServerManagerTests
             "missingMessageField" =>
                 $"{HookChatRecord.Marker}{separator}1{separator}0{separator}Procat{HookChatRecord.RecordEnd}",
             "unparsableSlot" => BuildChatRecord("notanumber", "0", "Procat", "!yes"),
-            "unparsableBotFlag" => BuildChatRecord("1", "maybe", "Procat", "!yes"),
+            "consoleLineWithoutNameMarker" =>
+                $"{HookChatRecord.Marker}{separator}1{separator}* 21:37:50 Procat: !yes{separator}!yes{HookChatRecord.RecordEnd}",
+            "consoleLineMissingTheMessage" =>
+                $"{HookChatRecord.Marker}{separator}1{separator}^8Procat: ^0something else{separator}!yes{HookChatRecord.RecordEnd}",
             "emptyName" => BuildChatRecord("1", "0", "   ", "!yes"),
             _ => throw new ArgumentOutOfRangeException(nameof(scenario))
         };
@@ -1002,10 +1006,18 @@ public class ServerManagerTests
         Assert.Empty(consoleLines);
     }
 
-    private static string BuildChatRecord(string slot, string isBot, string name, string message)
+    /// <summary>
+    /// Builds a record the way the hook does. The hook reports only what it observed
+    /// - the ring entry, the line the game formatted as "^8&lt;name&gt;: ^0&lt;message&gt;",
+    /// and the raw message - so the sender and bot flag are synthesised into the
+    /// console line here and derived back out by HookChatRecord.
+    /// </summary>
+    private static string BuildChatRecord(string ringIndex, string isBot, string name, string message)
     {
         var separator = HookChatRecord.FieldSeparator;
-        return $"{HookChatRecord.Marker}{separator}{slot}{separator}{isBot}{separator}{name}{separator}{message}{HookChatRecord.RecordEnd}";
+        var displayName = isBot == "1" ? "*" + name : name;
+        var consoleLine = $"^9* 21:37:50^0 ^8{displayName}: ^0{message}";
+        return $"{HookChatRecord.Marker}{separator}{ringIndex}{separator}{consoleLine}{separator}{message}{HookChatRecord.RecordEnd}";
     }
 
     private static void InvokeOnInjectedHookOutputReceived(ServerManager serverManager, string output)

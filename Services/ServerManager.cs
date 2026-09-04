@@ -1320,6 +1320,13 @@ public class ServerManager
 
         UseHookChat = true;
 
+        _logger.LogInformation(
+            "Hook chat record parsed: ring={RingIndex} bot={IsBot} name=[{Name}] message=[{Message}]",
+            record.RingIndex,
+            record.IsBot,
+            record.PlayerName,
+            record.Message);
+
         // The controller only acts on ! commands; ordinary chat still proves the hook
         // works, which is why the flag is set before this check rather than after.
         if (!record.Message.StartsWith('!'))

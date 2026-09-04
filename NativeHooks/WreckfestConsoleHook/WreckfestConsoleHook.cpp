@@ -26,6 +26,7 @@ constexpr char RecordEnd = '\x13';
 constexpr char FieldSeparator = '\x1f';
 constexpr size_t MaxChatNameLength = 96;
 constexpr size_t MaxChatMessageLength = 256;
+constexpr size_t MaxConsoleLineLength = 1024;
 
 #define NLSTR "\n"
 
@@ -601,77 +602,46 @@ std::string SanitizeRecordField(const std::string& value, size_t maxLength)
     return sanitized;
 }
 
-void TrimTrailingSpaces(std::string& value)
-{
-    while (!value.empty() && (value.back() == ' ' || value.back() == '\t'))
-    {
-        value.pop_back();
-    }
-}
 
-// The handler formats its line with "^8%s%s^0%s", the last %s being the raw message
-// we captured at entry. Stripping that exact string as a suffix - rather than
-// searching for a delimiter - is what makes a name containing a colon survive; the
-// console-text regex it replaces cannot do that, which is the bug this exists to fix.
+// Pairs the message captured at entry with the line the game formatted from it, and
+// ships both. The pairing is a containment test and nothing more: recovering the
+// sender needs the "^8"/"^0" markers and the ": " separator, and that belongs in
+// HookChatRecord where it is unit tested and cannot take the game process with it.
 void TryEmitStructuredChat(const char* consoleLine)
 {
     std::string line;
-    if (!CopyGameStringNoThrow(consoleLine, 1024, line))
+    if (!CopyGameStringNoThrow(consoleLine, MaxConsoleLineLength, line))
     {
         return;
     }
 
     const std::string& raw = t_pendingChat.rawText;
-    if (raw.empty() || line.size() <= raw.size())
+
+    // Matching only - the payload below stays verbatim. The ring is newline
+    // delimited, so the message the handler received still carries its terminator
+    // while the formatted line does not.
+    std::string probe = raw;
+    while (!probe.empty() &&
+           (probe.back() == 10 || probe.back() == 13 || probe.back() == 32))
     {
+        probe.pop_back();
+    }
+
+    if (probe.empty() || line.find(probe) == std::string::npos)
+    {
+        // Not the formatted line for this message. The handler prints other things,
+        // so stay armed for the line that does carry it.
         return;
     }
 
-    // Not the formatted chat line for this message (the handler prints other things).
-    if (line.compare(line.size() - raw.size(), raw.size(), raw) != 0)
-    {
-        return;
-    }
-
-    std::string head = line.substr(0, line.size() - raw.size());
-    if (head.size() < 2 || head.compare(head.size() - 2, 2, "^0") != 0)
-    {
-        return;
-    }
-
-    head.erase(head.size() - 2);
-
-    auto nameStart = head.rfind("^8");
-    if (nameStart == std::string::npos)
-    {
-        return;
-    }
-
-    std::string name = head.substr(nameStart + 2);
-
-    // "%s%s" is the name followed by its ": " separator; peel that back off. Only one
-    // trailing colon is removed, so a name that itself contains colons is preserved.
-    TrimTrailingSpaces(name);
-    if (!name.empty() && name.back() == ':')
-    {
-        name.pop_back();
-    }
-    TrimTrailingSpaces(name);
-
-    bool isBot = false;
-    if (!name.empty() && name.front() == '*')
-    {
-        isBot = true;
-        name.erase(0, 1);
-    }
-
-    if (name.empty())
-    {
-        return;
-    }
-
+    // Deliberately no interpretation here. Everything this needs to say is
+    // something the hook actually observed: which ring entry, the message exactly
+    // as the handler received it, and the line the game formatted from it. Working
+    // out the sender means reasoning about "^8", "^0" and the ": " separator, and
+    // that reasoning belongs somewhere it can be unit tested and where a mistake
+    // costs a dropped command rather than a dead game process.
     std::string record;
-    record.reserve(raw.size() + name.size() + 32);
+    record.reserve(raw.size() + line.size() + 32);
     record.push_back(RecordStart);
     record += "CHAT";
     record.push_back(FieldSeparator);
@@ -680,9 +650,9 @@ void TryEmitStructuredChat(const char* consoleLine)
     std::snprintf(indexText, sizeof(indexText), "%d", t_pendingChat.ringIndex);
     record += indexText;
     record.push_back(FieldSeparator);
-    record += isBot ? "1" : "0";
-    record.push_back(FieldSeparator);
-    record += SanitizeRecordField(name, MaxChatNameLength);
+    // The console line goes first so the message can be last: the message is what a
+    // player types, so it must be the field a stray separator byte cannot truncate.
+    record += SanitizeRecordField(line, MaxConsoleLineLength);
     record.push_back(FieldSeparator);
     record += SanitizeRecordField(raw, MaxChatMessageLength);
     record.push_back(RecordEnd);
