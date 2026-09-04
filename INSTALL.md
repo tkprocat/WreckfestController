@@ -76,12 +76,19 @@ If running standalone without WreckfestWeb, webhooks will be disabled but the AP
 
 #### Network Configuration
 ```json
-"Kestrel": {
-  "Urls": "http://0.0.0.0:5100;https://0.0.0.0:5101"
+"Api": {
+  "Key": "replace-with-a-long-random-secret",
+  "AllowRemote": false,
+  "HttpPort": 5100,
+  "HttpsPort": 5101
 }
 ```
 
-The API will listen on ports 5100 (HTTP) and 5101 (HTTPS). Change if needed.
+`Key` is required for every `/api/*` request and must be sent as the `X-Api-Key` header. If it is empty or missing, the desktop application still starts but the HTTP API returns `401 Unauthorized` for every API request.
+
+With `AllowRemote` set to `false` (the default), the API binds to `127.0.0.1`. Set it to `true` to bind to all network interfaces.
+
+`HttpPort` and `HttpsPort` default to 5100 and 5101. Give each instance its own pair when running several controllers on one Windows host, otherwise the second instance fails to bind. A value outside 1-65535 is ignored with a warning and the default is used.
 
 ### 3. Configure Wreckfest Server
 

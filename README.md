@@ -58,6 +58,19 @@ Edit `appsettings.json` to set your Wreckfest server paths:
 }
 ```
 
+Set a non-empty inbound API key before using the HTTP API. Requests to every `/api/*` endpoint must send this key in the `X-Api-Key` header. The API binds only to loopback by default; set `AllowRemote` to `true` only when remote access is required. Set `HttpPort` and `HttpsPort` to give each instance its own ports when running several controllers on one host.
+
+```json
+{
+  "Api": {
+    "Key": "replace-with-a-long-random-secret",
+    "AllowRemote": false,
+    "HttpPort": 5100,
+    "HttpsPort": 5101
+  }
+}
+```
+
 For detailed configuration options, see [INSTALL.md](INSTALL.md).
 
 ## Visual Studio 2022

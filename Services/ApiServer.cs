@@ -21,6 +21,10 @@ public interface IApiServer
 /// </summary>
 public class ApiServer : IApiServer, IDisposable
 {
+    public const int DefaultHttpPort = 5100;
+    public const int DefaultHttpsPort = 5101;
+    private const string LoopbackHost = "127.0.0.1";
+    private const string RemoteHost = "0.0.0.0";
     private readonly ILogger<ApiServer> _logger;
     private readonly IServiceProvider _serviceProvider;
     private WebApplication? _app;
@@ -34,6 +38,44 @@ public class ApiServer : IApiServer, IDisposable
 
     public bool IsRunning => _isRunning;
     public string BaseUrl { get; private set; } = "http://localhost:5100";
+
+    /// <summary>
+    /// Builds the listen URLs. Ports are configurable so several controller
+    /// instances can manage separate servers on one Windows host.
+    /// </summary>
+    public static string GetListenUrls(
+        bool allowRemote,
+        int httpPort = DefaultHttpPort,
+        int httpsPort = DefaultHttpsPort)
+    {
+        var host = allowRemote ? RemoteHost : LoopbackHost;
+        return $"http://{host}:{httpPort};https://{host}:{httpsPort}";
+    }
+
+    /// <summary>
+    /// Reads a port from configuration, falling back to the default when the value
+    /// is absent or outside the valid TCP range.
+    /// </summary>
+    private int ResolvePort(IConfiguration configuration, string key, int fallback)
+    {
+        var configured = configuration.GetValue<int?>(key);
+        if (configured is null)
+        {
+            return fallback;
+        }
+
+        if (configured is <= 0 or > 65535)
+        {
+            _logger.LogWarning(
+                "{Key} is {Value}, which is not a valid TCP port. Falling back to {Fallback}.",
+                key,
+                configured,
+                fallback);
+            return fallback;
+        }
+
+        return configured.Value;
+    }
 
     public async Task StartAsync()
     {
@@ -49,9 +91,17 @@ public class ApiServer : IApiServer, IDisposable
 
             var builder = WebApplication.CreateBuilder();
 
-            // Configure Kestrel URLs
             var configuration = _serviceProvider.GetRequiredService<IConfiguration>();
-            var urls = configuration["Kestrel:Urls"] ?? "http://localhost:5100";
+            var allowRemote = configuration.GetValue<bool>("Api:AllowRemote");
+            var httpPort = ResolvePort(configuration, "Api:HttpPort", DefaultHttpPort);
+            var httpsPort = ResolvePort(configuration, "Api:HttpsPort", DefaultHttpsPort);
+            var urls = GetListenUrls(allowRemote, httpPort, httpsPort);
+            var apiKey = configuration["Api:Key"];
+
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                _logger.LogWarning("API is disabled because Api:Key is not configured. Every API request will return 401 Unauthorized until a key is configured.");
+            }
 
             // Filter out HTTPS URLs if no valid certificate is available
             // This prevents startup errors when running as a WPF app
@@ -60,7 +110,7 @@ public class ApiServer : IApiServer, IDisposable
 
             if (string.IsNullOrWhiteSpace(filteredUrls))
             {
-                filteredUrls = "http://localhost:5100"; // Fallback to HTTP
+                filteredUrls = $"http://{(allowRemote ? RemoteHost : LoopbackHost)}:{httpPort}"; // Fallback to HTTP
             }
 
             builder.WebHost.UseUrls(filteredUrls);
@@ -90,6 +140,7 @@ public class ApiServer : IApiServer, IDisposable
             // Configure middleware
             // Swagger disabled - causes build issues with MAUI
 
+            _app.UseMiddleware<ApiKeyMiddleware>(apiKey);
             _app.UseAuthorization();
             _app.MapControllers();
 
