@@ -551,6 +551,17 @@ uintptr_t __fastcall HookedChatHandler(uintptr_t ringIndex, const char* text, ui
     t_pendingChat.ringIndex = static_cast<int>(ringIndex);
     CopyGameStringNoThrow(text, MaxChatMessageLength, t_pendingChat.rawText);
 
+    // The caps here are byte counts while the game limits chat by characters, so a
+    // multi-byte message can fill the buffer and be cut mid-sequence. Filling it
+    // exactly is the signal; log it rather than guess whether it happens in practice.
+    if (t_pendingChat.rawText.size() >= MaxChatMessageLength)
+    {
+        std::string warn = "WreckfestConsoleHook chat capture hit the ";
+        warn += std::to_string(MaxChatMessageLength);
+        warn += " byte cap and may be truncated mid-character";
+        WriteHookLine(warn.c_str());
+    }
+
     EnterCriticalSection(&g_hookLock);
     // Trampoline: the chat handler's entry point stays patched for the life of the
     // hook, so nothing here rewrites live code and no other game thread can execute
@@ -631,6 +642,33 @@ void TryEmitStructuredChat(const char* consoleLine)
     {
         // Not the formatted line for this message. The handler prints other things,
         // so stay armed for the line that does carry it.
+        //
+        // Reported only when the message contains bytes above ASCII, because that is
+        // the case we do not yet understand: whether the game hands us UTF-8, and
+        // whether a truncated capture stops the two ever matching. Logging every
+        // non-matching line would drown the console.
+        bool nonAscii = false;
+        for (size_t i = 0; i < probe.size(); i++)
+        {
+            if (static_cast<unsigned char>(probe[i]) >= 0x80)
+            {
+                nonAscii = true;
+                break;
+            }
+        }
+
+        if (nonAscii)
+        {
+            std::string warn = "WreckfestConsoleHook chat pairing failed for a non-ASCII message: probeBytes=";
+            warn += std::to_string(probe.size());
+            warn += " lineBytes=";
+            warn += std::to_string(line.size());
+            warn += " probe=[";
+            warn += probe;
+            warn += "]";
+            WriteHookLine(warn.c_str());
+        }
+
         return;
     }
 

@@ -1320,6 +1320,27 @@ public class ServerManager
 
         UseHookChat = true;
 
+        // The hook's length caps are byte counts while the game limits chat by
+        // characters, so a multi-byte message can be cut mid-sequence. Report the two
+        // counts side by side when they disagree, and flag any replacement character
+        // that survived decoding - both are things we want to see before deciding
+        // whether the caps need raising.
+        var messageBytes = System.Text.Encoding.UTF8.GetByteCount(record.Message);
+        var nameBytes = System.Text.Encoding.UTF8.GetByteCount(record.PlayerName);
+        if (messageBytes != record.Message.Length || nameBytes != record.PlayerName.Length)
+        {
+            _logger.LogInformation(
+                "Non-ASCII chat record: name=[{Name}] ({NameChars} chars / {NameBytes} bytes) " +
+                "message=[{Message}] ({MessageChars} chars / {MessageBytes} bytes) replacementChars={Replacements}",
+                record.PlayerName,
+                record.PlayerName.Length,
+                nameBytes,
+                record.Message,
+                record.Message.Length,
+                messageBytes,
+                record.PlayerName.Count(c => c == '�') + record.Message.Count(c => c == '�'));
+        }
+
         // Brackets so leading or trailing whitespace is visible: both bugs found
         // during live testing were invisible characters on these two fields.
         _logger.LogDebug(
