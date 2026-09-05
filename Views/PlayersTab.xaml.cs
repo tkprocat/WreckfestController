@@ -67,64 +67,95 @@ public partial class PlayersTab : UserControl
 
     private async void OnRefreshClicked(object sender, RoutedEventArgs e)
     {
-        await _serverManager.TryRefreshPlayersFromHookAsync();
-
-        RefreshPlayerList();
+        await RunPlayerActionAsync("refresh players", async () =>
+        {
+            if (!await _serverManager.TryRefreshPlayersFromHookAsync())
+                throw new InvalidOperationException("The player list could not be refreshed.");
+            RefreshPlayerList();
+        });
     }
 
-    private async void OnKickClicked(object sender, RoutedEventArgs e)
+    private async void OnKickClicked(object sender, RoutedEventArgs e) =>
+        await SendPlayerCommandAsync(sender, "kick", "/kick");
+
+    private async void OnBanClicked(object sender, RoutedEventArgs e) =>
+        await SendPlayerCommandAsync(sender, "ban", "/ban");
+
+    private async void OnPromoteClicked(object sender, RoutedEventArgs e) =>
+        await SendPlayerCommandAsync(sender, "promote", "/op");
+
+    private async void OnDemoteClicked(object sender, RoutedEventArgs e) =>
+        await SendPlayerCommandAsync(sender, "demote", "/demote");
+
+    private async Task SendPlayerCommandAsync(object sender, string action, string command)
     {
-        if (sender is Button button && button.Tag is int slot)
+        if (sender is not Button { Tag: int slot })
+            return;
+
+        await RunPlayerActionAsync($"{action} player in slot {slot}", async () =>
         {
-            _logger.LogInformation("Kicking player in slot {Slot}", slot);
-            var result = await _serverManager.SendCommandAsync($"/kick {slot}");
+            _logger.LogInformation("Player action: {Action}, slot {Slot}", action, slot);
+            var result = await _serverManager.SendCommandAsync($"{command} {slot}");
             if (!result.Success)
-            {
-                _logger.LogWarning("Failed to kick player: {Message}", result.Message);
-            }
-            await _serverManager.TryRefreshPlayersFromHookAsync();
+                throw new InvalidOperationException(result.Message);
+
+            await RefreshAfterPlayerCommandAsync();
+        });
+    }
+
+    private async Task RefreshAfterPlayerCommandAsync()
+    {
+        try
+        {
+            if (!await _serverManager.TryRefreshPlayersFromHookAsync())
+                throw new InvalidOperationException("The player list could not be refreshed.");
+            RefreshPlayerList();
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Player command succeeded, but the player list refresh failed");
+        }
+
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            return;
+
+        try
+        {
+            await DialogService.ShowWarningAsync(
+                "The player command succeeded, but the player list could not be refreshed.\n\nCheck that the server is attached and its console hook is injected, then refresh the list. You do not need to repeat the command.",
+                "Command succeeded — refresh failed");
+        }
+        catch (Exception dialogError)
+        {
+            _logger.LogError(dialogError, "Unable to show player list refresh warning");
         }
     }
 
-    private async void OnBanClicked(object sender, RoutedEventArgs e)
+    private async Task RunPlayerActionAsync(string action, Func<Task> operation)
     {
-        if (sender is Button button && button.Tag is int slot)
+        try
         {
-            _logger.LogInformation("Banning player in slot {Slot}", slot);
-            var result = await _serverManager.SendCommandAsync($"/ban {slot}");
-            if (!result.Success)
-            {
-                _logger.LogWarning("Failed to ban player: {Message}", result.Message);
-            }
-            await _serverManager.TryRefreshPlayersFromHookAsync();
+            await operation();
         }
-    }
-
-    private async void OnPromoteClicked(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button button && button.Tag is int slot)
+        catch (Exception ex)
         {
-            _logger.LogInformation("Promoting player in slot {Slot} to moderator", slot);
-            var result = await _serverManager.SendCommandAsync($"/op {slot}");
-            if (!result.Success)
-            {
-                _logger.LogWarning("Failed to promote player: {Message}", result.Message);
-            }
-            await _serverManager.TryRefreshPlayersFromHookAsync();
-        }
-    }
+            _logger.LogError(ex, "Failed to {Action}", action);
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+                return;
 
-    private async void OnDemoteClicked(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button button && button.Tag is int slot)
-        {
-            _logger.LogInformation("Demoting player in slot {Slot}", slot);
-            var result = await _serverManager.SendCommandAsync($"/demote {slot}");
-            if (!result.Success)
+            try
             {
-                _logger.LogWarning("Failed to demote player: {Message}", result.Message);
+                await DialogService.ShowErrorAsync(
+                    $"Unable to {action}.\n\n{ex.Message}\n\nCheck that the server is attached and its console hook is injected, then refresh the player list.",
+                    "Player action failed");
             }
-            await _serverManager.TryRefreshPlayersFromHookAsync();
+            catch (Exception dialogError)
+            {
+                // A closing window or another open dialog must not turn error reporting
+                // into an unhandled exception in the async event handler.
+                _logger.LogError(dialogError, "Unable to show player action error");
+            }
         }
     }
 }
