@@ -92,26 +92,36 @@ public class ServerInfoTracker
     /// </summary>
     public async Task<ServerConfig> RequestServerInfoAsync(TimeSpan timeout)
     {
+        // Hold this request's own completion source. A second caller overwrites the
+        // shared field, and before this was captured locally the first caller's
+        // timeout would fault the *second* caller's task while its own was left
+        // unresolved - so the first request hung forever.
+        var request = new TaskCompletionSource<ServerConfig>();
         lock (_lock)
         {
-            _infoResponseTask = new TaskCompletionSource<ServerConfig>();
+            _infoResponseTask = request;
         }
 
         try
         {
             using var cts = new CancellationTokenSource(timeout);
             using var registration = cts.Token.Register(() =>
-                _infoResponseTask?.TrySetException(new TimeoutException("Server info request timed out")));
+                request.TrySetException(new TimeoutException("Server info request timed out")));
 
-            return await _infoResponseTask.Task;
+            return await request.Task;
         }
         catch
         {
             lock (_lock)
             {
-                _collectingInfoResponse = false;
-                _infoResponseLines.Clear();
-                _infoResponseTask = null;
+                // Only tear down the shared collection state if it is still ours;
+                // a newer request may already own it.
+                if (ReferenceEquals(_infoResponseTask, request))
+                {
+                    _collectingInfoResponse = false;
+                    _infoResponseLines.Clear();
+                    _infoResponseTask = null;
+                }
             }
             throw;
         }

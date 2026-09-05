@@ -282,6 +282,54 @@ public class ServerManagerTests
         }
     }
 
+    // Hook output carries no PID, so state left over from the previous attachment
+    // would be read as belonging to the new process.
+    [Fact]
+    public void AttachToExistingProcess_WhenSwitchingProcess_ClearsPreviousProcessState()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            Assert.True(_serverManager.AttachToExistingProcess(first.Id).Success);
+            _playerTracker.Seed("PlayerOnFirstProcess");
+            Assert.NotEmpty(_playerTracker.GetPlayers());
+
+            Assert.True(_serverManager.AttachToExistingProcess(second.Id).Success);
+
+            Assert.Empty(_playerTracker.GetPlayers());
+            Assert.Equal(second.Id, _serverManager.GetStatus().ProcessId);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    private static Process StartIdleProcess()
+    {
+        var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            Arguments = "-NoProfile -Command Start-Sleep -Seconds 30",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+        Assert.NotNull(process);
+        return process!;
+    }
+
+    private static void KillIfRunning(Process process)
+    {
+        if (!process.HasExited)
+        {
+            process.Kill();
+            process.WaitForExit(5000);
+        }
+    }
+
     [Fact]
     public async Task SendCommandAsync_WhenServerNotRunning_ReturnsFailure()
     {

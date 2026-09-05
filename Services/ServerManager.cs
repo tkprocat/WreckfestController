@@ -74,6 +74,7 @@ public class ServerManager
     // text; see ServerEventReader. Polled rather than pushed, which is why the reader
     // reports overflow so we can fall back to a full snapshot.
     private ServerEventReader? _serverEventReader;
+    private int _serverEventGeneration;
     private System.Threading.Timer? _serverEventTimer;
     private int _serverEventPollBusy;
     private bool _serverEventsSeeded;
@@ -970,8 +971,19 @@ public class ServerManager
                 return (false, $"Process {pid} has already exited");
             }
 
-            _actualServerPid = pid;
-            _startTime = process.StartTime;
+            // Switch attachment as one step. Hook output carries no PID, so anything
+            // still arriving from the previous process - buffered output, an
+            // in-flight event poll, the roster it built - would otherwise be applied
+            // to this one.
+            lock (_lock)
+            {
+                StopOutputMonitoring();
+                ClearProcessScopedState();
+
+                _actualServerPid = pid;
+                _startTime = process.StartTime;
+            }
+
             ProcessIdChanged?.Invoke(pid);
             _logger.LogInformation("Attached to existing server process (PID: {PID}, Name: {Name})", pid, process.ProcessName);
 
@@ -989,6 +1001,15 @@ public class ServerManager
             _logger.LogError(ex, "Failed to attach to process {PID}", pid);
             return (false, $"Failed to attach to process: {ex.Message}");
         }
+    }
+
+    // Everything here describes one attached process and means nothing about the
+    // next one. Called while holding _lock.
+    private void ClearProcessScopedState()
+    {
+        _playerTracker.Clear();
+        _trackChangeTracker.Clear();
+        _outputBuffer.Clear();
     }
 
     private void AddToOutputBuffer(string message)
@@ -1124,8 +1145,15 @@ public class ServerManager
             ReadHookMemoryAsync,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<ServerEventReader>.Instance);
 
+        // Every poll carries the generation it was started under. Disposing the timer
+        // does not cancel a poll already awaiting a hook read, so the generation is
+        // what lets that poll notice its results belong to a process we have since
+        // stopped watching, and drop them instead of feeding another process's
+        // tracker.
+        var generation = Volatile.Read(ref _serverEventGeneration);
+
         _serverEventTimer = new System.Threading.Timer(
-            _ => _ = PollServerEventsAsync(),
+            _ => _ = PollServerEventsAsync(generation),
             null,
             ServerEventPollInterval,
             ServerEventPollInterval);
@@ -1133,16 +1161,22 @@ public class ServerManager
 
     private void StopServerEventPolling()
     {
+        // Retire the generation first: an in-flight poll checks this the moment its
+        // await resumes.
+        Interlocked.Increment(ref _serverEventGeneration);
         _serverEventTimer?.Dispose();
         _serverEventTimer = null;
         _serverEventReader = null;
         _serverEventsSeeded = false;
     }
 
-    private async Task PollServerEventsAsync()
+    private bool IsCurrentEventGeneration(int generation) =>
+        Volatile.Read(ref _serverEventGeneration) == generation;
+
+    private async Task PollServerEventsAsync(int generation)
     {
         var reader = _serverEventReader;
-        if (reader == null)
+        if (reader == null || !IsCurrentEventGeneration(generation))
         {
             return;
         }
@@ -1157,10 +1191,17 @@ public class ServerManager
         {
             var (events, overflowed) = await reader.PollAsync();
 
+            // Attachment may have moved while that read was outstanding. These events
+            // belong to the old process; applying them would corrupt the new one.
+            if (!IsCurrentEventGeneration(generation))
+            {
+                return;
+            }
+
             // The first successful poll only adopts the cursor - it deliberately does
             // not replay history - so anyone already connected produced no event. Seed
             // the roster from a snapshot once, then let events maintain it.
-            if (!_serverEventsSeeded && reader.HasSynced)
+            if (!_serverEventsSeeded && reader.HasSynced && IsCurrentEventGeneration(generation))
             {
                 _serverEventsSeeded = true;
                 await TryRefreshPlayersFromHookAsync();
@@ -1171,12 +1212,12 @@ public class ServerManager
                 _playerTracker.ProcessServerEvent(serverEvent);
             }
 
-            if (events.Count > 0)
+            if (events.Count > 0 && IsCurrentEventGeneration(generation))
             {
                 await TryRefreshPlayersFromHookAsync();
             }
 
-            if (overflowed)
+            if (overflowed && IsCurrentEventGeneration(generation))
             {
                 _logger.LogWarning("Server event ring overflowed; resyncing from a full player snapshot");
                 await TryRefreshPlayersFromHookAsync();
