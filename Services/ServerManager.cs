@@ -59,8 +59,8 @@ public class ServerManager
     // pipe - which makes the hook's own WriteHookLine/FlushFileBuffers block, so
     // neither side can progress until a timeout fires. One consumer preserves the
     // strict command ordering that !yes / !no / !confirm rely on.
-    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message)> _chatCommands =
-        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string)>(
+    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message, int Generation, long AttachmentId)> _chatCommands =
+        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string, int, long)>(
             new System.Threading.Channels.UnboundedChannelOptions
             {
                 SingleReader = true,
@@ -74,6 +74,29 @@ public class ServerManager
     // text; see ServerEventReader. Polled rather than pushed, which is why the reader
     // reports overflow so we can fall back to a full snapshot.
     private ServerEventReader? _serverEventReader;
+
+    // The attachment a chat command was accepted under, made ambient for the
+    // duration of the handler. Passing it explicitly would mean threading a PID
+    // through ChatCommandReceived and every SendCommandAsync call in VotingService;
+    // AsyncLocal flows across the awaits a handler makes without that churn.
+    //
+    // It carries the PID rather than the generation on purpose: the generation is
+    // an I/O epoch that also advances when monitoring restarts, so gating dispatch
+    // on it would refuse commands after an ordinary reinject.
+    // Monotonic identity for one continuous attachment. A PID cannot serve: attach
+    // A, switch to B, switch back to A and the PID matches again, so work queued
+    // under the first A attachment would be accepted by the second. This only ever
+    // increases, so an attachment is never mistaken for a later one.
+    private long _attachmentId;
+
+    // The attachment a chat command was accepted under, made ambient for the
+    // duration of the handler. Passing it explicitly would mean threading it
+    // through ChatCommandReceived and every SendCommandAsync call in
+    // VotingService; AsyncLocal flows across the awaits a handler makes without
+    // that churn. An explicit session parameter is the better end state - see the
+    // follow-up issue - but that is a wider change than this fix.
+    private static readonly AsyncLocal<long?> _dispatchAttachmentId = new();
+    private int _serverEventGeneration;
     private System.Threading.Timer? _serverEventTimer;
     private int _serverEventPollBusy;
     private bool _serverEventsSeeded;
@@ -164,7 +187,7 @@ public class ServerManager
         _webhookService = webhookService;
         _consoleLogSender = consoleLogSender;
 
-        _injectedHookOutputReader.OutputReceived += OnInjectedHookOutputReceived;
+        _injectedHookOutputReader.OutputReceivedFrom += OnInjectedHookOutputReceived;
         _injectedHookOutputReader.HookOutputReceived += output => ConsoleHookOutput?.Invoke(output);
 
     }
@@ -184,7 +207,7 @@ public class ServerManager
                 else
                 {
                     _logger.LogWarning("Tracked server process (PID: {PID}) has exited", _actualServerPid.Value);
-                    _actualServerPid = null;
+                    SetAttachedProcess(null);
                     _startTime = null;
                     return null;
                 }
@@ -193,7 +216,7 @@ public class ServerManager
             {
                 // Process doesn't exist
                 _logger.LogWarning("Tracked server process (PID: {PID}) no longer exists", _actualServerPid!.Value);
-                _actualServerPid = null;
+                SetAttachedProcess(null);
                 _startTime = null;
                 return null;
             }
@@ -280,7 +303,7 @@ public class ServerManager
                 };
 
                 _serverProcess = process;
-                _actualServerPid = process.Id;
+                SetAttachedProcess(process.Id);
                 _startTime = DateTime.UtcNow;
                 ProcessIdChanged?.Invoke(process.Id);
 
@@ -424,7 +447,7 @@ public class ServerManager
                     {
                         _serverProcess = null;
                         _startTime = null;
-                        _actualServerPid = null;
+                        SetAttachedProcess(null);
 
                         // Clear player tracking
                         _playerTracker.Clear();
@@ -524,7 +547,7 @@ public class ServerManager
 
                 _serverProcess = null;
                 _startTime = null;
-                _actualServerPid = null;
+                SetAttachedProcess(null);
 
                 // Clear player tracking
                 _playerTracker.Clear();
@@ -647,7 +670,7 @@ public class ServerManager
 
             // Update to track the new PID
             var newPid = newProcessPids.First();
-            _actualServerPid = newPid;
+            SetAttachedProcess(newPid);
             ProcessIdChanged?.Invoke(newPid);
 
             // Update start time
@@ -859,10 +882,28 @@ public class ServerManager
         await _commandSendLock.WaitAsync();
         try
         {
-            var processId = _actualServerPid ?? GetActualServerProcess()?.Id;
-            if (processId == null)
+            // Resolved after the semaphore, which is the last moment before the
+            // command goes out - and the moment that matters, because waiting for
+            // this lock is exactly when attachment can move underneath a caller
+            // that already validated.
+            int? processId;
+            var expectedAttachment = _dispatchAttachmentId.Value;
+            lock (_lock)
             {
-                return (false, "Server is not running");
+                processId = _actualServerPid ?? GetActualServerProcess()?.Id;
+                if (processId == null)
+                {
+                    return (false, "Server is not running");
+                }
+
+                if (expectedAttachment != null && expectedAttachment.Value != CurrentAttachmentId)
+                {
+                    _logger.LogWarning(
+                        "Refused to send {Command}: accepted under attachment {Expected}, now on {Current} (process {Pid})",
+                        command, expectedAttachment.Value, CurrentAttachmentId, processId.Value);
+                    return (false,
+                        $"Attachment moved before the command could be sent (was {expectedAttachment.Value}, now {CurrentAttachmentId})");
+                }
             }
 
             var result = await _serverInputWriter.SendCommandAsync(command, processId.Value);
@@ -915,22 +956,53 @@ public class ServerManager
 
     public virtual async Task<bool> TryRefreshPlayersFromHookAsync()
     {
-        var process = GetActualServerProcess();
-        if (process == null || _serverInputWriter is not IPlayerSnapshotReader playerSnapshotReader)
+        if (_serverInputWriter is not IPlayerSnapshotReader playerSnapshotReader)
         {
             return false;
         }
 
+        // PID and generation are captured together under the switch's own lock.
+        // Read separately, a switch landing between them would stamp the old
+        // process's snapshot with the new process's generation, and the commit check
+        // below would wave it through.
+        int pid;
+        int generation;
+        lock (_lock)
+        {
+            var process = GetActualServerProcess();
+            if (process == null)
+            {
+                return false;
+            }
+
+            pid = process.Id;
+            generation = CurrentAttachmentGeneration;
+        }
+
         try
         {
-            var snapshot = await playerSnapshotReader.ReadPlayerSnapshotAsync(process.Id);
+            var snapshot = await playerSnapshotReader.ReadPlayerSnapshotAsync(pid);
             if (!snapshot.Success)
             {
                 _logger.LogDebug("Injected hook player snapshot refresh skipped: {Message}", snapshot.Message);
                 return false;
             }
 
-            _playerTracker.ProcessHookPlayerSnapshot(snapshot.Players);
+            // Commit under the same lock the switch uses, so the generation cannot
+            // change between the check and the mutation.
+            lock (_lock)
+            {
+                if (!IsCurrentAttachmentGeneration(generation))
+                {
+                    _logger.LogDebug(
+                        "Discarded a player snapshot from process {Pid}; attachment moved while it was in flight",
+                        pid);
+                    return false;
+                }
+
+                _playerTracker.ProcessHookPlayerSnapshot(snapshot.Players);
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -970,8 +1042,20 @@ public class ServerManager
                 return (false, $"Process {pid} has already exited");
             }
 
-            _actualServerPid = pid;
-            _startTime = process.StartTime;
+            // Switch attachment as one step. Hook output carries no PID, so anything
+            // still arriving from the previous process - buffered output, an
+            // in-flight event poll, the roster it built - would otherwise be applied
+            // to this one.
+            lock (_lock)
+            {
+                StopOutputMonitoring();
+                StopHookOutputListener();
+                ClearProcessScopedState();
+
+                SetAttachedProcess(pid);
+                _startTime = process.StartTime;
+            }
+
             ProcessIdChanged?.Invoke(pid);
             _logger.LogInformation("Attached to existing server process (PID: {PID}, Name: {Name})", pid, process.ProcessName);
 
@@ -989,6 +1073,46 @@ public class ServerManager
             _logger.LogError(ex, "Failed to attach to process {PID}", pid);
             return (false, $"Failed to attach to process: {ex.Message}");
         }
+    }
+
+    // StopOutputMonitoring only clears the primary-output flag and stops event
+    // polling; the reader's pipe listeners keep running and keep delivering the old
+    // process's output. Stopping it here is deliberately scoped to attachment
+    // switching rather than folded into StopOutputMonitoring, which the graceful
+    // stop path also calls and which must keep behaving as it does today.
+    //
+    // Synchronous in practice - StopAsync closes the listeners and returns a
+    // completed task - so this cannot deadlock under _lock.
+    private void StopHookOutputListener()
+    {
+        try
+        {
+            _injectedHookOutputReader.StopAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to stop the hook output listener while switching attachment");
+        }
+    }
+
+    // Every attachment change goes through here. Scattered assignments were how
+    // identity drifted: eight sites moved the PID and only one advanced the
+    // guard that work is validated against.
+    private void SetAttachedProcess(int? pid)
+    {
+        _actualServerPid = pid;
+        Interlocked.Increment(ref _attachmentId);
+    }
+
+    private long CurrentAttachmentId => Interlocked.Read(ref _attachmentId);
+
+    // Everything here describes one attached process and means nothing about the
+    // next one. Called while holding _lock.
+    private void ClearProcessScopedState()
+    {
+        _playerTracker.Clear();
+        _trackChangeTracker.Clear();
+        _outputBuffer.Clear();
     }
 
     private void AddToOutputBuffer(string message)
@@ -1124,8 +1248,15 @@ public class ServerManager
             ReadHookMemoryAsync,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<ServerEventReader>.Instance);
 
+        // Every poll carries the generation it was started under. Disposing the timer
+        // does not cancel a poll already awaiting a hook read, so the generation is
+        // what lets that poll notice its results belong to a process we have since
+        // stopped watching, and drop them instead of feeding another process's
+        // tracker.
+        var generation = Volatile.Read(ref _serverEventGeneration);
+
         _serverEventTimer = new System.Threading.Timer(
-            _ => _ = PollServerEventsAsync(),
+            _ => _ = PollServerEventsAsync(generation),
             null,
             ServerEventPollInterval,
             ServerEventPollInterval);
@@ -1133,16 +1264,30 @@ public class ServerManager
 
     private void StopServerEventPolling()
     {
+        // Retire the generation first: an in-flight poll checks this the moment its
+        // await resumes.
+        Interlocked.Increment(ref _serverEventGeneration);
         _serverEventTimer?.Dispose();
         _serverEventTimer = null;
         _serverEventReader = null;
         _serverEventsSeeded = false;
     }
 
-    private async Task PollServerEventsAsync()
+    private bool IsCurrentEventGeneration(int generation) =>
+        Volatile.Read(ref _serverEventGeneration) == generation;
+
+    // Attachment and polling share one counter: every attachment switch stops
+    // polling, so retiring the generation covers both, and a single value avoids
+    // two counters that could disagree about which process is current.
+    private int CurrentAttachmentGeneration => Volatile.Read(ref _serverEventGeneration);
+
+    private bool IsCurrentAttachmentGeneration(int generation) =>
+        Volatile.Read(ref _serverEventGeneration) == generation;
+
+    private async Task PollServerEventsAsync(int generation)
     {
         var reader = _serverEventReader;
-        if (reader == null)
+        if (reader == null || !IsCurrentEventGeneration(generation))
         {
             return;
         }
@@ -1157,26 +1302,43 @@ public class ServerManager
         {
             var (events, overflowed) = await reader.PollAsync();
 
+            // Attachment may have moved while that read was outstanding. These events
+            // belong to the old process; applying them would corrupt the new one.
+            if (!IsCurrentEventGeneration(generation))
+            {
+                return;
+            }
+
             // The first successful poll only adopts the cursor - it deliberately does
             // not replay history - so anyone already connected produced no event. Seed
             // the roster from a snapshot once, then let events maintain it.
-            if (!_serverEventsSeeded && reader.HasSynced)
+            if (!_serverEventsSeeded && reader.HasSynced && IsCurrentEventGeneration(generation))
             {
                 _serverEventsSeeded = true;
                 await TryRefreshPlayersFromHookAsync();
             }
 
-            foreach (var serverEvent in events)
+            lock (_lock)
             {
-                _playerTracker.ProcessServerEvent(serverEvent);
+                // Re-checked inside the lock: without it the switch can land between
+                // the check above and these mutations.
+                if (!IsCurrentEventGeneration(generation))
+                {
+                    return;
+                }
+
+                foreach (var serverEvent in events)
+                {
+                    _playerTracker.ProcessServerEvent(serverEvent);
+                }
             }
 
-            if (events.Count > 0)
+            if (events.Count > 0 && IsCurrentEventGeneration(generation))
             {
                 await TryRefreshPlayersFromHookAsync();
             }
 
-            if (overflowed)
+            if (overflowed && IsCurrentEventGeneration(generation))
             {
                 _logger.LogWarning("Server event ring overflowed; resyncing from a full player snapshot");
                 await TryRefreshPlayersFromHookAsync();
@@ -1204,7 +1366,13 @@ public class ServerManager
     /// <summary>
     /// Callback for console monitor output.
     /// </summary>
-    private void OnConsoleOutputReceived(string output)
+    private void OnConsoleOutputReceived(string output) =>
+        ProcessConsoleLines(output, CurrentAttachmentGeneration);
+
+    // Named apart from the one-argument entry point rather than overloading it:
+    // the tests reach OnConsoleOutputReceived by reflection, and an overload makes
+    // that lookup ambiguous.
+    private void ProcessConsoleLines(string output, int generation)
     {
         if (string.IsNullOrWhiteSpace(output))
             return;
@@ -1217,23 +1385,32 @@ public class ServerManager
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
-            // Add to output buffer
-            _outputBuffer.Enqueue((DateTime.Now, line));
-            while (_outputBuffer.Count > MaxBufferSize)
+            // Everything that mutates controller state happens under the same lock
+            // the attachment switch takes, re-checking the generation first, so a
+            // switch cannot land between the check and the mutation.
+            lock (_lock)
             {
-                _outputBuffer.TryDequeue(out _);
+                if (!IsCurrentAttachmentGeneration(generation))
+                {
+                    return;
+                }
+
+                _outputBuffer.Enqueue((DateTime.Now, line));
+                while (_outputBuffer.Count > MaxBufferSize)
+                {
+                    _outputBuffer.TryDequeue(out _);
+                }
+
+                ReportChatLineWithoutRecord(line);
+                _trackChangeTracker.ProcessLogLine(line);
+                _serverInfoTracker.ProcessLogLine(line);
             }
 
-            // Notify subscribers
+            // Fan-out to subscribers stays outside the lock: these reach the UI
+            // dispatcher and an HTTP sender, and holding a controller lock across
+            // either invites a deadlock.
             NotifyConsoleOutput(line);
-
-            // Send to webhook for Laravel
             _consoleLogSender.AddLog(line);
-
-            // Parse chat commands, track changes, and server info.
-            ReportChatLineWithoutRecord(line);
-            _trackChangeTracker.ProcessLogLine(line);
-            _serverInfoTracker.ProcessLogLine(line);
         }
     }
 
@@ -1270,10 +1447,10 @@ public class ServerManager
     /// Hands a chat command to the worker. Never blocks the caller - the caller is
     /// the thread draining the hook output pipe.
     /// </summary>
-    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage)
+    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage, int generation, long attachmentId)
     {
         EnsureChatCommandWorker();
-        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage)))
+        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage, generation, attachmentId)))
         {
             _logger.LogWarning("Dropped chat command from {Player}: queue closed", playerName);
         }
@@ -1292,8 +1469,25 @@ public class ServerManager
 
     private async Task ProcessChatCommandQueueAsync()
     {
-        await foreach (var (player, isBot, message) in _chatCommands.Reader.ReadAllAsync())
+        await foreach (var (player, isBot, message, generation, attachmentId) in _chatCommands.Reader.ReadAllAsync())
         {
+            // A command accepted before an attachment switch would otherwise run
+            // against the new server: the queue is the longest delay between
+            // accepting output and acting on it, and a chat command acts.
+            if (!IsCurrentAttachmentGeneration(generation))
+            {
+                _logger.LogDebug(
+                    "Discarded queued chat command from {Player}; attachment moved before it ran",
+                    player);
+                continue;
+            }
+
+            // Passing the dequeue check is not enough on its own: the handler can
+            // block - on the command semaphore, on a vote - while attachment moves.
+            // Publishing it here lets SendCommandAsync refuse at the last moment,
+            // when it picks the target PID.
+            _dispatchAttachmentId.Value = attachmentId;
+
             try
             {
                 ChatCommandReceived?.Invoke(player, isBot, message);
@@ -1307,19 +1501,53 @@ public class ServerManager
         }
     }
 
-    private void OnInjectedHookOutputReceived(string output)
+    private void OnInjectedHookOutputReceived(int sourcePid, string output)
     {
+        // The line carries the process it was read from, which is the only reliable
+        // discriminator: stopping a listener does not await its in-flight callbacks,
+        // and the reader's TargetProcessId is cleared on stop and retargeted on the
+        // next inject, so it describes the reader's present state rather than this
+        // line's origin.
+        //
+        // This must gate the chat demux below as well as the text fanout: a chat
+        // command is the one piece of output that acts on the server rather than
+        // merely being displayed.
+        // The generation is taken with the PID, in one lock acquisition, and then
+        // re-checked at every point that mutates state. Validating here and acting
+        // later is not enough: the switch can land in between, and this line would
+        // still be applied to the process we have just moved to.
+        int? attachedPid;
+        int generation;
+        long attachmentId;
+        lock (_lock)
+        {
+            attachedPid = _actualServerPid;
+            generation = CurrentAttachmentGeneration;
+            attachmentId = CurrentAttachmentId;
+        }
+
+        // Only drop what can be proved stale. With nothing attached there is no
+        // other attachment to confuse this with, and silently discarding output
+        // then would hide it in exactly the case it is most needed.
+        if (attachedPid != null && sourcePid != attachedPid.Value)
+        {
+            _logger.LogDebug(
+                "Dropped hook output from process {Source}; attached to {Current}",
+                sourcePid, attachedPid.Value);
+            return;
+        }
+
         // Demuxed ahead of the text fanout. A structured record is not console
         // output: it must not reach the output buffer, the console webhook or the
         // chat regex, and it is consumed whether or not it parsed.
-        if (TryProcessHookChatRecord(output))
+        if (TryProcessHookChatRecord(output, generation, attachmentId))
         {
             return;
         }
 
         if (ProcessConsoleHookOutput)
         {
-            OnConsoleOutputReceived(output);
+            ProcessConsoleLines(output, generation);
         }
     }
 
@@ -1328,7 +1556,7 @@ public class ServerManager
     /// the line was a record - including a malformed one, which is dropped rather
     /// than leaked into the console output fanout.
     /// </summary>
-    private bool TryProcessHookChatRecord(string output)
+    private bool TryProcessHookChatRecord(string output, int generation, long attachmentId)
     {
         if (!HookChatRecord.LooksLikeRecord(output))
         {
@@ -1383,7 +1611,7 @@ public class ServerManager
 
         // No duplicate suppression needed: the hook emits one record per message,
         // where the console echo the old path had to undo did not exist.
-        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message);
+        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message, generation, attachmentId);
         return true;
     }
 
@@ -1572,7 +1800,7 @@ public class ServerManager
             lock (_lock)
             {
                 _serverProcess = process;
-                _actualServerPid = processId;
+                SetAttachedProcess(processId);
                 _startTime = process.StartTime;
             }
             ProcessIdChanged?.Invoke(processId);

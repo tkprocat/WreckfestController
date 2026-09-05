@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using System.Diagnostics;
+using WreckfestController.Models;
 using WreckfestController.Services;
 using Xunit;
 
@@ -279,6 +280,339 @@ public class ServerManagerTests
                 serverProcess.Kill();
                 await serverProcess.WaitForExitAsync();
             }
+        }
+    }
+
+    // Hook output carries no PID, so state left over from the previous attachment
+    // would be read as belonging to the new process.
+    [Fact]
+    public void AttachToExistingProcess_WhenSwitchingProcess_ClearsPreviousProcessState()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            Assert.True(_serverManager.AttachToExistingProcess(first.Id).Success);
+            _playerTracker.Seed("PlayerOnFirstProcess");
+            Assert.NotEmpty(_playerTracker.GetPlayers());
+
+            Assert.True(_serverManager.AttachToExistingProcess(second.Id).Success);
+
+            Assert.Empty(_playerTracker.GetPlayers());
+            Assert.Equal(second.Id, _serverManager.GetStatus().ProcessId);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // A chat command is the one piece of hook output that acts on the server rather
+    // than merely being displayed, so output left in flight from the process we just
+    // detached from must not reach the chat path either.
+    [Fact]
+    public async Task HookOutput_FromAPreviousAttachment_IsDropped()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            // The states a late callback from `first` can actually arrive in: the
+            // listener stopped and cleared the target, or it was reinjected and now
+            // reports `second`. Neither describes where this line came from.
+            outputReader.SetupGet(r => r.TargetProcessId).Returns(0);
+
+            var serverManager = CreateServerManager(outputReader.Object);
+            serverManager.ProcessConsoleHookOutput = true;
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+
+            // Chat commands are dispatched on a background worker, so asserting an
+            // empty list straight after raising the event passes whether or not the
+            // output was dropped. Wait for the command that must never arrive.
+            var dispatched = new TaskCompletionSource<string>();
+            serverManager.ChatCommandReceived += (_, _, message) => dispatched.TrySetResult(message);
+
+            var record = BuildChatRecord("10", "0", "StalePlayer", "!vote");
+            outputReader.Raise(r => r.OutputReceivedFrom += null, first.Id, record);
+
+            // ... and again once the reader has been retargeted to the new process.
+            outputReader.SetupGet(r => r.TargetProcessId).Returns(second.Id);
+            outputReader.Raise(r => r.OutputReceivedFrom += null, first.Id, record);
+
+            var settled = await Task.WhenAny(dispatched.Task, Task.Delay(TimeSpan.FromSeconds(1)));
+            Assert.True(
+                settled != dispatched.Task,
+                $"A chat command from the previous attachment was dispatched: {dispatched.Task.Status}");
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // Checking the generation before the read is not enough - the switch can land
+    // while the snapshot is in flight.
+    [Fact]
+    public async Task TryRefreshPlayersFromHookAsync_WhenAttachmentMovesMidRead_DiscardsTheSnapshot()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+
+            var inputWriter = new Mock<IServerInputWriter>();
+            var snapshotReader = inputWriter.As<IPlayerSnapshotReader>();
+            ServerManager? manager = null;
+            snapshotReader
+                .Setup(r => r.ReadPlayerSnapshotAsync(first.Id))
+                .ReturnsAsync(() =>
+                {
+                    // Attachment moves while this read is outstanding.
+                    manager!.AttachToExistingProcess(second.Id);
+                    return (true, "ok", (IReadOnlyList<Player>)
+                        [new Player { Name = "PlayerOnFirstProcess", Slot = 1 }]);
+                });
+
+            manager = CreateServerManager(outputReader.Object, inputWriter.Object);
+            Assert.True(manager.AttachToExistingProcess(first.Id).Success);
+
+            var refreshed = await manager.TryRefreshPlayersFromHookAsync();
+
+            Assert.False(refreshed);
+            Assert.Empty(_playerTracker.GetPlayers());
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    private ServerManager CreateServerManager(
+        IInjectedHookOutputReader outputReader,
+        IServerInputWriter? inputWriter = null)
+    {
+        var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
+        return new ServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockWebhookService.Object,
+            consoleLogSender.Object,
+            inputWriter ?? Mock.Of<IServerInputWriter>(),
+            outputReader);
+    }
+
+    // The chat queue is the longest gap between accepting output and acting on it,
+    // and a chat command acts on the server. One accepted under attachment A must not
+    // run after attachment has moved to B.
+    [Fact]
+    public async Task ChatCommand_QueuedBeforeAnAttachmentSwitch_DoesNotRunAfterIt()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+
+            var serverManager = CreateServerManager(outputReader.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+
+            // Hold the worker on the first command so the second is still queued when
+            // attachment moves - otherwise the race is won by luck rather than tested.
+            var firstCommandRunning = new TaskCompletionSource();
+            var releaseWorker = new TaskCompletionSource();
+            var executed = new List<string>();
+            serverManager.ChatCommandReceived += (_, _, message) =>
+            {
+                lock (executed) { executed.Add(message); }
+                if (message == "!first")
+                {
+                    firstCommandRunning.TrySetResult();
+                    releaseWorker.Task.GetAwaiter().GetResult();
+                }
+            };
+
+            outputReader.Raise(
+                r => r.OutputReceivedFrom += null,
+                first.Id,
+                BuildChatRecord("10", "0", "Player", "!first"));
+            await firstCommandRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            outputReader.Raise(
+                r => r.OutputReceivedFrom += null,
+                first.Id,
+                BuildChatRecord("10", "0", "Player", "!queued"));
+
+            // Attachment moves while !queued is still sitting in the queue.
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            releaseWorker.TrySetResult();
+
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            lock (executed)
+            {
+                Assert.DoesNotContain("!queued", executed);
+            }
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // The dequeue check is not the last word: a handler can pass it and then block
+    // - on the command semaphore, on a vote - while attachment moves. The target PID
+    // is chosen after that wait, so the check has to happen there too.
+    [Fact]
+    public async Task ChatCommand_DequeuedThenDelayed_DoesNotDispatchToTheNewAttachment()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+
+            var inputWriter = new Mock<IServerInputWriter>();
+            inputWriter
+                .Setup(w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()))
+                .ReturnsAsync((true, "sent"));
+
+            var serverManager = CreateServerManager(outputReader.Object, inputWriter.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+
+            var handlerRunning = new TaskCompletionSource();
+            var releaseHandler = new TaskCompletionSource();
+            var sendResult = new TaskCompletionSource<(bool Success, string Message)>();
+            serverManager.ChatCommandReceived += (_, _, _) =>
+            {
+                handlerRunning.TrySetResult();
+                // Stand in for any wait a handler makes before dispatching.
+                releaseHandler.Task.GetAwaiter().GetResult();
+                sendResult.TrySetResult(serverManager.SendCommandAsync("/kick 1").GetAwaiter().GetResult());
+            };
+
+            outputReader.Raise(
+                r => r.OutputReceivedFrom += null,
+                first.Id,
+                BuildChatRecord("10", "0", "Player", "!kick"));
+
+            // Dequeued and running, so the queue check has already been passed.
+            await handlerRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            releaseHandler.TrySetResult();
+
+            var result = await sendResult.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.False(result.Success);
+            Assert.Contains("Attachment moved", result.Message);
+            inputWriter.Verify(
+                w => w.SendCommandAsync(It.IsAny<string>(), second.Id),
+                Times.Never);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // A -> B -> A. The PID is identical either side of the round trip, so a PID
+    // check accepts work queued under the first attachment. Identity has to be
+    // monotonic, not a property of the process.
+    [Fact]
+    public async Task ChatCommand_WhenAttachmentReturnsToTheSameProcess_IsStillRefused()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+
+            var inputWriter = new Mock<IServerInputWriter>();
+            inputWriter
+                .Setup(w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()))
+                .ReturnsAsync((true, "sent"));
+
+            var serverManager = CreateServerManager(outputReader.Object, inputWriter.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+
+            var handlerRunning = new TaskCompletionSource();
+            var releaseHandler = new TaskCompletionSource();
+            var sendResult = new TaskCompletionSource<(bool Success, string Message)>();
+            serverManager.ChatCommandReceived += (_, _, _) =>
+            {
+                handlerRunning.TrySetResult();
+                releaseHandler.Task.GetAwaiter().GetResult();
+                sendResult.TrySetResult(serverManager.SendCommandAsync("/kick 1").GetAwaiter().GetResult());
+            };
+
+            outputReader.Raise(
+                r => r.OutputReceivedFrom += null,
+                first.Id,
+                BuildChatRecord("10", "0", "Player", "!kick"));
+            await handlerRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            // Away and back again: same PID, different attachment.
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            releaseHandler.TrySetResult();
+
+            var result = await sendResult.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.False(result.Success);
+            Assert.Contains("Attachment moved", result.Message);
+            inputWriter.Verify(
+                w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()),
+                Times.Never);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    private static Process StartIdleProcess()
+    {
+        var process = Process.Start(new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            Arguments = "-NoProfile -Command Start-Sleep -Seconds 30",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+        Assert.NotNull(process);
+        return process!;
+    }
+
+    private static void KillIfRunning(Process process)
+    {
+        if (!process.HasExited)
+        {
+            process.Kill();
+            process.WaitForExit(5000);
         }
     }
 
@@ -1037,7 +1371,10 @@ public class ServerManagerTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
 
         Assert.NotNull(method);
-        method.Invoke(serverManager, [output]);
+        // No attachment in these cases, so any source PID is accepted. The
+        // stale-source behaviour is covered by
+        // HookOutput_FromAPreviousAttachment_IsDropped.
+        method.Invoke(serverManager, [0, output]);
     }
 
     private TestServerManager CreateTestServerManager(IInjectedHookOutputReader injectedHookReader, string? build)

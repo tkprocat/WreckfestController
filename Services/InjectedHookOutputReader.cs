@@ -20,6 +20,7 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
 
     public event Action<string>? OutputReceived;
     public event Action<string>? HookOutputReceived;
+    public event Action<int, string>? OutputReceivedFrom;
 
     public string Mode => ServerOutputModes.InjectedHook;
     public bool IsMonitoring => !_listeners.IsEmpty;
@@ -154,6 +155,7 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
                     if (!string.IsNullOrWhiteSpace(normalizedLine))
                     {
                         OutputReceived?.Invoke(normalizedLine);
+                        OutputReceivedFrom?.Invoke(processId, normalizedLine);
                     }
                 }
 
