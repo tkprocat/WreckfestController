@@ -322,8 +322,10 @@ public class ServerManagerTests
         {
             var outputReader = new Mock<IInjectedHookOutputReader>();
             outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
-            // The reader is still bound to the process we have left.
-            outputReader.SetupGet(r => r.TargetProcessId).Returns(first.Id);
+            // The states a late callback from `first` can actually arrive in: the
+            // listener stopped and cleared the target, or it was reinjected and now
+            // reports `second`. Neither describes where this line came from.
+            outputReader.SetupGet(r => r.TargetProcessId).Returns(0);
 
             var serverManager = CreateServerManager(outputReader.Object);
             serverManager.ProcessConsoleHookOutput = true;
@@ -335,13 +337,12 @@ public class ServerManagerTests
             var dispatched = new TaskCompletionSource<string>();
             serverManager.ChatCommandReceived += (_, _, message) => dispatched.TrySetResult(message);
 
-            // Real wire shape: marker, ring index, the game's formatted console
-            // line, then the raw message. The sender is recovered from the
-            // formatted line, not sent as its own field.
-            const string consoleLine = "^9* 21:37:50^0 ^8StalePlayer: ^0!vote";
-            var record =
-                $"{HookChatRecord.Marker}10{consoleLine}!vote";
-            outputReader.Raise(r => r.OutputReceived += null, record);
+            var record = BuildChatRecord("10", "0", "StalePlayer", "!vote");
+            outputReader.Raise(r => r.OutputReceivedFrom += null, first.Id, record);
+
+            // ... and again once the reader has been retargeted to the new process.
+            outputReader.SetupGet(r => r.TargetProcessId).Returns(second.Id);
+            outputReader.Raise(r => r.OutputReceivedFrom += null, first.Id, record);
 
             var settled = await Task.WhenAny(dispatched.Task, Task.Delay(TimeSpan.FromSeconds(1)));
             Assert.True(
@@ -1194,7 +1195,10 @@ public class ServerManagerTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
 
         Assert.NotNull(method);
-        method.Invoke(serverManager, [output]);
+        // No attachment in these cases, so any source PID is accepted. The
+        // stale-source behaviour is covered by
+        // HookOutput_FromAPreviousAttachment_IsDropped.
+        method.Invoke(serverManager, [0, output]);
     }
 
     private TestServerManager CreateTestServerManager(IInjectedHookOutputReader injectedHookReader, string? build)

@@ -165,7 +165,7 @@ public class ServerManager
         _webhookService = webhookService;
         _consoleLogSender = consoleLogSender;
 
-        _injectedHookOutputReader.OutputReceived += OnInjectedHookOutputReceived;
+        _injectedHookOutputReader.OutputReceivedFrom += OnInjectedHookOutputReceived;
         _injectedHookOutputReader.HookOutputReceived += output => ConsoleHookOutput?.Invoke(output);
 
     }
@@ -916,20 +916,32 @@ public class ServerManager
 
     public virtual async Task<bool> TryRefreshPlayersFromHookAsync()
     {
-        var process = GetActualServerProcess();
-        if (process == null || _serverInputWriter is not IPlayerSnapshotReader playerSnapshotReader)
+        if (_serverInputWriter is not IPlayerSnapshotReader playerSnapshotReader)
         {
             return false;
         }
 
-        // Checking before the read is not enough: attachment can move while the
-        // snapshot is in flight, and committing then would repopulate the new
-        // process's roster with the old one's players.
-        var generation = CurrentAttachmentGeneration;
+        // PID and generation are captured together under the switch's own lock.
+        // Read separately, a switch landing between them would stamp the old
+        // process's snapshot with the new process's generation, and the commit check
+        // below would wave it through.
+        int pid;
+        int generation;
+        lock (_lock)
+        {
+            var process = GetActualServerProcess();
+            if (process == null)
+            {
+                return false;
+            }
+
+            pid = process.Id;
+            generation = CurrentAttachmentGeneration;
+        }
 
         try
         {
-            var snapshot = await playerSnapshotReader.ReadPlayerSnapshotAsync(process.Id);
+            var snapshot = await playerSnapshotReader.ReadPlayerSnapshotAsync(pid);
             if (!snapshot.Success)
             {
                 _logger.LogDebug("Injected hook player snapshot refresh skipped: {Message}", snapshot.Message);
@@ -944,7 +956,7 @@ public class ServerManager
                 {
                     _logger.LogDebug(
                         "Discarded a player snapshot from process {Pid}; attachment moved while it was in flight",
-                        process.Id);
+                        pid);
                     return false;
                 }
 
@@ -1406,21 +1418,31 @@ public class ServerManager
         }
     }
 
-    private void OnInjectedHookOutputReceived(string output)
+    private void OnInjectedHookOutputReceived(int sourcePid, string output)
     {
-        // The reader is one instance retargeted per attachment, so a callback can
-        // still be in flight from the process we just left. Output carries no PID,
-        // so the reader's own target is the only way to tell - and this has to gate
-        // the chat demux below as well, not just the text fanout: a chat command is
-        // the one piece of output that acts on the server rather than merely being
-        // displayed.
-        var attachedPid = _actualServerPid;
-        var readerTarget = _injectedHookOutputReader.TargetProcessId;
-        if (attachedPid != null && readerTarget != 0 && readerTarget != attachedPid.Value)
+        // The line carries the process it was read from, which is the only reliable
+        // discriminator: stopping a listener does not await its in-flight callbacks,
+        // and the reader's TargetProcessId is cleared on stop and retargeted on the
+        // next inject, so it describes the reader's present state rather than this
+        // line's origin.
+        //
+        // This must gate the chat demux below as well as the text fanout: a chat
+        // command is the one piece of output that acts on the server rather than
+        // merely being displayed.
+        int? attachedPid;
+        lock (_lock)
+        {
+            attachedPid = _actualServerPid;
+        }
+
+        // Only drop what can be proved stale. With nothing attached there is no
+        // other attachment to confuse this with, and silently discarding output
+        // then would hide it in exactly the case it is most needed.
+        if (attachedPid != null && sourcePid != attachedPid.Value)
         {
             _logger.LogDebug(
-                "Dropped hook output from process {Stale}; attachment has moved to {Current}",
-                readerTarget, attachedPid.Value);
+                "Dropped hook output from process {Source}; attached to {Current}",
+                sourcePid, attachedPid.Value);
             return;
         }
 
