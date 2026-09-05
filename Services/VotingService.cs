@@ -21,6 +21,7 @@ public class VotingService
     private int? _votedLaps;
     private string? _voteInitiator;
     private DateTime _voteStartedUtc;
+    private long _voteId;
     private readonly HashSet<string> _yesVoters = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _noVoters = new(StringComparer.OrdinalIgnoreCase);
     private System.Threading.Timer? _voteTimer;
@@ -36,6 +37,7 @@ public class VotingService
     private readonly object _directChangeLock = new();
     private DateTime _lastDirectChangeUtc = DateTime.MinValue;
     private string? _lastDirectChangeBy;
+    private long _directChangeReservationId;
     private List<AllowedVoteTrack> _pendingVoteOptions = new();
     private string? _pendingVoteRequester;
     private int? _pendingVoteLaps;
@@ -67,7 +69,8 @@ public class VotingService
 
     private int DirectCooldownSeconds =>
         Math.Clamp(_configuration.GetValue<int?>("Vote:DirectCooldownSeconds") ?? 30, 0, 3600);
-    private int VoteTimeoutSeconds => _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30;
+    private int VoteTimeoutSeconds =>
+        Math.Clamp(_configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30, 1, 3600);
     private int MaxLapsAllowed => Math.Max(1, _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10);
     private int MessageDelayMs => Math.Clamp(_configuration.GetValue<int?>("Vote:MessageDelayMs") ?? 250, 0, 5000);
 
@@ -990,7 +993,8 @@ public class VotingService
         string playerName,
         out string? refusal,
         out DateTime previousUtc,
-        out string? previousBy)
+        out string? previousBy,
+        out long reservationId)
     {
         refusal = null;
 
@@ -998,6 +1002,7 @@ public class VotingService
         {
             previousUtc = _lastDirectChangeUtc;
             previousBy = _lastDirectChangeBy;
+            reservationId = _directChangeReservationId;
 
             var cooldown = DirectCooldownSeconds;
 
@@ -1019,16 +1024,20 @@ public class VotingService
                 }
             }
 
+            reservationId = ++_directChangeReservationId;
             _lastDirectChangeUtc = DateTime.UtcNow;
             _lastDirectChangeBy = playerName;
             return true;
         }
     }
 
-    private void RollBackDirectChange(DateTime previousUtc, string? previousBy)
+    private void RollBackDirectChange(DateTime previousUtc, string? previousBy, long reservationId)
     {
         lock (_directChangeLock)
         {
+            if (_directChangeReservationId != reservationId)
+                return;
+
             _lastDirectChangeUtc = previousUtc;
             _lastDirectChangeBy = previousBy;
         }
@@ -1279,7 +1288,7 @@ public class VotingService
 
     private async Task ApplyDirectTrackChangeAsync(string playerName, string trackId, int? laps)
     {
-        if (!TryReserveDirectChange(playerName, out var refusal, out var previousUtc, out var previousBy))
+        if (!TryReserveDirectChange(playerName, out var refusal, out var previousUtc, out var previousBy, out var reservationId))
         {
             await BroadcastMessage(refusal!);
             return;
@@ -1307,7 +1316,7 @@ public class VotingService
         if (!await ApplyTrackChange(trackId, laps, messages))
         {
             // The server rejected it, so this attempt should not consume the window.
-            RollBackDirectChange(previousUtc, previousBy);
+            RollBackDirectChange(previousUtc, previousBy, reservationId);
         }
     }
 
@@ -1328,6 +1337,8 @@ public class VotingService
                 return;
             }
 
+            var timeout = VoteTimeoutSeconds;
+            var voteId = ++_voteId;
             _state = VoteState.Active;
             _votedTrackId = trackId;
             _votedLaps = laps;
@@ -1345,11 +1356,18 @@ public class VotingService
             }
             else
             {
-                var timeout = VoteTimeoutSeconds;
-                _voteTimer?.Dispose();
-                _voteTimer = new System.Threading.Timer(_ => TallyVotes(), null,
-                    TimeSpan.FromSeconds(timeout), Timeout.InfiniteTimeSpan);
-                ScheduleVoteStatusTimers(timeout);
+                try
+                {
+                    _voteTimer?.Dispose();
+                    _voteTimer = new System.Threading.Timer(_ => TallyVotes(voteId), null,
+                        TimeSpan.FromSeconds(timeout), Timeout.InfiniteTimeSpan);
+                    ScheduleVoteStatusTimers(timeout, voteId);
+                }
+                catch
+                {
+                    ResetVoteState();
+                    throw;
+                }
             }
 
             _logger.LogInformation("Vote started by {Initiator}: {TrackId} for {Laps} laps ({Timeout}s timeout)",
@@ -1376,7 +1394,7 @@ public class VotingService
         await BroadcastMessages(FormatVoteStartedMessages(initiator, trackId, laps));
     }
 
-    private void ScheduleVoteStatusTimers(int timeoutSeconds)
+    private void ScheduleVoteStatusTimers(int timeoutSeconds, long voteId)
     {
         _twentySecondStatusTimer?.Dispose();
         _tenSecondStatusTimer?.Dispose();
@@ -1385,13 +1403,13 @@ public class VotingService
 
         if (timeoutSeconds > 20)
         {
-            _twentySecondStatusTimer = new System.Threading.Timer(_ => BroadcastVoteStatus(20), null,
+            _twentySecondStatusTimer = new System.Threading.Timer(_ => BroadcastVoteStatus(20, voteId), null,
                 TimeSpan.FromSeconds(timeoutSeconds - 20), Timeout.InfiniteTimeSpan);
         }
 
         if (timeoutSeconds > 10)
         {
-            _tenSecondStatusTimer = new System.Threading.Timer(_ => BroadcastVoteStatus(10), null,
+            _tenSecondStatusTimer = new System.Threading.Timer(_ => BroadcastVoteStatus(10, voteId), null,
                 TimeSpan.FromSeconds(timeoutSeconds - 10), Timeout.InfiniteTimeSpan);
         }
     }
@@ -1439,14 +1457,14 @@ public class VotingService
             : $"{trimmed[..(maxLength - 3)]}...";
     }
 
-    private void BroadcastVoteStatus(int secondsRemaining)
+    private void BroadcastVoteStatus(int secondsRemaining, long voteId)
     {
         int yesCount;
         int noCount;
 
         lock (_stateLock)
         {
-            if (_state != VoteState.Active)
+            if (_state != VoteState.Active || _voteId != voteId)
                 return;
 
             yesCount = _yesVoters.Count;
@@ -1482,6 +1500,8 @@ public class VotingService
             if (_state != VoteState.Active)
                 return;
 
+            var humanCount = PruneDepartedVoters();
+
             if (_yesVoters.Contains(playerName) || _noVoters.Contains(playerName))
             {
                 _ = BroadcastMessage($"{playerName} already voted.");
@@ -1495,7 +1515,6 @@ public class VotingService
 
             trackId = _votedTrackId!;
             laps = _votedLaps;
-            var humanCount = _playerTracker.GetPlayerCount().online;
             var yesCount = _yesVoters.Count;
             var noCount = _noVoters.Count;
 
@@ -1569,13 +1588,8 @@ public class VotingService
         return true;
     }
 
-    private void TallyVotes()
+    private void TallyVotes(long voteId)
     {
-        if (CancelVoteIfModeChanged())
-        {
-            return;
-        }
-
         string? trackId;
         int? laps;
         int humanCount;
@@ -1585,14 +1599,17 @@ public class VotingService
 
         lock (_stateLock)
         {
-            if (_state != VoteState.Active)
+            if (_state != VoteState.Active || _voteId != voteId)
+                return;
+
+            if (CancelVoteIfModeChanged())
                 return;
 
             trackId = _votedTrackId!;
             laps = _votedLaps;
+            humanCount = PruneDepartedVoters();
             yesCount = _yesVoters.Count;
             noCount = _noVoters.Count;
-            humanCount = _playerTracker.GetPlayerCount().online;
             passed = HasMajority(yesCount, humanCount);
             ResetVoteState();
         }
@@ -1670,7 +1687,7 @@ public class VotingService
     {
         try
         {
-            await _serverManager.SendCommandAsync($"/message {message}");
+            await _serverManager.SendCommandAsync($"/message {TruncateToFit(message, ChatMessageCharacterLimit)}");
         }
         catch (Exception ex)
         {
@@ -1706,6 +1723,19 @@ public class VotingService
         _voteInitiator = null;
         _yesVoters.Clear();
         _noVoters.Clear();
+    }
+
+    // Must be called while holding _stateLock. Use one roster for both sides
+    // of the majority calculation, excluding bots and players who have left.
+    private int PruneDepartedVoters()
+    {
+        var humans = _playerTracker.GetPlayers()
+            .Where(player => !player.IsBot)
+            .Select(player => player.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _yesVoters.IntersectWith(humans);
+        _noVoters.IntersectWith(humans);
+        return humans.Count;
     }
 
     private static bool HasMajority(int count, int total) => total > 0 && count * 2 > total;

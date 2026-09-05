@@ -1260,6 +1260,110 @@ public class VotingServiceTests
         return (service, tracker, messages, serverMock, config);
     }
 
+    private static long CurrentVoteId(VotingService service) =>
+        (long)typeof(VotingService).GetField("_voteId",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(service)!;
+
+    private static void ExpireVote(VotingService service, long voteId) =>
+        typeof(VotingService).GetMethod("TallyVotes",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(service, [voteId]);
+
+    [Fact]
+    public void StaleTimeout_DoesNotEndNewVote()
+    {
+        var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Voting);
+        tracker.Seed("Alice", "Bob", "Carol");
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
+        var firstVote = CurrentVoteId(service);
+        service.ProcessChatCommand("Bob", false, "!yes");
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_03");
+        var secondVote = CurrentVoteId(service);
+
+        ExpireVote(service, firstVote);
+        Assert.DoesNotContain(messages, m => m.StartsWith("Vote timed out:"));
+        service.ProcessChatCommand("Bob", false, "!yes");
+        server.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+        Assert.NotEqual(firstVote, secondVote);
+    }
+
+    [Fact]
+    public void Timeout_ExcludesDepartedYesVoter()
+    {
+        var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Voting);
+        tracker.Seed("Alice", "Bob", "Carol", "Dave");
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
+        service.ProcessChatCommand("Bob", false, "!yes");
+        tracker.Clear();
+        tracker.Seed("Alice", "Carol", "Dave");
+
+        ExpireVote(service, CurrentVoteId(service));
+
+        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        Assert.Contains(messages, m => m.StartsWith("Vote timed out:"));
+    }
+
+    [Fact]
+    public void EarlyMajority_ExcludesDepartedYesVoter()
+    {
+        var (service, tracker, _, server, _) = CreateModeSetup(VoteModes.Voting);
+        tracker.Seed("Alice", "Bob", "Carol", "Dave", "Eve");
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
+        service.ProcessChatCommand("Bob", false, "!yes");
+        tracker.Clear();
+        tracker.Seed("Alice", "Carol", "Dave", "Eve");
+        service.ProcessChatCommand("Carol", false, "!yes");
+
+        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        ExpireVote(service, CurrentVoteId(service));
+    }
+
+    [Theory]
+    [InlineData(-1, 1)]
+    [InlineData(0, 1)]
+    [InlineData(int.MaxValue, 3600)]
+    public void InvalidTimeout_IsBoundedAndVoteCanFinish(int configured, int expected)
+    {
+        var (service, tracker, messages, _, config) = CreateModeSetup(VoteModes.Voting);
+        config["Vote:VoteTimeoutSeconds"] = configured.ToString();
+        tracker.Seed("Alice", "Bob");
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
+        Assert.Contains(messages, m => m.EndsWith($"Ends in {expected}s."));
+        ExpireVote(service, CurrentVoteId(service));
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_03");
+        Assert.Contains(messages, m => m == "Vote: Wrecknado Reverse");
+        ExpireVote(service, CurrentVoteId(service));
+    }
+
+    [Fact]
+    public async Task FailedOlderDirectChange_PreservesNewerCooldown()
+    {
+        var (service, tracker, messages, server, config) = CreateModeSetup(VoteModes.Direct);
+        tracker.Seed("Alice", "Bob", "Carol");
+        var pending = new TaskCompletionSource<(bool Success, string Message)>();
+        server.Setup(m => m.SendCommandAsync("track=wrecknado_02")).Returns(pending.Task);
+        var apply = typeof(VotingService).GetMethod("ApplyDirectTrackChangeAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var first = (Task)apply.Invoke(service, ["Alice", "wrecknado_02", null])!;
+        config["Vote:DirectCooldownSeconds"] = "0";
+        service.ProcessChatCommand("Bob", false, "!track wrecknado_03");
+        config["Vote:DirectCooldownSeconds"] = "30";
+        pending.SetResult((false, "failed"));
+        await first;
+
+        service.ProcessChatCommand("Carol", false, "!track wrecknado_03");
+
+        server.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+        Assert.Contains(messages, m => m.Contains("Try again in"));
+    }
+
+    [Fact]
+    public void Broadcast_LongUnknownTrack_RespectsChatLimit()
+    {
+        var (service, _, messages, _, _) = CreateModeSetup(VoteModes.Voting);
+        service.ProcessChatCommand("Alice", false, "!track " + new string('z', 300));
+        Assert.NotEmpty(messages);
+        Assert.All(messages, m => Assert.True(m.Length <= 127, m));
+    }
     private static void Join(PlayerTracker tracker, string name) =>
         tracker.Seed(name);
 
