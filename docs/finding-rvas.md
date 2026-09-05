@@ -88,6 +88,52 @@ table is a heap pointer and `__hook_read` is deliberately bounded to module
 memory. That is why the structured chat work hooks the handler - which computes
 the player-table index internally - rather than polling this ring.
 
+### The handler's `char* text` cannot be trusted
+
+`param_2` does **not** point at the start of the message. It arrives offset by
+`length & ~7`, so reading a C string from it yields only the final partial 8-byte
+block - and nothing at all when the length is an exact multiple of 8, because the
+pointer then lands on the NUL terminator.
+
+Measured live against 1.308438, seven for seven, with the last two rows predicted
+before being typed:
+
+| Typed | len | `len & ~7` | Readable through `text` |
+| --- | ---: | ---: | --- |
+| `!help` | 5 | 0 | `!help` |
+| `!lucky` | 6 | 0 | `!lucky` |
+| `!search tunnel` | 14 | 8 | `tunnel` |
+| `Hello world` | 11 | 8 | `rld` |
+| `!track tunnel_s01 2` | 19 | 16 | `1 2` |
+| `abcdefgh` | 8 | 8 | *(empty)* |
+| `abcdefghijklmnop` | 16 | 16 | *(empty)* |
+
+Whether the argument is a mis-derived signature or a pointer the game advances by
+whole words is unresolved, and did not need resolving: the input ring above holds
+the message whole, so the hook reads it from there and keeps the `text` fragment
+only as a check. The fragment is a suffix of the real message by construction, so
+a ring read that disagrees with it is rejected.
+
+### The ring is appended *after* the handler returns
+
+Timing matters and is not guessable - it cost two wrong attempts before being
+measured. At handler entry, and still at the moment the game prints the formatted
+console line, the message is **not** in the ring: the cursor is unchanged and
+still ends on the previous message. It is appended by the time the handler
+returns.
+
+Confirmed by instrumenting the rejection path and typing two messages in
+sequence:
+
+```
+!search tunnel  ->  cursor=0   read=FAILED  ring=[]
+!help           ->  cursor=15  read=ok      ring=[!search tunnel]
+```
+
+`15` is `"!search tunnel"` plus its newline - the *previous* message. So the hook
+emits its record after calling the original handler, and holds the console line
+back until then so the record still reaches the controller first.
+
 ### Player struct, cross-confirmed
 
 The decompiled chat handler walks `serverObject + 0x30` -> player table, stride

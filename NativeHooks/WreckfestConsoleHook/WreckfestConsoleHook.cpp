@@ -19,6 +19,21 @@ constexpr uintptr_t ServerNamespaceTagRva = 0x065E6308;
 // handler for the server console and for player chat. See docs/finding-rvas.md.
 constexpr uintptr_t ChatHandlerRva = 0x0038FC10;
 
+// The per-slot input ring, documented in docs/finding-rvas.md and confirmed live:
+// 24 entries of stride 0x1010, each a cumulative byte cursor followed by a 4096
+// byte window holding messages verbatim, newline delimited, NUL padded past the
+// cursor. The handler's own char* argument cannot be trusted - it arrives offset
+// by (length & ~7) into the message, so only the final partial 8 byte block is
+// readable through it - but the ring holds the whole thing.
+constexpr uintptr_t InputRingBaseRva = 0x019149A0;
+constexpr size_t InputRingStride = 0x1010;
+constexpr size_t InputRingDataOffset = 0x10;
+constexpr size_t InputRingWindow = 0x1000;
+constexpr size_t InputRingEntries = 24;
+// The game refuses anything longer, so a backward scan that passes this has lost
+// its place and must give up rather than return a run of stale bytes.
+constexpr size_t MaxInputRingMessage = 127;
+
 // Framing for structured records on the output pipe. Picked so a record can never
 // be mistaken for a console line: DC2 opens, DC3 closes, US separates fields.
 constexpr char RecordStart = '\x12';
@@ -96,6 +111,11 @@ struct PendingChat
     bool emitted = false;
     int ringIndex = -1;
     std::string rawText;
+    // The formatted line, held back rather than written when it is recognised.
+    // The record must reach the controller first, and the record cannot be built
+    // until the handler returns - see HookedChatHandler.
+    std::string consoleLine;
+    bool haveConsoleLine = false;
 };
 
 thread_local PendingChat t_pendingChat;
@@ -449,18 +469,35 @@ bool RestoreChatHook()
 }
 
 bool InstallHook();
-void TryEmitStructuredChat(const char* consoleLine);
+bool CopyGameStringNoThrow(const char* text, size_t maxLength, std::string& out);
+bool ConsoleLinePairsWithPendingChat(const std::string& line);
+void EmitPendingChatRecord();
 
 
 void __fastcall HookedConsolePrint(const char* text, void* arg2, void* arg3, void* arg4)
 {
-    // Emitted before the plain text line so the controller sees the structured
-    // record first. There is no text fallback to skip any more, but the controller
-    // warns about a chat-shaped console line that arrived without a record, so the
-    // record has to land first or every message trips that warning.
-    if (t_pendingChat.active && !t_pendingChat.emitted)
+    // The chat line is held back rather than written here. Two constraints meet at
+    // this point: the controller warns about a chat-shaped line that arrived with
+    // no record, so the record must be written first - and the record cannot be
+    // built yet, because the game appends the message to the input ring only after
+    // the handler returns. Both are satisfied by deferring this line to the end of
+    // HookedChatHandler, which writes the record and then this.
+    if (t_pendingChat.active && !t_pendingChat.emitted && !t_pendingChat.haveConsoleLine)
     {
-        TryEmitStructuredChat(text);
+        std::string candidate;
+        if (CopyGameStringNoThrow(text, MaxConsoleLineLength, candidate) &&
+            ConsoleLinePairsWithPendingChat(candidate))
+        {
+            t_pendingChat.consoleLine = candidate;
+            t_pendingChat.haveConsoleLine = true;
+
+            if (g_originalConsolePrint != nullptr)
+            {
+                g_originalConsolePrint(text, arg2, arg3, arg4);
+            }
+
+            return;
+        }
     }
 
     WriteHookLine(text);
@@ -497,6 +534,10 @@ bool InstallHook()
 }
 
 bool InstallChatHook();
+bool EndsWith(const std::string& value, const std::string& suffix);
+bool ReadRingCursorNoThrow(uintptr_t moduleBase, uintptr_t ringIndex, unsigned long long& cursor);
+std::string TrimTrailingTerminator(const std::string& value);
+std::string SanitizeRecordField(const std::string& value, size_t maxLength);
 
 // Copies a C string out of game memory without trusting it. A short-lived pointer
 // into a freed buffer would otherwise take the whole server down.
@@ -531,6 +572,88 @@ bool CopyGameStringNoThrow(const char* text, size_t maxLength, std::string& out)
     }
 }
 
+// The raw cursor, for diagnostics: reported when a ring read is rejected so the
+// reason is visible instead of inferred.
+bool ReadRingCursorNoThrow(uintptr_t moduleBase, uintptr_t ringIndex, unsigned long long& cursor)
+{
+    cursor = 0;
+
+    __try
+    {
+        if (ringIndex >= InputRingEntries)
+        {
+            return false;
+        }
+
+        cursor = *reinterpret_cast<const unsigned long long*>(
+            moduleBase + InputRingBaseRva + ringIndex * InputRingStride);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        cursor = 0;
+        return false;
+    }
+}
+
+// Recovers the message the player actually sent, from the input ring rather than
+// from the handler's char* argument. The cursor counts cumulative bytes including
+// each trailing newline, so the newest message is the run ending at cursor-1.
+//
+// Guarded like every other read of game memory: a bad index or a torn cursor must
+// cost one message, never the server process.
+bool ReadRingMessageNoThrow(uintptr_t moduleBase, uintptr_t ringIndex, std::string& out)
+{
+    out.clear();
+
+    __try
+    {
+        if (ringIndex >= InputRingEntries)
+        {
+            return false;
+        }
+
+        auto entry = moduleBase + InputRingBaseRva + ringIndex * InputRingStride;
+        auto cursor = *reinterpret_cast<const unsigned long long*>(entry);
+        auto data = reinterpret_cast<const char*>(entry + InputRingDataOffset);
+
+        // cursor-1 is the newline this message ended with; everything before it,
+        // back to the previous newline, is the message.
+        if (cursor == 0)
+        {
+            return false;
+        }
+
+        unsigned long long end = cursor - 1;
+        if (data[end % InputRingWindow] != 10)
+        {
+            // Not sitting on a terminator: the message is not in the ring yet, or
+            // the cursor moved under us. Either way this is not ours to guess at.
+            return false;
+        }
+
+        unsigned long long start = end;
+        while (start > 0 &&
+               (end - start) < MaxInputRingMessage &&
+               data[(start - 1) % InputRingWindow] != 10)
+        {
+            start--;
+        }
+
+        for (unsigned long long i = start; i < end; i++)
+        {
+            out.push_back(data[i % InputRingWindow]);
+        }
+
+        return !out.empty();
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        out.clear();
+        return false;
+    }
+}
+
 // Hooked at the function's entry rather than at the internal format call site.
 // The entry is the only place a 12-byte prologue patch is the same shape as the
 // ConsolePrint one, so it reuses the restore -> call original -> repatch discipline
@@ -550,6 +673,12 @@ uintptr_t __fastcall HookedChatHandler(uintptr_t ringIndex, const char* text, ui
     t_pendingChat.active = true;
     t_pendingChat.emitted = false;
     t_pendingChat.ringIndex = static_cast<int>(ringIndex);
+
+    // Only the fragment here. `text` is offset by (length & ~7) into the message,
+    // so it yields the final partial 8 byte block and nothing else, but the ring
+    // cannot be read yet: at entry the game has not appended this message, so the
+    // cursor still ends on the previous one. The whole message is recovered at
+    // emit time instead. See TryEmitStructuredChat.
     CopyGameStringNoThrow(text, MaxChatMessageLength, t_pendingChat.rawText);
 
     // The caps here are byte counts while the game limits chat by characters, so a
@@ -571,6 +700,15 @@ uintptr_t __fastcall HookedChatHandler(uintptr_t ringIndex, const char* text, ui
     uintptr_t result = original(ringIndex, text, serverObject, arg4);
 
     LeaveCriticalSection(&g_hookLock);
+
+    // Only now does the message exist in the input ring, so this is the first
+    // moment a complete record can be built. The console line was held back in
+    // HookedConsolePrint so the record still reaches the controller first.
+    if (t_pendingChat.haveConsoleLine)
+    {
+        EmitPendingChatRecord();
+        WriteHookLine(t_pendingChat.consoleLine.c_str());
+    }
 
     t_pendingChat = saved;
     return result;
@@ -600,6 +738,28 @@ bool InstallChatHook()
 // Control bytes would break the record framing, and the pipe is line-delimited, so
 // anything below space becomes '?' rather than being dropped: a mangled character
 // is visible, a silently shortened message is not.
+// The input ring is newline delimited, so a captured message carries its
+// terminator while the formatted console line does not. It must come off before
+// sanitising: SanitizeRecordField rewrites every control byte to '?', which turns
+// the terminator into an ordinary character that no downstream trim can remove -
+// "!help" ships as "!help?" and never matches the command it names.
+bool EndsWith(const std::string& value, const std::string& suffix)
+{
+    return suffix.size() <= value.size() &&
+           value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+std::string TrimTrailingTerminator(const std::string& value)
+{
+    size_t end = value.size();
+    while (end > 0 && (value[end - 1] == 10 || value[end - 1] == 13 || value[end - 1] == 32))
+    {
+        end--;
+    }
+
+    return value.substr(0, end);
+}
+
 std::string SanitizeRecordField(const std::string& value, size_t maxLength)
 {
     std::string sanitized;
@@ -619,68 +779,83 @@ std::string SanitizeRecordField(const std::string& value, size_t maxLength)
 // ships both. The pairing is a containment test and nothing more: recovering the
 // sender needs the "^8"/"^0" markers and the ": " separator, and that belongs in
 // HookChatRecord where it is unit tested and cannot take the game process with it.
-void TryEmitStructuredChat(const char* consoleLine)
+// Is this the formatted line for the message currently being handled? The check is
+// containment of the captured fragment, which is a suffix of the real message, so a
+// line carrying the message always matches and the handler's other output does not.
+bool ConsoleLinePairsWithPendingChat(const std::string& line)
 {
-    std::string line;
-    if (!CopyGameStringNoThrow(consoleLine, MaxConsoleLineLength, line))
+    std::string probe = TrimTrailingTerminator(t_pendingChat.rawText);
+    return !probe.empty() && line.find(probe) != std::string::npos;
+}
+
+// Builds and writes the record for the message just handled. Called after the
+// original handler returns, which is the first moment the message exists in the
+// input ring - the handler's own char* argument is offset by (length & ~7) into the
+// message and exposes only its final partial 8 byte block.
+void EmitPendingChatRecord()
+{
+    const std::string& line = t_pendingChat.consoleLine;
+
+    // The fragment is kept as a check rather than a payload. It is a suffix of the
+    // real message by construction, so the ring text must end with it, and the ring
+    // text must also appear in the line the game formatted. Two independent sources
+    // have to agree before the message is believed; a wrong message is worse than a
+    // truncated one.
+    std::string fragment = TrimTrailingTerminator(t_pendingChat.rawText);
+    auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+
+    std::string fromRing;
+    bool ringOk = ReadRingMessageNoThrow(moduleBase, static_cast<uintptr_t>(t_pendingChat.ringIndex), fromRing);
+    bool endsOk = ringOk && EndsWith(fromRing, fragment);
+    bool inLineOk = ringOk && line.find(fromRing) != std::string::npos;
+
+    std::string message;
+    if (ringOk && endsOk && inLineOk)
     {
+        message = fromRing;
+    }
+    else
+    {
+        // Fall back to the fragment, which is what shipped before the ring was
+        // used at all, and report the state that caused the rejection. Diagnosing
+        // this from outside the process is guesswork: a separate read cannot see
+        // what was true during the call.
+        unsigned long long cursor = 0;
+        ReadRingCursorNoThrow(moduleBase, static_cast<uintptr_t>(t_pendingChat.ringIndex), cursor);
+
+        std::string warn = "WreckfestConsoleHook ring rejected: index=";
+        warn += std::to_string(t_pendingChat.ringIndex);
+        warn += " cursor=";
+        warn += std::to_string(cursor);
+        warn += " read=";
+        warn += ringOk ? "ok" : "FAILED";
+        warn += " endsWithFragment=";
+        warn += endsOk ? "yes" : "NO";
+        warn += " inConsoleLine=";
+        warn += inLineOk ? "yes" : "NO";
+        warn += " ring=[";
+        warn += SanitizeRecordField(fromRing, MaxChatMessageLength);
+        warn += "] fragment=[";
+        warn += SanitizeRecordField(fragment, MaxChatMessageLength);
+        warn += "]";
+        WriteHookLine(warn.c_str());
+
+        message = fragment;
+    }
+
+    if (message.empty())
+    {
+        WriteHookLine("WreckfestConsoleHook chat capture was empty; no record emitted");
         return;
     }
 
-    const std::string& raw = t_pendingChat.rawText;
-
-    // Matching only - the payload below stays verbatim. The ring is newline
-    // delimited, so the message the handler received still carries its terminator
-    // while the formatted line does not.
-    std::string probe = raw;
-    while (!probe.empty() &&
-           (probe.back() == 10 || probe.back() == 13 || probe.back() == 32))
-    {
-        probe.pop_back();
-    }
-
-    if (probe.empty() || line.find(probe) == std::string::npos)
-    {
-        // Not the formatted line for this message. The handler prints other things,
-        // so stay armed for the line that does carry it.
-        //
-        // Reported only when the message contains bytes above ASCII, because that is
-        // the case we do not yet understand: whether the game hands us UTF-8, and
-        // whether a truncated capture stops the two ever matching. Logging every
-        // non-matching line would drown the console.
-        bool nonAscii = false;
-        for (size_t i = 0; i < probe.size(); i++)
-        {
-            if (static_cast<unsigned char>(probe[i]) >= 0x80)
-            {
-                nonAscii = true;
-                break;
-            }
-        }
-
-        if (nonAscii)
-        {
-            std::string warn = "WreckfestConsoleHook chat pairing failed for a non-ASCII message: probeBytes=";
-            warn += std::to_string(probe.size());
-            warn += " lineBytes=";
-            warn += std::to_string(line.size());
-            warn += " probe=[";
-            warn += probe;
-            warn += "]";
-            WriteHookLine(warn.c_str());
-        }
-
-        return;
-    }
-
-    // Deliberately no interpretation here. Everything this needs to say is
-    // something the hook actually observed: which ring entry, the message exactly
-    // as the handler received it, and the line the game formatted from it. Working
-    // out the sender means reasoning about "^8", "^0" and the ": " separator, and
-    // that reasoning belongs somewhere it can be unit tested and where a mistake
-    // costs a dropped command rather than a dead game process.
+    // Deliberately no interpretation here. Everything this says is something the
+    // hook observed: which ring entry, the message, and the line the game formatted
+    // from it. Working out the sender means reasoning about "^8", "^0" and the ": "
+    // separator, and that belongs in HookChatRecord where it is unit tested and
+    // where a mistake costs a dropped command rather than a dead game process.
     std::string record;
-    record.reserve(raw.size() + line.size() + 32);
+    record.reserve(message.size() + line.size() + 32);
     record.push_back(RecordStart);
     record += "CHAT";
     record.push_back(FieldSeparator);
@@ -693,7 +868,7 @@ void TryEmitStructuredChat(const char* consoleLine)
     // player types, so it must be the field a stray separator byte cannot truncate.
     record += SanitizeRecordField(line, MaxConsoleLineLength);
     record.push_back(FieldSeparator);
-    record += SanitizeRecordField(raw, MaxChatMessageLength);
+    record += SanitizeRecordField(message, MaxChatMessageLength);
     record.push_back(RecordEnd);
 
     t_pendingChat.emitted = true;
