@@ -371,7 +371,7 @@ public class ServerManager
             // made every graceful stop force-kill a server that was already exiting.
             //
             var commandResult = await SendCommandAsync("exit");
-            if (!commandResult.Success && !IsExpectedExitNoResponse(commandResult.Message))
+            if (!commandResult.Success && !IsExpectedExitSilence(commandResult.Message))
             {
                 _logger.LogWarning("Exit command was rejected ({Message}), falling back to force stop", commandResult.Message);
                 return await StopServerAsync();
@@ -450,10 +450,15 @@ public class ServerManager
     }
 
     // "exit" is dispatched and then the game goes away, so the hook has nothing left
-    // to acknowledge with. That silence is expected; anything else is a real refusal
-    // and still warrants the immediate fallback.
-    private static bool IsExpectedExitNoResponse(string message) =>
-        string.Equals(message, InjectedHookInputWriter.NoResponseMessage, StringComparison.Ordinal);
+    // to acknowledge with. Two results mean that silence: no response at all, and a
+    // response timeout after the command was already delivered. Both leave a server
+    // that may well be shutting down, so both earn the wait.
+    //
+    // Anything else - a refused command, or a timeout before delivery - is a real
+    // failure and still falls back immediately.
+    private static bool IsExpectedExitSilence(string message) =>
+        string.Equals(message, InjectedHookInputWriter.NoResponseMessage, StringComparison.Ordinal)
+        || string.Equals(message, InjectedHookInputWriter.DispatchedWithoutResponseMessage, StringComparison.Ordinal);
 
     /// <summary>
     /// Force stops the server by killing the process tree.

@@ -13,6 +13,15 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
     // constant and not a literal to be matched by spelling.
     public const string NoResponseMessage = "Injected hook input returned no response";
 
+    // The command reached the hook but no acknowledgement came back within the
+    // response timeout. Distinct from a connect or write failure, where nothing was
+    // delivered at all: a caller that can tolerate silence - see the exit path in
+    // ServerManager - must be able to tell "dispatched, unanswered" from "never
+    // arrived". The pipe name is logged rather than interpolated so this stays a
+    // stable sentinel callers can compare against.
+    public const string DispatchedWithoutResponseMessage =
+        "Injected hook input dispatched the command but timed out awaiting a response";
+
     // Player flag bits, confirmed against a live server (Wreckfest 1.308438) by
     // toggling privileges with /op and /demote and cross-checking the A/M marker in
     // the "list" output:
@@ -58,11 +67,16 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
                 ? NoResponseMessage
                 : $"Injected hook input failed: {response}");
         }
-        catch (OperationCanceledException ex)
+        catch (HookPipeTimeoutException ex)
         {
             var pipeName = GetPipeName(processId);
-            _logger.LogWarning(ex, "Timed out sending command through injected hook input pipe {PipeName}", pipeName);
-            return (false, $"Injected hook input timed out on {pipeName}");
+            _logger.LogWarning(
+                "Timed out {Phase} on injected hook input pipe {PipeName}",
+                ex.CommandWasDispatched ? "awaiting a response" : "delivering the command",
+                pipeName);
+            return (false, ex.CommandWasDispatched
+                ? DispatchedWithoutResponseMessage
+                : $"Injected hook input timed out on {pipeName}");
         }
         catch (Exception ex)
         {
@@ -192,7 +206,15 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
 
         using (var connectCancellation = new CancellationTokenSource(ConnectTimeoutMs))
         {
-            await pipe.ConnectAsync(connectCancellation.Token);
+            try
+            {
+                await pipe.ConnectAsync(connectCancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                // Never connected, so nothing was delivered.
+                throw new HookPipeTimeoutException(commandWasDispatched: false);
+            }
         }
 
         // Raw byte I/O rather than StreamWriter/StreamReader. The hook serves one
@@ -202,8 +224,18 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
         using var responseCancellation = new CancellationTokenSource(ResponseTimeoutMs);
 
         var payload = Encoding.UTF8.GetBytes(command + "\n");
-        await pipe.WriteAsync(payload, responseCancellation.Token);
-        await pipe.FlushAsync(responseCancellation.Token);
+        try
+        {
+            await pipe.WriteAsync(payload, responseCancellation.Token);
+            await pipe.FlushAsync(responseCancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            throw new HookPipeTimeoutException(commandWasDispatched: false);
+        }
+
+        // Past this point the hook has the command. A timeout from here on says only
+        // that no answer came back, not that the command failed to arrive.
 
         var buffer = new byte[8192];
         var received = new MemoryStream();
@@ -213,6 +245,10 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
             try
             {
                 read = await pipe.ReadAsync(buffer, responseCancellation.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                throw new HookPipeTimeoutException(commandWasDispatched: true);
             }
             catch (IOException)
             {
@@ -239,5 +275,14 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
     private static string GetPipeName(int processId)
     {
         return $"WreckfestConsoleHookInput-{processId}";
+    }
+
+    // Carries whether the command reached the hook before the timeout, which is the
+    // only thing separating a silence the caller may wait out from a failed delivery.
+    // Derives from OperationCanceledException so the other pipe callers, which still
+    // catch that, keep treating a timeout exactly as they did before.
+    private sealed class HookPipeTimeoutException(bool commandWasDispatched) : OperationCanceledException
+    {
+        public bool CommandWasDispatched { get; } = commandWasDispatched;
     }
 }
