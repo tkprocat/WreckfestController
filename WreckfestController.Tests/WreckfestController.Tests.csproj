@@ -5,6 +5,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- `dotnet publish` with no project argument resolves the .sln and publishes
+         every project into one -o folder: Moq, xunit and the TestPlatform assemblies
+         land next to the app, WreckfestController.Tests.exe ships with it, and every
+         xUnit analyser warning shows up in a release publish. -->
+    <IsPublishable>false</IsPublishable>
     <IsTestProject>true</IsTestProject>
     <OutputType>Exe</OutputType>
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
