@@ -418,6 +418,66 @@ public class ServerManagerTests
             outputReader);
     }
 
+    // The chat queue is the longest gap between accepting output and acting on it,
+    // and a chat command acts on the server. One accepted under attachment A must not
+    // run after attachment has moved to B.
+    [Fact]
+    public async Task ChatCommand_QueuedBeforeAnAttachmentSwitch_DoesNotRunAfterIt()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+
+            var serverManager = CreateServerManager(outputReader.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+
+            // Hold the worker on the first command so the second is still queued when
+            // attachment moves - otherwise the race is won by luck rather than tested.
+            var firstCommandRunning = new TaskCompletionSource();
+            var releaseWorker = new TaskCompletionSource();
+            var executed = new List<string>();
+            serverManager.ChatCommandReceived += (_, _, message) =>
+            {
+                lock (executed) { executed.Add(message); }
+                if (message == "!first")
+                {
+                    firstCommandRunning.TrySetResult();
+                    releaseWorker.Task.GetAwaiter().GetResult();
+                }
+            };
+
+            outputReader.Raise(
+                r => r.OutputReceivedFrom += null,
+                first.Id,
+                BuildChatRecord("10", "0", "Player", "!first"));
+            await firstCommandRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            outputReader.Raise(
+                r => r.OutputReceivedFrom += null,
+                first.Id,
+                BuildChatRecord("10", "0", "Player", "!queued"));
+
+            // Attachment moves while !queued is still sitting in the queue.
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            releaseWorker.TrySetResult();
+
+            await Task.Delay(TimeSpan.FromSeconds(1));
+            lock (executed)
+            {
+                Assert.DoesNotContain("!queued", executed);
+            }
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
     private static Process StartIdleProcess()
     {
         var process = Process.Start(new ProcessStartInfo

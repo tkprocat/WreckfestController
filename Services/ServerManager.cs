@@ -59,8 +59,8 @@ public class ServerManager
     // pipe - which makes the hook's own WriteHookLine/FlushFileBuffers block, so
     // neither side can progress until a timeout fires. One consumer preserves the
     // strict command ordering that !yes / !no / !confirm rely on.
-    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message)> _chatCommands =
-        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string)>(
+    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message, int Generation)> _chatCommands =
+        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string, int)>(
             new System.Threading.Channels.UnboundedChannelOptions
             {
                 SingleReader = true,
@@ -1315,7 +1315,13 @@ public class ServerManager
     /// <summary>
     /// Callback for console monitor output.
     /// </summary>
-    private void OnConsoleOutputReceived(string output)
+    private void OnConsoleOutputReceived(string output) =>
+        ProcessConsoleLines(output, CurrentAttachmentGeneration);
+
+    // Named apart from the one-argument entry point rather than overloading it:
+    // the tests reach OnConsoleOutputReceived by reflection, and an overload makes
+    // that lookup ambiguous.
+    private void ProcessConsoleLines(string output, int generation)
     {
         if (string.IsNullOrWhiteSpace(output))
             return;
@@ -1328,23 +1334,32 @@ public class ServerManager
             if (string.IsNullOrWhiteSpace(line))
                 continue;
 
-            // Add to output buffer
-            _outputBuffer.Enqueue((DateTime.Now, line));
-            while (_outputBuffer.Count > MaxBufferSize)
+            // Everything that mutates controller state happens under the same lock
+            // the attachment switch takes, re-checking the generation first, so a
+            // switch cannot land between the check and the mutation.
+            lock (_lock)
             {
-                _outputBuffer.TryDequeue(out _);
+                if (!IsCurrentAttachmentGeneration(generation))
+                {
+                    return;
+                }
+
+                _outputBuffer.Enqueue((DateTime.Now, line));
+                while (_outputBuffer.Count > MaxBufferSize)
+                {
+                    _outputBuffer.TryDequeue(out _);
+                }
+
+                ReportChatLineWithoutRecord(line);
+                _trackChangeTracker.ProcessLogLine(line);
+                _serverInfoTracker.ProcessLogLine(line);
             }
 
-            // Notify subscribers
+            // Fan-out to subscribers stays outside the lock: these reach the UI
+            // dispatcher and an HTTP sender, and holding a controller lock across
+            // either invites a deadlock.
             NotifyConsoleOutput(line);
-
-            // Send to webhook for Laravel
             _consoleLogSender.AddLog(line);
-
-            // Parse chat commands, track changes, and server info.
-            ReportChatLineWithoutRecord(line);
-            _trackChangeTracker.ProcessLogLine(line);
-            _serverInfoTracker.ProcessLogLine(line);
         }
     }
 
@@ -1381,10 +1396,10 @@ public class ServerManager
     /// Hands a chat command to the worker. Never blocks the caller - the caller is
     /// the thread draining the hook output pipe.
     /// </summary>
-    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage)
+    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage, int generation)
     {
         EnsureChatCommandWorker();
-        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage)))
+        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage, generation)))
         {
             _logger.LogWarning("Dropped chat command from {Player}: queue closed", playerName);
         }
@@ -1403,8 +1418,19 @@ public class ServerManager
 
     private async Task ProcessChatCommandQueueAsync()
     {
-        await foreach (var (player, isBot, message) in _chatCommands.Reader.ReadAllAsync())
+        await foreach (var (player, isBot, message, generation) in _chatCommands.Reader.ReadAllAsync())
         {
+            // A command accepted before an attachment switch would otherwise run
+            // against the new server: the queue is the longest delay between
+            // accepting output and acting on it, and a chat command acts.
+            if (!IsCurrentAttachmentGeneration(generation))
+            {
+                _logger.LogDebug(
+                    "Discarded queued chat command from {Player}; attachment moved before it ran",
+                    player);
+                continue;
+            }
+
             try
             {
                 ChatCommandReceived?.Invoke(player, isBot, message);
@@ -1429,10 +1455,16 @@ public class ServerManager
         // This must gate the chat demux below as well as the text fanout: a chat
         // command is the one piece of output that acts on the server rather than
         // merely being displayed.
+        // The generation is taken with the PID, in one lock acquisition, and then
+        // re-checked at every point that mutates state. Validating here and acting
+        // later is not enough: the switch can land in between, and this line would
+        // still be applied to the process we have just moved to.
         int? attachedPid;
+        int generation;
         lock (_lock)
         {
             attachedPid = _actualServerPid;
+            generation = CurrentAttachmentGeneration;
         }
 
         // Only drop what can be proved stale. With nothing attached there is no
@@ -1449,14 +1481,14 @@ public class ServerManager
         // Demuxed ahead of the text fanout. A structured record is not console
         // output: it must not reach the output buffer, the console webhook or the
         // chat regex, and it is consumed whether or not it parsed.
-        if (TryProcessHookChatRecord(output))
+        if (TryProcessHookChatRecord(output, generation))
         {
             return;
         }
 
         if (ProcessConsoleHookOutput)
         {
-            OnConsoleOutputReceived(output);
+            ProcessConsoleLines(output, generation);
         }
     }
 
@@ -1465,7 +1497,7 @@ public class ServerManager
     /// the line was a record - including a malformed one, which is dropped rather
     /// than leaked into the console output fanout.
     /// </summary>
-    private bool TryProcessHookChatRecord(string output)
+    private bool TryProcessHookChatRecord(string output, int generation)
     {
         if (!HookChatRecord.LooksLikeRecord(output))
         {
@@ -1520,7 +1552,7 @@ public class ServerManager
 
         // No duplicate suppression needed: the hook emits one record per message,
         // where the console echo the old path had to undo did not exist.
-        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message);
+        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message, generation);
         return true;
     }
 
