@@ -69,6 +69,19 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
         return Task.FromResult((true, $"Console hook {action.ToLowerInvariant()} for process {processId}"));
     }
 
+    /// <summary>
+    /// Turns one line off the hook pipe into what subscribers receive.
+    ///
+    /// A structured chat record is framed data, not console text.
+    /// <see cref="NormalizeLine"/> strips the "^8"/"^0" codes that
+    /// <see cref="HookChatRecord"/> recovers the sender from, so normalising a record
+    /// leaves something that still looks like ours and still frames correctly but can
+    /// never be parsed - every chat command silently discarded as malformed. Records
+    /// pass through untouched and are demuxed downstream; console text is normalised.
+    /// </summary>
+    public static string PrepareForFanout(string line) =>
+        HookChatRecord.LooksLikeRecord(line) ? line : NormalizeLine(line);
+
     public static string NormalizeLine(string line)
     {
         if (string.IsNullOrWhiteSpace(line))
@@ -151,11 +164,11 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
 
                     PublishHookOutput(processId, line);
 
-                    var normalizedLine = NormalizeLine(line);
-                    if (!string.IsNullOrWhiteSpace(normalizedLine))
+                    var delivered = PrepareForFanout(line);
+                    if (!string.IsNullOrWhiteSpace(delivered))
                     {
-                        OutputReceived?.Invoke(normalizedLine);
-                        OutputReceivedFrom?.Invoke(processId, normalizedLine);
+                        OutputReceived?.Invoke(delivered);
+                        OutputReceivedFrom?.Invoke(processId, delivered);
                     }
                 }
 
