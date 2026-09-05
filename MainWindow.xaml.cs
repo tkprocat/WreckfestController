@@ -19,6 +19,8 @@ public partial class MainWindow : Window
     private readonly Timer _statusUpdateTimer;
     private readonly Timer _processListRefreshTimer;
 
+    private volatile bool _closed;
+
     private ProcessManagerTab? _processManagerTab;
     private ServerControlTab? _serverControlTab;
     private ConfigurationTab? _configurationTab;
@@ -108,19 +110,47 @@ public partial class MainWindow : Window
 
     private void OnStatusUpdateTick(object? sender, ElapsedEventArgs e)
     {
-        Dispatcher.Invoke(() => _serverControlTab?.UpdateServerStatus());
+        QueueUiUpdate(() => _serverControlTab?.UpdateServerStatus());
     }
 
     private void OnProcessListRefreshTick(object? sender, ElapsedEventArgs e)
     {
-        Dispatcher.Invoke(() => _processManagerTab?.RefreshProcessList());
+        QueueUiUpdate(() => _processManagerTab?.RefreshProcessList());
     }
 
     private void OnProcessIdChanged(int? newPid)
     {
-        Dispatcher.Invoke(UpdateWindowTitle);
+        QueueUiUpdate(UpdateWindowTitle);
     }
 
+    private void QueueUiUpdate(Action update)
+    {
+        if (_closed || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            return;
+
+        try
+        {
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_closed || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+                    return;
+
+                try
+                {
+                    update();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to update window status");
+                }
+            }));
+        }
+        catch (InvalidOperationException) when (
+            _closed || Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+        {
+            // Shutdown can begin between the check and scheduling the callback.
+        }
+    }
     public void UpdateWindowTitle()
     {
         var status = _serverManager.GetStatus();
@@ -213,8 +243,13 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _closed = true;
+        _serverManager.ProcessIdChanged -= OnProcessIdChanged;
+        _statusUpdateTimer.Elapsed -= OnStatusUpdateTick;
+        _statusUpdateTimer.Dispose();
+        _processListRefreshTimer.Elapsed -= OnProcessListRefreshTick;
+        _processListRefreshTimer.Dispose();
+        _controllerLogTab?.Dispose();
         base.OnClosed(e);
-        _statusUpdateTimer?.Stop();
-        _processListRefreshTimer?.Stop();
     }
 }

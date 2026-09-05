@@ -238,6 +238,7 @@ public partial class ConfigurationTab : UserControl
                 }
             };
 
+            _currentSettings = defaults;
             PopulateForm(defaults);
             ShowStatusMessage("Settings reset to defaults (not saved yet)", isError: false);
         }
