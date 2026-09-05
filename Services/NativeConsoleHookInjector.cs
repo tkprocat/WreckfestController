@@ -158,12 +158,19 @@ internal static class NativeConsoleHookInjector
         }
         finally
         {
+            // LoadLibraryW reads its argument straight out of the remote allocation, so
+            // the page can only be released once the remote thread is definitely gone.
+            // After a timeout the thread is still running: leak the page rather than
+            // pull the path out from under it and fault the game process.
+            var threadHasExited = threadHandle == IntPtr.Zero ||
+                                  WaitForSingleObject(threadHandle, 0) == WaitObject0;
+
             if (threadHandle != IntPtr.Zero)
             {
                 CloseHandle(threadHandle);
             }
 
-            if (remotePath != IntPtr.Zero)
+            if (remotePath != IntPtr.Zero && threadHasExited)
             {
                 VirtualFreeEx(processHandle, remotePath, UIntPtr.Zero, MemRelease);
             }
