@@ -99,11 +99,37 @@ public partial class PlayersTab : UserControl
             if (!result.Success)
                 throw new InvalidOperationException(result.Message);
 
-            if (!await _serverManager.TryRefreshPlayersFromHookAsync())
-                throw new InvalidOperationException(
-                    "The command succeeded, but the player list could not be refreshed. Refresh the list before retrying the action.");
-            RefreshPlayerList();
+            await RefreshAfterPlayerCommandAsync();
         });
+    }
+
+    private async Task RefreshAfterPlayerCommandAsync()
+    {
+        try
+        {
+            if (!await _serverManager.TryRefreshPlayersFromHookAsync())
+                throw new InvalidOperationException("The player list could not be refreshed.");
+            RefreshPlayerList();
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Player command succeeded, but the player list refresh failed");
+        }
+
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished)
+            return;
+
+        try
+        {
+            await DialogService.ShowWarningAsync(
+                "The player command succeeded, but the player list could not be refreshed.\n\nCheck that the server is attached and its console hook is injected, then refresh the list. You do not need to repeat the command.",
+                "Command succeeded — refresh failed");
+        }
+        catch (Exception dialogError)
+        {
+            _logger.LogError(dialogError, "Unable to show player list refresh warning");
+        }
     }
 
     private async Task RunPlayerActionAsync(string action, Func<Task> operation)
