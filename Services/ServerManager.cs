@@ -188,7 +188,19 @@ public class ServerManager
         _consoleLogSender = consoleLogSender;
 
         _injectedHookOutputReader.OutputReceivedFrom += OnInjectedHookOutputReceived;
-        _injectedHookOutputReader.HookOutputReceived += output => ConsoleHookOutput?.Invoke(output);
+        _injectedHookOutputReader.HookOutputReceived += output =>
+        {
+            ConsoleHookOutput?.Invoke(output);
+
+            // The hook's own status and warning lines went only to the Process
+            // Manager tab, so a diagnostic it printed was invisible to the log
+            // everything else is diagnosed from. Mirror just those - not the
+            // game's console text, which would double every line.
+            if (output.Contains("WreckfestConsoleHook", StringComparison.Ordinal))
+            {
+                _logger.LogInformation("Hook: {Line}", output);
+            }
+        };
 
     }
 
