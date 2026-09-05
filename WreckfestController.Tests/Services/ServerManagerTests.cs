@@ -478,6 +478,64 @@ public class ServerManagerTests
         }
     }
 
+    // The dequeue check is not the last word: a handler can pass it and then block
+    // - on the command semaphore, on a vote - while attachment moves. The target PID
+    // is chosen after that wait, so the check has to happen there too.
+    [Fact]
+    public async Task ChatCommand_DequeuedThenDelayed_DoesNotDispatchToTheNewAttachment()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+
+            var inputWriter = new Mock<IServerInputWriter>();
+            inputWriter
+                .Setup(w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()))
+                .ReturnsAsync((true, "sent"));
+
+            var serverManager = CreateServerManager(outputReader.Object, inputWriter.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+
+            var handlerRunning = new TaskCompletionSource();
+            var releaseHandler = new TaskCompletionSource();
+            var sendResult = new TaskCompletionSource<(bool Success, string Message)>();
+            serverManager.ChatCommandReceived += (_, _, _) =>
+            {
+                handlerRunning.TrySetResult();
+                // Stand in for any wait a handler makes before dispatching.
+                releaseHandler.Task.GetAwaiter().GetResult();
+                sendResult.TrySetResult(serverManager.SendCommandAsync("/kick 1").GetAwaiter().GetResult());
+            };
+
+            outputReader.Raise(
+                r => r.OutputReceivedFrom += null,
+                first.Id,
+                BuildChatRecord("10", "0", "Player", "!kick"));
+
+            // Dequeued and running, so the queue check has already been passed.
+            await handlerRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            releaseHandler.TrySetResult();
+
+            var result = await sendResult.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.False(result.Success);
+            Assert.Contains("Attachment moved", result.Message);
+            inputWriter.Verify(
+                w => w.SendCommandAsync(It.IsAny<string>(), second.Id),
+                Times.Never);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
     private static Process StartIdleProcess()
     {
         var process = Process.Start(new ProcessStartInfo

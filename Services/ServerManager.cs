@@ -59,8 +59,8 @@ public class ServerManager
     // pipe - which makes the hook's own WriteHookLine/FlushFileBuffers block, so
     // neither side can progress until a timeout fires. One consumer preserves the
     // strict command ordering that !yes / !no / !confirm rely on.
-    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message, int Generation)> _chatCommands =
-        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string, int)>(
+    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message, int Generation, int SourcePid)> _chatCommands =
+        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string, int, int)>(
             new System.Threading.Channels.UnboundedChannelOptions
             {
                 SingleReader = true,
@@ -74,6 +74,16 @@ public class ServerManager
     // text; see ServerEventReader. Polled rather than pushed, which is why the reader
     // reports overflow so we can fall back to a full snapshot.
     private ServerEventReader? _serverEventReader;
+
+    // The attachment a chat command was accepted under, made ambient for the
+    // duration of the handler. Passing it explicitly would mean threading a PID
+    // through ChatCommandReceived and every SendCommandAsync call in VotingService;
+    // AsyncLocal flows across the awaits a handler makes without that churn.
+    //
+    // It carries the PID rather than the generation on purpose: the generation is
+    // an I/O epoch that also advances when monitoring restarts, so gating dispatch
+    // on it would refuse commands after an ordinary reinject.
+    private static readonly AsyncLocal<int?> _dispatchAttachmentPid = new();
     private int _serverEventGeneration;
     private System.Threading.Timer? _serverEventTimer;
     private int _serverEventPollBusy;
@@ -860,10 +870,28 @@ public class ServerManager
         await _commandSendLock.WaitAsync();
         try
         {
-            var processId = _actualServerPid ?? GetActualServerProcess()?.Id;
-            if (processId == null)
+            // Resolved after the semaphore, which is the last moment before the
+            // command goes out - and the moment that matters, because waiting for
+            // this lock is exactly when attachment can move underneath a caller
+            // that already validated.
+            int? processId;
+            var expectedPid = _dispatchAttachmentPid.Value;
+            lock (_lock)
             {
-                return (false, "Server is not running");
+                processId = _actualServerPid ?? GetActualServerProcess()?.Id;
+                if (processId == null)
+                {
+                    return (false, "Server is not running");
+                }
+
+                if (expectedPid != null && expectedPid.Value != processId.Value)
+                {
+                    _logger.LogWarning(
+                        "Refused to send {Command}: it was accepted for process {Expected} but {Current} is attached now",
+                        command, expectedPid.Value, processId.Value);
+                    return (false,
+                        $"Attachment moved from process {expectedPid.Value} to {processId.Value} before the command could be sent");
+                }
             }
 
             var result = await _serverInputWriter.SendCommandAsync(command, processId.Value);
@@ -1396,10 +1424,10 @@ public class ServerManager
     /// Hands a chat command to the worker. Never blocks the caller - the caller is
     /// the thread draining the hook output pipe.
     /// </summary>
-    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage, int generation)
+    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage, int generation, int sourcePid)
     {
         EnsureChatCommandWorker();
-        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage, generation)))
+        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage, generation, sourcePid)))
         {
             _logger.LogWarning("Dropped chat command from {Player}: queue closed", playerName);
         }
@@ -1418,7 +1446,7 @@ public class ServerManager
 
     private async Task ProcessChatCommandQueueAsync()
     {
-        await foreach (var (player, isBot, message, generation) in _chatCommands.Reader.ReadAllAsync())
+        await foreach (var (player, isBot, message, generation, sourcePid) in _chatCommands.Reader.ReadAllAsync())
         {
             // A command accepted before an attachment switch would otherwise run
             // against the new server: the queue is the longest delay between
@@ -1430,6 +1458,12 @@ public class ServerManager
                     player);
                 continue;
             }
+
+            // Passing the dequeue check is not enough on its own: the handler can
+            // block - on the command semaphore, on a vote - while attachment moves.
+            // Publishing it here lets SendCommandAsync refuse at the last moment,
+            // when it picks the target PID.
+            _dispatchAttachmentPid.Value = sourcePid;
 
             try
             {
@@ -1481,7 +1515,7 @@ public class ServerManager
         // Demuxed ahead of the text fanout. A structured record is not console
         // output: it must not reach the output buffer, the console webhook or the
         // chat regex, and it is consumed whether or not it parsed.
-        if (TryProcessHookChatRecord(output, generation))
+        if (TryProcessHookChatRecord(output, generation, sourcePid))
         {
             return;
         }
@@ -1497,7 +1531,7 @@ public class ServerManager
     /// the line was a record - including a malformed one, which is dropped rather
     /// than leaked into the console output fanout.
     /// </summary>
-    private bool TryProcessHookChatRecord(string output, int generation)
+    private bool TryProcessHookChatRecord(string output, int generation, int sourcePid)
     {
         if (!HookChatRecord.LooksLikeRecord(output))
         {
@@ -1552,7 +1586,7 @@ public class ServerManager
 
         // No duplicate suppression needed: the hook emits one record per message,
         // where the console echo the old path had to undo did not exist.
-        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message, generation);
+        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message, generation, sourcePid);
         return true;
     }
 
