@@ -18,6 +18,9 @@ public class ConsoleLogWebhookSender : IDisposable
     private readonly Timer? _flushTimer;
     private readonly ILogger<ConsoleLogWebhookSender> _logger;
     private bool _disposed;
+    // Set before the final flush so AddLog stops accepting work while
+    // FlushLogsAsync is still allowed to run one last time.
+    private bool _disposing;
 
     // Configuration
     private const int FlushIntervalMs = 1000; // 1 second
@@ -64,7 +67,7 @@ public class ConsoleLogWebhookSender : IDisposable
     /// </summary>
     public void AddLog(string logLine)
     {
-        if (string.IsNullOrEmpty(_webhookUrl) || _disposed)
+        if (string.IsNullOrEmpty(_webhookUrl) || _disposing || _disposed)
             return;
 
         lock (_bufferLock)
@@ -150,23 +153,33 @@ public class ConsoleLogWebhookSender : IDisposable
     /// </summary>
     public void Dispose()
     {
-        if (_disposed)
+        if (_disposing || _disposed)
             return;
 
-        _disposed = true;
+        // _disposing, not _disposed: FlushLogsAsync bails out on _disposed, so
+        // setting it here would silently drop the very lines this flush exists to
+        // send. It goes up only once the flush has finished.
+        _disposing = true;
 
         _logger.LogInformation("Disposing console log webhook sender");
 
         // Stop timer
         _flushTimer?.Dispose();
 
-        // Flush any remaining logs synchronously
-        if (_logBuffer.Count > 0)
+        int remaining;
+        lock (_bufferLock)
         {
-            _logger.LogInformation("Flushing {Count} remaining console logs", _logBuffer.Count);
+            remaining = _logBuffer.Count;
+        }
+
+        // Flush any remaining logs synchronously
+        if (remaining > 0)
+        {
+            _logger.LogInformation("Flushing {Count} remaining console logs", remaining);
             FlushLogsAsync().Wait(TimeSpan.FromSeconds(5));
         }
 
+        _disposed = true;
         _httpClient?.Dispose();
     }
 }

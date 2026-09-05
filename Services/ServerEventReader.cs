@@ -53,10 +53,11 @@ public class ServerEventReader
 {
     // Module-relative; see docs/finding-rvas.md for how these were derived.
     private const uint RvaRingCursor = 0x192CB28;   // int64, monotonic byte count
-    private const uint RvaRingBuffer = 0x192CB30;
+    // Public so tests can model the ring at the address the reader actually reads.
+    public const uint RvaRingBuffer = 0x192CB30;
     private const uint RvaArgCountTable = 0xFDCCB2; // short per event, stride 6
 
-    private const int RingSize = 0x1000;
+    public const int RingSize = 0x1000;
     private const int MaxEventId = 0x20;
     private const int ArgTableStride = 6;
     private const byte EntryMarker = 0x12;
@@ -143,7 +144,11 @@ public class ServerEventReader
             pending = RingSize;
         }
 
-        var span = await ReadRingAsync(_lastCursor, (int)pending);
+        // Read the window that ends at the cursor, not the one that starts at the last
+        // one we saw: on overflow the oldest pending bytes have already been
+        // overwritten, and starting at _lastCursor would return them while dropping
+        // the newest - and with them a terminator or a whole final event.
+        var span = await ReadRingAsync(cursor - pending, (int)pending);
         _lastCursor = cursor;
 
         if (span is null)

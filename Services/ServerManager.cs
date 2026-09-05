@@ -107,9 +107,9 @@ public class ServerManager
     /// </summary>
     public event Action<int?>? ProcessIdChanged;
 
-    public bool IsRunning => GetActualServerProcess() != null;
+    public bool IsRunning => GetActualServerPid() != null;
 
-    public int? AttachedProcessId => GetActualServerProcess()?.Id;
+    public int? AttachedProcessId => GetActualServerPid();
 
     /// <summary>
     /// Injection is only allowed into the process that is already attached, so the
@@ -192,6 +192,22 @@ public class ServerManager
 
     }
 
+    /// <summary>
+    /// The attached PID if that process is still alive. Every caller that only needs
+    /// the identity goes through here: <see cref="GetActualServerProcess"/> hands out
+    /// an owned <see cref="Process"/>, and the once-a-second status poll would
+    /// otherwise open a fresh OS handle per tick and hold it until finalisation.
+    /// </summary>
+    private int? GetActualServerPid()
+    {
+        using var process = GetActualServerProcess();
+        return process?.Id;
+    }
+
+    /// <summary>
+    /// The attached process, or null when nothing is attached or it has exited.
+    /// The returned instance is owned by the caller and must be disposed.
+    /// </summary>
     private Process? GetActualServerProcess()
     {
         // Only track by PID - we always start the server through the API
@@ -335,31 +351,40 @@ public class ServerManager
         {
             await Task.Delay(1000);
 
-            var actualProcess = GetActualServerProcess();
-            if (actualProcess != null)
+            string processName;
+            int processId;
+            using (var actualProcess = GetActualServerProcess())
             {
-                _logger.LogInformation("Server started successfully. Process: {ProcessName} (PID: {ProcessId})", actualProcess.ProcessName, actualProcess.Id);
-
-                // Send webhook notification
-                _ = Task.Run(async () =>
+                if (actualProcess == null)
                 {
-                    try
-                    {
-                        await _webhookService.SendServerStartedAsync(new Models.ServerStartedEvent
-                        {
-                            ProcessId = actualProcess.Id,
-                            ProcessName = actualProcess.ProcessName,
-                            StartTime = _startTime ?? DateTime.UtcNow
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to send server started webhook");
-                    }
-                });
+                    continue;
+                }
 
-                return (true, $"Server started successfully. Process: {actualProcess.ProcessName} (PID: {actualProcess.Id})");
+                processName = actualProcess.ProcessName;
+                processId = actualProcess.Id;
             }
+
+            _logger.LogInformation("Server started successfully. Process: {ProcessName} (PID: {ProcessId})", processName, processId);
+
+            // Send webhook notification
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _webhookService.SendServerStartedAsync(new Models.ServerStartedEvent
+                    {
+                        ProcessId = processId,
+                        ProcessName = processName,
+                        StartTime = _startTime ?? DateTime.UtcNow
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to send server started webhook");
+                }
+            });
+
+            return (true, $"Server started successfully. Process: {processName} (PID: {processId})");
         }
 
         // Process is running but not detected by GetActualServerProcess (shouldn't happen with PID tracking)
@@ -420,8 +445,7 @@ public class ServerManager
                 await Task.Delay(checkInterval);
 
                 // Check if process has exited
-                var process = GetActualServerProcess();
-                if (process == null)
+                if (GetActualServerPid() == null)
                 {
                     _logger.LogInformation("Server process exited gracefully");
 
@@ -506,8 +530,11 @@ public class ServerManager
             _logger.LogInformation("Force stopping server process {ProcessId}", currentPid);
 
             // Kill and wait outside the lock to avoid blocking status checks
-            actualProcess.Kill(entireProcessTree: true);
-            actualProcess.WaitForExit(10000);
+            using (actualProcess)
+            {
+                actualProcess.Kill(entireProcessTree: true);
+                actualProcess.WaitForExit(10000);
+            }
 
             // Send webhook notification before cleanup
             _ = Task.Run(async () =>
@@ -890,7 +917,7 @@ public class ServerManager
             var expectedAttachment = _dispatchAttachmentId.Value;
             lock (_lock)
             {
-                processId = _actualServerPid ?? GetActualServerProcess()?.Id;
+                processId = _actualServerPid ?? GetActualServerPid();
                 if (processId == null)
                 {
                     return (false, "Server is not running");
@@ -936,15 +963,15 @@ public class ServerManager
     /// </summary>
     public virtual async Task<byte[]?> ReadHookMemoryAsync(uint rva, int size)
     {
-        var process = GetActualServerProcess();
-        if (process == null || _serverInputWriter is not IHookMemoryReader reader)
+        var processId = GetActualServerPid();
+        if (processId == null || _serverInputWriter is not IHookMemoryReader reader)
         {
             return null;
         }
 
         try
         {
-            var result = await reader.ReadModuleMemoryAsync(process.Id, rva, size);
+            var result = await reader.ReadModuleMemoryAsync(processId.Value, rva, size);
             return result.Success ? result.Data : null;
         }
         catch (Exception ex)
@@ -969,13 +996,13 @@ public class ServerManager
         int generation;
         lock (_lock)
         {
-            var process = GetActualServerProcess();
-            if (process == null)
+            var attachedPid = GetActualServerPid();
+            if (attachedPid == null)
             {
                 return false;
             }
 
-            pid = process.Id;
+            pid = attachedPid.Value;
             generation = CurrentAttachmentGeneration;
         }
 
@@ -1019,13 +1046,13 @@ public class ServerManager
 
     public virtual ServerStatus GetStatus()
     {
-        var actualProcess = GetActualServerProcess();
+        var actualPid = GetActualServerPid();
 
         return new ServerStatus
         {
-            IsRunning = actualProcess != null,
-            ProcessId = actualProcess?.Id,
-            Uptime = _startTime.HasValue && actualProcess != null
+            IsRunning = actualPid != null,
+            ProcessId = actualPid,
+            Uptime = _startTime.HasValue && actualPid != null
                 ? DateTime.UtcNow - _startTime.Value
                 : null,
             CurrentTrack = _currentTrack
@@ -1180,6 +1207,14 @@ public class ServerManager
         }
     }
 
+    /// <summary>
+    /// Tails the server's log file from disk. This is the one deliberate exception to
+    /// the hook-only I/O contract in CLAUDE.md: WreckfestWeb's log viewer depends on
+    /// it, and it is the only way to see output from before attachment. It is
+    /// read-only history - it answers with no hook injected, and can return lines that
+    /// predate the attached process - so nothing that tracks live state may be fed
+    /// from it.
+    /// </summary>
     public (bool Success, string Message, string? LogFilePath, List<string>? Lines) GetLogFileContent(int lines = 100)
     {
         // Try to get log file path from server config first

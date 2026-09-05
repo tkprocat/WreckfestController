@@ -123,6 +123,55 @@ public class ServerEventReaderTests
         Assert.True(overflowed);
     }
 
+    [Fact]
+    public async Task PollAsync_OnOverflowReadsTheNewestBytesRatherThanTheOverwrittenOnes()
+    {
+        // A ring that has wrapped: the last poll saw cursor 100, the server has since
+        // written past 4200. Only cursors 104..4199 survive, so a read that still
+        // starts at 100 returns four overwritten bytes and drops the four newest -
+        // here, the terminator of the only complete event in the window.
+        const int ringSize = ServerEventReader.RingSize;
+        var ring = new byte[ringSize];
+        var newest = Hex("1227" + Convert.ToHexString("Newest"u8.ToArray()) + "130a");
+        Array.Copy(newest, 0, ring, 104 - newest.Length, newest.Length);
+
+        long cursor = 100;
+        var reader = MakeRingReader(() => cursor, ring);
+
+        await reader.PollAsync();      // adopt cursor 100
+        cursor = 4200;
+        var (events, overflowed) = await reader.PollAsync();
+
+        Assert.True(overflowed);
+        var e = Assert.Single(events);
+        Assert.Equal("Newest", e.Name);
+    }
+
+    /// <summary>
+    /// A reader backed by a real wrapping ring: reads are served from the requested
+    /// offset instead of always handing back the same block.
+    /// </summary>
+    private static ServerEventReader MakeRingReader(Func<long> cursor, byte[] ring)
+    {
+        return new ServerEventReader(
+            (rva, size) =>
+            {
+                if (size == 8) return Task.FromResult<byte[]?>(BitConverter.GetBytes(cursor()));
+                if (rva < ServerEventReader.RvaRingBuffer ||
+                    rva >= ServerEventReader.RvaRingBuffer + ring.Length)
+                {
+                    return Task.FromResult<byte[]?>(null);   // arg-count table
+                }
+
+                var offset = (int)(rva - ServerEventReader.RvaRingBuffer);
+                var length = Math.Min(size, ring.Length - offset);
+                var slice = new byte[length];
+                Array.Copy(ring, offset, slice, 0, length);
+                return Task.FromResult<byte[]?>(slice);
+            },
+            Mock.Of<ILogger<ServerEventReader>>());
+    }
+
     private static ServerEventReader MakeReader(long cursor, byte[] ring) =>
         MakeReader(() => cursor, _ => ring);
 

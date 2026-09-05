@@ -79,8 +79,16 @@ default is used.
 | POST | `attach/{pid}` | Attach to an existing process |
 | POST | `inject/{pid}` | Inject the console hook into a process |
 | POST | `inject` | Inject into the already-tracked process |
-| GET | `logfile?lines=100` | Tail the log file |
+| GET | `logfile?lines=100` | Tail the server's log file from disk — the one deliberate exception to hook-only I/O (see below) |
 | GET | `players` | Current roster |
+
+`logfile` is the only endpoint that reads server output from disk rather than from the
+injected hook. It is kept on purpose: WreckfestWeb's log viewer depends on it, and it is
+the only way to see output from before attachment. Nothing else in the app consumes it —
+no tracker, roster or chat path is fed from the file — so the hook-only contract still
+holds for everything that drives state. Treat what it returns as history, not live state:
+it answers even when no hook is injected, and its content can predate the current
+process.
 
 Injection is refused unless the target process is already attached, and refused when
 the detected game build does not match `WreckfestServer:SupportedBuild`. Both return
