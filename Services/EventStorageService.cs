@@ -140,16 +140,20 @@ public class EventStorageService
             // Serialize to JSON
             var json = JsonSerializer.Serialize(schedule, _jsonOptions);
 
-            // Write to file (atomic write using temp file)
+            // Write the replacement beside the original, then swap it in. File.Replace
+            // overwrites in one step, so the schedule is never absent - the previous
+            // version of this code deleted it first and could leave nothing behind.
             var tempPath = scheduleFilePath + ".tmp";
             File.WriteAllText(tempPath, json);
 
-            // Replace existing file
             if (File.Exists(scheduleFilePath))
             {
-                File.Delete(scheduleFilePath);
+                File.Replace(tempPath, scheduleFilePath, null);
             }
-            File.Move(tempPath, scheduleFilePath);
+            else
+            {
+                File.Move(tempPath, scheduleFilePath);
+            }
 
             _logger.LogInformation("Saved schedule with {Count} events to {Path}", schedule.Events.Count, scheduleFilePath);
             return true;
