@@ -359,20 +359,35 @@ public class ServerManager
             var currentPid = _actualServerPid;
             _logger.LogInformation("Stopping server gracefully via 'exit' command (PID: {PID})", currentPid);
 
-            // Stop output monitoring before sending exit command (frees console attachment)
+            // Stop reading server output before sending exit. I/O is hook-only, so this
+            // only clears the primary-output flag and stops event polling - it does not
+            // close the input pipe the command below travels on.
             StopOutputMonitoring();
 
-            // Send exit command
+            // The hook reports success only when the game writes back an "OK" line, and
+            // "exit" is the one command that cannot reliably produce one: the game starts
+            // shutting down the moment it is dispatched, so the acknowledgement is racing
+            // a process that is going away. Treating a missing "OK" as failure is what
+            // made every graceful stop force-kill a server that was already exiting.
+            //
             var commandResult = await SendCommandAsync("exit");
-            if (!commandResult.Success)
+            if (!commandResult.Success && !IsExpectedExitSilence(commandResult.Message))
             {
-                _logger.LogWarning("Failed to send exit command, falling back to force stop");
+                _logger.LogWarning("Exit command was rejected ({Message}), falling back to force stop", commandResult.Message);
                 return await StopServerAsync();
             }
 
-            _logger.LogInformation("Exit command sent, waiting for server to shutdown...");
+            if (commandResult.Success)
+            {
+                _logger.LogInformation("Exit command acknowledged, waiting for server to shut down...");
+            }
+            else
+            {
+                _logger.LogInformation("Exit command returned no hook response; waiting for server to shut down...");
+            }
 
-            // Wait for the process to exit gracefully (max 30 seconds)
+            // A missing response is expected for exit; only the process state can
+            // determine whether the dispatched command actually shut the server down.
             var timeout = TimeSpan.FromSeconds(30);
             var startTime = DateTime.Now;
             var checkInterval = TimeSpan.FromMilliseconds(500);
@@ -415,12 +430,16 @@ public class ServerManager
                         _playerTracker.Clear();
                     }
 
-                    return (true, $"Server stopped gracefully (was PID: {currentPid})");
+                    return (true, commandResult.Success
+                        ? $"Server stopped gracefully (was PID: {currentPid})"
+                        : $"Server stopped gracefully, though the exit command was never acknowledged (was PID: {currentPid})");
                 }
             }
 
-            // Timeout - process didn't exit gracefully
-            _logger.LogWarning("Server didn't exit gracefully within timeout, forcing shutdown");
+            // Still alive after the grace period, so the exit genuinely did not take.
+            _logger.LogWarning(
+                "Server still running {Seconds}s after the exit command, forcing shutdown",
+                timeout.TotalSeconds);
             return await StopServerAsync();
         }
         catch (Exception ex)
@@ -429,6 +448,17 @@ public class ServerManager
             return await StopServerAsync();
         }
     }
+
+    // "exit" is dispatched and then the game goes away, so the hook has nothing left
+    // to acknowledge with. Two results mean that silence: no response at all, and a
+    // response timeout after the command was already delivered. Both leave a server
+    // that may well be shutting down, so both earn the wait.
+    //
+    // Anything else - a refused command, or a timeout before delivery - is a real
+    // failure and still falls back immediately.
+    private static bool IsExpectedExitSilence(string message) =>
+        string.Equals(message, InjectedHookInputWriter.NoResponseMessage, StringComparison.Ordinal)
+        || string.Equals(message, InjectedHookInputWriter.DispatchedWithoutResponseMessage, StringComparison.Ordinal);
 
     /// <summary>
     /// Force stops the server by killing the process tree.
