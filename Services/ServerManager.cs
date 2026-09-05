@@ -59,8 +59,8 @@ public class ServerManager
     // pipe - which makes the hook's own WriteHookLine/FlushFileBuffers block, so
     // neither side can progress until a timeout fires. One consumer preserves the
     // strict command ordering that !yes / !no / !confirm rely on.
-    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message, int Generation, int SourcePid)> _chatCommands =
-        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string, int, int)>(
+    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message, int Generation, long AttachmentId)> _chatCommands =
+        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string, int, long)>(
             new System.Threading.Channels.UnboundedChannelOptions
             {
                 SingleReader = true,
@@ -83,7 +83,19 @@ public class ServerManager
     // It carries the PID rather than the generation on purpose: the generation is
     // an I/O epoch that also advances when monitoring restarts, so gating dispatch
     // on it would refuse commands after an ordinary reinject.
-    private static readonly AsyncLocal<int?> _dispatchAttachmentPid = new();
+    // Monotonic identity for one continuous attachment. A PID cannot serve: attach
+    // A, switch to B, switch back to A and the PID matches again, so work queued
+    // under the first A attachment would be accepted by the second. This only ever
+    // increases, so an attachment is never mistaken for a later one.
+    private long _attachmentId;
+
+    // The attachment a chat command was accepted under, made ambient for the
+    // duration of the handler. Passing it explicitly would mean threading it
+    // through ChatCommandReceived and every SendCommandAsync call in
+    // VotingService; AsyncLocal flows across the awaits a handler makes without
+    // that churn. An explicit session parameter is the better end state - see the
+    // follow-up issue - but that is a wider change than this fix.
+    private static readonly AsyncLocal<long?> _dispatchAttachmentId = new();
     private int _serverEventGeneration;
     private System.Threading.Timer? _serverEventTimer;
     private int _serverEventPollBusy;
@@ -195,7 +207,7 @@ public class ServerManager
                 else
                 {
                     _logger.LogWarning("Tracked server process (PID: {PID}) has exited", _actualServerPid.Value);
-                    _actualServerPid = null;
+                    SetAttachedProcess(null);
                     _startTime = null;
                     return null;
                 }
@@ -204,7 +216,7 @@ public class ServerManager
             {
                 // Process doesn't exist
                 _logger.LogWarning("Tracked server process (PID: {PID}) no longer exists", _actualServerPid!.Value);
-                _actualServerPid = null;
+                SetAttachedProcess(null);
                 _startTime = null;
                 return null;
             }
@@ -291,7 +303,7 @@ public class ServerManager
                 };
 
                 _serverProcess = process;
-                _actualServerPid = process.Id;
+                SetAttachedProcess(process.Id);
                 _startTime = DateTime.UtcNow;
                 ProcessIdChanged?.Invoke(process.Id);
 
@@ -435,7 +447,7 @@ public class ServerManager
                     {
                         _serverProcess = null;
                         _startTime = null;
-                        _actualServerPid = null;
+                        SetAttachedProcess(null);
 
                         // Clear player tracking
                         _playerTracker.Clear();
@@ -535,7 +547,7 @@ public class ServerManager
 
                 _serverProcess = null;
                 _startTime = null;
-                _actualServerPid = null;
+                SetAttachedProcess(null);
 
                 // Clear player tracking
                 _playerTracker.Clear();
@@ -658,7 +670,7 @@ public class ServerManager
 
             // Update to track the new PID
             var newPid = newProcessPids.First();
-            _actualServerPid = newPid;
+            SetAttachedProcess(newPid);
             ProcessIdChanged?.Invoke(newPid);
 
             // Update start time
@@ -875,7 +887,7 @@ public class ServerManager
             // this lock is exactly when attachment can move underneath a caller
             // that already validated.
             int? processId;
-            var expectedPid = _dispatchAttachmentPid.Value;
+            var expectedAttachment = _dispatchAttachmentId.Value;
             lock (_lock)
             {
                 processId = _actualServerPid ?? GetActualServerProcess()?.Id;
@@ -884,13 +896,13 @@ public class ServerManager
                     return (false, "Server is not running");
                 }
 
-                if (expectedPid != null && expectedPid.Value != processId.Value)
+                if (expectedAttachment != null && expectedAttachment.Value != CurrentAttachmentId)
                 {
                     _logger.LogWarning(
-                        "Refused to send {Command}: it was accepted for process {Expected} but {Current} is attached now",
-                        command, expectedPid.Value, processId.Value);
+                        "Refused to send {Command}: accepted under attachment {Expected}, now on {Current} (process {Pid})",
+                        command, expectedAttachment.Value, CurrentAttachmentId, processId.Value);
                     return (false,
-                        $"Attachment moved from process {expectedPid.Value} to {processId.Value} before the command could be sent");
+                        $"Attachment moved before the command could be sent (was {expectedAttachment.Value}, now {CurrentAttachmentId})");
                 }
             }
 
@@ -1040,7 +1052,7 @@ public class ServerManager
                 StopHookOutputListener();
                 ClearProcessScopedState();
 
-                _actualServerPid = pid;
+                SetAttachedProcess(pid);
                 _startTime = process.StartTime;
             }
 
@@ -1082,6 +1094,17 @@ public class ServerManager
             _logger.LogWarning(ex, "Failed to stop the hook output listener while switching attachment");
         }
     }
+
+    // Every attachment change goes through here. Scattered assignments were how
+    // identity drifted: eight sites moved the PID and only one advanced the
+    // guard that work is validated against.
+    private void SetAttachedProcess(int? pid)
+    {
+        _actualServerPid = pid;
+        Interlocked.Increment(ref _attachmentId);
+    }
+
+    private long CurrentAttachmentId => Interlocked.Read(ref _attachmentId);
 
     // Everything here describes one attached process and means nothing about the
     // next one. Called while holding _lock.
@@ -1424,10 +1447,10 @@ public class ServerManager
     /// Hands a chat command to the worker. Never blocks the caller - the caller is
     /// the thread draining the hook output pipe.
     /// </summary>
-    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage, int generation, int sourcePid)
+    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage, int generation, long attachmentId)
     {
         EnsureChatCommandWorker();
-        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage, generation, sourcePid)))
+        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage, generation, attachmentId)))
         {
             _logger.LogWarning("Dropped chat command from {Player}: queue closed", playerName);
         }
@@ -1446,7 +1469,7 @@ public class ServerManager
 
     private async Task ProcessChatCommandQueueAsync()
     {
-        await foreach (var (player, isBot, message, generation, sourcePid) in _chatCommands.Reader.ReadAllAsync())
+        await foreach (var (player, isBot, message, generation, attachmentId) in _chatCommands.Reader.ReadAllAsync())
         {
             // A command accepted before an attachment switch would otherwise run
             // against the new server: the queue is the longest delay between
@@ -1463,7 +1486,7 @@ public class ServerManager
             // block - on the command semaphore, on a vote - while attachment moves.
             // Publishing it here lets SendCommandAsync refuse at the last moment,
             // when it picks the target PID.
-            _dispatchAttachmentPid.Value = sourcePid;
+            _dispatchAttachmentId.Value = attachmentId;
 
             try
             {
@@ -1495,10 +1518,12 @@ public class ServerManager
         // still be applied to the process we have just moved to.
         int? attachedPid;
         int generation;
+        long attachmentId;
         lock (_lock)
         {
             attachedPid = _actualServerPid;
             generation = CurrentAttachmentGeneration;
+            attachmentId = CurrentAttachmentId;
         }
 
         // Only drop what can be proved stale. With nothing attached there is no
@@ -1515,7 +1540,7 @@ public class ServerManager
         // Demuxed ahead of the text fanout. A structured record is not console
         // output: it must not reach the output buffer, the console webhook or the
         // chat regex, and it is consumed whether or not it parsed.
-        if (TryProcessHookChatRecord(output, generation, sourcePid))
+        if (TryProcessHookChatRecord(output, generation, attachmentId))
         {
             return;
         }
@@ -1531,7 +1556,7 @@ public class ServerManager
     /// the line was a record - including a malformed one, which is dropped rather
     /// than leaked into the console output fanout.
     /// </summary>
-    private bool TryProcessHookChatRecord(string output, int generation, int sourcePid)
+    private bool TryProcessHookChatRecord(string output, int generation, long attachmentId)
     {
         if (!HookChatRecord.LooksLikeRecord(output))
         {
@@ -1586,7 +1611,7 @@ public class ServerManager
 
         // No duplicate suppression needed: the hook emits one record per message,
         // where the console echo the old path had to undo did not exist.
-        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message, generation, sourcePid);
+        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message, generation, attachmentId);
         return true;
     }
 
@@ -1775,7 +1800,7 @@ public class ServerManager
             lock (_lock)
             {
                 _serverProcess = process;
-                _actualServerPid = processId;
+                SetAttachedProcess(processId);
                 _startTime = process.StartTime;
             }
             ProcessIdChanged?.Invoke(processId);

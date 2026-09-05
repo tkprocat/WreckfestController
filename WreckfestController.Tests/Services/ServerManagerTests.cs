@@ -536,6 +536,64 @@ public class ServerManagerTests
         }
     }
 
+    // A -> B -> A. The PID is identical either side of the round trip, so a PID
+    // check accepts work queued under the first attachment. Identity has to be
+    // monotonic, not a property of the process.
+    [Fact]
+    public async Task ChatCommand_WhenAttachmentReturnsToTheSameProcess_IsStillRefused()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+
+            var inputWriter = new Mock<IServerInputWriter>();
+            inputWriter
+                .Setup(w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()))
+                .ReturnsAsync((true, "sent"));
+
+            var serverManager = CreateServerManager(outputReader.Object, inputWriter.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+
+            var handlerRunning = new TaskCompletionSource();
+            var releaseHandler = new TaskCompletionSource();
+            var sendResult = new TaskCompletionSource<(bool Success, string Message)>();
+            serverManager.ChatCommandReceived += (_, _, _) =>
+            {
+                handlerRunning.TrySetResult();
+                releaseHandler.Task.GetAwaiter().GetResult();
+                sendResult.TrySetResult(serverManager.SendCommandAsync("/kick 1").GetAwaiter().GetResult());
+            };
+
+            outputReader.Raise(
+                r => r.OutputReceivedFrom += null,
+                first.Id,
+                BuildChatRecord("10", "0", "Player", "!kick"));
+            await handlerRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            // Away and back again: same PID, different attachment.
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            releaseHandler.TrySetResult();
+
+            var result = await sendResult.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.False(result.Success);
+            Assert.Contains("Attachment moved", result.Message);
+            inputWriter.Verify(
+                w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()),
+                Times.Never);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
     private static Process StartIdleProcess()
     {
         var process = Process.Start(new ProcessStartInfo
