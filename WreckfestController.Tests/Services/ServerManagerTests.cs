@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using System.Diagnostics;
+using WreckfestController.Models;
 using WreckfestController.Services;
 using Xunit;
 
@@ -306,6 +307,114 @@ public class ServerManagerTests
             KillIfRunning(first);
             KillIfRunning(second);
         }
+    }
+
+    // A chat command is the one piece of hook output that acts on the server rather
+    // than merely being displayed, so output left in flight from the process we just
+    // detached from must not reach the chat path either.
+    [Fact]
+    public async Task HookOutput_FromAPreviousAttachment_IsDropped()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            // The reader is still bound to the process we have left.
+            outputReader.SetupGet(r => r.TargetProcessId).Returns(first.Id);
+
+            var serverManager = CreateServerManager(outputReader.Object);
+            serverManager.ProcessConsoleHookOutput = true;
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+
+            // Chat commands are dispatched on a background worker, so asserting an
+            // empty list straight after raising the event passes whether or not the
+            // output was dropped. Wait for the command that must never arrive.
+            var dispatched = new TaskCompletionSource<string>();
+            serverManager.ChatCommandReceived += (_, _, message) => dispatched.TrySetResult(message);
+
+            // Real wire shape: marker, ring index, the game's formatted console
+            // line, then the raw message. The sender is recovered from the
+            // formatted line, not sent as its own field.
+            const string consoleLine = "^9* 21:37:50^0 ^8StalePlayer: ^0!vote";
+            var record =
+                $"{HookChatRecord.Marker}10{consoleLine}!vote";
+            outputReader.Raise(r => r.OutputReceived += null, record);
+
+            var settled = await Task.WhenAny(dispatched.Task, Task.Delay(TimeSpan.FromSeconds(1)));
+            Assert.True(
+                settled != dispatched.Task,
+                $"A chat command from the previous attachment was dispatched: {dispatched.Task.Status}");
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // Checking the generation before the read is not enough - the switch can land
+    // while the snapshot is in flight.
+    [Fact]
+    public async Task TryRefreshPlayersFromHookAsync_WhenAttachmentMovesMidRead_DiscardsTheSnapshot()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+
+            var inputWriter = new Mock<IServerInputWriter>();
+            var snapshotReader = inputWriter.As<IPlayerSnapshotReader>();
+            ServerManager? manager = null;
+            snapshotReader
+                .Setup(r => r.ReadPlayerSnapshotAsync(first.Id))
+                .ReturnsAsync(() =>
+                {
+                    // Attachment moves while this read is outstanding.
+                    manager!.AttachToExistingProcess(second.Id);
+                    return (true, "ok", (IReadOnlyList<Player>)
+                        [new Player { Name = "PlayerOnFirstProcess", Slot = 1 }]);
+                });
+
+            manager = CreateServerManager(outputReader.Object, inputWriter.Object);
+            Assert.True(manager.AttachToExistingProcess(first.Id).Success);
+
+            var refreshed = await manager.TryRefreshPlayersFromHookAsync();
+
+            Assert.False(refreshed);
+            Assert.Empty(_playerTracker.GetPlayers());
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    private ServerManager CreateServerManager(
+        IInjectedHookOutputReader outputReader,
+        IServerInputWriter? inputWriter = null)
+    {
+        var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+
+        return new ServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockWebhookService.Object,
+            consoleLogSender.Object,
+            inputWriter ?? Mock.Of<IServerInputWriter>(),
+            outputReader);
     }
 
     private static Process StartIdleProcess()

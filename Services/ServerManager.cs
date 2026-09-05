@@ -922,6 +922,11 @@ public class ServerManager
             return false;
         }
 
+        // Checking before the read is not enough: attachment can move while the
+        // snapshot is in flight, and committing then would repopulate the new
+        // process's roster with the old one's players.
+        var generation = CurrentAttachmentGeneration;
+
         try
         {
             var snapshot = await playerSnapshotReader.ReadPlayerSnapshotAsync(process.Id);
@@ -931,7 +936,21 @@ public class ServerManager
                 return false;
             }
 
-            _playerTracker.ProcessHookPlayerSnapshot(snapshot.Players);
+            // Commit under the same lock the switch uses, so the generation cannot
+            // change between the check and the mutation.
+            lock (_lock)
+            {
+                if (!IsCurrentAttachmentGeneration(generation))
+                {
+                    _logger.LogDebug(
+                        "Discarded a player snapshot from process {Pid}; attachment moved while it was in flight",
+                        process.Id);
+                    return false;
+                }
+
+                _playerTracker.ProcessHookPlayerSnapshot(snapshot.Players);
+            }
+
             return true;
         }
         catch (Exception ex)
@@ -978,6 +997,7 @@ public class ServerManager
             lock (_lock)
             {
                 StopOutputMonitoring();
+                StopHookOutputListener();
                 ClearProcessScopedState();
 
                 _actualServerPid = pid;
@@ -1000,6 +1020,26 @@ public class ServerManager
         {
             _logger.LogError(ex, "Failed to attach to process {PID}", pid);
             return (false, $"Failed to attach to process: {ex.Message}");
+        }
+    }
+
+    // StopOutputMonitoring only clears the primary-output flag and stops event
+    // polling; the reader's pipe listeners keep running and keep delivering the old
+    // process's output. Stopping it here is deliberately scoped to attachment
+    // switching rather than folded into StopOutputMonitoring, which the graceful
+    // stop path also calls and which must keep behaving as it does today.
+    //
+    // Synchronous in practice - StopAsync closes the listeners and returns a
+    // completed task - so this cannot deadlock under _lock.
+    private void StopHookOutputListener()
+    {
+        try
+        {
+            _injectedHookOutputReader.StopAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to stop the hook output listener while switching attachment");
         }
     }
 
@@ -1173,6 +1213,14 @@ public class ServerManager
     private bool IsCurrentEventGeneration(int generation) =>
         Volatile.Read(ref _serverEventGeneration) == generation;
 
+    // Attachment and polling share one counter: every attachment switch stops
+    // polling, so retiring the generation covers both, and a single value avoids
+    // two counters that could disagree about which process is current.
+    private int CurrentAttachmentGeneration => Volatile.Read(ref _serverEventGeneration);
+
+    private bool IsCurrentAttachmentGeneration(int generation) =>
+        Volatile.Read(ref _serverEventGeneration) == generation;
+
     private async Task PollServerEventsAsync(int generation)
     {
         var reader = _serverEventReader;
@@ -1207,9 +1255,19 @@ public class ServerManager
                 await TryRefreshPlayersFromHookAsync();
             }
 
-            foreach (var serverEvent in events)
+            lock (_lock)
             {
-                _playerTracker.ProcessServerEvent(serverEvent);
+                // Re-checked inside the lock: without it the switch can land between
+                // the check above and these mutations.
+                if (!IsCurrentEventGeneration(generation))
+                {
+                    return;
+                }
+
+                foreach (var serverEvent in events)
+                {
+                    _playerTracker.ProcessServerEvent(serverEvent);
+                }
             }
 
             if (events.Count > 0 && IsCurrentEventGeneration(generation))
@@ -1350,6 +1408,22 @@ public class ServerManager
 
     private void OnInjectedHookOutputReceived(string output)
     {
+        // The reader is one instance retargeted per attachment, so a callback can
+        // still be in flight from the process we just left. Output carries no PID,
+        // so the reader's own target is the only way to tell - and this has to gate
+        // the chat demux below as well, not just the text fanout: a chat command is
+        // the one piece of output that acts on the server rather than merely being
+        // displayed.
+        var attachedPid = _actualServerPid;
+        var readerTarget = _injectedHookOutputReader.TargetProcessId;
+        if (attachedPid != null && readerTarget != 0 && readerTarget != attachedPid.Value)
+        {
+            _logger.LogDebug(
+                "Dropped hook output from process {Stale}; attachment has moved to {Current}",
+                readerTarget, attachedPid.Value);
+            return;
+        }
+
         // Demuxed ahead of the text fanout. A structured record is not console
         // output: it must not reach the output buffer, the console webhook or the
         // chat regex, and it is consumed whether or not it parsed.
