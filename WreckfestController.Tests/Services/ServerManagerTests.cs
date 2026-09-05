@@ -146,6 +146,67 @@ public class ServerManagerTests
     }
 
     [Fact]
+    public async Task StopServerViaCommandAsync_WhenExitHasNoHookResponse_WaitsForProcessExit()
+    {
+        using var serverProcess = Process.Start(new ProcessStartInfo
+        {
+            FileName = "powershell.exe",
+            Arguments = "-NoProfile -Command Start-Sleep -Seconds 30",
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+        Assert.NotNull(serverProcess);
+
+        var inputWriter = new Mock<IServerInputWriter>();
+        inputWriter
+            .Setup(w => w.SendCommandAsync("exit", serverProcess.Id))
+            .ReturnsAsync(() =>
+            {
+                // Model exit being dispatched, then the game closing before the hook
+                // can write its post-dispatch OK response.
+                serverProcess.Kill();
+                return (false, "Injected hook input returned no response");
+            });
+
+        var outputReader = new Mock<IInjectedHookOutputReader>();
+        outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+        outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
+
+        var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
+            Mock.Of<HttpClient>(),
+            Mock.Of<IConfiguration>(),
+            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
+        var serverManager = new ServerManager(
+            _mockConfiguration.Object,
+            _mockLogger.Object,
+            _playerTracker,
+            _trackChangeTracker,
+            _serverInfoTracker,
+            _mockWebhookService.Object,
+            consoleLogSender.Object,
+            inputWriter.Object,
+            outputReader.Object);
+        serverManager.AttachToExistingProcess(serverProcess.Id);
+
+        try
+        {
+            var result = await serverManager.StopServerViaCommandAsync();
+
+            Assert.True(result.Success);
+            Assert.Contains("gracefully", result.Message);
+            inputWriter.Verify(w => w.SendCommandAsync("exit", serverProcess.Id), Times.Once);
+        }
+        finally
+        {
+            if (!serverProcess.HasExited)
+            {
+                serverProcess.Kill();
+                await serverProcess.WaitForExitAsync();
+            }
+        }
+    }
+
+    [Fact]
     public async Task SendCommandAsync_WhenServerNotRunning_ReturnsFailure()
     {
         // Act

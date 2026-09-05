@@ -7,6 +7,12 @@ namespace WreckfestController.Services;
 
 public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader, IHookMemoryReader
 {
+    // The hook dispatched the command but wrote back no acknowledgement. Callers
+    // distinguish this from an outright rejection - see ServerManager's exit path,
+    // where a missing response is expected rather than a failure - so it is a named
+    // constant and not a literal to be matched by spelling.
+    public const string NoResponseMessage = "Injected hook input returned no response";
+
     // Player flag bits, confirmed against a live server (Wreckfest 1.308438) by
     // toggling privileges with /op and /demote and cross-checking the A/M marker in
     // the "list" output:
@@ -49,7 +55,7 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
             }
 
             return (false, string.IsNullOrWhiteSpace(response)
-                ? "Injected hook input returned no response"
+                ? NoResponseMessage
                 : $"Injected hook input failed: {response}");
         }
         catch (OperationCanceledException ex)
