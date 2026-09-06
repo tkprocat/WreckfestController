@@ -22,6 +22,8 @@ public class SmartRestartService
     private DateTime _countdownStartTime;
     private DateTime _waitStartTime;
     private Action<Event>? _onRestartCompleteCallback = null;
+    private Action<Event, RestartOutcome>? _onFinished;
+    private long _restartId;
     private readonly object _stateLock = new();
 
     // Configuration
@@ -76,9 +78,11 @@ public class SmartRestartService
     /// <param name="event">The event to activate after restart</param>
     /// <param name="onComplete">Callback invoked after restart is complete</param>
     /// <returns>True if restart was initiated, false if already in progress</returns>
-    public bool InitiateRestart(Event @event, Action<Event> onComplete)
+    public bool InitiateRestart(Event @event, Action<Event> onComplete,
+        Action<Event, RestartOutcome>? onFinished = null)
     {
         bool startImmediately;
+        long restartId;
         lock (_stateLock)
         {
             if (_state != SmartRestartState.Idle)
@@ -97,6 +101,8 @@ public class SmartRestartService
 
             _pendingEvent = @event;
             _onRestartCompleteCallback = onComplete;
+            _onFinished = onFinished;
+            restartId = ++_restartId;
 
             // Check if any real players are online (excludes bots)
             if (!_playerTracker.HasPlayersOnline())
@@ -117,7 +123,7 @@ public class SmartRestartService
                 // Start countdown timer (fires every minute)
                 _countdownTimer = new System.Threading.Timer(
                     OnCountdownTick,
-                    null,
+                    restartId,
                     TimeSpan.Zero,
                     TimeSpan.FromMinutes(1));
 
@@ -126,7 +132,7 @@ public class SmartRestartService
         }
 
         if (startImmediately)
-            _ = Task.Run(() => ExecuteRestartAsync());
+            _ = Task.Run(() => ExecuteRestartAsync(restartId));
 
         return true;
     }
@@ -138,6 +144,8 @@ public class SmartRestartService
     {
         lock (_stateLock)
         {
+            if (state is not long restartId || restartId != _restartId)
+                return;
             if (_state == SmartRestartState.Warning && _countdownMinutesRemaining > 0)
             {
                 // Send warning message
@@ -204,7 +212,7 @@ public class SmartRestartService
                     // Start checking for lobby opportunity
                     _countdownTimer = new System.Threading.Timer(
                         OnLobbyCheckTick,
-                        null,
+                        restartId,
                         TimeSpan.Zero,
                         TimeSpan.FromSeconds(CheckIntervalSeconds));
                 }
@@ -217,10 +225,12 @@ public class SmartRestartService
     /// </summary>
     private void OnLobbyCheckTick(object? state)
     {
+        if (state is not long restartId)
+            return;
         bool shouldRestart = false;
         lock (_stateLock)
         {
-            if (_state != SmartRestartState.Pending)
+            if (restartId != _restartId || _state != SmartRestartState.Pending)
                 return;
 
             var waitDuration = DateTime.UtcNow - _waitStartTime;
@@ -252,7 +262,7 @@ public class SmartRestartService
         }
 
         if (shouldRestart)
-            _ = Task.Run(() => ExecuteRestartAsync());
+            _ = Task.Run(() => ExecuteRestartAsync(restartId));
     }
 
     /// <summary>
@@ -261,8 +271,10 @@ public class SmartRestartService
     private void OnTrackChanged(TrackChangeEvent trackChangeEvent)
     {
         bool shouldRestart = false;
+        long restartId;
         lock (_stateLock)
         {
+            restartId = _restartId;
             if (_state == SmartRestartState.Pending)
             {
                 _logger.LogInformation(
@@ -274,20 +286,20 @@ public class SmartRestartService
         }
 
         if (shouldRestart)
-            _ = Task.Run(() => ExecuteRestartAsync());
+            _ = Task.Run(() => ExecuteRestartAsync(restartId));
     }
 
     /// <summary>
     /// Executes the actual server restart and applies event configuration
     /// </summary>
-    private async Task ExecuteRestartAsync()
+    private async Task ExecuteRestartAsync(long restartId)
     {
         Event? eventToActivate;
         Action<Event>? callback;
 
         lock (_stateLock)
         {
-            if (_state == SmartRestartState.Restarting || _state == SmartRestartState.Idle)
+            if (restartId != _restartId || _state != SmartRestartState.Pending)
             {
                 _logger.LogWarning("Restart already in progress or cancelled");
                 return;
@@ -306,10 +318,11 @@ public class SmartRestartService
         if (eventToActivate == null)
         {
             _logger.LogError("No event to activate - this should not happen");
-            ResetState();
+            FinishRestart(restartId, RestartOutcome.Failed);
             return;
         }
 
+        var outcome = RestartOutcome.Failed;
         try
         {
             _logger.LogInformation(
@@ -322,7 +335,6 @@ public class SmartRestartService
             if (!restartResult.Success)
             {
                 _logger.LogError("Server restart failed: {Message}", restartResult.Message);
-                ResetState();
                 return;
             }
 
@@ -340,16 +352,16 @@ public class SmartRestartService
             }
 
             // Invoke callback
+            outcome = RestartOutcome.Succeeded;
             callback?.Invoke(eventToActivate);
-
-            // Reset state after a short delay
-            await Task.Delay(5000);
-            ResetState();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during restart execution");
-            ResetState();
+        }
+        finally
+        {
+            FinishRestart(restartId, outcome);
         }
     }
 
@@ -379,10 +391,16 @@ public class SmartRestartService
     /// <summary>
     /// Resets the service state to idle
     /// </summary>
-    private void ResetState()
+    private void FinishRestart(long restartId, RestartOutcome outcome)
     {
+        Action<Event, RestartOutcome>? finished;
+        Event? completedEvent;
         lock (_stateLock)
         {
+            if (restartId != _restartId || _state == SmartRestartState.Idle)
+                return;
+            finished = _onFinished;
+            completedEvent = _pendingEvent;
             _logger.LogDebug("Resetting smart restart service state");
 
             _countdownTimer?.Dispose();
@@ -391,7 +409,16 @@ public class SmartRestartService
             _state = SmartRestartState.Idle;
             _pendingEvent = null;
             _onRestartCompleteCallback = null;
+            _onFinished = null;
             _countdownMinutesRemaining = 0;
+        }
+
+        // Never invoke consumer callbacks under the state lock. Clear ownership
+        // first so a reentrant callback can safely initiate another restart.
+        if (completedEvent != null)
+        {
+            try { finished?.Invoke(completedEvent, outcome); }
+            catch (Exception ex) { _logger.LogError(ex, "Error reporting restart completion"); }
         }
     }
 
@@ -400,9 +427,10 @@ public class SmartRestartService
     /// </summary>
     public bool CancelRestart()
     {
+        long restartId;
         lock (_stateLock)
         {
-            if (_state == SmartRestartState.Idle || _state == SmartRestartState.Restarting)
+            if (_state != SmartRestartState.Warning && _state != SmartRestartState.Pending)
             {
                 _logger.LogWarning("Cannot cancel - no restart in progress or already restarting");
                 return false;
@@ -412,11 +440,17 @@ public class SmartRestartService
 
             _ = SendServerMessageAsync("Server restart cancelled.");
 
-            ResetState();
-            return true;
+            restartId = _restartId;
+            // Claim cancellation before releasing the lock; queued execution can
+            // no longer enter Restarting while the terminal callback is delivered.
+            _state = SmartRestartState.Completed;
         }
+        FinishRestart(restartId, RestartOutcome.Cancelled);
+        return true;
     }
 }
+
+public enum RestartOutcome { Succeeded, Failed, Cancelled }
 
 /// <summary>
 /// State of the smart restart process
