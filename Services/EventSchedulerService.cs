@@ -191,7 +191,7 @@ public class EventSchedulerService : IHostedService, IDisposable
             _logger.LogInformation("Configuration applied successfully for event {EventName}", @event.Name);
 
             // Initiate smart restart
-            var restartInitiated = _smartRestartService.InitiateRestart(@event, OnEventActivated);
+            var restartInitiated = _smartRestartService.InitiateRestart(@event, OnEventActivated, OnRestartFinished);
 
             if (!restartInitiated)
             {
@@ -306,14 +306,15 @@ public class EventSchedulerService : IHostedService, IDisposable
         {
             _logger.LogError(ex, "Error in OnEventActivated callback for event {EventName} (ID {EventId})", @event.Name, @event.Id);
         }
-        finally
+    }
+
+    private void OnRestartFinished(Event @event, RestartOutcome outcome)
+    {
+        lock (_lock)
         {
-            // Reset processing flag
-            lock (_lock)
-            {
-                _isProcessingEvent = false;
-            }
+            _isProcessingEvent = false;
         }
+        _logger.LogInformation("Restart for event {EventId} finished with {Outcome}; scheduler released", @event.Id, outcome);
     }
 
     /// <summary>
