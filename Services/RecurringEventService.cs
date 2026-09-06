@@ -158,7 +158,10 @@ public class RecurringEventService
             return false;
         }
 
-        var nextInstance = CalculateNextInstance(@event, DateTime.UtcNow);
+        // An empty server may activate during the five-minute lead-in. Advance
+        // beyond the occurrence just completed, even if its start is still future.
+        var now = DateTime.UtcNow;
+        var nextInstance = CalculateNextInstance(@event, @event.StartTime > now ? @event.StartTime : now);
         if (!nextInstance.HasValue)
         {
             _logger.LogInformation("Event {EventName} (ID {EventId}) will not recur (invalid pattern)", @event.Name, @event.Id);

@@ -172,6 +172,15 @@ public class EventStorageService
     /// <returns>True if save was successful, false otherwise</returns>
     public bool ReplaceSchedule(List<Event> events)
     {
+        var previous = LoadSchedule();
+        foreach (var evt in events)
+        {
+            var existing = previous.GetEventById(evt.Id);
+            if (existing?.StartTime == evt.StartTime)
+                evt.LastActivatedStartTime = existing.IsActive
+                    ? existing.StartTime : existing.LastActivatedStartTime;
+        }
+
         var schedule = new EventSchedule
         {
             Events = events,

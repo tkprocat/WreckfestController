@@ -88,7 +88,7 @@ public class EventSchedulerService : IHostedService, IDisposable
 
         var now = DateTime.UtcNow;
         var missedEvents = _schedule.Events
-            .Where(e => !e.IsActive && e.StartTime < now.AddMinutes(-5))
+            .Where(e => !e.IsActive && !e.IsOccurrenceCompleted && e.StartTime < now.AddMinutes(-5))
             .OrderBy(e => e.StartTime)
             .ToList();
 
