@@ -158,10 +158,11 @@ public class EventSchedule
     /// <param name="event">Event to add or update</param>
     public void AddOrUpdateEvent(Event @event)
     {
+        @event.StartTime = @event.StartTime.ToUniversalTime();
         var existingEvent = Events.FirstOrDefault(e => e.Id == @event.Id);
         if (existingEvent != null)
         {
-            if (existingEvent.StartTime == @event.StartTime)
+            if (existingEvent.StartTime.ToUniversalTime() == @event.StartTime)
                 @event.LastActivatedStartTime = existingEvent.IsActive
                     ? existingEvent.StartTime : existingEvent.LastActivatedStartTime;
             Events.Remove(existingEvent);
