@@ -14,13 +14,15 @@ public class SmartRestartService
     private readonly ConfigService _configService;
     private readonly WreckfestWebWebhookService _webhookService;
     private readonly ILogger<SmartRestartService> _logger;
+    private readonly TimeProvider _timeProvider;
 
     private SmartRestartState _state = SmartRestartState.Idle;
     private Event? _pendingEvent = null;
-    private System.Threading.Timer? _countdownTimer = null;
-    private int _countdownMinutesRemaining = 0;
+    private ITimer? _countdownTimer = null;
+    private long _countdownTimestamp;
     private DateTime _countdownStartTime;
-    private DateTime _waitStartTime;
+    private long _waitTimestamp;
+    private int _lastWarningMinutes;
     private Action<Event>? _onRestartCompleteCallback = null;
     private Action<Event, RestartOutcome>? _onFinished;
     private long _restartId;
@@ -38,7 +40,20 @@ public class SmartRestartService
         ConfigService configService,
         WreckfestWebWebhookService webhookService,
         ILogger<SmartRestartService> logger)
+        : this(serverManager, playerTracker, trackChangeTracker, configService, webhookService, logger, TimeProvider.System)
     {
+    }
+
+    public SmartRestartService(
+        ServerManager serverManager,
+        PlayerTracker playerTracker,
+        TrackChangeTracker trackChangeTracker,
+        ConfigService configService,
+        WreckfestWebWebhookService webhookService,
+        ILogger<SmartRestartService> logger,
+        TimeProvider timeProvider)
+    {
+        _timeProvider = timeProvider;
         _serverManager = serverManager;
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
@@ -109,6 +124,7 @@ public class SmartRestartService
             {
                 _logger.LogInformation("No real players online (only bots or empty) - skipping countdown and restarting immediately");
                 _state = SmartRestartState.Pending; // Set state so ExecuteRestartAsync doesn't early-return
+                _waitTimestamp = _timeProvider.GetTimestamp();
                 startImmediately = true;
             }
             else
@@ -117,15 +133,16 @@ public class SmartRestartService
                 var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
                 _logger.LogInformation("{PlayerCount} real players online - starting {Minutes}-minute countdown", onlinePlayers, CountdownMinutes);
                 _state = SmartRestartState.Warning;
-                _countdownMinutesRemaining = CountdownMinutes;
-                _countdownStartTime = DateTime.UtcNow;
+                _countdownTimestamp = _timeProvider.GetTimestamp();
+                _countdownStartTime = _timeProvider.GetUtcNow().UtcDateTime;
+                _lastWarningMinutes = CountdownMinutes + 1;
 
-                // Start countdown timer (fires every minute)
-                _countdownTimer = new System.Threading.Timer(
+                // Each callback schedules the next elapsed-time boundary.
+                _countdownTimer = _timeProvider.CreateTimer(
                     OnCountdownTick,
                     restartId,
                     TimeSpan.Zero,
-                    TimeSpan.FromMinutes(1));
+                    Timeout.InfiniteTimeSpan);
 
                 startImmediately = false;
             }
@@ -142,84 +159,68 @@ public class SmartRestartService
     /// </summary>
     private void OnCountdownTick(object? state)
     {
+        Models.ServerRestartPendingEvent notification;
+        string message;
         lock (_stateLock)
         {
-            if (state is not long restartId || restartId != _restartId)
+            if (state is not long restartId || restartId != _restartId || _state != SmartRestartState.Warning)
                 return;
-            if (_state == SmartRestartState.Warning && _countdownMinutesRemaining > 0)
+
+            // Count elapsed monotonic time, not callbacks: delayed ticks and wall
+            // clock corrections must not shorten the promised warning period.
+            var remaining = TimeSpan.FromMinutes(CountdownMinutes)
+                - _timeProvider.GetElapsedTime(_countdownTimestamp);
+            var minutesRemaining = Math.Max(0, (int)Math.Ceiling(remaining.TotalMinutes));
+            if (minutesRemaining > 0)
             {
-                // Send warning message
-                var message = _countdownMinutesRemaining == 1
+                // A slightly early tick must retry at the boundary, not wait a
+                // whole extra minute or declare the countdown finished early.
+                var untilBoundary = remaining - TimeSpan.FromMinutes(minutesRemaining - 1);
+                _countdownTimer?.Change(
+                    untilBoundary < TimeSpan.FromMilliseconds(1) ? TimeSpan.FromMilliseconds(1) : untilBoundary,
+                    Timeout.InfiniteTimeSpan);
+                if (minutesRemaining == _lastWarningMinutes)
+                    return;
+                _lastWarningMinutes = minutesRemaining;
+            }
+
+            notification = new Models.ServerRestartPendingEvent
+            {
+                MinutesRemaining = minutesRemaining,
+                EventName = _pendingEvent?.Name,
+                EventId = _pendingEvent?.Id,
+                ScheduledRestartTime = _countdownStartTime.AddMinutes(CountdownMinutes)
+            };
+
+            if (minutesRemaining > 0)
+            {
+                message = minutesRemaining == 1
                     ? "Server will restart in 1 minute."
-                    : $"Server will restart in {_countdownMinutesRemaining} minutes.";
-
-                _ = SendServerMessageAsync(message);
-
-                // Send webhook notification
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _webhookService.SendServerRestartPendingAsync(new Models.ServerRestartPendingEvent
-                        {
-                            MinutesRemaining = _countdownMinutesRemaining,
-                            EventName = _pendingEvent?.Name,
-                            EventId = _pendingEvent?.Id,
-                            ScheduledRestartTime = _countdownStartTime.AddMinutes(CountdownMinutes)
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to send server restart pending webhook");
-                    }
-                });
-
-                _countdownMinutesRemaining--;
-
-                if (_countdownMinutesRemaining == 0)
-                {
-                    // Countdown complete - move to pending state
-                    _logger.LogInformation("Countdown complete - entering pending state (waiting for lobby)");
-                    _state = SmartRestartState.Pending;
-                    _waitStartTime = DateTime.UtcNow;
-
-                    // Stop countdown timer
-                    _countdownTimer?.Dispose();
-                    _countdownTimer = null;
-
-                    // Send final message
-                    _ = SendServerMessageAsync("Server will restart at the next lobby.");
-
-                    // Send webhook notification for pending state (0 minutes)
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await _webhookService.SendServerRestartPendingAsync(new Models.ServerRestartPendingEvent
-                            {
-                                MinutesRemaining = 0,
-                                EventName = _pendingEvent?.Name,
-                                EventId = _pendingEvent?.Id,
-                                ScheduledRestartTime = DateTime.UtcNow
-                            });
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Failed to send server restart pending webhook");
-                        }
-                    });
-
-                    // Start checking for lobby opportunity
-                    _countdownTimer = new System.Threading.Timer(
-                        OnLobbyCheckTick,
-                        restartId,
-                        TimeSpan.Zero,
-                        TimeSpan.FromSeconds(CheckIntervalSeconds));
-                }
+                    : $"Server will restart in {minutesRemaining} minutes.";
+            }
+            else
+            {
+                _logger.LogInformation("Countdown complete - entering pending state (waiting for lobby)");
+                _state = SmartRestartState.Pending;
+                _waitTimestamp = _timeProvider.GetTimestamp();
+                _countdownTimer?.Dispose();
+                message = "Server will restart at the next lobby.";
+                _countdownTimer = _timeProvider.CreateTimer(
+                    OnLobbyCheckTick, restartId, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
             }
         }
+
+        // Async methods can run synchronously up to their first incomplete await.
+        // Dispatch the captured message/payload only after releasing the state lock.
+        _ = SendServerMessageAsync(message);
+        _ = SendRestartPendingNotificationAsync(notification);
     }
 
+    private async Task SendRestartPendingNotificationAsync(Models.ServerRestartPendingEvent notification)
+    {
+        try { await _webhookService.SendServerRestartPendingAsync(notification); }
+        catch (Exception ex) { _logger.LogError(ex, "Failed to send server restart pending webhook"); }
+    }
     /// <summary>
     /// Callback for lobby check timer ticks
     /// </summary>
@@ -228,18 +229,19 @@ public class SmartRestartService
         if (state is not long restartId)
             return;
         bool shouldRestart = false;
+        bool timedOut = false;
         lock (_stateLock)
         {
             if (restartId != _restartId || _state != SmartRestartState.Pending)
                 return;
 
-            var waitDuration = DateTime.UtcNow - _waitStartTime;
+            var waitDuration = _timeProvider.GetElapsedTime(_waitTimestamp);
             if (waitDuration.TotalMinutes >= MaxWaitMinutes)
             {
                 _logger.LogWarning(
                     "Max wait time ({Minutes} minutes) exceeded - forcing restart",
                     MaxWaitMinutes);
-                _ = SendServerMessageAsync("Server restarting now (timeout).");
+                timedOut = true;
                 shouldRestart = true;
             }
             else
@@ -252,6 +254,12 @@ public class SmartRestartService
                 }
                 else
                 {
+                    var remaining = TimeSpan.FromMinutes(MaxWaitMinutes) - waitDuration;
+                    var untilCheck = remaining < TimeSpan.FromSeconds(CheckIntervalSeconds)
+                        ? remaining : TimeSpan.FromSeconds(CheckIntervalSeconds);
+                    _countdownTimer?.Change(
+                        untilCheck < TimeSpan.FromMilliseconds(1) ? TimeSpan.FromMilliseconds(1) : untilCheck,
+                        Timeout.InfiniteTimeSpan);
                     _logger.LogDebug(
                         "Still waiting for lobby. {OnlinePlayers} players online. Waited {Minutes:F1} of {MaxMinutes} minutes.",
                         onlinePlayers,
@@ -261,6 +269,8 @@ public class SmartRestartService
             }
         }
 
+        if (timedOut)
+            _ = SendServerMessageAsync("Server restarting now (timeout).");
         if (shouldRestart)
             _ = Task.Run(() => ExecuteRestartAsync(restartId));
     }
@@ -410,7 +420,6 @@ public class SmartRestartService
             _pendingEvent = null;
             _onRestartCompleteCallback = null;
             _onFinished = null;
-            _countdownMinutesRemaining = 0;
         }
 
         // Never invoke consumer callbacks under the state lock. Clear ownership
