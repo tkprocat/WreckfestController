@@ -28,7 +28,7 @@ public class EventSchedule
     {
         var now = DateTime.UtcNow;
         return Events
-            .Where(e => !e.IsActive && e.StartTime > now)
+            .Where(e => !e.IsActive && !e.IsOccurrenceCompleted && e.StartTime > now)
             .OrderBy(e => e.StartTime)
             .ToList();
     }
@@ -43,7 +43,7 @@ public class EventSchedule
         var now = DateTime.UtcNow;
         var activationThreshold = now.AddMinutes(5); // Activate 5 minutes early for countdown
         return Events
-            .Where(e => !e.IsActive && e.StartTime <= activationThreshold)
+            .Where(e => !e.IsActive && !e.IsOccurrenceCompleted && e.StartTime <= activationThreshold)
             .OrderBy(e => e.StartTime)
             .ToList();
     }
@@ -65,7 +65,7 @@ public class EventSchedule
     {
         var now = DateTime.UtcNow;
         return Events
-            .Where(e => !e.IsActive && e.StartTime <= now)
+            .Where(e => !e.IsActive && !e.IsOccurrenceCompleted && e.StartTime <= now)
             .OrderBy(e => e.StartTime)
             .FirstOrDefault();
     }
@@ -78,7 +78,7 @@ public class EventSchedule
     {
         var now = DateTime.UtcNow;
         return Events
-            .Where(e => !e.IsActive && e.StartTime > now)
+            .Where(e => !e.IsActive && !e.IsOccurrenceCompleted && e.StartTime > now)
             .OrderBy(e => e.StartTime)
             .FirstOrDefault();
     }
@@ -109,11 +109,14 @@ public class EventSchedule
         // Deactivate all other events
         foreach (var evt in Events)
         {
+            if (evt.IsActive)
+                evt.LastActivatedStartTime = evt.StartTime;
             evt.IsActive = false;
         }
 
         // Activate the target event
         eventToActivate.IsActive = true;
+        eventToActivate.LastActivatedStartTime = eventToActivate.StartTime;
         return true;
     }
 
@@ -124,6 +127,8 @@ public class EventSchedule
     {
         foreach (var evt in Events)
         {
+            if (evt.IsActive)
+                evt.LastActivatedStartTime = evt.StartTime;
             evt.IsActive = false;
         }
     }
@@ -156,6 +161,9 @@ public class EventSchedule
         var existingEvent = Events.FirstOrDefault(e => e.Id == @event.Id);
         if (existingEvent != null)
         {
+            if (existingEvent.StartTime == @event.StartTime)
+                @event.LastActivatedStartTime = existingEvent.IsActive
+                    ? existingEvent.StartTime : existingEvent.LastActivatedStartTime;
             Events.Remove(existingEvent);
         }
         Events.Add(@event);
@@ -189,8 +197,8 @@ public class EventSchedule
         return (
             Total: Events.Count,
             Active: Events.Count(e => e.IsActive),
-            Upcoming: Events.Count(e => !e.IsActive && e.StartTime > activationThreshold),
-            Due: Events.Count(e => !e.IsActive && e.StartTime <= activationThreshold)
+            Upcoming: Events.Count(e => !e.IsActive && !e.IsOccurrenceCompleted && e.StartTime > activationThreshold),
+            Due: Events.Count(e => !e.IsActive && !e.IsOccurrenceCompleted && e.StartTime <= activationThreshold)
         );
     }
 }

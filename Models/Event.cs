@@ -38,6 +38,13 @@ public class Event
     [JsonPropertyName("isActive")]
     public bool IsActive { get; set; }
 
+    /// <summary>The scheduled occurrence most recently activated, retained after deactivation.</summary>
+    [JsonPropertyName("lastActivatedStartTime")]
+    public DateTime? LastActivatedStartTime { get; set; }
+
+    [JsonIgnore]
+    public bool IsOccurrenceCompleted => LastActivatedStartTime == StartTime;
+
     /// <summary>
     /// Server configuration overrides to apply when event activates.
     /// Only populated fields will be applied; null/default values are ignored.
