@@ -14,11 +14,12 @@ public class SmartRestartService
     private readonly ConfigService _configService;
     private readonly WreckfestWebWebhookService _webhookService;
     private readonly ILogger<SmartRestartService> _logger;
+    private readonly TimeProvider _timeProvider;
 
     private SmartRestartState _state = SmartRestartState.Idle;
     private Event? _pendingEvent = null;
-    private System.Threading.Timer? _countdownTimer = null;
-    private int _countdownMinutesRemaining = 0;
+    private ITimer? _countdownTimer = null;
+    private long _countdownTimestamp;
     private DateTime _countdownStartTime;
     private DateTime _waitStartTime;
     private Action<Event>? _onRestartCompleteCallback = null;
@@ -38,7 +39,20 @@ public class SmartRestartService
         ConfigService configService,
         WreckfestWebWebhookService webhookService,
         ILogger<SmartRestartService> logger)
+        : this(serverManager, playerTracker, trackChangeTracker, configService, webhookService, logger, TimeProvider.System)
     {
+    }
+
+    public SmartRestartService(
+        ServerManager serverManager,
+        PlayerTracker playerTracker,
+        TrackChangeTracker trackChangeTracker,
+        ConfigService configService,
+        WreckfestWebWebhookService webhookService,
+        ILogger<SmartRestartService> logger,
+        TimeProvider timeProvider)
+    {
+        _timeProvider = timeProvider;
         _serverManager = serverManager;
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
@@ -117,11 +131,11 @@ public class SmartRestartService
                 var (onlinePlayers, _) = _playerTracker.GetPlayerCount();
                 _logger.LogInformation("{PlayerCount} real players online - starting {Minutes}-minute countdown", onlinePlayers, CountdownMinutes);
                 _state = SmartRestartState.Warning;
-                _countdownMinutesRemaining = CountdownMinutes;
-                _countdownStartTime = DateTime.UtcNow;
+                _countdownTimestamp = _timeProvider.GetTimestamp();
+                _countdownStartTime = _timeProvider.GetUtcNow().UtcDateTime;
 
                 // Start countdown timer (fires every minute)
-                _countdownTimer = new System.Threading.Timer(
+                _countdownTimer = _timeProvider.CreateTimer(
                     OnCountdownTick,
                     restartId,
                     TimeSpan.Zero,
@@ -144,82 +158,49 @@ public class SmartRestartService
     {
         lock (_stateLock)
         {
-            if (state is not long restartId || restartId != _restartId)
+            if (state is not long restartId || restartId != _restartId || _state != SmartRestartState.Warning)
                 return;
-            if (_state == SmartRestartState.Warning && _countdownMinutesRemaining > 0)
+
+            // Count elapsed monotonic time, not callbacks: delayed ticks and wall
+            // clock corrections must not shorten the promised warning period.
+            var remaining = TimeSpan.FromMinutes(CountdownMinutes)
+                - _timeProvider.GetElapsedTime(_countdownTimestamp);
+            var minutesRemaining = Math.Max(0, (int)Math.Ceiling(remaining.TotalMinutes));
+            var notification = new Models.ServerRestartPendingEvent
             {
-                // Send warning message
-                var message = _countdownMinutesRemaining == 1
+                MinutesRemaining = minutesRemaining,
+                EventName = _pendingEvent?.Name,
+                EventId = _pendingEvent?.Id,
+                ScheduledRestartTime = _countdownStartTime.AddMinutes(CountdownMinutes)
+            };
+
+            if (minutesRemaining > 0)
+            {
+                var message = minutesRemaining == 1
                     ? "Server will restart in 1 minute."
-                    : $"Server will restart in {_countdownMinutesRemaining} minutes.";
-
+                    : $"Server will restart in {minutesRemaining} minutes.";
                 _ = SendServerMessageAsync(message);
-
-                // Send webhook notification
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await _webhookService.SendServerRestartPendingAsync(new Models.ServerRestartPendingEvent
-                        {
-                            MinutesRemaining = _countdownMinutesRemaining,
-                            EventName = _pendingEvent?.Name,
-                            EventId = _pendingEvent?.Id,
-                            ScheduledRestartTime = _countdownStartTime.AddMinutes(CountdownMinutes)
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Failed to send server restart pending webhook");
-                    }
-                });
-
-                _countdownMinutesRemaining--;
-
-                if (_countdownMinutesRemaining == 0)
-                {
-                    // Countdown complete - move to pending state
-                    _logger.LogInformation("Countdown complete - entering pending state (waiting for lobby)");
-                    _state = SmartRestartState.Pending;
-                    _waitStartTime = DateTime.UtcNow;
-
-                    // Stop countdown timer
-                    _countdownTimer?.Dispose();
-                    _countdownTimer = null;
-
-                    // Send final message
-                    _ = SendServerMessageAsync("Server will restart at the next lobby.");
-
-                    // Send webhook notification for pending state (0 minutes)
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await _webhookService.SendServerRestartPendingAsync(new Models.ServerRestartPendingEvent
-                            {
-                                MinutesRemaining = 0,
-                                EventName = _pendingEvent?.Name,
-                                EventId = _pendingEvent?.Id,
-                                ScheduledRestartTime = DateTime.UtcNow
-                            });
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Failed to send server restart pending webhook");
-                        }
-                    });
-
-                    // Start checking for lobby opportunity
-                    _countdownTimer = new System.Threading.Timer(
-                        OnLobbyCheckTick,
-                        restartId,
-                        TimeSpan.Zero,
-                        TimeSpan.FromSeconds(CheckIntervalSeconds));
-                }
+                _ = SendRestartPendingNotificationAsync(notification);
+                return;
             }
+
+            _logger.LogInformation("Countdown complete - entering pending state (waiting for lobby)");
+            _state = SmartRestartState.Pending;
+            _waitStartTime = DateTime.UtcNow;
+            _countdownTimer?.Dispose();
+            _countdownTimer = null;
+            _ = SendServerMessageAsync("Server will restart at the next lobby.");
+            _ = SendRestartPendingNotificationAsync(notification);
+            _countdownTimer = _timeProvider.CreateTimer(
+                OnLobbyCheckTick, restartId, TimeSpan.Zero, TimeSpan.FromSeconds(CheckIntervalSeconds));
         }
     }
 
+    private async Task SendRestartPendingNotificationAsync(Models.ServerRestartPendingEvent notification)
+    {
+        try { await _webhookService.SendServerRestartPendingAsync(notification); }
+        catch (Exception ex) { _logger.LogError(ex, "Failed to send server restart pending webhook"); }
+    }
     /// <summary>
     /// Callback for lobby check timer ticks
     /// </summary>
@@ -410,7 +391,6 @@ public class SmartRestartService
             _pendingEvent = null;
             _onRestartCompleteCallback = null;
             _onFinished = null;
-            _countdownMinutesRemaining = 0;
         }
 
         // Never invoke consumer callbacks under the state lock. Clear ownership
