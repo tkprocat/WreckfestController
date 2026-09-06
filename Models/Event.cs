@@ -43,7 +43,7 @@ public class Event
     public DateTime? LastActivatedStartTime { get; set; }
 
     [JsonIgnore]
-    public bool IsOccurrenceCompleted => LastActivatedStartTime == StartTime;
+    public bool IsOccurrenceCompleted => LastActivatedStartTime?.ToUniversalTime() == StartTime.ToUniversalTime();
 
     /// <summary>
     /// Server configuration overrides to apply when event activates.

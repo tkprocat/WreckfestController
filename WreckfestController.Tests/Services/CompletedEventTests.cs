@@ -33,8 +33,10 @@ public class CompletedEventTests
         Assert.Empty(schedule.GetDueEvents());
     }
 
-    [Fact]
-    public void CompletionSurvivesStorageAndScheduleReplacementButNewOccurrenceCanRun()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void CompletionSurvivesStorageAndScheduleReplacementButNewOccurrenceCanRun(bool useLocalTime)
     {
         var path = Path.Combine(Path.GetTempPath(), $"schedule-{Guid.NewGuid()}.json");
         var config = new ConfigurationBuilder().AddInMemoryCollection(
@@ -47,10 +49,11 @@ public class CompletedEventTests
             schedule.ActivateEvent(1);
             schedule.DeactivateAllEvents();
             Assert.True(storage.SaveSchedule(schedule));
-            Assert.True(storage.ReplaceSchedule([new Event { Id = 1, StartTime = start }]));
+            var refreshedStart = useLocalTime ? start.ToLocalTime() : start;
+            Assert.True(storage.ReplaceSchedule([new Event { Id = 1, StartTime = refreshedStart }]));
             var loaded = storage.LoadSchedule();
             Assert.Empty(loaded.GetDueEvents());
-            loaded.AddOrUpdateEvent(new Event { Id = 1, StartTime = start });
+            loaded.AddOrUpdateEvent(new Event { Id = 1, StartTime = refreshedStart });
             Assert.Empty(loaded.GetDueEvents());
             loaded.UpdateEventStartTime(1, start.AddMinutes(30));
             Assert.Single(loaded.GetDueEvents());

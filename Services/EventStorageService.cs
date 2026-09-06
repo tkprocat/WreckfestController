@@ -175,6 +175,8 @@ public class EventStorageService
         var previous = LoadSchedule();
         foreach (var evt in events)
         {
+            // Match the same instant even when an API request uses a local offset.
+            evt.StartTime = evt.StartTime.ToUniversalTime();
             var existing = previous.GetEventById(evt.Id);
             if (existing?.StartTime == evt.StartTime)
                 evt.LastActivatedStartTime = existing.IsActive
