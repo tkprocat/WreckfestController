@@ -34,8 +34,9 @@ public class RestartCountdownTests : IDisposable
             _messages.Add(command);
             return Task.FromResult((true, "Sent"));
         });
-        _restart = new SmartRestartService(_server.Object, players, tracks,
-            new ConfigService(settings, Mock.Of<ILogger<ConfigService>>()), webhook,
+        var config = new Mock<ConfigService>(settings, Mock.Of<ILogger<ConfigService>>());
+        config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig());
+        _restart = new SmartRestartService(_server.Object, players, tracks, config.Object, webhook,
             Mock.Of<ILogger<SmartRestartService>>(), _clock);
         Assert.True(_restart.InitiateRestart(new Event { Id = 7, Name = "Test event" }, _ => { }));
     }
