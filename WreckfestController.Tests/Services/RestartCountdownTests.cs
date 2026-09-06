@@ -67,16 +67,106 @@ public class RestartCountdownTests : IDisposable
     public async Task DelayedAndRepeatedTicksUseElapsedTime()
     {
         _clock.Elapsed = TimeSpan.FromMinutes(4.5);
+        _clock.Timer!.Fire();
+        Assert.Equal(1, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
         for (var i = 0; i < 3; i++)
         {
             _clock.Timer!.Fire();
-            Assert.Equal(1, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
+            Assert.False(_http.HasPendingPayload());
+            Assert.Single(_messages);
             Assert.Equal(SmartRestartState.Warning, _restart.GetState());
         }
         _clock.Elapsed = TimeSpan.FromMinutes(5.5);
         _clock.Timer!.Fire();
         Assert.Equal(0, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
         Assert.Equal(SmartRestartState.Pending, _restart.GetState());
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(4)]
+    [InlineData(5)]
+    public async Task EarlyTickRechecksBoundaryWithoutRepeatingWarningOrFinishingEarly(int minute)
+    {
+        _clock.Elapsed = TimeSpan.FromMinutes(minute - 1);
+        _clock.Timer!.Fire();
+        Assert.Equal(6 - minute, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
+
+        _clock.Elapsed = TimeSpan.FromMinutes(minute) - TimeSpan.FromMilliseconds(2);
+        _clock.Timer.Fire();
+        Assert.Equal(SmartRestartState.Warning, _restart.GetState());
+        Assert.Single(_messages);
+        Assert.False(_http.HasPendingPayload());
+        Assert.Equal(TimeSpan.FromMilliseconds(2), _clock.Timer.DueTime);
+        Assert.Equal(Timeout.InfiniteTimeSpan, _clock.Timer.Period);
+
+        _clock.Elapsed += _clock.Timer.DueTime;
+        _clock.Timer.Fire();
+        Assert.Equal(5 - minute, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
+        Assert.Equal(minute == 5 ? SmartRestartState.Pending : SmartRestartState.Warning, _restart.GetState());
+        Assert.Equal(2, _messages.Count);
+    }
+
+    [Theory]
+    [InlineData(-2)]
+    [InlineData(2)]
+    public async Task PendingTimeoutUsesTenElapsedMinutesDespiteWallClockChanges(int hours)
+    {
+        var restarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _server.Setup(s => s.RestartServerViaCommandAsync()).Returns(() => {
+            restarted.TrySetResult();
+            return Task.FromResult((false, "Test finished"));
+        });
+        _clock.Elapsed = TimeSpan.FromMinutes(5);
+        _clock.Timer!.Fire();
+        await _http.Next();
+
+        _clock.WallClockAdjustment = TimeSpan.FromHours(hours);
+        _clock.Timer.Fire();
+        Assert.Equal(SmartRestartState.Pending, _restart.GetState());
+        Assert.Equal(TimeSpan.FromSeconds(30), _clock.Timer.DueTime);
+        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+
+        _clock.Elapsed = TimeSpan.FromMinutes(15) - TimeSpan.FromMilliseconds(2);
+        _clock.Timer.Fire();
+        Assert.Equal(SmartRestartState.Pending, _restart.GetState());
+        Assert.Equal(TimeSpan.FromMilliseconds(2), _clock.Timer.DueTime);
+        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+
+        _clock.Elapsed += _clock.Timer.DueTime;
+        _clock.Timer.Fire();
+        await restarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Once);
+        Assert.Contains("/message Server restarting now (timeout).", _messages);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(5)]
+    public async Task SynchronouslyBlockedWebhookDoesNotHoldStateLock(int minute)
+    {
+        using var release = new ManualResetEventSlim();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _http.BeforePendingSend = () => {
+            entered.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(10)))
+                throw new TimeoutException("Test webhook was not released");
+        };
+        _clock.Elapsed = TimeSpan.FromMinutes(minute);
+        var tick = Task.Run(() => _clock.Timer!.Fire(), TestContext.Current.CancellationToken);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            var state = await Task.Run(() => _restart.GetState(), TestContext.Current.CancellationToken)
+                .WaitAsync(TimeSpan.FromSeconds(2), TestContext.Current.CancellationToken);
+            Assert.Equal(minute == 0 ? SmartRestartState.Warning : SmartRestartState.Pending, state);
+        }
+        finally
+        {
+            release.Set();
+            await tick.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        }
+        Assert.Equal(5 - minute, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
     }
 
     [Theory]
@@ -106,14 +196,22 @@ public class RestartCountdownTests : IDisposable
         public override long GetTimestamp() => Elapsed.Ticks;
         public override DateTimeOffset GetUtcNow() => new DateTimeOffset(2026, 9, 6, 12, 0, 0, TimeSpan.Zero) + Elapsed + WallClockAdjustment;
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
-            => Timer = new ManualTimer(callback, state);
+            => Timer = new ManualTimer(callback, state, dueTime, period);
     }
 
-    private sealed class ManualTimer(TimerCallback callback, object? state) : ITimer
+    private sealed class ManualTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) : ITimer
     {
         private bool _disposed;
+        public TimeSpan DueTime { get; private set; } = dueTime;
+        public TimeSpan Period { get; private set; } = period;
         public void Fire() { if (!_disposed) callback(state); }
-        public bool Change(TimeSpan dueTime, TimeSpan period) => !_disposed;
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            if (_disposed) return false;
+            DueTime = dueTime;
+            Period = period;
+            return true;
+        }
         public void Dispose() => _disposed = true;
         public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
     }
@@ -121,10 +219,13 @@ public class RestartCountdownTests : IDisposable
     private sealed class CaptureHandler : HttpMessageHandler
     {
         private readonly Channel<JsonElement> _payloads = Channel.CreateUnbounded<JsonElement>();
+        public Action? BeforePendingSend { get; set; }
+        public bool HasPendingPayload() => _payloads.Reader.TryPeek(out _);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri!.AbsolutePath.EndsWith("server-restart-pending"))
             {
+                BeforePendingSend?.Invoke();
                 using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
                 _payloads.Writer.TryWrite(json.RootElement.Clone());
             }
