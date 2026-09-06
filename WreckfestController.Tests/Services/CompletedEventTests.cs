@@ -34,9 +34,10 @@ public class CompletedEventTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void CompletionSurvivesStorageAndScheduleReplacementButNewOccurrenceCanRun(bool useLocalTime)
+    [InlineData(DateTimeKind.Utc)]
+    [InlineData(DateTimeKind.Local)]
+    [InlineData(DateTimeKind.Unspecified)]
+    public void CompletionSurvivesStorageAndScheduleReplacementButNewOccurrenceCanRun(DateTimeKind refreshKind)
     {
         var path = Path.Combine(Path.GetTempPath(), $"schedule-{Guid.NewGuid()}.json");
         var config = new ConfigurationBuilder().AddInMemoryCollection(
@@ -49,9 +50,18 @@ public class CompletedEventTests
             schedule.ActivateEvent(1);
             schedule.DeactivateAllEvents();
             Assert.True(storage.SaveSchedule(schedule));
-            var refreshedStart = useLocalTime ? start.ToLocalTime() : start;
+            var refreshedStart = refreshKind switch
+            {
+                DateTimeKind.Local => start.ToLocalTime(),
+                DateTimeKind.Unspecified => DateTime.SpecifyKind(start, DateTimeKind.Unspecified),
+                _ => start
+            };
+            Assert.Equal(refreshKind, refreshedStart.Kind);
             Assert.True(storage.ReplaceSchedule([new Event { Id = 1, StartTime = refreshedStart }]));
             var loaded = storage.LoadSchedule();
+            // A refresh must not move the occurrence. An unzoned timestamp is already a
+            // UTC instant here, so normalizing it must not shift it by the local offset.
+            Assert.Equal(start, loaded.GetEventById(1)!.StartTime);
             Assert.Empty(loaded.GetDueEvents());
             loaded.AddOrUpdateEvent(new Event { Id = 1, StartTime = refreshedStart });
             Assert.Empty(loaded.GetDueEvents());

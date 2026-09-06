@@ -147,7 +147,7 @@ public class EventSchedule
             return false;
         }
 
-        evt.StartTime = newStartTime;
+        evt.StartTime = Event.AsUtcInstant(newStartTime);
         evt.IsActive = false; // Reset active status for next occurrence
         return true;
     }
@@ -158,13 +158,13 @@ public class EventSchedule
     /// <param name="event">Event to add or update</param>
     public void AddOrUpdateEvent(Event @event)
     {
-        @event.StartTime = @event.StartTime.ToUniversalTime();
+        @event.StartTime = Event.AsUtcInstant(@event.StartTime);
         var existingEvent = Events.FirstOrDefault(e => e.Id == @event.Id);
         if (existingEvent != null)
         {
-            if (existingEvent.StartTime.ToUniversalTime() == @event.StartTime)
+            if (Event.AsUtcInstant(existingEvent.StartTime) == @event.StartTime)
                 @event.LastActivatedStartTime = existingEvent.IsActive
-                    ? existingEvent.StartTime : existingEvent.LastActivatedStartTime;
+                    ? @event.StartTime : existingEvent.LastActivatedStartTime;
             Events.Remove(existingEvent);
         }
         Events.Add(@event);
