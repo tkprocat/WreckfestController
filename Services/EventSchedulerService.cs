@@ -12,7 +12,6 @@ public class EventSchedulerService : IHostedService, IDisposable
     private readonly EventStorageService _storageService;
     private readonly SmartRestartService _smartRestartService;
     private readonly RecurringEventService _recurringEventService;
-    private readonly ConfigService _configService;
     private readonly WreckfestWebWebhookService _webhookService;
     private readonly ILogger<EventSchedulerService> _logger;
 
@@ -35,7 +34,6 @@ public class EventSchedulerService : IHostedService, IDisposable
         _storageService = storageService;
         _smartRestartService = smartRestartService;
         _recurringEventService = recurringEventService;
-        _configService = configService;
         _webhookService = webhookService;
         _logger = logger;
     }
@@ -161,34 +159,18 @@ public class EventSchedulerService : IHostedService, IDisposable
             _isProcessingEvent = true;
 
             // Activate event asynchronously
-            _ = Task.Run(() => ActivateEventAsync(eventToActivate));
+            _ = Task.Run(() => ActivateEvent(eventToActivate));
         }
     }
 
     /// <summary>
     /// Activates an event by applying configuration and initiating smart restart
     /// </summary>
-    private async Task ActivateEventAsync(Event @event)
+    private void ActivateEvent(Event @event)
     {
         try
         {
             _logger.LogInformation("Beginning activation for event: {EventName} (ID {EventId})", @event.Name, @event.Id);
-
-            // Apply event configuration before initiating restart
-            var configApplied = await ApplyEventConfigurationAsync(@event);
-            if (!configApplied)
-            {
-                _logger.LogError("Failed to apply event configuration for {EventName} (ID {EventId}) - aborting activation", @event.Name, @event.Id);
-
-                lock (_lock)
-                {
-                    _isProcessingEvent = false;
-                }
-
-                return;
-            }
-
-            _logger.LogInformation("Configuration applied successfully for event {EventName}", @event.Name);
 
             // Initiate smart restart
             var restartInitiated = _smartRestartService.InitiateRestart(@event, OnEventActivated, OnRestartFinished);
@@ -340,75 +322,6 @@ public class EventSchedulerService : IHostedService, IDisposable
             _logger.LogInformation("Manually reloading schedule from disk");
             _schedule = _storageService.LoadSchedule();
             _logger.LogInformation("Reloaded schedule with {Count} events", _schedule?.Events.Count ?? 0);
-        }
-    }
-
-    /// <summary>
-    /// Applies the event's server configuration (tracks and server settings)
-    /// </summary>
-    private async Task<bool> ApplyEventConfigurationAsync(Event @event)
-    {
-        try
-        {
-            _logger.LogInformation("Applying configuration for event: {EventName}", @event.Name);
-
-            // Read current config
-            var currentConfig = _configService.ReadBasicConfig();
-
-            // Apply server config overrides if present
-            if (@event.ServerConfig != null)
-            {
-                var eventConfig = @event.ServerConfig;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.ServerName))
-                    currentConfig.ServerName = eventConfig.ServerName;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.WelcomeMessage))
-                    currentConfig.WelcomeMessage = eventConfig.WelcomeMessage;
-
-                if (eventConfig.Password != null)
-                    currentConfig.Password = eventConfig.Password;
-
-                if (eventConfig.MaxPlayers.HasValue)
-                    currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value;
-
-                if (eventConfig.Bots.HasValue)
-                    currentConfig.Bots = eventConfig.Bots.Value;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.AiDifficulty))
-                    currentConfig.AiDifficulty = eventConfig.AiDifficulty;
-
-                if (eventConfig.Laps.HasValue)
-                    currentConfig.Laps = eventConfig.Laps.Value;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.VehicleDamage))
-                    currentConfig.VehicleDamage = eventConfig.VehicleDamage;
-
-                if (eventConfig.LobbyCountdown.HasValue)
-                    currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value;
-
-                // Write updated config
-                _configService.WriteBasicConfig(currentConfig);
-                _logger.LogInformation("Server configuration updated");
-            }
-
-            // Apply track rotation if present
-            if (@event.Tracks != null && @event.Tracks.Count > 0)
-            {
-                var collectionName = string.IsNullOrWhiteSpace(@event.CollectionName)
-                    ? $"Event: {@event.Name}"
-                    : @event.CollectionName;
-
-                _configService.WriteEventLoopTracks(collectionName, @event.Tracks);
-                _logger.LogInformation("Track rotation updated with {Count} tracks", @event.Tracks.Count);
-            }
-
-            return await Task.FromResult(true);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error applying event configuration");
-            return false;
         }
     }
 

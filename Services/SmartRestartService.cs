@@ -114,6 +114,10 @@ public class SmartRestartService
                 @event.Name,
                 @event.Id);
 
+            // Both manual and scheduled activation must finish configuration writes
+            // before a restart is accepted. A failure propagates to the caller.
+            ApplyEventConfiguration(@event);
+
             _pendingEvent = @event;
             _onRestartCompleteCallback = onComplete;
             _onFinished = onFinished;
@@ -395,6 +399,75 @@ public class SmartRestartService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error sending server message");
+        }
+    }
+
+    /// <summary>
+    /// Applies the event's server configuration (tracks and server settings)
+    /// </summary>
+    private void ApplyEventConfiguration(Event @event)
+    {
+        try
+        {
+            _logger.LogInformation("Applying configuration for event: {EventName}", @event.Name);
+
+            // Read current config
+            var currentConfig = _configService.ReadBasicConfig();
+
+            // Apply server config overrides if present
+            if (@event.ServerConfig != null)
+            {
+                var eventConfig = @event.ServerConfig;
+
+                if (!string.IsNullOrWhiteSpace(eventConfig.ServerName))
+                    currentConfig.ServerName = eventConfig.ServerName;
+
+                if (!string.IsNullOrWhiteSpace(eventConfig.WelcomeMessage))
+                    currentConfig.WelcomeMessage = eventConfig.WelcomeMessage;
+
+                if (eventConfig.Password != null)
+                    currentConfig.Password = eventConfig.Password;
+
+                if (eventConfig.MaxPlayers.HasValue)
+                    currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value;
+
+                if (eventConfig.Bots.HasValue)
+                    currentConfig.Bots = eventConfig.Bots.Value;
+
+                if (!string.IsNullOrWhiteSpace(eventConfig.AiDifficulty))
+                    currentConfig.AiDifficulty = eventConfig.AiDifficulty;
+
+                if (eventConfig.Laps.HasValue)
+                    currentConfig.Laps = eventConfig.Laps.Value;
+
+                if (!string.IsNullOrWhiteSpace(eventConfig.VehicleDamage))
+                    currentConfig.VehicleDamage = eventConfig.VehicleDamage;
+
+                if (eventConfig.LobbyCountdown.HasValue)
+                    currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value;
+
+                // Write updated config
+                _configService.WriteBasicConfig(currentConfig);
+                _logger.LogInformation("Server configuration updated");
+            }
+
+            // Apply track rotation if present
+            if (@event.Tracks != null && @event.Tracks.Count > 0)
+            {
+                var collectionName = string.IsNullOrWhiteSpace(@event.CollectionName)
+                    ? $"Event: {@event.Name}"
+                    : @event.CollectionName;
+
+                _configService.WriteEventLoopTracks(collectionName, @event.Tracks);
+                _logger.LogInformation("Track rotation updated with {Count} tracks", @event.Tracks.Count);
+            }
+
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error applying event configuration");
+            throw;
         }
     }
 
