@@ -11,7 +11,6 @@ public partial class EventSchedulerTab : UserControl
 {
     private readonly EventStorageService _eventStorage;
     private readonly SmartRestartService _smartRestartService;
-    private readonly ConfigService _configService;
     private readonly WreckfestWebWebhookService _webhookService;
     private readonly ILogger<EventSchedulerTab> _logger;
     private readonly ObservableCollection<EventViewModel> _events = new();
@@ -20,7 +19,6 @@ public partial class EventSchedulerTab : UserControl
     public EventSchedulerTab(
         EventStorageService eventStorage,
         SmartRestartService smartRestartService,
-        ConfigService configService,
         WreckfestWebWebhookService webhookService,
         ILogger<EventSchedulerTab> logger)
     {
@@ -28,7 +26,6 @@ public partial class EventSchedulerTab : UserControl
 
         _eventStorage = eventStorage;
         _smartRestartService = smartRestartService;
-        _configService = configService;
         _webhookService = webhookService;
         _logger = logger;
 
@@ -148,7 +145,8 @@ public partial class EventSchedulerTab : UserControl
 
     private async void OnActivateClicked(object sender, RoutedEventArgs e)
     {
-        if (_selectedEvent == null)
+        var eventToActivate = _selectedEvent;
+        if (eventToActivate == null)
             return;
 
         try
@@ -166,7 +164,7 @@ public partial class EventSchedulerTab : UserControl
             // Confirm with user
             var result = await DialogService.ShowConfirmationAsync(
                 $"This will initiate a smart restart to activate event:\n\n" +
-                $"'{_selectedEvent.Name}'\n\n" +
+                $"'{eventToActivate.Name}'\n\n" +
                 $"The server will send countdown warnings to players and restart at the next lobby.\n\n" +
                 $"Continue?",
                 "Confirm Event Activation");
@@ -174,22 +172,21 @@ public partial class EventSchedulerTab : UserControl
             if (!result)
                 return;
 
-            _logger.LogInformation("Manually activating event: {EventName} (ID: {EventId})", _selectedEvent.Name, _selectedEvent.Id);
+            _logger.LogInformation("Manually activating event: {EventName} (ID: {EventId})", eventToActivate.Name, eventToActivate.Id);
 
             // Disable button during activation
             ActivateButton.IsEnabled = false;
 
-            // Apply event configuration BEFORE initiating restart
-            var configApplied = ApplyEventConfiguration(_selectedEvent);
-            if (!configApplied)
+            // The shared entry point checks idle state before writing configuration.
+            // Another request may have started a restart while confirmation was open.
+            var restartInitiated = _smartRestartService.InitiateRestart(eventToActivate, OnEventActivated);
+            if (!restartInitiated)
             {
-                await DialogService.ShowErrorAsync("Failed to apply event configuration. Check logs for details.");
-                ActivateButton.IsEnabled = true;
+                await DialogService.ShowWarningAsync(
+                    "A server restart is already in progress. Please wait for it to complete.",
+                    "Cannot Activate");
                 return;
             }
-
-            // Initiate smart restart for this event
-            _smartRestartService.InitiateRestart(_selectedEvent, OnEventActivated);
 
             await DialogService.ShowSuccessAsync(
                 $"Event activation initiated!\n\n" +
@@ -203,76 +200,10 @@ public partial class EventSchedulerTab : UserControl
         {
             _logger.LogError(ex, "Error activating event");
             await DialogService.ShowErrorAsync($"Failed to activate event: {ex.Message}");
-            ActivateButton.IsEnabled = true;
         }
-    }
-
-    /// <summary>
-    /// Applies the event's server configuration (tracks and server settings)
-    /// </summary>
-    private bool ApplyEventConfiguration(Event @event)
-    {
-        try
+        finally
         {
-            _logger.LogInformation("Applying configuration for event: {EventName}", @event.Name);
-
-            // Read current config
-            var currentConfig = _configService.ReadBasicConfig();
-
-            // Apply server config overrides if present
-            if (@event.ServerConfig != null)
-            {
-                var eventConfig = @event.ServerConfig;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.ServerName))
-                    currentConfig.ServerName = eventConfig.ServerName;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.WelcomeMessage))
-                    currentConfig.WelcomeMessage = eventConfig.WelcomeMessage;
-
-                if (eventConfig.Password != null)
-                    currentConfig.Password = eventConfig.Password;
-
-                if (eventConfig.MaxPlayers.HasValue)
-                    currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value;
-
-                if (eventConfig.Bots.HasValue)
-                    currentConfig.Bots = eventConfig.Bots.Value;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.AiDifficulty))
-                    currentConfig.AiDifficulty = eventConfig.AiDifficulty;
-
-                if (eventConfig.Laps.HasValue)
-                    currentConfig.Laps = eventConfig.Laps.Value;
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.VehicleDamage))
-                    currentConfig.VehicleDamage = eventConfig.VehicleDamage;
-
-                if (eventConfig.LobbyCountdown.HasValue)
-                    currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value;
-
-                // Write updated config
-                _configService.WriteBasicConfig(currentConfig);
-                _logger.LogInformation("Server configuration updated");
-            }
-
-            // Apply track rotation if present
-            if (@event.Tracks != null && @event.Tracks.Count > 0)
-            {
-                var collectionName = string.IsNullOrWhiteSpace(@event.CollectionName)
-                    ? $"Event: {@event.Name}"
-                    : @event.CollectionName;
-
-                _configService.WriteEventLoopTracks(collectionName, @event.Tracks);
-                _logger.LogInformation("Track rotation updated with {Count} tracks", @event.Tracks.Count);
-            }
-
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error applying event configuration");
-            return false;
+            ActivateButton.IsEnabled = _selectedEvent != null;
         }
     }
 

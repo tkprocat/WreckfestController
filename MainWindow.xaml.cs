@@ -67,7 +67,6 @@ public partial class MainWindow : Window
         _eventSchedulerTab = new EventSchedulerTab(
             eventStorageService,
             smartRestartService,
-            configService,
             webhookService,
             _loggerFactory.CreateLogger<EventSchedulerTab>());
 

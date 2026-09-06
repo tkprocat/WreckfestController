@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
+using System.Reflection;
 using WreckfestController.Controllers;
 using WreckfestController.Models;
 using WreckfestController.Services;
@@ -102,6 +103,40 @@ public class ManualEventConfigurationTests : IDisposable
         Assert.Equal(SmartRestartState.Idle, _restart.GetState());
         Assert.False(_storage.LoadSchedule().GetEventById(1)!.IsActive);
         _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+    }
+
+    [Fact]
+    public async Task SchedulerConfigurationExceptionReleasesProcessingAndAllowsAnotherEvent()
+    {
+        var settings = new ConfigurationBuilder().Build();
+        var scheduler = new EventSchedulerService(_storage, _restart,
+            new RecurringEventService(Mock.Of<ILogger<RecurringEventService>>()), _config.Object,
+            new WreckfestWebWebhookService(Mock.Of<ILogger<WreckfestWebWebhookService>>(), settings, new HttpClient()),
+            Mock.Of<ILogger<EventSchedulerService>>());
+        using (scheduler)
+        {
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var processing = typeof(EventSchedulerService).GetField("_isProcessingEvent", flags)!;
+            processing.SetValue(scheduler, true);
+            _config.Setup(c => c.WriteBasicConfig(It.IsAny<ServerConfig>())).Throws(new IOException("Write failed"));
+            typeof(EventSchedulerService).GetMethod("ActivateEvent", flags)!
+                .Invoke(scheduler, [_storage.LoadSchedule().GetEventById(1)]);
+
+            Assert.False((bool)processing.GetValue(scheduler)!);
+            Assert.Equal(SmartRestartState.Idle, _restart.GetState());
+            _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+            Assert.False(_storage.LoadSchedule().GetEventById(1)!.IsActive);
+
+            _config.Setup(c => c.WriteBasicConfig(It.IsAny<ServerConfig>()));
+            var restarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _server.Setup(s => s.RestartServerViaCommandAsync()).Returns(() => {
+                restarted.TrySetResult();
+                return Task.FromResult((false, "Test finished"));
+            });
+            Assert.True(_storage.ReplaceSchedule([new Event { Id = 2, StartTime = DateTime.UtcNow.AddMinutes(-1) }]));
+            typeof(EventSchedulerService).GetMethod("CheckForDueEvents", flags)!.Invoke(scheduler, [null]);
+            await restarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        }
     }
 
     public void Dispose() => File.Delete(_path);
