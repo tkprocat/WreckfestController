@@ -105,6 +105,15 @@ a failure result rather than throwing.
 | GET | `tracks/collection-name` | Current track collection name |
 | GET | `serverinfo` | Server info snapshot |
 
+`PUT basic` is a **partial update**: send only the `ServerConfig` fields to change
+(names are case-insensitive), and every omitted field keeps its current value. The
+request is rejected with 400, and nothing is written, when it names an unknown field,
+gives a value of the wrong type or `null`, or puts a line break in a string.
+
+`PUT tracks` replaces the whole event loop. It is rejected with 400 unless
+`collectionName` is non-empty, `tracks` is present, every entry has a non-empty
+`track`, and no value contains a line break. An empty `tracks` list is allowed.
+
 ### Events — `api/events`
 
 | Method | Path | Purpose |
