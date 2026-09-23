@@ -1918,7 +1918,7 @@ public class VotingServiceTests
 
         service.ProcessChatCommand("Admin", false, "!voting off");
         service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
-        await Task.Delay(80);
+        await Task.Delay(80, TestContext.Current.CancellationToken);
 
         server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
         server.Verify(m => m.SendCommandAsync("laps=4"), Times.Once);
