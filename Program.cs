@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using WreckfestController.Data;
 using WreckfestController.Services;
 
 namespace WreckfestController;
@@ -96,14 +97,16 @@ public class Program
         }
     }
 
+    // For single-file apps, use the directory where the exe is located.
+    // Environment.ProcessPath gives the actual exe path even in single-file mode.
+    private static string ExeDirectory =>
+        Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory;
+
     public static IHostBuilder CreateHostBuilder(string[] args) =>
         Host.CreateDefaultBuilder(args)
             .ConfigureAppConfiguration((context, config) =>
             {
-                // For single-file apps, use the directory where the exe is located
-                // Environment.ProcessPath gives us the actual exe path even in single-file mode
-                var exeDirectory = Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory;
-                config.SetBasePath(exeDirectory);
+                config.SetBasePath(ExeDirectory);
 
                 // appsettings.json is optional - app works with defaults if not present
                 config.AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
@@ -147,6 +150,11 @@ public class Program
                 services.AddSingleton<ServerManager>();
                 services.AddSingleton<SettingsService>();
                 services.AddSingleton<VotingService>();
+
+                // The controller's own database. The path is read once; changing it needs a restart.
+                var databasePath = DatabasePath.Resolve(context.Configuration, ExeDirectory);
+                services.AddDbContextFactory<ControllerDbContext>(
+                    options => ControllerDbContext.Configure(options, databasePath));
 
                 // Register API server
                 services.AddSingleton<IApiServer, ApiServer>();

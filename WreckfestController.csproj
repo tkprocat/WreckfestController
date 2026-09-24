@@ -48,6 +48,14 @@
 
     <!-- System packages -->
     <PackageReference Include="System.Management" Version="10.0.11" />
+
+    <!-- Database: SQLite through EF Core, with ASP.NET Core Identity's user store -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
+    <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
   </ItemGroup>
 
   <!-- Framework references for ASP.NET Core -->
