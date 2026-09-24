@@ -124,7 +124,6 @@ public class ApiServer : IApiServer, IDisposable
             var httpPort = ResolvePort(configuration, "Api:HttpPort", DefaultHttpPort);
             var httpsPort = ResolvePort(configuration, "Api:HttpsPort", DefaultHttpsPort);
             var urls = GetListenUrls(allowRemote, httpPort, httpsPort);
-            var apiKey = configuration["Api:Key"];
 
             // Filter out HTTPS URLs if no valid certificate is available
             // This prevents startup errors when running as a WPF app
@@ -141,31 +140,11 @@ public class ApiServer : IApiServer, IDisposable
 
             _logger.LogInformation("API server will listen on: {Urls}", filteredUrls);
 
-            // Add controllers
-            builder.Services.AddControllers();
-            builder.Services.AddEndpointsApiExplorer();
-            // Swagger disabled - causes build issues with MAUI
-
-            // Register services from main service provider
-            // Note: We're creating a new service collection, but we'll use the existing singletons
-            builder.Services.AddSingleton(_serviceProvider.GetRequiredService<PlayerTracker>());
-            builder.Services.AddSingleton(_serviceProvider.GetRequiredService<TrackChangeTracker>());
-            builder.Services.AddSingleton(_serviceProvider.GetRequiredService<WreckfestWebWebhookService>());
-            builder.Services.AddSingleton(_serviceProvider.GetRequiredService<ConsoleLogWebhookSender>());
-            builder.Services.AddSingleton(_serviceProvider.GetRequiredService<ServerManager>());
-            builder.Services.AddSingleton(_serviceProvider.GetRequiredService<ConfigService>());
-            builder.Services.AddSingleton(_serviceProvider.GetRequiredService<EventStorageService>());
-            builder.Services.AddSingleton(_serviceProvider.GetRequiredService<RecurringEventService>());
-            builder.Services.AddSingleton(_serviceProvider.GetRequiredService<SmartRestartService>());
+            ConfigureServices(builder, _serviceProvider, configuration);
 
             _app = builder.Build();
 
-            // Configure middleware
-            // Swagger disabled - causes build issues with MAUI
-
-            _app.UseMiddleware<ApiKeyMiddleware>(apiKey);
-            _app.UseAuthorization();
-            _app.MapControllers();
+            ConfigurePipeline(_app);
 
             await _app.StartAsync();
 
@@ -178,6 +157,54 @@ public class ApiServer : IApiServer, IDisposable
             throw;
         }
     }
+
+    /// <summary>
+    /// Registers the API's services. The controllers share the WPF app's singletons,
+    /// so they are copied across from <paramref name="main"/> rather than created anew.
+    /// Split from <see cref="StartAsync"/> so tests can build the same host on a
+    /// TestServer without binding a port.
+    /// </summary>
+    public static void ConfigureServices(
+        WebApplicationBuilder builder,
+        IServiceProvider main,
+        IConfiguration configuration)
+    {
+        builder.Services.AddControllers()
+            // AddControllers discovers controllers from the entry assembly, which is
+            // the test runner rather than this app when a test builds the host.
+            .AddApplicationPart(typeof(ApiServer).Assembly);
+        builder.Services.AddEndpointsApiExplorer();
+        // Swagger disabled - causes build issues with MAUI
+
+        builder.Services.AddSingleton(new ApiKeySetting(configuration["Api:Key"]));
+
+        // Register services from main service provider
+        // Note: We're creating a new service collection, but we'll use the existing singletons
+        builder.Services.AddSingleton(main.GetRequiredService<PlayerTracker>());
+        builder.Services.AddSingleton(main.GetRequiredService<TrackChangeTracker>());
+        builder.Services.AddSingleton(main.GetRequiredService<WreckfestWebWebhookService>());
+        builder.Services.AddSingleton(main.GetRequiredService<ConsoleLogWebhookSender>());
+        builder.Services.AddSingleton(main.GetRequiredService<ServerManager>());
+        builder.Services.AddSingleton(main.GetRequiredService<ConfigService>());
+        builder.Services.AddSingleton(main.GetRequiredService<EventStorageService>());
+        builder.Services.AddSingleton(main.GetRequiredService<RecurringEventService>());
+        builder.Services.AddSingleton(main.GetRequiredService<SmartRestartService>());
+    }
+
+    /// <summary>
+    /// Configures the request pipeline. Expects the services from
+    /// <see cref="ConfigureServices"/>.
+    /// </summary>
+    public static void ConfigurePipeline(WebApplication app)
+    {
+        var apiKey = app.Services.GetRequiredService<ApiKeySetting>().Key;
+        app.UseMiddleware<ApiKeyMiddleware>(apiKey);
+        app.UseAuthorization();
+        app.MapControllers();
+    }
+
+    /// <summary>The inbound key, carried from ConfigureServices to ConfigurePipeline.</summary>
+    private sealed record ApiKeySetting(string? Key);
 
     public async Task StopAsync()
     {
