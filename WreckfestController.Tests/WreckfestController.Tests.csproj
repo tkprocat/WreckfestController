@@ -36,4 +36,10 @@
     <Folder Include="Properties\" />
   </ItemGroup>
 
+  <!-- Databases from earlier schemas, migrated forward by the tests. Never edit one:
+       add a new fixture for each release instead. -->
+  <ItemGroup>
+    <None Include="Data\Fixtures\*.db" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

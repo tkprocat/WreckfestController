@@ -8,11 +8,34 @@ namespace WreckfestController.Services;
 /// </summary>
 public class GuiLoggerProvider : ILoggerProvider
 {
-    private ControllerLogTab? _logTab;
+    /// <summary>How many entries are held while no log tab exists yet.</summary>
+    public const int MaxPendingEntries = 1000;
+
+    private readonly object _lock = new();
+    private readonly Queue<(string Level, string Message, DateTime LoggedAt)> _pending = new();
+    private Action<string, string, DateTime>? _sink;
 
     public void SetLogTab(ControllerLogTab logTab)
     {
-        _logTab = logTab;
+        SetSink(logTab.AddLogEntry);
+    }
+
+    /// <summary>
+    /// Connects the destination for log entries and replays everything logged before it,
+    /// oldest first. Startup - the database bootstrapper and the hosted services - runs
+    /// before the window exists, and those are exactly the lines that explain a failure.
+    /// </summary>
+    public void SetSink(Action<string, string, DateTime> sink)
+    {
+        lock (_lock)
+        {
+            while (_pending.TryDequeue(out var entry))
+            {
+                sink(entry.Level, entry.Message, entry.LoggedAt);
+            }
+
+            _sink = sink;
+        }
     }
 
     public ILogger CreateLogger(string categoryName)
@@ -27,11 +50,24 @@ public class GuiLoggerProvider : ILoggerProvider
 
     internal void Log(string level, string categoryName, string message)
     {
-        if (_logTab != null)
+        // Format: [Category] Message
+        var formattedMessage = $"[{GetShortCategoryName(categoryName)}] {message}";
+        var loggedAt = DateTime.Now;
+
+        lock (_lock)
         {
-            // Format: [Category] Message
-            var formattedMessage = $"[{GetShortCategoryName(categoryName)}] {message}";
-            _logTab.AddLogEntry(level, formattedMessage);
+            if (_sink != null)
+            {
+                _sink(level, formattedMessage, loggedAt);
+                return;
+            }
+
+            if (_pending.Count == MaxPendingEntries)
+            {
+                _pending.Dequeue();
+            }
+
+            _pending.Enqueue((level, formattedMessage, loggedAt));
         }
     }
 

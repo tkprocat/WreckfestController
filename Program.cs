@@ -13,10 +13,25 @@ public class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        var host = CreateHostBuilder(args).Build();
+        IHost host;
+        try
+        {
+            host = CreateHostBuilder(args).Build();
+        }
+        catch (Exception ex)
+        {
+            // Nothing is registered yet, so there is no window to carry on in. This is
+            // almost always a malformed settings file.
+            ReportFatalStartupError(ex);
+            return;
+        }
 
         try
         {
+            // Never throws: a failure puts the app into recovery mode instead, which the
+            // window, the scheduler and the API all read from DatabaseState.
+            host.Services.GetRequiredService<DatabaseBootstrapper>().Run();
+
             // Start hosted services, including EventSchedulerService, before entering
             // the WPF message loop.
             //
@@ -76,6 +91,17 @@ public class Program
         }
     }
 
+    private static void ReportFatalStartupError(Exception ex)
+    {
+        Console.WriteLine($"Failed to start: {ex}");
+        MessageBox.Show(
+            $"Wreckfest Controller could not start.\n\n{ex.Message}\n\n" +
+            "Check appsettings.json and user-settings.json for errors.",
+            "Wreckfest Controller",
+            MessageBoxButton.OK,
+            MessageBoxImage.Error);
+    }
+
     // The host failed to start, so hosted services - the event scheduler above all -
     // are not running: scheduled events will not activate until the app is restarted.
     // Everything reached through the DI container still works, so the app carries on.
@@ -130,6 +156,10 @@ public class Program
                     builder.AddDebug();
 #endif
                     builder.AddProvider(guiLoggerProvider);
+
+                    // EF Core logs every SQL statement at Information, which buries the
+                    // Controller Log. A more specific Logging:LogLevel entry still wins.
+                    builder.AddFilter("Microsoft.EntityFrameworkCore", LogLevel.Warning);
                 });
 
                 // Register core services
@@ -155,6 +185,8 @@ public class Program
                 var databasePath = DatabasePath.Resolve(context.Configuration, ExeDirectory);
                 services.AddDbContextFactory<ControllerDbContext>(
                     options => ControllerDbContext.Configure(options, databasePath));
+                services.AddSingleton(new DatabaseState(databasePath));
+                services.AddSingleton<DatabaseBootstrapper>();
 
                 // Register API server
                 services.AddSingleton<IApiServer, ApiServer>();
@@ -163,7 +195,9 @@ public class Program
                 services.AddSingleton<MainWindow>();
 
                 // Register hosted services (background services)
-                services.AddHostedService<EventSchedulerService>();
+                // The scheduler waits while the database is unavailable (recovery mode).
+                services.AddSingleton<EventSchedulerService>();
+                services.AddHostedService<DatabaseGatedHostedService<EventSchedulerService>>();
             });
 
     /// <summary>

@@ -5,6 +5,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
+using WreckfestController.Data;
 using WreckfestController.Services;
 
 namespace WreckfestController.Tests.Api;
@@ -31,8 +32,12 @@ public sealed class ApiTestHost : IAsyncDisposable
     /// <summary>The WPF app's service provider, which the API copies singletons from.</summary>
     public IServiceProvider MainServices => _main;
 
+    /// <param name="databaseState">
+    /// Defaults to a ready database. Pass one that is not ready to run in recovery mode.
+    /// </param>
     public static async Task<ApiTestHost> StartAsync(
-        IDictionary<string, string?>? settings = null)
+        IDictionary<string, string?>? settings = null,
+        DatabaseState? databaseState = null)
     {
         var values = new Dictionary<string, string?>
         {
@@ -49,7 +54,13 @@ public sealed class ApiTestHost : IAsyncDisposable
             .AddInMemoryCollection(values)
             .Build();
 
-        var main = BuildMainServices(configuration);
+        if (databaseState is null)
+        {
+            databaseState = new DatabaseState("test.db");
+            databaseState.MarkReady(backupPath: null);
+        }
+
+        var main = BuildMainServices(configuration, databaseState);
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
@@ -80,9 +91,12 @@ public sealed class ApiTestHost : IAsyncDisposable
         await _main.DisposeAsync();
     }
 
-    private static ServiceProvider BuildMainServices(IConfiguration configuration)
+    private static ServiceProvider BuildMainServices(
+        IConfiguration configuration,
+        DatabaseState databaseState)
     {
         var services = new ServiceCollection();
+        services.AddSingleton(databaseState);
         services.AddLogging();
         services.AddSingleton(configuration);
         services.AddSingleton(new HttpClient());
