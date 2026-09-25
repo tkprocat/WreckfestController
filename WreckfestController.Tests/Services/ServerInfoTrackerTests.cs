@@ -32,7 +32,7 @@ public class ServerInfoTrackerTests
 
         // The point of the test: `first` must reach a terminal state on its own
         // timeout instead of waiting forever for a result that will never come.
-        var settled = await Task.WhenAny(first, Task.Delay(TimeSpan.FromSeconds(5)));
+        var settled = await Task.WhenAny(first, Task.Delay(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
         Assert.Same(first, settled);
         await Assert.ThrowsAsync<TimeoutException>(() => first);
     }

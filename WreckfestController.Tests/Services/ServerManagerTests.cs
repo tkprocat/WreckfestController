@@ -202,7 +202,7 @@ public class ServerManagerTests
             if (!serverProcess.HasExited)
             {
                 serverProcess.Kill();
-                await serverProcess.WaitForExitAsync();
+                await serverProcess.WaitForExitAsync(TestContext.Current.CancellationToken);
             }
         }
     }
@@ -278,7 +278,7 @@ public class ServerManagerTests
             if (!serverProcess.HasExited)
             {
                 serverProcess.Kill();
-                await serverProcess.WaitForExitAsync();
+                await serverProcess.WaitForExitAsync(TestContext.Current.CancellationToken);
             }
         }
     }
@@ -344,7 +344,7 @@ public class ServerManagerTests
             outputReader.SetupGet(r => r.TargetProcessId).Returns(second.Id);
             outputReader.Raise(r => r.OutputReceivedFrom += null, first.Id, record);
 
-            var settled = await Task.WhenAny(dispatched.Task, Task.Delay(TimeSpan.FromSeconds(1)));
+            var settled = await Task.WhenAny(dispatched.Task, Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken));
             Assert.True(
                 settled != dispatched.Task,
                 $"A chat command from the previous attachment was dispatched: {dispatched.Task.Status}");
@@ -454,7 +454,7 @@ public class ServerManagerTests
                 r => r.OutputReceivedFrom += null,
                 first.Id,
                 BuildChatRecord("10", "0", "Player", "!first"));
-            await firstCommandRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await firstCommandRunning.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
             outputReader.Raise(
                 r => r.OutputReceivedFrom += null,
@@ -465,7 +465,7 @@ public class ServerManagerTests
             Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
             releaseWorker.TrySetResult();
 
-            await Task.Delay(TimeSpan.FromSeconds(1));
+            await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
             lock (executed)
             {
                 Assert.DoesNotContain("!queued", executed);
@@ -517,11 +517,11 @@ public class ServerManagerTests
                 BuildChatRecord("10", "0", "Player", "!kick"));
 
             // Dequeued and running, so the queue check has already been passed.
-            await handlerRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await handlerRunning.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
             Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
             releaseHandler.TrySetResult();
 
-            var result = await sendResult.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var result = await sendResult.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
             Assert.False(result.Success);
             Assert.Contains("Attachment moved", result.Message);
@@ -572,14 +572,14 @@ public class ServerManagerTests
                 r => r.OutputReceivedFrom += null,
                 first.Id,
                 BuildChatRecord("10", "0", "Player", "!kick"));
-            await handlerRunning.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await handlerRunning.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
             // Away and back again: same PID, different attachment.
             Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
             Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
             releaseHandler.TrySetResult();
 
-            var result = await sendResult.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var result = await sendResult.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
 
             Assert.False(result.Success);
             Assert.Contains("Attachment moved", result.Message);
