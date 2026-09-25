@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Primitives;
 using WreckfestController.Models;
 
 namespace WreckfestController.Services;
@@ -42,7 +43,12 @@ public class VotingService
     private string? _pendingVoteRequester;
     private int? _pendingVoteLaps;
 
-    private string VoteMode => VoteModes.Normalize(
+    // Set by !voting. Kept here rather than written into IConfiguration: its indexer
+    // writes every provider, so the value would survive a reload of the settings file
+    // and leak into SettingsService's defaults.
+    private volatile string? _chatModeOverride;
+
+    private string VoteMode => _chatModeOverride ?? VoteModes.Normalize(
         _configuration["Vote:Mode"],
         _configuration.GetValue<bool?>("Vote:Enabled"));
 
@@ -86,6 +92,9 @@ public class VotingService
         _configService = configService;
         _logger = logger;
         _configuration = configuration;
+
+        // A settings reload (including a save from the UI) restores the saved mode.
+        ChangeToken.OnChange(_configuration.GetReloadToken, () => _chatModeOverride = null);
 
         _serverManager.ChatCommandReceived += ProcessChatCommand;
     }
@@ -180,6 +189,16 @@ public class VotingService
             if (IsPrivileged(playerName))
             {
                 _ = HandleEventLoopCommandAsync(lower);
+            }
+
+            return;
+        }
+
+        if (lower == "!voting" || lower.StartsWith("!voting "))
+        {
+            if (IsPrivileged(playerName))
+            {
+                HandleVotingCommand(lower);
             }
 
             return;
@@ -293,6 +312,21 @@ public class VotingService
                lower == "!more";
     }
 
+    private void HandleVotingCommand(string lower)
+    {
+        var argument = lower["!voting".Length..].Trim();
+        if (argument is not ("on" or "off"))
+        {
+            _ = BroadcastMessage("Usage: !voting on|off");
+            return;
+        }
+
+        _chatModeOverride = argument == "on" ? VoteModes.Voting : VoteModes.Direct;
+        CancelVoteIfModeChanged();
+        ClearPendingVote();
+        _ = BroadcastMessage(argument == "on" ? "Voting enabled." : "Voting disabled.");
+    }
+
     private static bool IsLuckyCommand(string lower)
     {
         return lower is "!lucky" or "!ifeellucky" or "!ifeeelucky";
@@ -390,9 +424,7 @@ public class VotingService
 
     private List<AllowedVoteTrack> GetAllowedTracks()
     {
-        return _configuration
-            .GetSection("Vote:AllowedTracks")
-            .Get<List<AllowedVoteTrack>>() ?? new List<AllowedVoteTrack>();
+        return AllowedTrackConfiguration.Read(_configuration);
     }
 
     private void StartLuckyVote(string playerName)
@@ -1610,7 +1642,9 @@ public class VotingService
             humanCount = PruneDepartedVoters();
             yesCount = _yesVoters.Count;
             noCount = _noVoters.Count;
-            passed = HasMajority(yesCount, humanCount);
+            // At timeout, abstentions do not count against the proposal.
+            // Early completion still requires a majority of all online humans.
+            passed = yesCount > noCount;
             ResetVoteState();
         }
 

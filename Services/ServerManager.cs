@@ -88,6 +88,9 @@ public class ServerManager
     // under the first A attachment would be accepted by the second. This only ever
     // increases, so an attachment is never mistaken for a later one.
     private long _attachmentId;
+    // Automatic cleanup of an exited process must not cancel its replacement
+    // search, but any explicit attach/start/stop must invalidate that search.
+    private long _attachmentSelectionId;
 
     // The attachment a chat command was accepted under, made ambient for the
     // duration of the handler. Passing it explicitly would mean threading it
@@ -222,41 +225,45 @@ public class ServerManager
     /// </summary>
     private Process? GetActualServerProcess()
     {
-        // Only track by PID - we always start the server through the API
-        if (_actualServerPid.HasValue)
+        lock (_lock)
         {
-            try
+            // Only track by PID - we always start the server through the API
+            if (_actualServerPid.HasValue)
             {
-                var process = Process.GetProcessById(_actualServerPid.Value);
-                if (!process.HasExited)
+                try
                 {
-                    return process;
+                    var process = Process.GetProcessById(_actualServerPid.Value);
+                    if (!process.HasExited)
+                    {
+                        return process;
+                    }
+                    else
+                    {
+                        process.Dispose();
+                        _logger.LogWarning("Tracked server process (PID: {PID}) has exited", _actualServerPid.Value);
+                        SetAttachedProcess(null, processExited: true);
+                        _startTime = null;
+                        return null;
+                    }
                 }
-                else
+                catch (ArgumentException)
                 {
-                    _logger.LogWarning("Tracked server process (PID: {PID}) has exited", _actualServerPid.Value);
-                    SetAttachedProcess(null);
+                    // Process doesn't exist
+                    _logger.LogWarning("Tracked server process (PID: {PID}) no longer exists", _actualServerPid!.Value);
+                    SetAttachedProcess(null, processExited: true);
                     _startTime = null;
                     return null;
                 }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Error accessing tracked server process (PID: {PID})", _actualServerPid!.Value);
+                    return null;
+                }
             }
-            catch (ArgumentException)
-            {
-                // Process doesn't exist
-                _logger.LogWarning("Tracked server process (PID: {PID}) no longer exists", _actualServerPid!.Value);
-                SetAttachedProcess(null);
-                _startTime = null;
-                return null;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error accessing tracked server process (PID: {PID})", _actualServerPid!.Value);
-                return null;
-            }
-        }
 
-        // No tracked PID means server is not running
-        return null;
+            // No tracked PID means server is not running
+            return null;
+        }
     }
 
     public virtual async Task<(bool Success, string Message)> StartServerAsync()
@@ -621,13 +628,33 @@ public class ServerManager
     /// </summary>
     public virtual async Task<(bool Success, string Message)> RestartServerViaCommandAsync()
     {
-        if (!IsRunning)
-        {
-            return (false, "Server is not running");
-        }
-
         try
         {
+            using var originalProcess = GetActualServerProcess();
+            if (originalProcess == null)
+                return (false, "Server is not running");
+
+            // Hold the original process handle so its exit time remains available
+            // after /restart, even when normal status polling clears the attachment.
+            _ = originalProcess.Handle;
+            var oldPid = originalProcess.Id;
+            var original = ReadRestartProcessIdentity(oldPid);
+            if (original == null || !original.IsComplete)
+                return (false, "Cannot restart safely: original server identity is unavailable.");
+            if (originalProcess.HasExited ||
+                Math.Abs((original.CreatedUtc - originalProcess.StartTime.ToUniversalTime()).TotalMilliseconds) > 1)
+                return (false, "Cannot restart safely: original process changed during identity capture.");
+
+            long selectionId;
+            long attachmentId;
+            lock (_lock)
+            {
+                if (_actualServerPid != oldPid)
+                    return (false, "Attachment changed before restart.");
+                selectionId = _attachmentSelectionId;
+                attachmentId = CurrentAttachmentId;
+            }
+
             _logger.LogInformation("Starting server restart via /restart command");
 
             // Step 1: Get all current Wreckfest*.exe PIDs
@@ -636,10 +663,23 @@ public class ServerManager
 
             // Step 2: Stop output monitoring before restart (old process will be killed)
             _logger.LogDebug("Stopping output monitoring before restart");
-            StopOutputMonitoring();
+            lock (_lock)
+            {
+                if (_attachmentSelectionId != selectionId)
+                    return (false, "Attachment changed before restart.");
+                StopOutputMonitoring();
+            }
 
             // Step 3: Send /restart command
-            var commandResult = await SendCommandAsync("/restart");
+            var requestedUtc = DateTime.UtcNow;
+            var previousDispatch = _dispatchAttachmentId.Value;
+            (bool Success, string Message) commandResult;
+            try
+            {
+                _dispatchAttachmentId.Value = attachmentId;
+                commandResult = await SendCommandAsync("/restart");
+            }
+            finally { _dispatchAttachmentId.Value = previousDispatch; }
             if (!commandResult.Success)
             {
                 return (false, $"Failed to send restart command: {commandResult.Message}");
@@ -702,14 +742,31 @@ public class ServerManager
                 return (false, "Server restart failed: No new process detected. The server may have failed to restart.");
             }
 
-            if (newProcessPids.Count > 1)
-            {
-                _logger.LogWarning("Multiple new Wreckfest processes detected: {PIDs}. Using the first one.", string.Join(", ", newProcessPids));
-            }
+            if (!originalProcess.HasExited)
+                return (false, "Server restart failed: original process is still running.");
 
-            // Update to track the new PID
-            var newPid = newProcessPids.First();
-            SetAttachedProcess(newPid);
+            var candidates = newProcessPids.Select(ReadRestartProcessIdentity).ToList();
+            var selection = RestartProcessIdentity.SelectReplacement(
+                original, oldPids, candidates, requestedUtc, originalProcess.ExitTime.ToUniversalTime());
+            if (selection.Process is not { } replacement)
+                return (false, $"Server restart failed: {selection.Error}");
+
+            // Re-read before attachment so an exited/reused PID cannot inherit the
+            // selected process's identity. Keep the handle open through the change.
+            using var replacementProcess = Process.GetProcessById(replacement.ProcessId);
+            _ = replacementProcess.Handle;
+            if (ReadRestartProcessIdentity(replacement.ProcessId) != replacement || replacementProcess.HasExited)
+                return (false, "Server restart failed: replacement process changed during detection.");
+
+            var newPid = replacement.ProcessId;
+            lock (_lock)
+            {
+                if (_attachmentSelectionId != selectionId)
+                    return (false, "Attachment changed during restart; replacement was not attached.");
+                StopHookOutputListener();
+                ClearProcessScopedState();
+                SetAttachedProcess(newPid);
+            }
             ProcessIdChanged?.Invoke(newPid);
 
             // Update start time
@@ -723,7 +780,6 @@ public class ServerManager
                 _startTime = DateTime.UtcNow;
             }
 
-            var oldPid = oldPids.FirstOrDefault();
             _logger.LogInformation("Server restarted successfully via /restart command. New PID: {PID} (was {OldPID})",
                 newPid, oldPid != 0 ? oldPid : (int?)null);
 
@@ -777,6 +833,35 @@ public class ServerManager
             _logger.LogError(ex, "Error getting Wreckfest process IDs");
             return new List<int>();
         }
+    }
+
+    private RestartProcessIdentity? ReadRestartProcessIdentity(int pid)
+    {
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                $"SELECT ProcessId, ParentProcessId, ExecutablePath, CommandLine, CreationDate FROM Win32_Process WHERE ProcessId = {pid}");
+            using var results = searcher.Get();
+            foreach (System.Management.ManagementObject process in results)
+            {
+                using (process)
+                {
+                    var creationDate = process["CreationDate"]?.ToString();
+                    if (string.IsNullOrWhiteSpace(creationDate))
+                        return null;
+                    return new RestartProcessIdentity(
+                        Convert.ToInt32(process["ProcessId"]), Convert.ToInt32(process["ParentProcessId"]),
+                        process["ExecutablePath"]?.ToString() ?? string.Empty,
+                        process["CommandLine"]?.ToString() ?? string.Empty,
+                        System.Management.ManagementDateTimeConverter.ToDateTime(creationDate).ToUniversalTime());
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not verify restart identity for PID {Pid}", pid);
+        }
+        return null;
     }
 
     public virtual async Task<(bool Success, string Message)> UpdateServerAsync()
@@ -1137,10 +1222,15 @@ public class ServerManager
     // Every attachment change goes through here. Scattered assignments were how
     // identity drifted: eight sites moved the PID and only one advanced the
     // guard that work is validated against.
-    private void SetAttachedProcess(int? pid)
+    private void SetAttachedProcess(int? pid, bool processExited = false)
     {
-        _actualServerPid = pid;
-        Interlocked.Increment(ref _attachmentId);
+        lock (_lock)
+        {
+            _actualServerPid = pid;
+            Interlocked.Increment(ref _attachmentId);
+            if (!processExited)
+                Interlocked.Increment(ref _attachmentSelectionId);
+        }
     }
 
     private long CurrentAttachmentId => Interlocked.Read(ref _attachmentId);

@@ -43,7 +43,20 @@ public class Event
     public DateTime? LastActivatedStartTime { get; set; }
 
     [JsonIgnore]
-    public bool IsOccurrenceCompleted => LastActivatedStartTime == StartTime;
+    public bool IsOccurrenceCompleted =>
+        LastActivatedStartTime is { } last && AsUtcInstant(last) == AsUtcInstant(StartTime);
+
+    /// <summary>
+    /// The UTC instant a schedule timestamp denotes. A refresh may express the same
+    /// occurrence as UTC, as a local offset, or with no zone at all - PHP emits
+    /// "2026-09-06T20:00:00", which deserializes as Unspecified. Every scheduler
+    /// comparison is against DateTime.UtcNow, so an unzoned value is already a UTC
+    /// instant; ToUniversalTime alone would reinterpret it as local and shift the
+    /// event by the machine's offset.
+    /// </summary>
+    public static DateTime AsUtcInstant(DateTime value) => value.Kind == DateTimeKind.Unspecified
+        ? DateTime.SpecifyKind(value, DateTimeKind.Utc)
+        : value.ToUniversalTime();
 
     /// <summary>
     /// Server configuration overrides to apply when event activates.

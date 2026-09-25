@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -87,37 +88,82 @@ public class ConfigControllerTests
         Assert.NotNull(badRequestResult.Value);
     }
 
-    [Fact]
-    public void UpdateBasicConfig_WhenSuccessful_ReturnsOk()
+    private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
+
+    private ServerConfig SetUpCurrentConfig()
     {
-        // Arrange
-        var config = new ServerConfig
+        var current = new ServerConfig
         {
-            ServerName = "Updated Server",
-            MaxPlayers = 16
+            ServerName = "Old name",
+            Password = "secret",
+            MaxPlayers = 16,
+            GamePort = 40000,
+            Track = "loop"
         };
+        _mockConfigService.Setup(s => s.ReadBasicConfig()).Returns(current);
+        return current;
+    }
 
-        // Act
-        var result = _controller.UpdateBasicConfig(config);
+    [Fact]
+    public void UpdateBasicConfig_PartialBody_ChangesOnlySuppliedFields()
+    {
+        SetUpCurrentConfig();
+        ServerConfig? written = null;
+        _mockConfigService.Setup(s => s.WriteBasicConfig(It.IsAny<ServerConfig>()))
+            .Callback<ServerConfig>(c => written = c);
 
-        // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
-        _mockConfigService.Verify(s => s.WriteBasicConfig(config), Times.Once);
+        var result = _controller.UpdateBasicConfig(Json("""{"serverName":"New name","maxPlayers":20}"""));
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.NotNull(written);
+        Assert.Equal("New name", written.ServerName);
+        Assert.Equal(20, written.MaxPlayers);
+        Assert.Equal("secret", written.Password);
+        Assert.Equal(40000, written.GamePort);
+        Assert.Equal("loop", written.Track);
+    }
+
+    [Fact]
+    public void UpdateBasicConfig_FieldNamesAreCaseInsensitive()
+    {
+        SetUpCurrentConfig();
+        ServerConfig? written = null;
+        _mockConfigService.Setup(s => s.WriteBasicConfig(It.IsAny<ServerConfig>()))
+            .Callback<ServerConfig>(c => written = c);
+
+        var result = _controller.UpdateBasicConfig(Json("""{"ServerName":"New name"}"""));
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal("New name", written?.ServerName);
+    }
+
+    [Theory]
+    [InlineData("""{"serverNmae":"typo"}""")]
+    [InlineData("""{"maxPlayers":"lots"}""")]
+    [InlineData("""{"maxPlayers":null}""")]
+    [InlineData("""{"serverName":null}""")]
+    [InlineData("""{"serverName":"a\nlaps=99"}""")]
+    [InlineData("""["serverName"]""")]
+    public void UpdateBasicConfig_InvalidBody_ReturnsBadRequestWithoutWriting(string body)
+    {
+        var current = SetUpCurrentConfig();
+
+        var result = _controller.UpdateBasicConfig(Json(body));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        _mockConfigService.Verify(s => s.WriteBasicConfig(It.IsAny<ServerConfig>()), Times.Never);
+        Assert.Equal("Old name", current.ServerName);
     }
 
     [Fact]
     public void UpdateBasicConfig_WhenException_ReturnsBadRequest()
     {
-        // Arrange
-        var config = new ServerConfig();
+        SetUpCurrentConfig();
         _mockConfigService.Setup(s => s.WriteBasicConfig(It.IsAny<ServerConfig>()))
             .Throws(new System.IO.IOException("Write failed"));
 
-        // Act
-        var result = _controller.UpdateBasicConfig(config);
+        var result = _controller.UpdateBasicConfig(Json("""{"serverName":"New name"}"""));
 
-        // Assert
         var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
         Assert.NotNull(badRequestResult.Value);
     }
@@ -193,5 +239,29 @@ public class ConfigControllerTests
         // Assert
         var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
         Assert.NotNull(badRequestResult.Value);
+    }
+
+    public static TheoryData<string, List<EventLoopTrack>?> InvalidTrackRequests => new()
+    {
+        { "", [new EventLoopTrack { Track = "track1" }] },
+        { "   ", [new EventLoopTrack { Track = "track1" }] },
+        { "a\nb", [new EventLoopTrack { Track = "track1" }] },
+        { "rotation", null },
+        { "rotation", [new EventLoopTrack()] },
+        { "rotation", [new EventLoopTrack { Track = "track1" }, new EventLoopTrack { Track = " " }] },
+        { "rotation", [new EventLoopTrack { Track = "track1\nel_laps=99" }] },
+        { "rotation", [new EventLoopTrack { Track = "track1", Weather = "rain\r\n" }] },
+    };
+
+    [Theory]
+    [MemberData(nameof(InvalidTrackRequests))]
+    public void UpdateEventLoopTracks_InvalidRequest_ReturnsBadRequestWithoutWriting(
+        string collectionName, List<EventLoopTrack>? tracks)
+    {
+        var result = _controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest(collectionName, tracks!));
+
+        Assert.IsType<BadRequestObjectResult>(result);
+        _mockConfigService.Verify(
+            s => s.WriteEventLoopTracks(It.IsAny<string>(), It.IsAny<List<EventLoopTrack>>()), Times.Never);
     }
 }

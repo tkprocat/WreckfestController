@@ -166,14 +166,14 @@ public class SettingsService
                 DirectCooldownSeconds = _configuration.GetValue<int?>("Vote:DirectCooldownSeconds") ?? 30,
                 VoteTimeoutSeconds = _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30,
                 MaxLapsAllowed = _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10,
-                AllowedTracks = _configuration.GetSection("Vote:AllowedTracks").Get<List<AllowedVoteTrack>>() ?? new()
+                AllowedTracks = AllowedTrackConfiguration.Read(_configuration)
             }
         };
     }
 
     private UserSettings NormalizeSettings(UserSettings settings)
     {
-        var defaultTracks = _configuration.GetSection("Vote:AllowedTracks").Get<List<AllowedVoteTrack>>() ?? new();
+        var defaultTracks = AllowedTrackConfiguration.Read(_configuration);
 
         settings.Vote ??= new VoteSettings
         {
