@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Http;
 using WreckfestController.Services;
 
 namespace WreckfestController.Tests.Services;
@@ -6,75 +5,29 @@ namespace WreckfestController.Tests.Services;
 public class ApiServerSecurityTests
 {
     [Fact]
-    public async Task ApiRequest_WithMissingKey_ReturnsUnauthorized()
+    public void ApiKey_MatchesTheConfiguredKey()
     {
-        var nextCalled = false;
-        var middleware = new ApiKeyMiddleware(_ =>
-        {
-            nextCalled = true;
-            return Task.CompletedTask;
-        }, "test-key");
-        var context = CreateApiRequest();
-
-        await middleware.InvokeAsync(context);
-
-        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
-        Assert.False(nextCalled);
+        Assert.True(ApiKeyAuthenticationHandler.Matches("test-key", "test-key"));
     }
 
-    [Fact]
-    public async Task ApiRequest_WithWrongKey_ReturnsUnauthorized()
+    [Theory]
+    [InlineData("test-key", "wrong-key")]
+    [InlineData("test-key", "")]
+    [InlineData("test-key", "test-key ")]
+    public void ApiKey_RejectsAnyOtherValue(string configured, string provided)
     {
-        var nextCalled = false;
-        var middleware = new ApiKeyMiddleware(_ =>
-        {
-            nextCalled = true;
-            return Task.CompletedTask;
-        }, "test-key");
-        var context = CreateApiRequest();
-        context.Request.Headers["X-Api-Key"] = "wrong-key";
-
-        await middleware.InvokeAsync(context);
-
-        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
-        Assert.False(nextCalled);
+        Assert.False(ApiKeyAuthenticationHandler.Matches(configured, provided));
     }
 
-    [Fact]
-    public async Task ApiRequest_WithCorrectKey_CallsNextMiddleware()
+    // The key is optional now, so a blank one must mean "no key accepted", not "any".
+    [Theory]
+    [InlineData(null, "")]
+    [InlineData("", "")]
+    [InlineData("   ", "   ")]
+    [InlineData("", "anything")]
+    public void ApiKey_BlankConfiguredKey_MatchesNothing(string? configured, string provided)
     {
-        var nextCalled = false;
-        var middleware = new ApiKeyMiddleware(context =>
-        {
-            nextCalled = true;
-            context.Response.StatusCode = StatusCodes.Status204NoContent;
-            return Task.CompletedTask;
-        }, "test-key");
-        var context = CreateApiRequest();
-        context.Request.Headers["X-Api-Key"] = "test-key";
-
-        await middleware.InvokeAsync(context);
-
-        Assert.Equal(StatusCodes.Status204NoContent, context.Response.StatusCode);
-        Assert.True(nextCalled);
-    }
-
-    [Fact]
-    public async Task ApiRequest_WithNoConfiguredKey_ReturnsUnauthorized()
-    {
-        var nextCalled = false;
-        var middleware = new ApiKeyMiddleware(_ =>
-        {
-            nextCalled = true;
-            return Task.CompletedTask;
-        }, string.Empty);
-        var context = CreateApiRequest();
-        context.Request.Headers["X-Api-Key"] = "any-key";
-
-        await middleware.InvokeAsync(context);
-
-        Assert.Equal(StatusCodes.Status401Unauthorized, context.Response.StatusCode);
-        Assert.False(nextCalled);
+        Assert.False(ApiKeyAuthenticationHandler.Matches(configured, provided));
     }
 
     [Theory]
@@ -97,12 +50,5 @@ public class ApiServerSecurityTests
         string expectedUrls)
     {
         Assert.Equal(expectedUrls, ApiServer.GetListenUrls(allowRemote, httpPort, httpsPort));
-    }
-
-    private static DefaultHttpContext CreateApiRequest()
-    {
-        var context = new DefaultHttpContext();
-        context.Request.Path = "/api/server/status";
-        return context;
     }
 }

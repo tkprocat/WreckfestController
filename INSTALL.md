@@ -85,7 +85,7 @@ If no webhook base URL is configured, console-log webhooks are disabled and the 
 }
 ```
 
-`Key` is required for every `/api/*` request and must be sent as the `X-Api-Key` header. If it is empty or missing, the desktop application still starts but the HTTP API returns `401 Unauthorized` for every API request.
+Every `/api/*` request needs credentials: either this `Key`, sent as the `X-Api-Key` header, or a signed-in web UI session. The key is optional and only needed by scripts; if it is empty, no key is accepted. Until the web UI's sign-in arrives, the key is the only way in, so leave it set if you use the API today. See [docs/API.md](docs/API.md#authentication).
 
 With `AllowRemote` set to `false` (the default), the API binds to `127.0.0.1`. Set it to `true` to bind to all network interfaces.
 

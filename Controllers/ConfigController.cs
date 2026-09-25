@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WreckfestController.Models;
 using WreckfestController.Services;
@@ -6,6 +7,7 @@ using WreckfestController.Services;
 namespace WreckfestController.Controllers;
 
 [ApiController]
+[Authorize(Policy = ApiAuthentication.AdminPolicy)]
 [Route("api/[controller]")]
 public class ConfigController : ControllerBase
 {

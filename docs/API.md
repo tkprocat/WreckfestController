@@ -1,29 +1,41 @@
 # HTTP API
 
-WreckfestController hosts a REST API alongside the desktop application. Any client
-that holds the API key can drive it — there is no assumption about what is on the
+WreckfestController hosts a REST API alongside the desktop application. Browsers sign
+in with a cookie; scripts send an API key. There is no assumption about what is on the
 other end.
 
 All routes are prefixed `api/` and return JSON.
 
 ## Authentication
 
-Every request to `api/*` must carry the configured key:
+Every endpoint requires an authenticated caller, in one of two ways:
 
-```
-X-Api-Key: <Api:Key>
-```
+- **API key** (scripts, live testing): send the configured key.
 
-`ApiKeyMiddleware` runs once, ahead of `MapControllers`, so the rule is uniform
-across all controllers and a newly added controller is protected by default. The key
-is compared with `CryptographicOperations.FixedTimeEquals`.
+  ```
+  X-Api-Key: <Api:Key>
+  ```
 
-A missing or non-matching key returns **401** with no body.
+  The key is compared with `CryptographicOperations.FixedTimeEquals`. It is optional:
+  when `Api:Key` is blank, no key is accepted and only cookie sign-in works.
+- **Cookie** (the web UI): an ASP.NET Core Identity cookie, issued by the sign-in
+  endpoints that arrive with the web UI. It is `HttpOnly`, `SameSite=Strict`, marked
+  `Secure` when the request came over HTTPS, and slides over 14 days. Its encryption
+  keys are kept in a `keys` folder beside the database, protected with DPAPI, so
+  restarting the controller does not sign anyone out. Changing a user's password or
+  locking them out ends their other sessions on the next request.
 
-There is deliberately **no local exemption** — loopback requests need the key too.
+When the `X-Api-Key` header is present it alone decides: a wrong key is rejected even
+if a valid cookie is also sent.
 
-If `Api:Key` is empty or unset the API does not start at all. The desktop
-application still runs; only the HTTP API is absent.
+A missing or rejected credential returns **401** with no body, never a redirect.
+
+Authorization uses a fallback policy, so an endpoint is protected unless it is
+explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
+(none yet), so one cannot appear by accident. Requests to paths that match no
+endpoint also get 401 rather than 404.
+
+There is deliberately **no local exemption**: loopback requests need credentials too.
 
 > The key is read once when the API server starts, so changing it requires a
 > restart.
@@ -40,15 +52,13 @@ application still runs; only the HTTP API is absent.
 }
 ```
 
-The API is **opt-in**, and starts only when `Enabled` is `true` **and** `Key` is
-non-blank. Either missing means no port is bound at all, with a startup line saying
-which condition failed. Binding a port that could only answer 401 would serve
-nothing and still take the port from another instance.
+The API is **opt-in**, and starts only when `Enabled` is `true`. Otherwise no port
+is bound at all. `Key` no longer affects whether it starts.
 
 | Setting | Effect |
 | --- | --- |
 | `Enabled: false` (default) | the API does not start; no port is bound |
-| `Enabled: true`, `Key` blank | the API does not start either |
+| `Enabled: true`, `Key` blank | the API starts; only cookie sign-in is accepted |
 | `AllowRemote: false` (default) | binds `127.0.0.1` only |
 | `AllowRemote: true` | binds `0.0.0.0` |
 | `HttpPort` / `HttpsPort` | defaults 5100 / 5101 |

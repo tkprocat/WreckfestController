@@ -70,7 +70,7 @@ Edit `appsettings.json` to set your Wreckfest server paths:
 }
 ```
 
-Set a non-empty inbound API key before using the HTTP API. Requests to every `/api/*` endpoint must send this key in the `X-Api-Key` header. The API binds only to loopback by default; set `AllowRemote` to `true` only when remote access is required. Set `HttpPort` and `HttpsPort` to give each instance its own ports when running several controllers on one host.
+Every `/api/*` request must be authenticated, either with the inbound API key in the `X-Api-Key` header or with a signed-in web UI session. Scripts need the key; set one if you use the API before the web UI's sign-in arrives. The API binds only to loopback by default; set `AllowRemote` to `true` only when remote access is required. Set `HttpPort` and `HttpsPort` to give each instance its own ports when running several controllers on one host.
 
 ```json
 {

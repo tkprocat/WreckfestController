@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Reflection;
 using WreckfestController.Services;
@@ -5,6 +6,7 @@ using WreckfestController.Services;
 namespace WreckfestController.Controllers;
 
 [ApiController]
+[Authorize(Policy = ApiAuthentication.AdminPolicy)]
 [Route("api/[controller]")]
 public class ServerController : ControllerBase
 {
