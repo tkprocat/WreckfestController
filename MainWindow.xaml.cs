@@ -154,8 +154,8 @@ public partial class MainWindow : Window
 
     private void OpenDataFolderButton_Click(object sender, RoutedEventArgs e)
     {
-        var folder = Path.GetDirectoryName(_databaseState.DatabasePath);
-        if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
+        var folder = DatabasePath.NearestExistingFolder(_databaseState.DatabasePath);
+        if (folder is null)
         {
             return;
         }

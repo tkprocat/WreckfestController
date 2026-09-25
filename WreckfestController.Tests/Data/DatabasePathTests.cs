@@ -53,6 +53,39 @@ public class DatabasePathTests
         Assert.Equal(absolute, DatabasePath.Resolve(Config(absolute), BaseDirectory));
     }
 
+    [Fact]
+    public void NearestExistingFolder_WhenFolderExists_ReturnsIt()
+    {
+        var folder = Directory.CreateTempSubdirectory("wfc-nearest-").FullName;
+        try
+        {
+            Assert.Equal(folder, DatabasePath.NearestExistingFolder(Path.Combine(folder, "controller.db")));
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void NearestExistingFolder_SkipsMissingFoldersAndFilesInTheWay()
+    {
+        var root = Directory.CreateTempSubdirectory("wfc-nearest-").FullName;
+        try
+        {
+            // A file where the database folder should be, as in recovery mode.
+            var blocker = Path.Combine(root, "not-a-folder");
+            File.WriteAllText(blocker, "");
+
+            Assert.Equal(root, DatabasePath.NearestExistingFolder(Path.Combine(blocker, "controller.db")));
+            Assert.Equal(root, DatabasePath.NearestExistingFolder(Path.Combine(root, "missing", "deeper", "controller.db")));
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     private static IConfiguration Config(string? path) =>
         new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?> { ["Database:Path"] = path })

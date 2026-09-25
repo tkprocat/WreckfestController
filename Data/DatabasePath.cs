@@ -37,4 +37,25 @@ public static class DatabasePath
         var expandedPath = Environment.ExpandEnvironmentVariables(configuredPath.Trim());
         return Path.GetFullPath(expandedPath, baseDirectory);
     }
+
+    /// <summary>
+    /// The database's folder if it exists, otherwise its closest existing ancestor, or
+    /// null when none exists. In recovery mode the folder may be missing, or a file may
+    /// sit where it should be; the user still needs somewhere to start looking.
+    /// </summary>
+    public static string? NearestExistingFolder(string databasePath)
+    {
+        var folder = Path.GetDirectoryName(databasePath);
+        while (!string.IsNullOrEmpty(folder))
+        {
+            if (Directory.Exists(folder))
+            {
+                return folder;
+            }
+
+            folder = Path.GetDirectoryName(folder);
+        }
+
+        return null;
+    }
 }
