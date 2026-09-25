@@ -424,9 +424,7 @@ public class VotingService
 
     private List<AllowedVoteTrack> GetAllowedTracks()
     {
-        return _configuration
-            .GetSection("Vote:AllowedTracks")
-            .Get<List<AllowedVoteTrack>>() ?? new List<AllowedVoteTrack>();
+        return AllowedTrackConfiguration.Read(_configuration);
     }
 
     private void StartLuckyVote(string playerName)
