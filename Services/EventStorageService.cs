@@ -175,10 +175,12 @@ public class EventStorageService
         var previous = LoadSchedule();
         foreach (var evt in events)
         {
+            // Match the same instant even when a refresh uses a local offset or no zone.
+            evt.StartTime = Event.AsUtcInstant(evt.StartTime);
             var existing = previous.GetEventById(evt.Id);
-            if (existing?.StartTime == evt.StartTime)
+            if (existing != null && Event.AsUtcInstant(existing.StartTime) == evt.StartTime)
                 evt.LastActivatedStartTime = existing.IsActive
-                    ? existing.StartTime : existing.LastActivatedStartTime;
+                    ? evt.StartTime : existing.LastActivatedStartTime;
         }
 
         var schedule = new EventSchedule
