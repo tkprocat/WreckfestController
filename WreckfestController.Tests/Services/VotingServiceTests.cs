@@ -347,18 +347,18 @@ public class VotingServiceTests
     }
 
     [Fact]
-    public async Task VoteTimeout_OnlyInitiatorVotedWithoutMajority_FailsVote()
+    public async Task VoteTimeout_OnlyInitiatorVoted_PassesVote()
     {
         var (service, tracker, messages, configMock) = CreateIsolatedSetup(timeoutSeconds: 1);
         tracker.Seed("Alice", "Bob");
         service.ProcessChatCommand("Bob", isBot: false, "!vote only_initiator_track 3");
-        // Only Bob auto-votes yes (1 yes, 0 no), which is not a human majority.
+        // Bob's auto-yes is the only cast vote; Alice abstains.
 
         await Task.Delay(1500);
 
         configMock.Verify(c => c.WriteEventLoopTracks(
             It.IsAny<string>(), It.IsAny<List<EventLoopTrack>>()), Times.Never);
-        Assert.Contains(messages, m => m.Contains("not enough yes votes"));
+        Assert.Contains(messages, m => m.Contains("Vote passed"));
     }
 
     [Fact]
@@ -1286,6 +1286,38 @@ public class VotingServiceTests
         Assert.NotEqual(firstVote, secondVote);
     }
 
+    [Theory]
+    [InlineData(2, 0, true)]
+    [InlineData(2, 1, true)]
+    [InlineData(1, 1, false)]
+    [InlineData(1, 2, false)]
+    [InlineData(0, 0, false)]
+    public void Timeout_CountsOnlyCastVotes(int yesVotes, int noVotes, bool passes)
+    {
+        var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Voting);
+        tracker.Seed("Alice", "Bob", "Carol", "Dave", "Eve", "Frank");
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
+        if (yesVotes > 1)
+            service.ProcessChatCommand("Bob", false, "!yes");
+        if (noVotes > 0)
+            service.ProcessChatCommand("Carol", false, "!no");
+        if (noVotes > 1)
+            service.ProcessChatCommand("Dave", false, "!no");
+        if (yesVotes == 0)
+        {
+            tracker.Clear();
+            tracker.Seed("Bob", "Carol", "Dave", "Eve", "Frank");
+        }
+
+        // Leave time for abstaining players to vote before deciding the result.
+        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        ExpireVote(service, CurrentVoteId(service));
+
+        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"),
+            passes ? Times.Once() : Times.Never());
+        Assert.Contains(messages, m => m.StartsWith(passes ? "Vote passed!" : "Vote timed out:"));
+    }
+
     [Fact]
     public void Timeout_ExcludesDepartedYesVoter()
     {
@@ -1293,6 +1325,7 @@ public class VotingServiceTests
         tracker.Seed("Alice", "Bob", "Carol", "Dave");
         service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
         service.ProcessChatCommand("Bob", false, "!yes");
+        service.ProcessChatCommand("Carol", false, "!no");
         tracker.Clear();
         tracker.Seed("Alice", "Carol", "Dave");
 
@@ -1828,6 +1861,120 @@ public class VotingServiceTests
         await Task.Delay(80);
 
         serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(VoteModes.Off, "!voting on", VoteModes.Voting, false)]
+    [InlineData(VoteModes.Direct, "  !VOTING ON  ", VoteModes.Voting, true)]
+    [InlineData(VoteModes.Voting, "!voting off", VoteModes.Direct, true)]
+    [InlineData(VoteModes.Direct, "!voting off", VoteModes.Direct, false)]
+    public void VotingCommand_ChangesModeForPrivilegedPlayers(
+        string initialMode, string command, string expectedMode, bool moderator)
+    {
+        var (service, tracker, messages, _, config) = CreateModeSetup(initialMode);
+        Join(tracker, "Admin");
+        var player = tracker.GetPlayers().Single(p => p.Name == "Admin");
+        player.IsAdmin = !moderator;
+        player.IsModerator = moderator;
+
+        service.ProcessChatCommand("Admin", false, command);
+
+        Assert.Contains(expectedMode == VoteModes.Direct ? "Voting disabled." : "Voting enabled.", messages);
+        AssertReportedMode(service, messages, expectedMode);
+        // The override lives in the service; the settings sources are left alone.
+        Assert.Equal(initialMode, config["Vote:Mode"]);
+    }
+
+    [Fact]
+    public void VotingCommand_SettingsReloadRestoresSavedMode()
+    {
+        var (service, tracker, messages, _, config) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Admin");
+        tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
+
+        service.ProcessChatCommand("Admin", false, "!voting off");
+        AssertReportedMode(service, messages, VoteModes.Direct);
+
+        config.Reload();
+
+        AssertReportedMode(service, messages, VoteModes.Voting);
+    }
+
+    private static void AssertReportedMode(VotingService service, List<string> messages, string mode)
+    {
+        messages.Clear();
+        service.ProcessChatCommand("Observer", false, "!config");
+        Assert.Contains(messages, m => m.Contains($"mode={mode.ToLowerInvariant()},", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task VotingCommand_OffAllowsTrackChangesWithoutAVote()
+    {
+        var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Admin");
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
+
+        service.ProcessChatCommand("Admin", false, "!voting off");
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(80, TestContext.Current.CancellationToken);
+
+        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+        server.Verify(m => m.SendCommandAsync("laps=4"), Times.Once);
+        Assert.DoesNotContain(messages, m => m.Contains("Vote started", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void VotingCommand_IgnoresOrdinaryPlayersAndBots(bool isBot)
+    {
+        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        tracker.GetPlayers().Single(p => p.Name == "Alice").IsAdmin = isBot;
+
+        service.ProcessChatCommand("Alice", isBot, "!voting off");
+
+        Assert.Empty(messages);
+        AssertReportedMode(service, messages, VoteModes.Voting);
+    }
+
+    [Theory]
+    [InlineData("!voting")]
+    [InlineData("!voting maybe")]
+    [InlineData("!voting on off")]
+    public void VotingCommand_InvalidArgumentsLeaveModeUnchanged(string command)
+    {
+        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Off);
+        Join(tracker, "Admin");
+        tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
+
+        service.ProcessChatCommand("Admin", false, command);
+
+        Assert.Contains("Usage: !voting on|off", messages);
+        AssertReportedMode(service, messages, VoteModes.Off);
+    }
+
+    [Fact]
+    public void VotingCommand_OffCancelsVoteAndPreventsExpiredVoteChangingTrack()
+    {
+        var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Admin");
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        var voteId = CurrentVoteId(service);
+
+        service.ProcessChatCommand("Admin", false, "!voting off");
+        service.ProcessChatCommand("Bob", false, "!yes");
+        service.ProcessChatCommand("Admin", false, "!voting on");
+        ExpireVote(service, voteId);
+
+        Assert.Contains(messages, m => m.Contains("Vote cancelled", StringComparison.Ordinal));
+        Assert.Contains("Voting disabled.", messages);
+        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
     }
 
     // --- !eventloop ---------------------------------------------------------

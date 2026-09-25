@@ -17,6 +17,18 @@ Part of the WreckfestWeb ecosystem - integrates with [WreckfestWeb](https://gith
 - **📝 Swagger UI** - Interactive API documentation
 - **✅ Comprehensive Tests** - 169+ unit tests covering all functionality
 
+## Voting chat commands
+
+Admins and moderators can use `!voting on` to select Voting mode or `!voting off`
+to switch to direct track changes and cancel an active vote. `!track` continues to work
+without a vote, using the direct-mode cooldown. These commands change the runtime
+configuration; restarting the controller or reloading settings restores the saved
+mode. The commands are hidden from `!help` and ignored for other players.
+
+When the vote timer ends, only votes cast by remaining human players count:
+more yes than no passes; ties and no votes fail. The initiator automatically votes
+yes. Votes can finish early when a majority of all online humans agrees.
+
 ## Installation
 
 📖 **See [INSTALL.md](INSTALL.md) for complete installation instructions** including:
