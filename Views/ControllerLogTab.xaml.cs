@@ -22,9 +22,13 @@ public partial class ControllerLogTab : UserControl, IDisposable
         _refreshTimer.Start();
     }
 
-    public void AddLogEntry(string level, string message)
+    public void AddLogEntry(string level, string message) =>
+        AddLogEntry(level, message, DateTime.Now);
+
+    /// <summary>Adds an entry logged at <paramref name="loggedAt"/>, which may be earlier than now.</summary>
+    public void AddLogEntry(string level, string message, DateTime loggedAt)
     {
-        var timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
+        var timestamp = loggedAt.ToString("HH:mm:ss.fff");
         _buffer.Add($"[{timestamp}] [{level,-5}] {message}");
     }
 

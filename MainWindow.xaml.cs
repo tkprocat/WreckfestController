@@ -4,6 +4,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Extensions.Logging;
+using WreckfestController.Data;
 using WreckfestController.Services;
 using WreckfestController.Views;
 using Timer = System.Timers.Timer;
@@ -14,6 +15,8 @@ namespace WreckfestController;
 public partial class MainWindow : Window
 {
     private readonly ServerManager _serverManager;
+    private readonly DatabaseState _databaseState;
+    private readonly DatabaseBootstrapper _databaseBootstrapper;
     private readonly ILogger<MainWindow> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly Timer _statusUpdateTimer;
@@ -38,12 +41,16 @@ public partial class MainWindow : Window
         ConfigService configService,
         WreckfestWebWebhookService webhookService,
         GuiLoggerProvider guiLoggerProvider,
+        DatabaseState databaseState,
+        DatabaseBootstrapper databaseBootstrapper,
         ILogger<MainWindow> logger,
         ILoggerFactory loggerFactory)
     {
         InitializeComponent();
 
         _serverManager = serverManager;
+        _databaseState = databaseState;
+        _databaseBootstrapper = databaseBootstrapper;
         _logger = logger;
         _loggerFactory = loggerFactory;
 
@@ -101,6 +108,9 @@ public partial class MainWindow : Window
         _processListRefreshTimer.Elapsed += OnProcessListRefreshTick;
         _processListRefreshTimer.Start();
 
+        _databaseState.Changed += OnDatabaseStateChanged;
+        UpdateDatabaseBanner();
+
         // Initial updates
         _serverControlTab.UpdateServerStatus();
         _processManagerTab.RefreshProcessList();
@@ -120,6 +130,55 @@ public partial class MainWindow : Window
     private void OnProcessIdChanged(int? newPid)
     {
         QueueUiUpdate(UpdateWindowTitle);
+    }
+
+    private void OnDatabaseStateChanged()
+    {
+        QueueUiUpdate(UpdateDatabaseBanner);
+    }
+
+    private void UpdateDatabaseBanner()
+    {
+        if (_databaseState.IsReady)
+        {
+            DatabaseBanner.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        DatabaseBannerError.Text = _databaseState.Error ?? "The database has not been prepared yet.";
+        DatabaseBannerBackup.Text = _databaseState.BackupPath is { } backup
+            ? $"A backup was made before the failed migration: {backup}"
+            : $"Database: {_databaseState.DatabasePath}";
+        DatabaseBanner.Visibility = Visibility.Visible;
+    }
+
+    private void OpenDataFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        var folder = DatabasePath.NearestExistingFolder(_databaseState.DatabasePath);
+        if (folder is null)
+        {
+            return;
+        }
+
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = folder,
+            UseShellExecute = true,
+        });
+    }
+
+    private async void RetryDatabaseButton_Click(object sender, RoutedEventArgs e)
+    {
+        RetryDatabaseButton.IsEnabled = false;
+        try
+        {
+            // The banner follows DatabaseState.Changed, so the result needs no handling here.
+            await Task.Run(_databaseBootstrapper.Run);
+        }
+        finally
+        {
+            RetryDatabaseButton.IsEnabled = true;
+        }
     }
 
     private void QueueUiUpdate(Action update)
@@ -244,6 +303,7 @@ public partial class MainWindow : Window
     {
         _closed = true;
         _serverManager.ProcessIdChanged -= OnProcessIdChanged;
+        _databaseState.Changed -= OnDatabaseStateChanged;
         _statusUpdateTimer.Elapsed -= OnStatusUpdateTick;
         _statusUpdateTimer.Dispose();
         _processListRefreshTimer.Elapsed -= OnProcessListRefreshTick;

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.Hosting;
+using WreckfestController.Data;
 
 namespace WreckfestController.Services;
 
@@ -189,6 +190,7 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddSingleton(main.GetRequiredService<EventStorageService>());
         builder.Services.AddSingleton(main.GetRequiredService<RecurringEventService>());
         builder.Services.AddSingleton(main.GetRequiredService<SmartRestartService>());
+        builder.Services.AddSingleton(main.GetRequiredService<DatabaseState>());
     }
 
     /// <summary>
@@ -197,6 +199,9 @@ public class ApiServer : IApiServer, IDisposable
     /// </summary>
     public static void ConfigurePipeline(WebApplication app)
     {
+        // First, so recovery mode answers before anything asks for a key.
+        app.UseMiddleware<DatabaseUnavailableMiddleware>();
+
         var apiKey = app.Services.GetRequiredService<ApiKeySetting>().Key;
         app.UseMiddleware<ApiKeyMiddleware>(apiKey);
         app.UseAuthorization();
