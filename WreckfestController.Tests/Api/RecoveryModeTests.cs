@@ -60,6 +60,30 @@ public sealed class RecoveryModeTests : IDisposable
         }
     }
 
+    // The database's folder cannot be created: a file sits where it should be. Creating
+    // the folder used to happen while DI built the context factory, before Run() and
+    // outside its handler, so the app crashed instead of opening in recovery mode.
+    [Fact]
+    public void UncreatableDatabaseFolder_EntersRecoveryModeThroughTheRealRegistration()
+    {
+        Directory.CreateDirectory(_directory);
+        var blocker = Path.Combine(_directory, "not-a-folder");
+        File.WriteAllText(blocker, "a file where the database folder should be");
+        var databaseFile = Path.Combine(blocker, "controller.db");
+
+        using var host = Program
+            .CreateHostBuilder([$"--Database:Path={databaseFile}"])
+            .Build();
+
+        var bootstrapper = host.Services.GetRequiredService<DatabaseBootstrapper>();
+        Assert.False(bootstrapper.Run());
+
+        var state = host.Services.GetRequiredService<DatabaseState>();
+        Assert.False(state.IsReady);
+        Assert.False(string.IsNullOrWhiteSpace(state.Error));
+        Assert.True(File.Exists(blocker));
+    }
+
     [Fact]
     public async Task Api_InRecoveryMode_AnswersOnlyAuthState()
     {

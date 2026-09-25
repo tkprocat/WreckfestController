@@ -8,9 +8,9 @@ namespace WreckfestController.Data;
 /// configuration loading never touches the database.
 /// </summary>
 /// <remarks>
-/// The steps, in order: back up the existing file when a migration is about to run,
-/// apply migrations, and switch the file to WAL. Phase 3b adds seeding the first-run
-/// settings and warming the settings store's cache here.
+/// The steps, in order: create the folder, back up the existing file when a migration
+/// is about to run, apply migrations, and switch the file to WAL. Phase 3b adds seeding
+/// the first-run settings and warming the settings store's cache here.
 /// A failure never escapes: it is recorded in <see cref="DatabaseState"/>, which puts
 /// the app into recovery mode, and <see cref="Run"/> can be called again to retry.
 /// </remarks>
@@ -50,6 +50,8 @@ public sealed class DatabaseBootstrapper
             string? backupPath = null;
             try
             {
+                ControllerDbContext.EnsureFolder(_state.DatabasePath);
+
                 using var context = _contextFactory.CreateDbContext();
 
                 var pending = context.Database.GetPendingMigrations().ToList();

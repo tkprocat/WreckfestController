@@ -16,6 +16,9 @@ public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<Controller
         var configuration = new ConfigurationBuilder().AddCommandLine(args).Build();
         var databasePath = DatabasePath.Resolve(configuration, AppContext.BaseDirectory);
 
+        // For `dotnet ef database update`; adding a migration never opens the file.
+        ControllerDbContext.EnsureFolder(databasePath);
+
         var options = new DbContextOptionsBuilder<ControllerDbContext>();
         ControllerDbContext.Configure(options, databasePath);
         return new ControllerDbContext(options.Options);

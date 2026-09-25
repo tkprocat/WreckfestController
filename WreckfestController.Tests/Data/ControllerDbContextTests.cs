@@ -15,6 +15,12 @@ public sealed class ControllerDbContextTests : IDisposable
     private readonly string _directory =
         Path.Combine(Path.GetTempPath(), "wfc-db-tests", Guid.NewGuid().ToString("N"));
 
+    public ControllerDbContextTests()
+    {
+        // Creating the folder is the bootstrapper's job, not the context's.
+        Directory.CreateDirectory(_directory);
+    }
+
     private string DatabaseFile => Path.Combine(_directory, "controller.db");
 
     [Fact]
@@ -27,7 +33,7 @@ public sealed class ControllerDbContextTests : IDisposable
     }
 
     [Fact]
-    public async Task Migrate_CreatesTheFileAndItsFolder()
+    public async Task Migrate_CreatesTheFile()
     {
         await using (var context = CreateContext())
         {

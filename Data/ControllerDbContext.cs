@@ -20,21 +20,30 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
     /// Shared by the app's registration and the design-time factory so both open the
     /// database the same way.
     /// </summary>
+    /// <remarks>
+    /// Must not touch the file system: DI runs this while resolving the context factory,
+    /// before <see cref="DatabaseBootstrapper.Run"/> can turn a failure into recovery
+    /// mode. SQLite does not create the folder, so <see cref="EnsureFolder"/> does, from
+    /// inside the bootstrapper.
+    /// </remarks>
     public static void Configure(DbContextOptionsBuilder options, string databasePath)
     {
-        // SQLite creates the file but not its folder.
-        var directory = Path.GetDirectoryName(databasePath);
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
         var connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = databasePath,
         }.ToString();
 
         options.UseSqlite(connectionString);
+    }
+
+    /// <summary>Creates the folder that will hold the database file. SQLite creates only the file.</summary>
+    public static void EnsureFolder(string databasePath)
+    {
+        var directory = Path.GetDirectoryName(databasePath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
     }
 
     protected override void OnModelCreating(ModelBuilder builder)
