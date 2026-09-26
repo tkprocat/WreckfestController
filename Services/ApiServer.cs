@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Metadata;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Hosting;
 using WreckfestController.Data;
+using WreckfestController.Hubs;
 
 namespace WreckfestController.Services;
 
@@ -19,7 +21,7 @@ public interface IApiServer
 
 /// <summary>
 /// Embedded ASP.NET Core API server that runs within the MAUI application.
-/// Provides the REST API and WebSocket endpoints.
+/// Provides the REST API and the SignalR hub.
 /// </summary>
 public class ApiServer : IApiServer, IDisposable
 {
@@ -175,8 +177,7 @@ public class ApiServer : IApiServer, IDisposable
         // Note: We're creating a new service collection, but we'll use the existing singletons
         builder.Services.AddSingleton(main.GetRequiredService<PlayerTracker>());
         builder.Services.AddSingleton(main.GetRequiredService<TrackChangeTracker>());
-        builder.Services.AddSingleton(main.GetRequiredService<WreckfestWebWebhookService>());
-        builder.Services.AddSingleton(main.GetRequiredService<ConsoleLogWebhookSender>());
+        builder.Services.AddSingleton(main.GetRequiredService<HubServerEventPublisher>());
         builder.Services.AddSingleton(main.GetRequiredService<ServerManager>());
         builder.Services.AddSingleton(main.GetRequiredService<ConfigService>());
         builder.Services.AddSingleton(main.GetRequiredService<EventStorageService>());
@@ -187,6 +188,7 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddApiAuthentication(main, configuration);
         builder.Services.AddTrustedProxies(configuration);
         builder.Services.AddLoginRateLimit();
+        builder.Services.AddSignalR();
     }
 
     /// <summary>
@@ -205,6 +207,17 @@ public class ApiServer : IApiServer, IDisposable
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapControllers();
+
+        // Anonymous so the public page gets live updates. What a connection receives
+        // is decided by its group, and only ServerHub puts a signed-in caller in admin.
+        app.MapHub<ServerHub>(ServerHub.Route).AllowAnonymous();
+
+        // The publisher belongs to the WPF app and outlives this host, so it is
+        // pointed at this host's hub only while the host is running.
+        var publisher = app.Services.GetRequiredService<HubServerEventPublisher>();
+        var hub = app.Services.GetRequiredService<IHubContext<ServerHub, IServerHubClient>>();
+        app.Lifetime.ApplicationStarted.Register(() => publisher.Attach(hub));
+        app.Lifetime.ApplicationStopping.Register(() => publisher.Detach(hub));
     }
 
     public async Task StopAsync()

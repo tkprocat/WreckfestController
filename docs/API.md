@@ -32,8 +32,8 @@ A missing or rejected credential returns **401** with no body, never a redirect.
 
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
-(`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`), so
-one cannot appear by accident. Requests to paths that match no
+(`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`, and
+the [live-update hub](#live-updates--hubsserver)), so one cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
 
 ### CSRF
@@ -218,6 +218,43 @@ gives a value of the wrong type or `null`, or puts a line break in a string.
 | GET | `{id}` | One event |
 | POST | `{id}/activate` | Activate an event now |
 
+## Live updates — `/hubs/server`
+
+A SignalR hub pushes server events to the web UI, replacing the outbound webhooks.
+Clients only listen; the hub has no methods to call. It is outside `api/` and answers
+anonymously, but what a connection receives depends on its group:
+
+- **`public`** — every connection.
+- **`admin`** — a connection whose caller passes the Admin policy: the browser's
+  sign-in cookie (sent automatically, same origin) or, for scripts, `X-Api-Key`.
+  Membership is decided once, when the connection opens; sign out or a revoked
+  session takes effect on the next connection.
+
+| Message | Group | Payload |
+| --- | --- | --- |
+| `PlayersUpdated` | public | `{ players: [{ name, playerId, score, vehicle, slot, isBot, joinedAt }] }` |
+| `PlayerJoined` | public | `{ playerName, isBot }` |
+| `PlayerLeft` | public | `{ playerName }` |
+| `TrackChanged` | public | `{ trackId }` |
+| `EventActivated` | public | `{ eventId, eventName, timestamp }` |
+| `ServerStarted` | public | `{ processId, processName, startTime, timestamp }` |
+| `ServerStopped` | public | `{ processId, stopMethod, timestamp }` — `Graceful` or `Force` |
+| `ServerRestarted` | public | `{ oldProcessId, newProcessId, restartMethod, timestamp }` |
+| `ServerAttached` | public | `{ processId, processName, startTime, timestamp }` |
+| `ServerRestartPending` | public | `{ minutesRemaining, eventName, eventId, scheduledRestartTime, timestamp }` |
+| `ConsoleLog` | admin | `{ logs: [string] }` — console lines, batched about once a second (at most 1000 per message) |
+
+Timestamps are UTC. Events raised while no client is connected, or while the API is
+stopped, are not queued. The payload types are the records in `Hubs/IServerHubClient.cs`.
+
+```js
+const connection = new signalR.HubConnectionBuilder().withUrl("/hubs/server").build();
+connection.on("TrackChanged", ({ trackId }) => console.log(trackId));
+await connection.start();
+```
+
+While the database is unavailable (recovery mode) the hub answers 503, like the API.
+
 ## ⚠️ Breaking change
 
 Authentication was introduced after the API had been in use unauthenticated. Any
@@ -228,9 +265,3 @@ With `AllowRemote: false`, a client must also run on the same host.
 
 Existing integrations must be updated to send the header, and `Api:Enabled` must
 be set to `true` — the API no longer starts by default.
-
-## Header casing
-
-Inbound is `X-Api-Key`; the outbound webhooks this application *sends* use
-`X-API-Key` (see [Webhooks.md](Webhooks.md)). HTTP header names are case-insensitive,
-so both are correct — do not "fix" one to match the other.

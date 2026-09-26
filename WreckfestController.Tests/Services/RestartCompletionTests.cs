@@ -23,19 +23,18 @@ public class RestartCompletionTests : IDisposable
     {
         var settings = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["EventSchedulePath"] = _path }).Build();
-        var webhook = new WreckfestWebWebhookService(Mock.Of<ILogger<WreckfestWebWebhookService>>(), settings, new HttpClient());
-        _players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), webhook);
-        var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), webhook);
+        var events = Mock.Of<IServerEventPublisher>();
+        _players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events);
+        var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), events);
         _server = new Mock<ServerManager>(settings, Mock.Of<ILogger<ServerManager>>(), _players, tracks,
-            new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), webhook,
-            new ConsoleLogWebhookSender(new HttpClient(), settings, Mock.Of<ILogger<ConsoleLogWebhookSender>>()));
+            new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), events);
         var config = new Mock<ConfigService>(settings, Mock.Of<ILogger<ConfigService>>());
         config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig());
-        _restart = new SmartRestartService(_server.Object, _players, tracks, config.Object, webhook,
+        _restart = new SmartRestartService(_server.Object, _players, tracks, config.Object, events,
             Mock.Of<ILogger<SmartRestartService>>());
         _storage = new EventStorageService(settings, Mock.Of<ILogger<EventStorageService>>());
         _scheduler = new EventSchedulerService(_storage, _restart,
-            new RecurringEventService(Mock.Of<ILogger<RecurringEventService>>()), config.Object, webhook, _log);
+            new RecurringEventService(Mock.Of<ILogger<RecurringEventService>>()), config.Object, events, _log);
     }
 
     private void MakeDueAndCheck(int id)

@@ -5,7 +5,7 @@ namespace WreckfestController.Services;
 public class TrackChangeTracker
 {
     private readonly ILogger<TrackChangeTracker> _logger;
-    private readonly WreckfestWebWebhookService _webhookService;
+    private readonly IServerEventPublisher _events;
     private string? _currentTrack = null;
     private readonly object _lock = new();
 
@@ -14,10 +14,10 @@ public class TrackChangeTracker
     /// </summary>
     public event Action<TrackChangeEvent>? TrackChanged;
 
-    public TrackChangeTracker(ILogger<TrackChangeTracker> logger, WreckfestWebWebhookService webhookService)
+    public TrackChangeTracker(ILogger<TrackChangeTracker> logger, IServerEventPublisher events)
     {
         _logger = logger;
-        _webhookService = webhookService;
+        _events = events;
     }
 
     /// <summary>
@@ -48,8 +48,7 @@ public class TrackChangeTracker
             _logger.LogInformation("Track changed to: {TrackId}", trackId);
             TrackChanged?.Invoke(new TrackChangeEvent(trackId));
 
-            // Send webhook to Laravel
-            _ = _webhookService.SendTrackChangedAsync(trackId);
+            _ = _events.TrackChangedAsync(trackId);
         }
     }
 

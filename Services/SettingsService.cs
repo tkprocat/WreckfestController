@@ -81,26 +81,7 @@ public class SettingsService
                 ReadCommentHandling = JsonCommentHandling.Skip
             });
 
-            settings ??= CreateDefaultSettings();
-            var migratedWebhookSettings = settings.WreckfestWeb is not null;
-            var normalizedSettings = NormalizeSettings(settings);
-
-            if (migratedWebhookSettings)
-            {
-                try
-                {
-                    SaveSettings(normalizedSettings);
-                    _logger.LogInformation("Migrated legacy WreckfestWeb user settings to Webhooks");
-                }
-                catch (Exception ex)
-                {
-                    // The in-memory migration still lets the current run work when the
-                    // settings file cannot be rewritten.
-                    _logger.LogError(ex, "Unable to persist migrated webhook user settings to {Path}", _userSettingsPath);
-                }
-            }
-
-            return normalizedSettings;
+            return NormalizeSettings(settings ?? CreateDefaultSettings());
         }
         catch (Exception ex)
         {
@@ -152,11 +133,6 @@ public class SettingsService
                 SteamCmdPath = _configuration["SteamCmd:SteamCmdPath"] ?? "",
                 WreckfestAppId = _configuration["SteamCmd:WreckfestAppId"] ?? "361580"
             },
-            Webhooks = new WreckfestWebSettings
-            {
-                WebhookBaseUrl = WebhookConfiguration.GetBaseUrl(_configuration, _logger) ?? WebhookConfiguration.DefaultBaseUrl,
-                WebhookApiKey = WebhookConfiguration.GetApiKey(_configuration, _logger) ?? ""
-            },
             Vote = new VoteSettings
             {
                 Enabled = _configuration.GetValue("Vote:Enabled", true),
@@ -199,9 +175,6 @@ public class SettingsService
 
         settings.WreckfestServer ??= new WreckfestServerSettings();
         settings.WreckfestServer.OutputMode = ServerOutputModes.InjectedHook;
-
-        settings.Webhooks ??= settings.WreckfestWeb ?? new WreckfestWebSettings();
-        settings.WreckfestWeb = null;
 
         return settings;
     }

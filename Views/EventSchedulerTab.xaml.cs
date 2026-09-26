@@ -11,7 +11,7 @@ public partial class EventSchedulerTab : UserControl
 {
     private readonly EventStorageService _eventStorage;
     private readonly SmartRestartService _smartRestartService;
-    private readonly WreckfestWebWebhookService _webhookService;
+    private readonly IServerEventPublisher _publisher;
     private readonly ILogger<EventSchedulerTab> _logger;
     private readonly ObservableCollection<EventViewModel> _events = new();
     private Event? _selectedEvent;
@@ -19,14 +19,14 @@ public partial class EventSchedulerTab : UserControl
     public EventSchedulerTab(
         EventStorageService eventStorage,
         SmartRestartService smartRestartService,
-        WreckfestWebWebhookService webhookService,
+        IServerEventPublisher publisher,
         ILogger<EventSchedulerTab> logger)
     {
         InitializeComponent();
 
         _eventStorage = eventStorage;
         _smartRestartService = smartRestartService;
-        _webhookService = webhookService;
+        _publisher = publisher;
         _logger = logger;
 
         EventsDataGrid.ItemsSource = _events;
@@ -225,8 +225,7 @@ public partial class EventSchedulerTab : UserControl
                 _logger.LogInformation("Marked event {EventName} as active in schedule", @event.Name);
             }
 
-            // Send webhook to Laravel
-            _ = _webhookService.SendEventActivatedAsync(@event.Id, @event.Name);
+            _ = _publisher.EventActivatedAsync(@event.Id, @event.Name);
 
             // Re-enable button on UI thread
             Dispatcher.Invoke(() =>

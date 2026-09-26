@@ -1,7 +1,10 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http.Connections;
+using Microsoft.AspNetCore.Http.Connections.Client;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
@@ -10,6 +13,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Moq;
 using WreckfestController.Data;
+using WreckfestController.Hubs;
 using WreckfestController.Services;
 
 namespace WreckfestController.Tests.Api;
@@ -71,7 +75,6 @@ public sealed class ApiTestHost : IAsyncDisposable
         {
             ["Api:Enabled"] = "true",
             ["Api:Key"] = ApiKey,
-            ["Webhooks:Enabled"] = "false",
         };
         foreach (var (key, value) in settings ?? new Dictionary<string, string?>())
         {
@@ -181,6 +184,24 @@ public sealed class ApiTestHost : IAsyncDisposable
         return client;
     }
 
+    /// <summary>
+    /// A connection to <see cref="ServerHub"/> over the TestServer, not yet started.
+    /// Long polling, because a TestServer handler speaks plain HTTP. Add a header in
+    /// <paramref name="configure"/> to sign in.
+    /// </summary>
+    public HubConnection CreateHubConnection(Action<HttpConnectionOptions>? configure = null)
+    {
+        var server = _app.GetTestServer();
+        return new HubConnectionBuilder()
+            .WithUrl(new Uri(server.BaseAddress, ServerHub.Route.TrimStart('/')), options =>
+            {
+                options.HttpMessageHandlerFactory = _ => server.CreateHandler();
+                options.Transports = HttpTransportType.LongPolling;
+                configure?.Invoke(options);
+            })
+            .Build();
+    }
+
     public async ValueTask DisposeAsync()
     {
         await _app.StopAsync();
@@ -206,9 +227,8 @@ public sealed class ApiTestHost : IAsyncDisposable
         });
         services.AddLogging();
         services.AddSingleton(configuration);
-        services.AddSingleton(new HttpClient());
-        services.AddSingleton<WreckfestWebWebhookService>();
-        services.AddSingleton<ConsoleLogWebhookSender>();
+        services.AddSingleton<HubServerEventPublisher>();
+        services.AddSingleton<IServerEventPublisher>(sp => sp.GetRequiredService<HubServerEventPublisher>());
         services.AddSingleton<PlayerTracker>();
         services.AddSingleton<TrackChangeTracker>();
         services.AddSingleton<ServerInfoTracker>();
@@ -218,8 +238,7 @@ public sealed class ApiTestHost : IAsyncDisposable
             sp.GetRequiredService<PlayerTracker>(),
             sp.GetRequiredService<TrackChangeTracker>(),
             sp.GetRequiredService<ServerInfoTracker>(),
-            sp.GetRequiredService<WreckfestWebWebhookService>(),
-            sp.GetRequiredService<ConsoleLogWebhookSender>(),
+            sp.GetRequiredService<IServerEventPublisher>(),
             Mock.Of<IServerInputWriter>(),
             Mock.Of<IInjectedHookOutputReader>()));
         services.AddSingleton<ConfigService>();

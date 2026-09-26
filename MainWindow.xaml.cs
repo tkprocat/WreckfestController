@@ -40,7 +40,7 @@ public partial class MainWindow : Window
         EventStorageService eventStorageService,
         SmartRestartService smartRestartService,
         ConfigService configService,
-        WreckfestWebWebhookService webhookService,
+        IServerEventPublisher events,
         GuiLoggerProvider guiLoggerProvider,
         DatabaseState databaseState,
         DatabaseBootstrapper databaseBootstrapper,
@@ -78,7 +78,7 @@ public partial class MainWindow : Window
         _eventSchedulerTab = new EventSchedulerTab(
             eventStorageService,
             smartRestartService,
-            webhookService,
+            events,
             _loggerFactory.CreateLogger<EventSchedulerTab>());
 
         _controllerLogTab = new ControllerLogTab();

@@ -25,6 +25,10 @@ public class EndpointAuthorizationTests
         "POST /api/auth/login",
         // An expired session must still be able to clear its cookie.
         "POST /api/auth/logout",
+        // The live-update hub. Signed-out clients get only the public group; ServerHub
+        // adds the admin group (console log) only for a caller that passes Admin.
+        "* /hubs/server/negotiate",
+        "* /hubs/server",
     };
 
     [Fact]

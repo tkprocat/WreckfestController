@@ -7,7 +7,7 @@ public class PlayerTracker
 {
     private readonly ConcurrentDictionary<string, Player> _players = new();
     private readonly ILogger<PlayerTracker> _logger;
-    private readonly WreckfestWebWebhookService _webhookService;
+    private readonly IServerEventPublisher _events;
     private readonly object _lock = new();
 
     /// <summary>
@@ -15,10 +15,10 @@ public class PlayerTracker
     /// </summary>
     public event Action<PlayerTrackerEvent>? PlayerEvent;
 
-    public PlayerTracker(ILogger<PlayerTracker> logger, WreckfestWebWebhookService webhookService)
+    public PlayerTracker(ILogger<PlayerTracker> logger, IServerEventPublisher events)
     {
         _logger = logger;
-        _webhookService = webhookService;
+        _events = events;
     }
 
     /// <summary>
@@ -298,17 +298,33 @@ public class PlayerTracker
     private void NotifyPlayerEvent(PlayerTrackerEvent playerTrackerEvent)
     {
         PlayerEvent?.Invoke(playerTrackerEvent);
+
+        if (playerTrackerEvent.Player is not { } player)
+        {
+            return;
+        }
+
+        switch (playerTrackerEvent.EventType)
+        {
+            case "Join":
+                _ = _events.PlayerJoinedAsync(player.Name, player.IsBot);
+                break;
+            case "Left":
+            case "Kicked":
+                _ = _events.PlayerLeftAsync(player.Name);
+                break;
+        }
     }
 
     /// <summary>
-    /// Send the current player list to Laravel webhook
+    /// Send the current player list to the web UI
     /// </summary>
     private async Task SendPlayerListUpdate()
     {
         try
         {
             var onlinePlayers = GetPlayers();
-            await _webhookService.SendPlayersUpdatedAsync(onlinePlayers);
+            await _events.PlayersUpdatedAsync(onlinePlayers);
         }
         catch (Exception ex)
         {

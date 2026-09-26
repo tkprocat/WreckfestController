@@ -24,15 +24,14 @@ public class ManualEventConfigurationTests : IDisposable
     {
         var settings = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["EventSchedulePath"] = _path }).Build();
-        var webhook = new WreckfestWebWebhookService(Mock.Of<ILogger<WreckfestWebWebhookService>>(), settings, new HttpClient());
-        var players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), webhook);
-        var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), webhook);
+        var events = Mock.Of<IServerEventPublisher>();
+        var players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events);
+        var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), events);
         _server = new Mock<ServerManager>(settings, Mock.Of<ILogger<ServerManager>>(), players, tracks,
-            new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), webhook,
-            new ConsoleLogWebhookSender(new HttpClient(), settings, Mock.Of<ILogger<ConsoleLogWebhookSender>>()));
+            new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), events);
         _config = new Mock<ConfigService>(settings, Mock.Of<ILogger<ConfigService>>());
         _config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig { ServerName = "Old name" });
-        _restart = new SmartRestartService(_server.Object, players, tracks, _config.Object, webhook,
+        _restart = new SmartRestartService(_server.Object, players, tracks, _config.Object, events,
             Mock.Of<ILogger<SmartRestartService>>());
         _storage = new EventStorageService(settings, Mock.Of<ILogger<EventStorageService>>());
         var logger = new Mock<ILogger<EventsController>>();
@@ -43,7 +42,7 @@ public class ManualEventConfigurationTests : IDisposable
                 if (call.Arguments[2].ToString()!.StartsWith("Manual event activation workflow completed"))
                     _activated.TrySetResult();
             }));
-        _controller = new EventsController(_storage, _restart, webhook, logger.Object);
+        _controller = new EventsController(_storage, _restart, events, logger.Object);
         Assert.True(_storage.SaveSchedule(new EventSchedule { Events = [new Event {
             Id = 1, Name = "Future event", StartTime = DateTime.UtcNow.AddDays(1),
             ServerConfig = new EventServerConfig { ServerName = "New name" },
@@ -111,7 +110,7 @@ public class ManualEventConfigurationTests : IDisposable
         var settings = new ConfigurationBuilder().Build();
         var scheduler = new EventSchedulerService(_storage, _restart,
             new RecurringEventService(Mock.Of<ILogger<RecurringEventService>>()), _config.Object,
-            new WreckfestWebWebhookService(Mock.Of<ILogger<WreckfestWebWebhookService>>(), settings, new HttpClient()),
+            Mock.Of<IServerEventPublisher>(),
             Mock.Of<ILogger<EventSchedulerService>>());
         using (scheduler)
         {
