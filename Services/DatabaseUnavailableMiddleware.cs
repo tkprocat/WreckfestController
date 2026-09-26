@@ -35,6 +35,7 @@ public sealed class DatabaseUnavailableMiddleware
             await context.Response.WriteAsJsonAsync(new
             {
                 authenticated = false,
+                user = (object?)null,
                 setupRequired = false,
                 degraded = true,
             });

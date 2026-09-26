@@ -12,6 +12,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Settings File Path Info -->
@@ -262,6 +263,42 @@
                        TextWrapping="Wrap"
                        Margin="0,15,0,0"
                        HorizontalAlignment="Right"/>
+
+            <!-- Web Accounts: separate from the settings above, and not saved with them -->
+            <Border Grid.Row="7"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,20,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <TextBlock Text="WEB ACCOUNTS"
+                                   FontSize="14"
+                                   FontWeight="Bold"
+                                   Foreground="{StaticResource TextPrimary}"
+                                   Margin="0,0,0,5"/>
+                        <TextBlock x:Name="AccountsStatusText"
+                                   Text="Loading..."
+                                   FontSize="11"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <Button x:Name="CreateAccountButton"
+                            Grid.Column="1"
+                            Content="CREATE ADMIN ACCOUNT"
+                            Click="OnCreateAccountClicked"
+                            Background="{StaticResource ButtonLightBlue}"
+                            Foreground="White"
+                            Width="200"
+                            Margin="15,0,0,0"/>
+                </Grid>
+            </Border>
         </Grid>
     </ScrollViewer>
 </UserControl>

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.ModelBinding.Metadata;
 using Microsoft.Extensions.Hosting;
 using WreckfestController.Data;
 
@@ -157,7 +158,13 @@ public class ApiServer : IApiServer, IDisposable
         IServiceProvider main,
         IConfiguration configuration)
     {
-        builder.Services.AddControllers()
+        builder.Services.AddControllers(options =>
+            {
+                options.Filters.Add<CookieAntiforgeryFilter>();
+                // Name validation errors after the JSON property ("email"), not the C#
+                // one ("Email"), to match the Identity errors and the request body.
+                options.ModelMetadataDetailsProviders.Add(new SystemTextJsonValidationMetadataProvider());
+            })
             // AddControllers discovers controllers from the entry assembly, which is
             // the test runner rather than this app when a test builds the host.
             .AddApplicationPart(typeof(ApiServer).Assembly);

@@ -37,9 +37,12 @@ public sealed class DatabaseBootstrapperTests : IDisposable
     [Fact]
     public void Run_SwitchesTheFileToWal()
     {
-        var (bootstrapper, _) = Create();
+        var (bootstrapper, state) = Create();
 
-        bootstrapper.Run();
+        // This test has failed intermittently without saying why. Run() never throws,
+        // so check it succeeded and carry the bootstrapper's own error into the failure.
+        var succeeded = bootstrapper.Run();
+        Assert.True(succeeded, $"Run() failed: {state.Error}");
 
         Assert.Equal("wal", Scalar(DatabaseFile, "PRAGMA journal_mode;"));
     }
