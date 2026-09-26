@@ -41,27 +41,17 @@ public class ApiServer : IApiServer, IDisposable
     public string BaseUrl { get; private set; } = "http://localhost:5100";
 
     /// <summary>
-    /// Builds the listen URLs. Ports are configurable so several controller
-    /// instances can manage separate servers on one Windows host.
-    /// </summary>
-    /// <summary>
     /// The HTTP API is opt-in. When disabled no port is bound at all, which also
     /// keeps several controller instances on one host from contending for ports.
+    /// The key is optional: browsers sign in with a cookie, and only scripts need it.
     /// </summary>
     public static bool IsEnabled(IConfiguration configuration) =>
-        IsFlagSet(configuration) && HasApiKey(configuration);
-
-    /// <summary>True when Api:Enabled parses as true.</summary>
-    public static bool IsFlagSet(IConfiguration configuration) =>
         bool.TryParse(configuration["Api:Enabled"], out var enabled) && enabled;
 
     /// <summary>
-    /// True when an inbound key is configured. Without one every request would be
-    /// rejected, so binding the port would serve nothing but 401s.
+    /// Builds the listen URLs. Ports are configurable so several controller
+    /// instances can manage separate servers on one Windows host.
     /// </summary>
-    public static bool HasApiKey(IConfiguration configuration) =>
-        !string.IsNullOrWhiteSpace(configuration["Api:Key"]);
-
     public static string GetListenUrls(
         bool allowRemote,
         int httpPort = DefaultHttpPort,
@@ -114,10 +104,7 @@ public class ApiServer : IApiServer, IDisposable
 
             if (!IsEnabled(configuration))
             {
-                _logger.LogInformation(
-                    IsFlagSet(configuration)
-                        ? "HTTP API not started: Api:Enabled is true but Api:Key is blank. No port will be bound."
-                        : "HTTP API is disabled (Api:Enabled is false). No port will be bound.");
+                _logger.LogInformation("HTTP API is disabled (Api:Enabled is false). No port will be bound.");
                 return;
             }
 
@@ -177,8 +164,6 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddEndpointsApiExplorer();
         // Swagger disabled - causes build issues with MAUI
 
-        builder.Services.AddSingleton(new ApiKeySetting(configuration["Api:Key"]));
-
         // Register services from main service provider
         // Note: We're creating a new service collection, but we'll use the existing singletons
         builder.Services.AddSingleton(main.GetRequiredService<PlayerTracker>());
@@ -191,6 +176,8 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddSingleton(main.GetRequiredService<RecurringEventService>());
         builder.Services.AddSingleton(main.GetRequiredService<SmartRestartService>());
         builder.Services.AddSingleton(main.GetRequiredService<DatabaseState>());
+
+        builder.Services.AddApiAuthentication(main, configuration);
     }
 
     /// <summary>
@@ -199,17 +186,13 @@ public class ApiServer : IApiServer, IDisposable
     /// </summary>
     public static void ConfigurePipeline(WebApplication app)
     {
-        // First, so recovery mode answers before anything asks for a key.
+        // First, so recovery mode answers before anything touches the user store.
         app.UseMiddleware<DatabaseUnavailableMiddleware>();
 
-        var apiKey = app.Services.GetRequiredService<ApiKeySetting>().Key;
-        app.UseMiddleware<ApiKeyMiddleware>(apiKey);
+        app.UseAuthentication();
         app.UseAuthorization();
         app.MapControllers();
     }
-
-    /// <summary>The inbound key, carried from ConfigureServices to ConfigurePipeline.</summary>
-    private sealed record ApiKeySetting(string? Key);
 
     public async Task StopAsync()
     {

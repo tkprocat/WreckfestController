@@ -158,15 +158,13 @@ public class WebhookConfigurationTests
             ApiServer.IsEnabled(Build(new Dictionary<string, string?>
             {
                 ["Api:Enabled"] = value,
-                ["Api:Key"] = "secret"
             })));
     }
 
     private static IConfiguration Build(Dictionary<string, string?> values) =>
         new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 
-    // Enabled alone is not enough: a blank key would mean posting unauthenticated
-    // outbound, and serving nothing but 401s inbound.
+    // Enabled alone is not enough: a blank key would mean posting unauthenticated.
     [Fact]
     public void Webhooks_AreDisabled_WhenEnabledButKeyIsBlank()
     {
@@ -198,10 +196,11 @@ public class WebhookConfigurationTests
         })));
     }
 
+    // Browsers sign in with a cookie, so the key is only for scripts and is optional.
     [Fact]
-    public void Api_IsDisabled_WhenEnabledButKeyIsBlank()
+    public void Api_IsEnabled_WhenEnabledAndKeyIsBlank()
     {
-        Assert.False(ApiServer.IsEnabled(Build(new Dictionary<string, string?>
+        Assert.True(ApiServer.IsEnabled(Build(new Dictionary<string, string?>
         {
             ["Api:Enabled"] = "true",
             ["Api:Key"] = "   "

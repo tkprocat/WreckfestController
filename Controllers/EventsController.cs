@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WreckfestController.Models;
 using WreckfestController.Services;
@@ -8,6 +9,7 @@ namespace WreckfestController.Controllers;
 /// API controller for managing scheduled server events
 /// </summary>
 [ApiController]
+[Authorize(Policy = ApiAuthentication.AdminPolicy)]
 [Route("api/[controller]")]
 public class EventsController : ControllerBase
 {
