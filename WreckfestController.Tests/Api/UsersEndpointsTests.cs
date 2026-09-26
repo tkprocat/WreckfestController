@@ -239,6 +239,86 @@ public class UsersEndpointsTests
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
     }
 
+    // Someone edits the account between the lock reading it and saving it. The lock
+    // must fail visibly, not answer isLockedOut: true over an unlocked row.
+    [Fact]
+    public async Task Lock_LosingARace_Returns409_AndLeavesTheAccountAsItWas()
+    {
+        var edit = new ConcurrentEditInterceptor();
+        await using var host = await ApiTestHost.StartAsync(
+            configureDatabase: options => options.AddInterceptors(edit));
+        var other = await host.CreateUserAsync("other");
+        using var script = host.CreateAuthenticatedClient();
+
+        edit.ArmFor(other.Id);
+        using var locked = await script.PostAsync($"/api/users/{other.Id}/lock", null, Ct);
+
+        Assert.Equal(HttpStatusCode.Conflict, locked.StatusCode);
+        var stored = await script.GetFromJsonAsync<JsonElement>($"/api/users/{other.Id}", Ct);
+        Assert.False(stored.GetProperty("isLockedOut").GetBoolean());
+    }
+
+    // Two admins delete the other two accounts at the same moment. Each sees two
+    // accounts when it counts; unless the count and delete are serialized, both go
+    // ahead and nobody can sign in any more.
+    [Fact]
+    public async Task ConcurrentDeletes_NeverRemoveTheLastAccount()
+    {
+        await using var host = await ApiTestHost.StartAsync(
+            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor()));
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using var script = host.CreateAuthenticatedClient();
+
+        var responses = await Task.WhenAll(
+            script.DeleteAsync($"/api/users/{first.Id}", Ct),
+            script.DeleteAsync($"/api/users/{second.Id}", Ct));
+
+        var statuses = responses.Select(r => r.StatusCode).OrderBy(s => s).ToList();
+        Assert.Equal([HttpStatusCode.NoContent, HttpStatusCode.Conflict], statuses);
+        var remaining = await script.GetFromJsonAsync<JsonElement>("/api/users", Ct);
+        Assert.Single(remaining.EnumerateArray());
+        foreach (var response in responses)
+        {
+            response.Dispose();
+        }
+    }
+
+    // MVC's own validation and Identity's errors must name fields the same way, the
+    // way the request spells them, so the SPA can map both onto its form.
+    [Fact]
+    public async Task ValidationErrors_UseTheRequestsFieldNames()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var script = host.CreateAuthenticatedClient();
+
+        using var badEmail = await script.PostAsJsonAsync("/api/users", new
+        {
+            userName = "fresh",
+            email = "not an email",
+            password = ApiTestHost.Password,
+        }, Ct);
+        await AuthEndpointsTests.AssertFieldErrorAsync(badEmail, "email");
+
+        using var missingUserName = await script.PostAsJsonAsync("/api/users", new
+        {
+            email = "fresh@example.com",
+            password = ApiTestHost.Password,
+        }, Ct);
+        await AuthEndpointsTests.AssertFieldErrorAsync(missingUserName, "userName");
+
+        using var missingPassword = await script.PostAsJsonAsync(
+            "/api/users/any/password", new { }, Ct);
+        await AuthEndpointsTests.AssertFieldErrorAsync(missingPassword, "newPassword");
+
+        // Login is anonymous, so it needs the antiforgery token first.
+        using var browser = host.CreateBrowser();
+        await browser.FetchAntiforgeryAsync();
+        using var missingLogin = await browser.Http.PostAsJsonAsync(
+            "/api/auth/login", new { password = ApiTestHost.Password }, Ct);
+        await AuthEndpointsTests.AssertFieldErrorAsync(missingLogin, "login");
+    }
+
     [Fact]
     public async Task UnknownId_Returns404()
     {

@@ -127,6 +127,11 @@ named as in the request. The older controllers below still answer `{ message }`.
 | POST | `{id}/lock` | Locks until unlocked and ends the account's sessions. **409** for your own account. |
 | POST | `{id}/unlock` | Lifts an admin lock or a failed-sign-in lockout. |
 
+Any account write answers **409** when the account was changed by another request
+at the same moment; reload it and try again. Nothing is half-applied: a lock and the
+sign-out it causes are one save, and concurrent deletes are serialized so the last
+account always survives.
+
 Account responses never include password hashes or security stamps:
 `{ id, userName, email, displayName, timeZone, isLockedOut, lockoutEnd }`.
 

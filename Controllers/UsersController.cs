@@ -21,17 +21,21 @@ public class UsersController : ControllerBase
 {
     private readonly UserManager<AppUser> _users;
     private readonly SignInManager<AppUser> _signIn;
+    private readonly ControllerDbContext _db;
     private readonly TimeProvider _time;
     private readonly ILogger<UsersController> _logger;
 
+    /// <param name="db">The request's context: the same instance UserManager's store uses.</param>
     public UsersController(
         UserManager<AppUser> users,
         SignInManager<AppUser> signIn,
+        ControllerDbContext db,
         TimeProvider time,
         ILogger<UsersController> logger)
     {
         _users = users;
         _signIn = signIn;
+        _db = db;
         _time = time;
         _logger = logger;
     }
@@ -69,8 +73,7 @@ public class UsersController : ControllerBase
         var result = await _users.CreateAsync(user, request.Password);
         if (!result.Succeeded)
         {
-            ModelState.AddIdentityErrors(result);
-            return ValidationProblem(ModelState);
+            return this.IdentityFailure(result);
         }
 
         _logger.LogInformation("{Caller} created web account {UserName}", Caller, user.UserName);
@@ -106,8 +109,7 @@ public class UsersController : ControllerBase
             : await _users.UpdateAsync(user);
         if (!result.Succeeded)
         {
-            ModelState.AddIdentityErrors(result);
-            return ValidationProblem(ModelState);
+            return this.IdentityFailure(result);
         }
 
         if (loginChanged && IsCaller(user))
@@ -121,6 +123,12 @@ public class UsersController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id)
     {
+        // Two admins deleting the other two accounts at once would each count two and
+        // both go ahead, leaving nobody able to sign in. Microsoft.Data.Sqlite begins
+        // with BEGIN IMMEDIATE, which takes the write lock before the count, so a
+        // competing delete waits until this one commits and then counts again.
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+
         var user = await _users.FindByIdAsync(id);
         if (user is null)
         {
@@ -141,10 +149,10 @@ public class UsersController : ControllerBase
         var result = await _users.DeleteAsync(user);
         if (!result.Succeeded)
         {
-            ModelState.AddIdentityErrors(result);
-            return ValidationProblem(ModelState);
+            return this.IdentityFailure(result);
         }
 
+        await transaction.CommitAsync();
         _logger.LogInformation("{Caller} deleted web account {UserName}", Caller, user.UserName);
         return NoContent();
     }
@@ -163,16 +171,14 @@ public class UsersController : ControllerBase
         var validation = await AccountValidation.ValidatePasswordAsync(_users, user, request.NewPassword);
         if (!validation.Succeeded)
         {
-            ModelState.AddIdentityErrors(validation, passwordField: "newPassword");
-            return ValidationProblem(ModelState);
+            return this.IdentityFailure(validation, passwordField: "newPassword");
         }
 
         user.PasswordHash = _users.PasswordHasher.HashPassword(user, request.NewPassword);
         var result = await _users.UpdateSecurityStampAsync(user);
         if (!result.Succeeded)
         {
-            ModelState.AddIdentityErrors(result, passwordField: "newPassword");
-            return ValidationProblem(ModelState);
+            return this.IdentityFailure(result, passwordField: "newPassword");
         }
 
         if (IsCaller(user))
@@ -199,9 +205,15 @@ public class UsersController : ControllerBase
             return Refused("You cannot lock your own account.");
         }
 
-        await _users.SetLockoutEnabledAsync(user, true);
-        await _users.SetLockoutEndDateAsync(user, DateTimeOffset.MaxValue);
-        await _users.UpdateSecurityStampAsync(user);
+        // One save, so the lock and the new stamp that ends the account's sessions land
+        // together or not at all.
+        user.LockoutEnabled = true;
+        user.LockoutEnd = DateTimeOffset.MaxValue;
+        var result = await _users.UpdateSecurityStampAsync(user);
+        if (!result.Succeeded)
+        {
+            return this.IdentityFailure(result);
+        }
 
         _logger.LogInformation("{Caller} locked web account {UserName}", Caller, user.UserName);
         return UserResponse.From(user, _time);
@@ -217,8 +229,13 @@ public class UsersController : ControllerBase
             return NotFound();
         }
 
-        await _users.SetLockoutEndDateAsync(user, null);
-        await _users.ResetAccessFailedCountAsync(user);
+        user.LockoutEnd = null;
+        user.AccessFailedCount = 0;
+        var result = await _users.UpdateAsync(user);
+        if (!result.Succeeded)
+        {
+            return this.IdentityFailure(result);
+        }
 
         _logger.LogInformation("{Caller} unlocked web account {UserName}", Caller, user.UserName);
         return UserResponse.From(user, _time);
@@ -255,4 +272,8 @@ public sealed record UpdateUserRequest : ProfileRequest
     public string UserName { get; init; } = string.Empty;
 }
 
-public sealed record ResetPasswordRequest([Required] string NewPassword);
+public sealed record ResetPasswordRequest
+{
+    [Required]
+    public string NewPassword { get; init; } = string.Empty;
+}

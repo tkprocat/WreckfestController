@@ -244,8 +244,9 @@ public class AuthEndpointsTests
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
         var errors = problem.GetProperty("errors");
+        // Ordinal: "Email" and "email" are different keys to a JavaScript form.
         Assert.True(
-            errors.TryGetProperty(field, out _),
+            errors.EnumerateObject().Any(e => e.Name == field),
             $"expected an error for '{field}', got {errors}");
     }
 }

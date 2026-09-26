@@ -1,5 +1,7 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using WreckfestController.Data;
 
@@ -71,6 +73,27 @@ internal static class AccountValidation
             };
             modelState.AddModelError(field, error.Description);
         }
+    }
+
+    /// <summary>
+    /// The response for a failed Identity operation: 409 when the account changed
+    /// underneath the request (its concurrency stamp moved), otherwise a validation
+    /// problem naming the fields.
+    /// </summary>
+    public static ActionResult IdentityFailure(
+        this ControllerBase controller,
+        IdentityResult result,
+        string passwordField = "password")
+    {
+        if (result.Errors.Any(e => e.Code == nameof(IdentityErrorDescriber.ConcurrencyFailure)))
+        {
+            return controller.Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "This account was changed by someone else at the same time. Reload it and try again.");
+        }
+
+        controller.ModelState.AddIdentityErrors(result, passwordField);
+        return controller.ValidationProblem(controller.ModelState);
     }
 
     /// <summary>True for a null zone or an IANA id; Windows ids are rejected so the browser can use it.</summary>

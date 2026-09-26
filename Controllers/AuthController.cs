@@ -151,8 +151,7 @@ public class AuthController : ControllerBase
             : await _users.UpdateAsync(user);
         if (!result.Succeeded)
         {
-            ModelState.AddIdentityErrors(result);
-            return ValidationProblem(ModelState);
+            return this.IdentityFailure(result);
         }
 
         if (emailChanged)
@@ -177,8 +176,7 @@ public class AuthController : ControllerBase
         var result = await _users.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
         if (!result.Succeeded)
         {
-            ModelState.AddIdentityErrors(result, passwordField: "newPassword");
-            return ValidationProblem(ModelState);
+            return this.IdentityFailure(result, passwordField: "newPassword");
         }
 
         // The new stamp would otherwise end this session too.
@@ -197,13 +195,27 @@ public class AuthController : ControllerBase
         title: "Only a signed-in user has a profile. API-key requests do not.");
 }
 
-public sealed record LoginRequest(
-    [Required] string Login,
-    [Required] string Password,
-    bool Remember);
+// Properties rather than a positional record: validation errors are keyed by the
+// property's JSON name ("login"), but by the C# parameter name for constructor
+// parameters ("Login"), which the SPA's forms would not match.
+public sealed record LoginRequest
+{
+    [Required]
+    public string Login { get; init; } = string.Empty;
+
+    [Required]
+    public string Password { get; init; } = string.Empty;
+
+    public bool Remember { get; init; }
+}
 
 public sealed record UpdateProfileRequest : ProfileRequest;
 
-public sealed record ChangePasswordRequest(
-    [Required] string CurrentPassword,
-    [Required] string NewPassword);
+public sealed record ChangePasswordRequest
+{
+    [Required]
+    public string CurrentPassword { get; init; } = string.Empty;
+
+    [Required]
+    public string NewPassword { get; init; } = string.Empty;
+}

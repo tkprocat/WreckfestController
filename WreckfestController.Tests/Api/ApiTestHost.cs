@@ -51,10 +51,15 @@ public sealed class ApiTestHost : IAsyncDisposable
     /// simulate a restart; the caller then owns deleting it. Defaults to a fresh temp
     /// folder that is deleted on dispose.
     /// </param>
+    /// <param name="configureDatabase">
+    /// Extra options for every context the hosts create, such as interceptors that
+    /// make a race happen on cue.
+    /// </param>
     public static async Task<ApiTestHost> StartAsync(
         IDictionary<string, string?>? settings = null,
         DatabaseState? databaseState = null,
-        string? dataDirectory = null)
+        string? dataDirectory = null,
+        Action<DbContextOptionsBuilder>? configureDatabase = null)
     {
         var values = new Dictionary<string, string?>
         {
@@ -81,7 +86,7 @@ public sealed class ApiTestHost : IAsyncDisposable
             databaseState.MarkReady(backupPath: null);
         }
 
-        var main = BuildMainServices(configuration, databaseState);
+        var main = BuildMainServices(configuration, databaseState, configureDatabase);
         if (databaseState.IsReady)
         {
             var factory = main.GetRequiredService<IDbContextFactory<ControllerDbContext>>();
@@ -182,12 +187,16 @@ public sealed class ApiTestHost : IAsyncDisposable
 
     private static ServiceProvider BuildMainServices(
         IConfiguration configuration,
-        DatabaseState databaseState)
+        DatabaseState databaseState,
+        Action<DbContextOptionsBuilder>? configureDatabase)
     {
         var services = new ServiceCollection();
         services.AddSingleton(databaseState);
-        services.AddDbContextFactory<ControllerDbContext>(
-            options => ControllerDbContext.Configure(options, databaseState.DatabasePath));
+        services.AddDbContextFactory<ControllerDbContext>(options =>
+        {
+            ControllerDbContext.Configure(options, databaseState.DatabasePath);
+            configureDatabase?.Invoke(options);
+        });
         services.AddLogging();
         services.AddSingleton(configuration);
         services.AddSingleton(new HttpClient());
