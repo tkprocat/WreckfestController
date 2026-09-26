@@ -26,6 +26,12 @@ public sealed class ApiTestHost : IAsyncDisposable
     public const string ApiKey = "test-api-key";
     public const string Password = "correct horse battery";
 
+    /// <summary>
+    /// Sets the request's TCP peer address, which a TestServer otherwise leaves unset.
+    /// Applied before the app's own pipeline, so it stands in for the real connection.
+    /// </summary>
+    public const string PeerAddressHeader = "X-Test-Peer-Address";
+
     private readonly ServiceProvider _main;
     private readonly WebApplication _app;
     private readonly string? _ownedDirectory;
@@ -96,6 +102,7 @@ public sealed class ApiTestHost : IAsyncDisposable
 
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseTestServer();
+        builder.Services.AddSingleton<IStartupFilter, PeerAddressStartupFilter>();
         ApiServer.ConfigureServices(builder, main, configuration);
 
         var app = builder.Build();
@@ -220,5 +227,22 @@ public sealed class ApiTestHost : IAsyncDisposable
         services.AddSingleton<RecurringEventService>();
         services.AddSingleton<SmartRestartService>();
         return services.BuildServiceProvider();
+    }
+
+    private sealed class PeerAddressStartupFilter : IStartupFilter
+    {
+        public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+        {
+            app.Use((context, nextMiddleware) =>
+            {
+                if (context.Request.Headers.TryGetValue(PeerAddressHeader, out var peer))
+                {
+                    context.Connection.RemoteIpAddress = System.Net.IPAddress.Parse(peer!);
+                }
+
+                return nextMiddleware(context);
+            });
+            next(app);
+        };
     }
 }

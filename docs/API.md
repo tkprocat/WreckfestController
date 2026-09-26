@@ -60,6 +60,12 @@ button, which also works as recovery if every account is locked out or its passw
 lost. Passwords need at least 10 characters; five failed sign-ins lock an account for
 15 minutes.
 
+`POST auth/login` also allows **10 attempts per minute per client IP**, counting
+successes and failures alike. Over the limit it answers **429** with a `Retry-After`
+header, even for the right password. Lockout protects one account; this slows a client
+trying many. Behind a reverse proxy, set `TrustedProxies` (below) or every client
+shares the proxy's limit.
+
 There is deliberately **no local exemption**: loopback requests need credentials too.
 
 > The key is read once when the API server starts, so changing it requires a
@@ -72,6 +78,7 @@ There is deliberately **no local exemption**: loopback requests need credentials
   "Enabled": false,
   "Key": "",
   "AllowRemote": false,
+  "TrustedProxies": [],
   "HttpPort": 5100,
   "HttpsPort": 5101
 }
@@ -86,7 +93,20 @@ is bound at all. `Key` no longer affects whether it starts.
 | `Enabled: true`, `Key` blank | the API starts; only cookie sign-in is accepted |
 | `AllowRemote: false` (default) | binds `127.0.0.1` only |
 | `AllowRemote: true` | binds `0.0.0.0` |
+| `TrustedProxies` | reverse proxies whose `X-Forwarded-For` / `X-Forwarded-Proto` are honoured; default none |
 | `HttpPort` / `HttpsPort` | defaults 5100 / 5101 |
+
+### Behind a reverse proxy
+
+List the proxy in `TrustedProxies`, as addresses or CIDR ranges:
+`["192.168.1.1"]` or `["10.0.0.0/24"]`. A comma-separated string also works. The
+controller then takes the client IP from `X-Forwarded-For`, for the login rate limit and
+logs, and the scheme from `X-Forwarded-Proto`, so the sign-in cookie is marked `Secure`
+when the browser used HTTPS. `X-Forwarded-Host` is not used.
+
+The headers are ignored from every other address, loopback included, so a client cannot
+pick its own IP by sending them. An entry that is not an address or range is logged and
+skipped.
 
 Ports are configurable so several controller instances can manage separate servers
 on one Windows host. A value outside 1–65535 is ignored with a warning and the

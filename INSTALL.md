@@ -80,6 +80,7 @@ If no webhook base URL is configured, console-log webhooks are disabled and the 
 "Api": {
   "Key": "replace-with-a-long-random-secret",
   "AllowRemote": false,
+  "TrustedProxies": [],
   "HttpPort": 5100,
   "HttpsPort": 5101
 }
@@ -88,6 +89,8 @@ If no webhook base URL is configured, console-log webhooks are disabled and the 
 Every `/api/*` request needs credentials: either this `Key`, sent as the `X-Api-Key` header, or a signed-in web UI session. The key is optional and only needed by scripts; if it is empty, no key is accepted. Web accounts are created in the desktop app: when the API is enabled and no account exists, it offers a "Create admin account" dialog at startup, and the Configuration tab has the same button. The web UI itself is still to come, so tools that use the API today should keep using the key. See [docs/API.md](docs/API.md#authentication).
 
 With `AllowRemote` set to `false` (the default), the API binds to `127.0.0.1`. Set it to `true` to bind to all network interfaces.
+
+If a reverse proxy (for example HAProxy on OPNsense) terminates HTTPS in front of the controller, add its address to `TrustedProxies`, such as `["192.168.1.1"]`. The controller then sees each browser's real IP for the login rate limit, and knows the connection was HTTPS. Forwarded headers from any other address are ignored. See [docs/API.md](docs/API.md#behind-a-reverse-proxy).
 
 `HttpPort` and `HttpsPort` default to 5100 and 5101. Give each instance its own pair when running several controllers on one Windows host, otherwise the second instance fails to bind. A value outside 1-65535 is ignored with a warning and the default is used.
 

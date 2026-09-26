@@ -185,6 +185,8 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddSingleton(main.GetRequiredService<DatabaseState>());
 
         builder.Services.AddApiAuthentication(main, configuration);
+        builder.Services.AddTrustedProxies(configuration);
+        builder.Services.AddLoginRateLimit();
     }
 
     /// <summary>
@@ -193,9 +195,13 @@ public class ApiServer : IApiServer, IDisposable
     /// </summary>
     public static void ConfigurePipeline(WebApplication app)
     {
-        // First, so recovery mode answers before anything touches the user store.
+        // Before anything reads the client IP or the scheme.
+        app.UseForwardedHeaders();
+
+        // Next, so recovery mode answers before anything touches the user store.
         app.UseMiddleware<DatabaseUnavailableMiddleware>();
 
+        app.UseRateLimiter();
         app.UseAuthentication();
         app.UseAuthorization();
         app.MapControllers();

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
 using WreckfestController.Services;
@@ -75,10 +76,11 @@ public class AuthController : ControllerBase
 
     /// <summary>
     /// Signs in by username, or by email when no username matches. Five failures lock
-    /// the account for 15 minutes.
+    /// the account for 15 minutes, and each client IP gets 10 attempts a minute.
     /// </summary>
     [HttpPost("login")]
     [AllowAnonymous]
+    [EnableRateLimiting(LoginRateLimit.PolicyName)]
     public async Task<ActionResult<UserResponse>> Login(LoginRequest request)
     {
         var user = await _users.FindByNameAsync(request.Login)
