@@ -10,14 +10,19 @@ namespace WreckfestController.Views;
 public partial class ConfigurationTab : UserControl
 {
     private readonly SettingsService _settingsService;
+    private readonly AccountService _accountService;
     private readonly ILogger<ConfigurationTab> _logger;
     private UserSettings _currentSettings;
 
-    public ConfigurationTab(SettingsService settingsService, ILogger<ConfigurationTab> logger)
+    public ConfigurationTab(
+        SettingsService settingsService,
+        AccountService accountService,
+        ILogger<ConfigurationTab> logger)
     {
         InitializeComponent();
 
         _settingsService = settingsService;
+        _accountService = accountService;
         _logger = logger;
         _currentSettings = new UserSettings();
 
@@ -26,6 +31,51 @@ public partial class ConfigurationTab : UserControl
 
         // Load current settings
         LoadSettings();
+        _ = RefreshAccountsAsync();
+    }
+
+    /// <summary>Re-reads the account count. Also called when the database becomes ready.</summary>
+    public async Task RefreshAccountsAsync()
+    {
+        if (!_accountService.IsDatabaseReady)
+        {
+            AccountsStatusText.Text = "Unavailable until the database is ready.";
+            CreateAccountButton.IsEnabled = false;
+            return;
+        }
+
+        try
+        {
+            var count = await _accountService.CountUsersAsync();
+            const string recovery = "Create another here if every account is locked out or its password is lost.";
+            AccountsStatusText.Text = count switch
+            {
+                0 => "No accounts yet. Create one to sign in to the web UI.",
+                1 => $"1 account can sign in to the web UI. {recovery}",
+                _ => $"{count} accounts can sign in to the web UI. {recovery}",
+            };
+            CreateAccountButton.IsEnabled = true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not count web accounts");
+            AccountsStatusText.Text = "Could not read the accounts. See the Controller Log.";
+            CreateAccountButton.IsEnabled = false;
+        }
+    }
+
+    private async void OnCreateAccountClicked(object sender, RoutedEventArgs e)
+    {
+        var created = await CreateAccountDialogView.ShowAsync(
+            _accountService,
+            "Every account is an admin: it can control the server, change settings and manage other accounts from the web UI.");
+        if (created is not null)
+        {
+            _logger.LogInformation("Web account {UserName} created from the desktop app", created);
+            ShowStatusMessage($"Account {created} created.", isError: false);
+        }
+
+        await RefreshAccountsAsync();
     }
 
     private void LoadSettings()

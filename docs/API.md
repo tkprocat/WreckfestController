@@ -18,8 +18,8 @@ Every endpoint requires an authenticated caller, in one of two ways:
 
   The key is compared with `CryptographicOperations.FixedTimeEquals`. It is optional:
   when `Api:Key` is blank, no key is accepted and only cookie sign-in works.
-- **Cookie** (the web UI): an ASP.NET Core Identity cookie, issued by the sign-in
-  endpoints that arrive with the web UI. It is `HttpOnly`, `SameSite=Strict`, marked
+- **Cookie** (the web UI): an ASP.NET Core Identity cookie, issued by
+  `POST /api/auth/login`. It is `HttpOnly`, `SameSite=Strict`, marked
   `Secure` when the request came over HTTPS, and slides over 14 days. Its encryption
   keys are kept in a `keys` folder beside the database, protected with DPAPI, so
   restarting the controller does not sign anyone out. Changing a user's password or
@@ -32,8 +32,33 @@ A missing or rejected credential returns **401** with no body, never a redirect.
 
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
-(none yet), so one cannot appear by accident. Requests to paths that match no
+(`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`), so
+one cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
+
+### CSRF
+
+Browser requests must also prove they came from the web UI. Every unsafe request
+(anything but GET, HEAD, OPTIONS, TRACE) that does **not** carry `X-Api-Key` must send
+the antiforgery token:
+
+1. `GET /api/auth/antiforgery` sets a JS-readable `XSRF-TOKEN` cookie.
+2. Copy its value into the `X-XSRF-TOKEN` header on each unsafe request.
+3. The token is tied to the signed-in identity, so fetch a fresh one **after login
+   and logout**; a token from before login is rejected after it.
+
+A missing or stale token returns **400**. API-key requests are exempt: they carry no
+cookies, and a browser cannot add a custom header cross-site without a CORS preflight,
+which this API never grants.
+
+### Accounts
+
+Every account is an admin in v1. There is **no web setup page**: the first account is
+created in the desktop app, which offers a "Create admin account" dialog at startup
+when the API is enabled and no accounts exist. The Configuration tab has the same
+button, which also works as recovery if every account is locked out or its password
+lost. Passwords need at least 10 characters; five failed sign-ins lock an account for
+15 minutes.
 
 There is deliberately **no local exemption**: loopback requests need credentials too.
 
@@ -72,6 +97,38 @@ default is used.
 > actually be listened on.
 
 ## Endpoints
+
+The auth and users endpoints return validation failures as **400**
+`ValidationProblemDetails`: `{ "errors": { "<field>": ["message", ...] } }`, with fields
+named as in the request. The older controllers below still answer `{ message }`.
+
+### Auth — `api/auth`
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `state` | Anonymous. `{ authenticated, user, setupRequired, degraded }`. `setupRequired` is true while no account exists. `user` is null for anonymous and API-key callers. |
+| GET | `antiforgery` | Anonymous. Sets the `XSRF-TOKEN` cookie; 204. |
+| POST | `login` | Anonymous. `{ login, password, remember }`. `login` matches the username, then the email. 200 with the user; **401** for a wrong login or password (the same answer either way); **423** while the account is locked. `remember` makes the cookie outlive the browser session. |
+| POST | `logout` | Anonymous, so an expired session can still clear its cookie. 204. |
+| GET | `me` | The caller's profile. **403** for API-key callers, who are not a user. |
+| PUT | `me` | `{ email, displayName, timeZone }`. `timeZone` is an IANA id (`Europe/Copenhagen`) or null for the browser's zone. Changing the email ends the caller's other sessions. |
+| POST | `me/password` | `{ currentPassword, newPassword }`. 204. Keeps this session and ends the others. |
+
+### Users — `api/users`
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | — | All accounts, by username. |
+| GET | `{id}` | One account. |
+| POST | — | `{ userName, email, password, displayName, timeZone }`. 201. `password` is a temporary one for the owner to change. |
+| PUT | `{id}` | `{ userName, email, displayName, timeZone }`. A new username or email ends that account's sessions (not the caller's own). |
+| DELETE | `{id}` | 204. **409** for your own account or the last one. |
+| POST | `{id}/password` | `{ newPassword }`. Admin reset: 204, ends the account's sessions. A rejected password leaves the old one in place. |
+| POST | `{id}/lock` | Locks until unlocked and ends the account's sessions. **409** for your own account. |
+| POST | `{id}/unlock` | Lifts an admin lock or a failed-sign-in lockout. |
+
+Account responses never include password hashes or security stamps:
+`{ id, userName, email, displayName, timeZone, isLockedOut, lockoutEnd }`.
 
 ### Server — `api/server`
 

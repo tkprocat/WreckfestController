@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using WreckfestController.Data;
 
 namespace WreckfestController.Services;
@@ -24,6 +25,10 @@ public static class ApiAuthentication
     /// <summary>Day-to-day server control. Any signed-in user in v1; roles come later.</summary>
     public const string OperatorPolicy = "Operator";
 
+    /// <summary>The JS-readable cookie the SPA copies into <see cref="XsrfHeaderName"/>.</summary>
+    public const string XsrfCookieName = "XSRF-TOKEN";
+    public const string XsrfHeaderName = "X-XSRF-TOKEN";
+
     public const int PasswordMinLength = 10;
     public const int MaxFailedSignIns = 5;
     public static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
@@ -32,6 +37,25 @@ public static class ApiAuthentication
     /// <summary>Where the cookie-encryption keys live: a <c>keys</c> folder beside the database.</summary>
     public static string KeysFolder(string databasePath) =>
         Path.Combine(Path.GetDirectoryName(Path.GetFullPath(databasePath)) ?? ".", "keys");
+
+    /// <summary>
+    /// The account rules. Shared by the API host and the desktop app's
+    /// <see cref="AccountService"/>, so both accept and reject the same passwords.
+    /// </summary>
+    public static void ConfigureIdentity(IdentityOptions options)
+    {
+        options.Password.RequiredLength = PasswordMinLength;
+        options.Password.RequireDigit = false;
+        options.Password.RequireLowercase = false;
+        options.Password.RequireUppercase = false;
+        options.Password.RequireNonAlphanumeric = false;
+
+        options.Lockout.AllowedForNewUsers = true;
+        options.Lockout.MaxFailedAccessAttempts = MaxFailedSignIns;
+        options.Lockout.DefaultLockoutTimeSpan = LockoutDuration;
+
+        options.User.RequireUniqueEmail = true;
+    }
 
     public static void AddApiAuthentication(
         this IServiceCollection services,
@@ -44,20 +68,9 @@ public static class ApiAuthentication
         services.AddScoped(sp =>
             sp.GetRequiredService<IDbContextFactory<ControllerDbContext>>().CreateDbContext());
 
-        services.AddIdentityCore<AppUser>(options =>
-            {
-                options.Password.RequiredLength = PasswordMinLength;
-                options.Password.RequireDigit = false;
-                options.Password.RequireLowercase = false;
-                options.Password.RequireUppercase = false;
-                options.Password.RequireNonAlphanumeric = false;
+        services.TryAddSingleton(TimeProvider.System);
 
-                options.Lockout.AllowedForNewUsers = true;
-                options.Lockout.MaxFailedAccessAttempts = MaxFailedSignIns;
-                options.Lockout.DefaultLockoutTimeSpan = LockoutDuration;
-
-                options.User.RequireUniqueEmail = true;
-            })
+        services.AddIdentityCore<AppUser>(ConfigureIdentity)
             .AddRoles<IdentityRole>()
             .AddEntityFrameworkStores<ControllerDbContext>()
             .AddSignInManager();
@@ -109,6 +122,13 @@ public static class ApiAuthentication
                     return Task.CompletedTask;
                 };
             }));
+
+        services.AddAntiforgery(options =>
+        {
+            options.HeaderName = XsrfHeaderName;
+            options.Cookie.SameSite = SameSiteMode.Strict;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+        });
 
         services.AddAuthorizationBuilder()
             // Applies to every endpoint without its own authorization metadata, so a new

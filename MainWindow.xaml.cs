@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private readonly ServerManager _serverManager;
     private readonly DatabaseState _databaseState;
     private readonly DatabaseBootstrapper _databaseBootstrapper;
+    private readonly AccountService _accountService;
     private readonly ILogger<MainWindow> _logger;
     private readonly ILoggerFactory _loggerFactory;
     private readonly Timer _statusUpdateTimer;
@@ -43,6 +44,7 @@ public partial class MainWindow : Window
         GuiLoggerProvider guiLoggerProvider,
         DatabaseState databaseState,
         DatabaseBootstrapper databaseBootstrapper,
+        AccountService accountService,
         ILogger<MainWindow> logger,
         ILoggerFactory loggerFactory)
     {
@@ -51,6 +53,7 @@ public partial class MainWindow : Window
         _serverManager = serverManager;
         _databaseState = databaseState;
         _databaseBootstrapper = databaseBootstrapper;
+        _accountService = accountService;
         _logger = logger;
         _loggerFactory = loggerFactory;
 
@@ -69,6 +72,7 @@ public partial class MainWindow : Window
 
         _configurationTab = new ConfigurationTab(
             settingsService,
+            accountService,
             _loggerFactory.CreateLogger<ConfigurationTab>());
 
         _eventSchedulerTab = new EventSchedulerTab(
@@ -115,6 +119,43 @@ public partial class MainWindow : Window
         _serverControlTab.UpdateServerStatus();
         _processManagerTab.RefreshProcessList();
         UpdateWindowTitle();
+
+        // Not Loaded: the window's Loaded runs before the DialogHost inside it registers,
+        // and showing a dialog then throws. ContentRendered fires once, after both.
+        ContentRendered += async (_, _) => await OfferFirstAdminAsync();
+    }
+
+    /// <summary>
+    /// The web UI has no setup page: the first admin is created here, at the game
+    /// machine. Asked once per start, and only when the API is on with no accounts.
+    /// </summary>
+    private async Task OfferFirstAdminAsync()
+    {
+        try
+        {
+            if (!await _accountService.NeedsFirstAdminAsync())
+            {
+                return;
+            }
+
+            var created = await CreateAccountDialogView.ShowAsync(
+                _accountService,
+                "The HTTP API is enabled, but no one can sign in to the web UI yet. " +
+                "Create the first admin account. You can also do this later from the Configuration tab.");
+            if (created is not null)
+            {
+                _logger.LogInformation("Web account {UserName} created from the desktop app", created);
+            }
+
+            if (_configurationTab is not null)
+            {
+                await _configurationTab.RefreshAccountsAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not offer to create the first web account");
+        }
     }
 
     private void OnStatusUpdateTick(object? sender, ElapsedEventArgs e)
@@ -134,7 +175,11 @@ public partial class MainWindow : Window
 
     private void OnDatabaseStateChanged()
     {
-        QueueUiUpdate(UpdateDatabaseBanner);
+        QueueUiUpdate(() =>
+        {
+            UpdateDatabaseBanner();
+            _ = _configurationTab?.RefreshAccountsAsync();
+        });
     }
 
     private void UpdateDatabaseBanner()

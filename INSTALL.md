@@ -85,7 +85,7 @@ If no webhook base URL is configured, console-log webhooks are disabled and the 
 }
 ```
 
-Every `/api/*` request needs credentials: either this `Key`, sent as the `X-Api-Key` header, or a signed-in web UI session. The key is optional and only needed by scripts; if it is empty, no key is accepted. Until the web UI's sign-in arrives, the key is the only way in, so leave it set if you use the API today. See [docs/API.md](docs/API.md#authentication).
+Every `/api/*` request needs credentials: either this `Key`, sent as the `X-Api-Key` header, or a signed-in web UI session. The key is optional and only needed by scripts; if it is empty, no key is accepted. Web accounts are created in the desktop app: when the API is enabled and no account exists, it offers a "Create admin account" dialog at startup, and the Configuration tab has the same button. The web UI itself is still to come, so tools that use the API today should keep using the key. See [docs/API.md](docs/API.md#authentication).
 
 With `AllowRemote` set to `false` (the default), the API binds to `127.0.0.1`. Set it to `true` to bind to all network interfaces.
 

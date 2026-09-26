@@ -157,7 +157,7 @@ public class ApiServer : IApiServer, IDisposable
         IServiceProvider main,
         IConfiguration configuration)
     {
-        builder.Services.AddControllers()
+        builder.Services.AddControllers(options => options.Filters.Add<CookieAntiforgeryFilter>())
             // AddControllers discovers controllers from the entry assembly, which is
             // the test runner rather than this app when a test builds the host.
             .AddApplicationPart(typeof(ApiServer).Assembly);

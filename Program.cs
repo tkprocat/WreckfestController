@@ -187,6 +187,7 @@ public class Program
                     options => ControllerDbContext.Configure(options, databasePath));
                 services.AddSingleton(new DatabaseState(databasePath));
                 services.AddSingleton<DatabaseBootstrapper>();
+                AccountService.AddAccounts(services);
 
                 // Register API server
                 services.AddSingleton<IApiServer, ApiServer>();

@@ -154,6 +154,13 @@ public sealed class ApiTestHost : IAsyncDisposable
     /// <summary>A client with no API key header.</summary>
     public HttpClient CreateClient() => _app.GetTestClient();
 
+    /// <summary>A cookie-keeping client that sends the antiforgery header like the SPA.</summary>
+    public BrowserClient CreateBrowser()
+    {
+        var server = _app.GetTestServer();
+        return new BrowserClient(server.CreateHandler(), server.BaseAddress);
+    }
+
     /// <summary>A client that sends the configured API key.</summary>
     public HttpClient CreateAuthenticatedClient()
     {
