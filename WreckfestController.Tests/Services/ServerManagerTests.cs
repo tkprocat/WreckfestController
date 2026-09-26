@@ -15,7 +15,7 @@ public class ServerManagerTests
     private readonly Mock<ILogger<PlayerTracker>> _mockPlayerTrackerLogger;
     private readonly Mock<ILogger<TrackChangeTracker>> _mockTrackChangeTrackerLogger;
     private readonly Mock<ILogger<ServerInfoTracker>> _mockServerInfoTrackerLogger;
-    private readonly Mock<WreckfestWebWebhookService> _mockWebhookService;
+    private readonly Mock<IServerEventPublisher> _mockEvents;
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ServerInfoTracker _serverInfoTracker;
@@ -28,10 +28,7 @@ public class ServerManagerTests
         _mockPlayerTrackerLogger = new Mock<ILogger<PlayerTracker>>();
         _mockTrackChangeTrackerLogger = new Mock<ILogger<TrackChangeTracker>>();
         _mockServerInfoTrackerLogger = new Mock<ILogger<ServerInfoTracker>>();
-        _mockWebhookService = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        _mockEvents = new Mock<IServerEventPublisher>();
 
         // Setup mock configuration with test values
         _mockConfiguration.Setup(c => c["WreckfestServer:ServerPath"])
@@ -39,14 +36,10 @@ public class ServerManagerTests
         _mockConfiguration.Setup(c => c["WreckfestServer:WorkingDirectory"])
             .Returns("C:\\test");
 
-        _playerTracker = new PlayerTracker(_mockPlayerTrackerLogger.Object, _mockWebhookService.Object);
-        _trackChangeTracker = new TrackChangeTracker(_mockTrackChangeTrackerLogger.Object, _mockWebhookService.Object);
+        _playerTracker = new PlayerTracker(_mockPlayerTrackerLogger.Object, _mockEvents.Object);
+        _trackChangeTracker = new TrackChangeTracker(_mockTrackChangeTrackerLogger.Object, _mockEvents.Object);
         _serverInfoTracker = new ServerInfoTracker(_mockServerInfoTrackerLogger.Object);
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         _serverManager = new ServerManager(
             _mockConfiguration.Object,
@@ -54,8 +47,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            mockConsoleLogSender.Object);
+            _mockEvents.Object);
     }
 
     [Fact]
@@ -84,10 +76,6 @@ public class ServerManagerTests
         _mockConfiguration.Setup(c => c["WreckfestServer:ServerPath"])
             .Returns("C:\\nonexistent\\server.bat");
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
@@ -95,8 +83,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            mockConsoleLogSender.Object);
+            _mockEvents.Object);
 
         // Act
         var result = await serverManager.StartServerAsync();
@@ -113,10 +100,6 @@ public class ServerManagerTests
         _mockConfiguration.Setup(c => c["WreckfestServer:ServerPath"])
             .Returns(string.Empty);
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
@@ -124,8 +107,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            mockConsoleLogSender.Object);
+            _mockEvents.Object);
 
         // Act
         var result = await serverManager.StartServerAsync();
@@ -173,18 +155,13 @@ public class ServerManagerTests
         outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
-        var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            consoleLogSender.Object,
+            _mockEvents.Object,
             inputWriter.Object,
             outputReader.Object);
         serverManager.AttachToExistingProcess(serverProcess.Id);
@@ -243,18 +220,13 @@ public class ServerManagerTests
         outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
-        var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            consoleLogSender.Object,
+            _mockEvents.Object,
             inputWriter.Object,
             outputReader.Object);
         serverManager.AttachToExistingProcess(serverProcess.Id);
@@ -401,10 +373,6 @@ public class ServerManagerTests
         IInjectedHookOutputReader outputReader,
         IServerInputWriter? inputWriter = null)
     {
-        var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         return new ServerManager(
             _mockConfiguration.Object,
@@ -412,8 +380,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            consoleLogSender.Object,
+            _mockEvents.Object,
             inputWriter ?? Mock.Of<IServerInputWriter>(),
             outputReader);
     }
@@ -641,10 +608,6 @@ public class ServerManagerTests
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
@@ -652,8 +615,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            mockConsoleLogSender.Object,
+            _mockEvents.Object,
             inputWriter.Object,
             outputReader.Object);
 
@@ -682,10 +644,6 @@ public class ServerManagerTests
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
@@ -693,8 +651,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            mockConsoleLogSender.Object,
+            _mockEvents.Object,
             inputWriter.Object,
             outputReader.Object);
 
@@ -719,10 +676,6 @@ public class ServerManagerTests
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
@@ -730,8 +683,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            mockConsoleLogSender.Object,
+            _mockEvents.Object,
             inputWriter.Object,
             outputReader.Object);
 
@@ -766,10 +718,6 @@ public class ServerManagerTests
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
@@ -777,8 +725,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            mockConsoleLogSender.Object,
+            _mockEvents.Object,
             inputWriter.Object,
             outputReader.Object);
 
@@ -811,10 +758,6 @@ public class ServerManagerTests
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
@@ -822,8 +765,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            mockConsoleLogSender.Object,
+            _mockEvents.Object,
             inputWriter.Object,
             outputReader.Object);
 
@@ -861,10 +803,6 @@ public class ServerManagerTests
         outputReader.Setup(r => r.StartAsync(It.IsAny<int>())).ReturnsAsync(true);
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var serverManager = new ServerManager(
             _mockConfiguration.Object,
@@ -872,8 +810,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            mockConsoleLogSender.Object,
+            _mockEvents.Object,
             inputWriter.Object,
             outputReader.Object);
 
@@ -918,10 +855,6 @@ public class ServerManagerTests
             .Setup(r => r.InjectAsync(Process.GetCurrentProcess().Id))
             .ReturnsAsync((true, "injected through reader"));
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var serverManager = new TestServerManager(
             _mockConfiguration.Object,
@@ -929,8 +862,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            mockConsoleLogSender.Object,
+            _mockEvents.Object,
             inputWriter.Object,
             injectedHookReader.Object,
             "1.308438");
@@ -1379,10 +1311,6 @@ public class ServerManagerTests
 
     private TestServerManager CreateTestServerManager(IInjectedHookOutputReader injectedHookReader, string? build)
     {
-        var consoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         return new TestServerManager(
             _mockConfiguration.Object,
@@ -1390,8 +1318,7 @@ public class ServerManagerTests
             _playerTracker,
             _trackChangeTracker,
             _serverInfoTracker,
-            _mockWebhookService.Object,
-            consoleLogSender.Object,
+            _mockEvents.Object,
             Mock.Of<IServerInputWriter>(),
             injectedHookReader,
             build);
@@ -1407,8 +1334,7 @@ public class ServerManagerTests
             PlayerTracker playerTracker,
             TrackChangeTracker trackChangeTracker,
             ServerInfoTracker serverInfoTracker,
-            WreckfestWebWebhookService webhookService,
-            ConsoleLogWebhookSender consoleLogSender,
+            IServerEventPublisher events,
             IServerInputWriter serverInputWriter,
             IInjectedHookOutputReader injectedHookOutputReader,
             string? build)
@@ -1418,8 +1344,7 @@ public class ServerManagerTests
                 playerTracker,
                 trackChangeTracker,
                 serverInfoTracker,
-                webhookService,
-                consoleLogSender,
+                events,
                 serverInputWriter,
                 injectedHookOutputReader)
         {

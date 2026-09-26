@@ -12,7 +12,6 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Settings File Path Info -->
@@ -158,51 +157,8 @@
                 </StackPanel>
             </Border>
 
-            <!-- Network Settings Section -->
-            <Border Grid.Row="3"
-                    Background="{StaticResource BackgroundMedium}"
-                    BorderBrush="{StaticResource BorderColor}"
-                    BorderThickness="1"
-                    CornerRadius="4"
-                    Padding="15"
-                    Margin="0,0,0,15">
-                <StackPanel>
-                    <TextBlock Text="NETWORK SETTINGS"
-                               FontSize="14"
-                               FontWeight="Bold"
-                               Foreground="{StaticResource TextPrimary}"
-                               Margin="0,0,0,15"/>
-
-                    <!-- Webhook URL -->
-                    <TextBlock Text="Webhook Base URL"
-                               Foreground="{StaticResource TextSecondary}"
-                               FontSize="12"
-                               Margin="0,0,0,5"/>
-                    <TextBox x:Name="WebhookUrlTextBox"
-                             materialDesign:HintAssist.Hint="http://localhost:8000/api/webhooks"
-                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                             Foreground="{StaticResource TextPrimary}"
-                             Margin="0,0,0,15"/>
-
-                    <!-- Webhook API Key -->
-                    <TextBlock Text="Webhook API Key"
-                               Foreground="{StaticResource TextSecondary}"
-                               FontSize="12"
-                               Margin="0,0,0,5"/>
-                    <TextBox x:Name="WebhookApiKeyTextBox"
-                             materialDesign:HintAssist.Hint="64-character hex key for webhook authentication"
-                             Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                             Foreground="{StaticResource TextPrimary}"/>
-                    <TextBlock Text="Sent with webhook requests in the X-API-Key header"
-                               FontSize="10"
-                               Foreground="{StaticResource TextSecondary}"
-                               Margin="0,5,0,0"
-                               TextWrapping="Wrap"/>
-                </StackPanel>
-            </Border>
-
             <!-- Action Buttons -->
-            <Border Grid.Row="4"
+            <Border Grid.Row="3"
                     Background="{StaticResource BackgroundMedium}"
                     BorderBrush="{StaticResource BorderColor}"
                     BorderThickness="1"
@@ -237,7 +193,7 @@
             </Border>
 
             <!-- Action Buttons -->
-            <StackPanel Grid.Row="5"
+            <StackPanel Grid.Row="4"
                         Orientation="Horizontal"
                         HorizontalAlignment="Right"
                         Margin="0,10,0,0">
@@ -256,7 +212,7 @@
 
             <!-- Status Message -->
             <TextBlock x:Name="StatusMessageText"
-                       Grid.Row="6"
+                       Grid.Row="5"
                        Text=""
                        Foreground="{StaticResource TextSecondary}"
                        FontSize="11"
@@ -265,7 +221,7 @@
                        HorizontalAlignment="Right"/>
 
             <!-- Web Accounts: separate from the settings above, and not saved with them -->
-            <Border Grid.Row="7"
+            <Border Grid.Row="6"
                     Background="{StaticResource BackgroundMedium}"
                     BorderBrush="{StaticResource BorderColor}"
                     BorderThickness="1"

@@ -13,7 +13,7 @@ public class EventsControllerTests
 {
     private readonly Mock<EventStorageService> _mockStorage;
     private readonly Mock<SmartRestartService> _mockSmartRestart;
-    private readonly Mock<WreckfestWebWebhookService> _mockWebhook;
+    private readonly Mock<IServerEventPublisher> _mockEvents;
     private readonly Mock<ILogger<EventsController>> _mockLogger;
     private readonly EventsController _controller;
 
@@ -25,26 +25,19 @@ public class EventsControllerTests
             Mock.Of<ILogger<EventStorageService>>());
 
         // Setup SmartRestartService mock with all required dependencies
-        var mockWebhookServiceForTrackers = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        var mockEventsForTrackers = new Mock<IServerEventPublisher>();
 
         var mockPlayerTracker = new Mock<PlayerTracker>(
             Mock.Of<ILogger<PlayerTracker>>(),
-            mockWebhookServiceForTrackers.Object);
+            mockEventsForTrackers.Object);
 
         var mockTrackChangeTracker = new Mock<TrackChangeTracker>(
             Mock.Of<ILogger<TrackChangeTracker>>(),
-            mockWebhookServiceForTrackers.Object);
+            mockEventsForTrackers.Object);
 
         var mockServerInfoTracker = new Mock<ServerInfoTracker>(
             Mock.Of<ILogger<ServerInfoTracker>>());
 
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         var mockServerManager = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
@@ -52,8 +45,7 @@ public class EventsControllerTests
             mockPlayerTracker.Object,
             mockTrackChangeTracker.Object,
             mockServerInfoTracker.Object,
-            mockWebhookServiceForTrackers.Object,
-            mockConsoleLogSender.Object);
+            mockEventsForTrackers.Object);
 
         var mockConfigService = new Mock<ConfigService>(
             Mock.Of<IConfiguration>(),
@@ -64,21 +56,18 @@ public class EventsControllerTests
             mockPlayerTracker.Object,
             mockTrackChangeTracker.Object,
             mockConfigService.Object,
-            mockWebhookServiceForTrackers.Object,
+            mockEventsForTrackers.Object,
             Mock.Of<ILogger<SmartRestartService>>());
 
-        // Setup WreckfestWebWebhookService mock
-        _mockWebhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        // Setup IServerEventPublisher mock
+        _mockEvents = new Mock<IServerEventPublisher>();
 
         _mockLogger = new Mock<ILogger<EventsController>>();
         
         _controller = new EventsController(
             _mockStorage.Object,
             _mockSmartRestart.Object,
-            _mockWebhook.Object,
+            _mockEvents.Object,
             _mockLogger.Object);
     }
 
@@ -214,6 +203,6 @@ public class EventsControllerTests
     // Integration testing required for:
     // 1. Event lookup from schedule
     // 2. Smart restart initiation
-    // 3. Event activation callback (marks as active + sends webhook)
+    // 3. Event activation callback (marks as active + notifies the web UI)
     // 4. Error handling for various failure scenarios
 }

@@ -1,5 +1,3 @@
-using System.Net;
-using System.Text.Json;
 using System.Threading.Channels;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -13,30 +11,27 @@ namespace WreckfestController.Tests.Services;
 public class RestartCountdownTests : IDisposable
 {
     private readonly ManualClock _clock = new();
-    private readonly CaptureHandler _http = new();
+    private readonly CapturePublisher _published = new();
     private readonly List<string> _messages = [];
     private readonly SmartRestartService _restart;
     private readonly Mock<ServerManager> _server;
 
     public RestartCountdownTests()
     {
-        var settings = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> {
-            ["Webhooks:Enabled"] = "true", ["Webhooks:BaseUrl"] = "http://test.invalid",
-            ["Webhooks:ApiKey"] = "test-only" }).Build();
-        var webhook = new WreckfestWebWebhookService(Mock.Of<ILogger<WreckfestWebWebhookService>>(), settings, new HttpClient(_http));
-        var players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), webhook);
+        var settings = new ConfigurationBuilder().Build();
+        var events = _published;
+        var players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events);
         players.ProcessHookPlayerSnapshot([new Player { PlayerId = 1, Name = "Player", IsBot = false }]);
-        var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), webhook);
+        var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), events);
         _server = new Mock<ServerManager>(settings, Mock.Of<ILogger<ServerManager>>(), players, tracks,
-            new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), webhook,
-            new ConsoleLogWebhookSender(new HttpClient(_http), settings, Mock.Of<ILogger<ConsoleLogWebhookSender>>()));
+            new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), events);
         _server.Setup(s => s.SendCommandAsync(It.IsAny<string>())).Returns((string command) => {
             _messages.Add(command);
             return Task.FromResult((true, "Sent"));
         });
         var config = new Mock<ConfigService>(settings, Mock.Of<ILogger<ConfigService>>());
         config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig());
-        _restart = new SmartRestartService(_server.Object, players, tracks, config.Object, webhook,
+        _restart = new SmartRestartService(_server.Object, players, tracks, config.Object, events,
             Mock.Of<ILogger<SmartRestartService>>(), _clock);
         Assert.True(_restart.InitiateRestart(new Event { Id = 7, Name = "Test event" }, _ => { }));
     }
@@ -49,10 +44,10 @@ public class RestartCountdownTests : IDisposable
         {
             _clock.Elapsed = TimeSpan.FromMinutes(minute);
             _clock.Timer!.Fire();
-            var payload = await _http.Next();
-            Assert.Equal(5 - minute, payload.GetProperty("minutesRemaining").GetInt32());
-            Assert.Equal(7, payload.GetProperty("eventId").GetInt32());
-            Assert.Equal(deadline, payload.GetProperty("scheduledRestartTime").GetDateTime());
+            var payload = await _published.Next();
+            Assert.Equal(5 - minute, payload.MinutesRemaining);
+            Assert.Equal(7, payload.EventId);
+            Assert.Equal(deadline, payload.ScheduledRestartTime);
             Assert.Equal(minute < 5 ? SmartRestartState.Warning : SmartRestartState.Pending, _restart.GetState());
         }
         Assert.Equal(new[] {
@@ -68,17 +63,17 @@ public class RestartCountdownTests : IDisposable
     {
         _clock.Elapsed = TimeSpan.FromMinutes(4.5);
         _clock.Timer!.Fire();
-        Assert.Equal(1, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
+        Assert.Equal(1, (await _published.Next()).MinutesRemaining);
         for (var i = 0; i < 3; i++)
         {
             _clock.Timer!.Fire();
-            Assert.False(_http.HasPendingPayload());
+            Assert.False(_published.HasPendingPayload());
             Assert.Single(_messages);
             Assert.Equal(SmartRestartState.Warning, _restart.GetState());
         }
         _clock.Elapsed = TimeSpan.FromMinutes(5.5);
         _clock.Timer!.Fire();
-        Assert.Equal(0, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
+        Assert.Equal(0, (await _published.Next()).MinutesRemaining);
         Assert.Equal(SmartRestartState.Pending, _restart.GetState());
     }
 
@@ -90,19 +85,19 @@ public class RestartCountdownTests : IDisposable
     {
         _clock.Elapsed = TimeSpan.FromMinutes(minute - 1);
         _clock.Timer!.Fire();
-        Assert.Equal(6 - minute, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
+        Assert.Equal(6 - minute, (await _published.Next()).MinutesRemaining);
 
         _clock.Elapsed = TimeSpan.FromMinutes(minute) - TimeSpan.FromMilliseconds(2);
         _clock.Timer.Fire();
         Assert.Equal(SmartRestartState.Warning, _restart.GetState());
         Assert.Single(_messages);
-        Assert.False(_http.HasPendingPayload());
+        Assert.False(_published.HasPendingPayload());
         Assert.Equal(TimeSpan.FromMilliseconds(2), _clock.Timer.DueTime);
         Assert.Equal(Timeout.InfiniteTimeSpan, _clock.Timer.Period);
 
         _clock.Elapsed += _clock.Timer.DueTime;
         _clock.Timer.Fire();
-        Assert.Equal(5 - minute, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
+        Assert.Equal(5 - minute, (await _published.Next()).MinutesRemaining);
         Assert.Equal(minute == 5 ? SmartRestartState.Pending : SmartRestartState.Warning, _restart.GetState());
         Assert.Equal(2, _messages.Count);
     }
@@ -119,7 +114,7 @@ public class RestartCountdownTests : IDisposable
         });
         _clock.Elapsed = TimeSpan.FromMinutes(5);
         _clock.Timer!.Fire();
-        await _http.Next();
+        await _published.Next();
 
         _clock.WallClockAdjustment = TimeSpan.FromHours(hours);
         _clock.Timer.Fire();
@@ -143,14 +138,14 @@ public class RestartCountdownTests : IDisposable
     [Theory]
     [InlineData(0)]
     [InlineData(5)]
-    public async Task SynchronouslyBlockedWebhookDoesNotHoldStateLock(int minute)
+    public async Task SynchronouslyBlockedPublisherDoesNotHoldStateLock(int minute)
     {
         using var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _http.BeforePendingSend = () => {
+        _published.BeforePendingSend = () => {
             entered.TrySetResult();
             if (!release.Wait(TimeSpan.FromSeconds(10)))
-                throw new TimeoutException("Test webhook was not released");
+                throw new TimeoutException("Test publisher was not released");
         };
         _clock.Elapsed = TimeSpan.FromMinutes(minute);
         var tick = Task.Run(() => _clock.Timer!.Fire(), TestContext.Current.CancellationToken);
@@ -166,7 +161,7 @@ public class RestartCountdownTests : IDisposable
             release.Set();
             await tick.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
         }
-        Assert.Equal(5 - minute, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
+        Assert.Equal(5 - minute, (await _published.Next()).MinutesRemaining);
     }
 
     [Theory]
@@ -177,11 +172,11 @@ public class RestartCountdownTests : IDisposable
         _clock.WallClockAdjustment = TimeSpan.FromHours(hours);
         _clock.Elapsed = TimeSpan.FromMinutes(4);
         _clock.Timer!.Fire();
-        Assert.Equal(1, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
+        Assert.Equal(1, (await _published.Next()).MinutesRemaining);
         Assert.Equal(SmartRestartState.Warning, _restart.GetState());
         _clock.Elapsed = TimeSpan.FromMinutes(5);
         _clock.Timer!.Fire();
-        Assert.Equal(0, (await _http.Next()).GetProperty("minutesRemaining").GetInt32());
+        Assert.Equal(0, (await _published.Next()).MinutesRemaining);
         Assert.Equal(SmartRestartState.Pending, _restart.GetState());
     }
 
@@ -216,22 +211,28 @@ public class RestartCountdownTests : IDisposable
         public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
     }
 
-    private sealed class CaptureHandler : HttpMessageHandler
+    private sealed class CapturePublisher : IServerEventPublisher
     {
-        private readonly Channel<JsonElement> _payloads = Channel.CreateUnbounded<JsonElement>();
+        private readonly Channel<ServerRestartPendingEvent> _payloads = Channel.CreateUnbounded<ServerRestartPendingEvent>();
         public Action? BeforePendingSend { get; set; }
         public bool HasPendingPayload() => _payloads.Reader.TryPeek(out _);
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public Task ServerRestartPendingAsync(ServerRestartPendingEvent serverEvent)
         {
-            if (request.RequestUri!.AbsolutePath.EndsWith("server-restart-pending"))
-            {
-                BeforePendingSend?.Invoke();
-                using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
-                _payloads.Writer.TryWrite(json.RootElement.Clone());
-            }
-            return new HttpResponseMessage(HttpStatusCode.OK);
+            BeforePendingSend?.Invoke();
+            _payloads.Writer.TryWrite(serverEvent);
+            return Task.CompletedTask;
         }
-        public async Task<JsonElement> Next()
+        public Task PlayersUpdatedAsync(IReadOnlyList<Player> players) => Task.CompletedTask;
+        public Task PlayerJoinedAsync(string playerName, bool isBot) => Task.CompletedTask;
+        public Task PlayerLeftAsync(string playerName) => Task.CompletedTask;
+        public Task TrackChangedAsync(string trackId) => Task.CompletedTask;
+        public Task EventActivatedAsync(int eventId, string eventName) => Task.CompletedTask;
+        public Task ServerStartedAsync(ServerStartedEvent serverEvent) => Task.CompletedTask;
+        public Task ServerStoppedAsync(ServerStoppedEvent serverEvent) => Task.CompletedTask;
+        public Task ServerRestartedAsync(ServerRestartedEvent serverEvent) => Task.CompletedTask;
+        public Task ServerAttachedAsync(ServerAttachedEvent serverEvent) => Task.CompletedTask;
+        public void AddConsoleLog(string line) { }
+        public async Task<ServerRestartPendingEvent> Next()
             => await _payloads.Reader.ReadAsync(TestContext.Current.CancellationToken).AsTask()
                 .WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
     }

@@ -37,8 +37,7 @@ public class ServerManager
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ServerInfoTracker _serverInfoTracker;
-    private readonly WreckfestWebWebhookService _webhookService;
-    private readonly ConsoleLogWebhookSender _consoleLogSender;
+    private readonly IServerEventPublisher _events;
     private string _currentTrack = string.Empty;
 
     /// <summary>
@@ -129,16 +128,14 @@ public class ServerManager
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ServerInfoTracker serverInfoTracker,
-        WreckfestWebWebhookService webhookService,
-        ConsoleLogWebhookSender consoleLogSender)
+        IServerEventPublisher events)
         : this(
             configuration,
             logger,
             playerTracker,
             trackChangeTracker,
             serverInfoTracker,
-            webhookService,
-            consoleLogSender,
+            events,
             new InjectedHookInputWriter(
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<InjectedHookInputWriter>.Instance),
             new InjectedHookOutputReader(
@@ -152,8 +149,7 @@ public class ServerManager
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ServerInfoTracker serverInfoTracker,
-        WreckfestWebWebhookService webhookService,
-        ConsoleLogWebhookSender consoleLogSender,
+        IServerEventPublisher events,
         IServerInputWriter serverInputWriter)
         : this(
             configuration,
@@ -161,8 +157,7 @@ public class ServerManager
             playerTracker,
             trackChangeTracker,
             serverInfoTracker,
-            webhookService,
-            consoleLogSender,
+            events,
             serverInputWriter,
             new InjectedHookOutputReader(
                 Microsoft.Extensions.Logging.Abstractions.NullLogger<InjectedHookOutputReader>.Instance))
@@ -175,8 +170,7 @@ public class ServerManager
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ServerInfoTracker serverInfoTracker,
-        WreckfestWebWebhookService webhookService,
-        ConsoleLogWebhookSender consoleLogSender,
+        IServerEventPublisher events,
         IServerInputWriter serverInputWriter,
         IInjectedHookOutputReader injectedHookOutputReader)
     {
@@ -187,8 +181,7 @@ public class ServerManager
         _serverInfoTracker = serverInfoTracker;
         _serverInputWriter = serverInputWriter;
         _injectedHookOutputReader = injectedHookOutputReader;
-        _webhookService = webhookService;
-        _consoleLogSender = consoleLogSender;
+        _events = events;
 
         _injectedHookOutputReader.OutputReceivedFrom += OnInjectedHookOutputReceived;
         _injectedHookOutputReader.HookOutputReceived += output =>
@@ -385,12 +378,12 @@ public class ServerManager
 
             _logger.LogInformation("Server started successfully. Process: {ProcessName} (PID: {ProcessId})", processName, processId);
 
-            // Send webhook notification
+            // Notify the web UI
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await _webhookService.SendServerStartedAsync(new Models.ServerStartedEvent
+                    await _events.ServerStartedAsync(new Models.ServerStartedEvent
                     {
                         ProcessId = processId,
                         ProcessName = processName,
@@ -399,7 +392,7 @@ public class ServerManager
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to send server started webhook");
+                    _logger.LogError(ex, "Failed to publish server started event");
                 }
             });
 
@@ -468,12 +461,12 @@ public class ServerManager
                 {
                     _logger.LogInformation("Server process exited gracefully");
 
-                    // Send webhook notification before cleanup
+                    // Notify the web UI before cleanup
                     _ = Task.Run(async () =>
                     {
                         try
                         {
-                            await _webhookService.SendServerStoppedAsync(new Models.ServerStoppedEvent
+                            await _events.ServerStoppedAsync(new Models.ServerStoppedEvent
                             {
                                 ProcessId = currentPid ?? 0,
                                 StopMethod = "Graceful"
@@ -481,7 +474,7 @@ public class ServerManager
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "Failed to send server stopped webhook");
+                            _logger.LogError(ex, "Failed to publish server stopped event");
                         }
                     });
 
@@ -555,12 +548,12 @@ public class ServerManager
                 actualProcess.WaitForExit(10000);
             }
 
-            // Send webhook notification before cleanup
+            // Notify the web UI before cleanup
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await _webhookService.SendServerStoppedAsync(new Models.ServerStoppedEvent
+                    await _events.ServerStoppedAsync(new Models.ServerStoppedEvent
                     {
                         ProcessId = currentPid,
                         StopMethod = "Force"
@@ -568,7 +561,7 @@ public class ServerManager
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to send server stopped webhook");
+                    _logger.LogError(ex, "Failed to publish server stopped event");
                 }
             });
 
@@ -787,12 +780,12 @@ public class ServerManager
             _logger.LogDebug("Restarting output monitoring for new process");
             StartOutputMonitoring();
 
-            // Send webhook notification
+            // Notify the web UI
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await _webhookService.SendServerRestartedAsync(new Models.ServerRestartedEvent
+                    await _events.ServerRestartedAsync(new Models.ServerRestartedEvent
                     {
                         OldProcessId = oldPid != 0 ? oldPid : null,
                         NewProcessId = newPid,
@@ -801,7 +794,7 @@ public class ServerManager
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to send server restarted webhook");
+                    _logger.LogError(ex, "Failed to publish server restarted event");
                 }
             });
 
@@ -1544,10 +1537,10 @@ public class ServerManager
             }
 
             // Fan-out to subscribers stays outside the lock: these reach the UI
-            // dispatcher and an HTTP sender, and holding a controller lock across
+            // dispatcher and the SignalR hub, and holding a controller lock across
             // either invites a deadlock.
             NotifyConsoleOutput(line);
-            _consoleLogSender.AddLog(line);
+            _events.AddConsoleLog(line);
         }
     }
 
@@ -1675,7 +1668,7 @@ public class ServerManager
         }
 
         // Demuxed ahead of the text fanout. A structured record is not console
-        // output: it must not reach the output buffer, the console webhook or the
+        // output: it must not reach the output buffer, the web UI console or the
         // chat regex, and it is consumed whether or not it parsed.
         if (TryProcessHookChatRecord(output, generation, attachmentId))
         {
@@ -1950,12 +1943,12 @@ public class ServerManager
 
             _logger.LogInformation($"Successfully attached to process {processId}");
 
-            // Send webhook notification
+            // Notify the web UI
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await _webhookService.SendServerAttachedAsync(new Models.ServerAttachedEvent
+                    await _events.ServerAttachedAsync(new Models.ServerAttachedEvent
                     {
                         ProcessId = processId,
                         ProcessName = process.ProcessName,
@@ -1964,7 +1957,7 @@ public class ServerManager
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Failed to send server attached webhook");
+                    _logger.LogError(ex, "Failed to publish server attached event");
                 }
             });
 
