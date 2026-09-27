@@ -1002,6 +1002,49 @@ public class ServerManagerTests
     }
 
     [Fact]
+    public async Task InjectConsoleHookAsync_WhileAnotherIsInProgress_RefusesAndDisablesInjection()
+    {
+        _mockConfiguration.Setup(c => c["WreckfestServer:SupportedBuild"])
+            .Returns("1.308438");
+        var pid = Process.GetCurrentProcess().Id;
+        var release = new TaskCompletionSource<(bool, string)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        injectedHookReader.Setup(r => r.InjectAsync(pid)).Returns(release.Task);
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+        serverManager.AttachToExistingProcess(pid);
+
+        var first = serverManager.InjectConsoleHookAsync(pid);
+
+        // What the Process Manager's refresh asks before re-enabling INJECT.
+        Assert.True(serverManager.IsInjectionInProgress);
+        Assert.False(serverManager.CanInjectInto(pid));
+
+        var second = await serverManager.InjectConsoleHookAsync(pid);
+        Assert.False(second.Success);
+        Assert.Contains("already in progress", second.Message);
+
+        release.SetResult((true, "injected"));
+        Assert.True((await first).Success);
+        Assert.False(serverManager.IsInjectionInProgress);
+        Assert.True(serverManager.CanInjectInto(pid));
+        injectedHookReader.Verify(r => r.InjectAsync(pid), Times.Once);
+    }
+
+    [Fact]
+    public async Task InjectConsoleHookAsync_WhenItFails_ReleasesTheInProgressFlag()
+    {
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
+
+        // No SupportedBuild configured, so the build check refuses.
+        var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
+
+        Assert.False(result.Success);
+        Assert.False(serverManager.IsInjectionInProgress);
+    }
+
+    [Fact]
     public async Task InjectConsoleHookAsync_WhenTheWindowNeverAppears_RefusesAfterTheRetries()
     {
         _mockConfiguration.Setup(c => c["WreckfestServer:SupportedBuild"])

@@ -118,10 +118,16 @@ public class ServerManager
     /// Injection is only allowed into the process that is already attached, so the
     /// tracked PID and the hooked process cannot diverge. A null candidate never
     /// qualifies - comparing two nulls would otherwise read as a match when nothing
-    /// is selected and nothing is attached.
+    /// is selected and nothing is attached. Never while another injection is still
+    /// in progress: it can wait many seconds for a starting server's window.
     /// </summary>
     public bool CanInjectInto(int? candidateProcessId) =>
-        candidateProcessId.HasValue && candidateProcessId == AttachedProcessId;
+        candidateProcessId.HasValue && candidateProcessId == AttachedProcessId && !IsInjectionInProgress;
+
+    private int _injectionInProgress;
+
+    /// <summary>True while <see cref="InjectConsoleHookAsync"/> is running.</summary>
+    public bool IsInjectionInProgress => Volatile.Read(ref _injectionInProgress) != 0;
 
     public ServerManager(
         IConfiguration configuration,
@@ -1984,6 +1990,26 @@ public class ServerManager
     {
         _logger.LogInformation("Console hook injection requested for process {ProcessId}", processId);
 
+        // One at a time, from the button and the API alike. A second injection would
+        // restart the hook listener under the first one.
+        if (Interlocked.CompareExchange(ref _injectionInProgress, 1, 0) != 0)
+        {
+            _logger.LogWarning("Console hook injection into process {ProcessId} refused: another is in progress", processId);
+            return (false, "Injection refused: another injection is already in progress.");
+        }
+
+        try
+        {
+            return await InjectConsoleHookCoreAsync(processId);
+        }
+        finally
+        {
+            Volatile.Write(ref _injectionInProgress, 0);
+        }
+    }
+
+    private async Task<(bool Success, string Message)> InjectConsoleHookCoreAsync(int processId)
+    {
         try
         {
             var process = Process.GetProcessById(processId);
