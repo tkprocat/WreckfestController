@@ -118,10 +118,16 @@ public class ServerManager
     /// Injection is only allowed into the process that is already attached, so the
     /// tracked PID and the hooked process cannot diverge. A null candidate never
     /// qualifies - comparing two nulls would otherwise read as a match when nothing
-    /// is selected and nothing is attached.
+    /// is selected and nothing is attached. Never while another injection is still
+    /// in progress: it can wait many seconds for a starting server's window.
     /// </summary>
     public bool CanInjectInto(int? candidateProcessId) =>
-        candidateProcessId.HasValue && candidateProcessId == AttachedProcessId;
+        candidateProcessId.HasValue && candidateProcessId == AttachedProcessId && !IsInjectionInProgress;
+
+    private int _injectionInProgress;
+
+    /// <summary>True while <see cref="InjectConsoleHookAsync"/> is running.</summary>
+    public bool IsInjectionInProgress => Volatile.Read(ref _injectionInProgress) != 0;
 
     public ServerManager(
         IConfiguration configuration,
@@ -1980,44 +1986,161 @@ public class ServerManager
     /// <summary>
     /// Injects the experimental console hook into an existing Wreckfest server process.
     /// </summary>
-    public virtual Task<(bool Success, string Message)> InjectConsoleHookAsync(int processId)
+    public virtual async Task<(bool Success, string Message)> InjectConsoleHookAsync(int processId)
     {
         _logger.LogInformation("Console hook injection requested for process {ProcessId}", processId);
 
+        // One at a time, from the button and the API alike. A second injection would
+        // restart the hook listener under the first one.
+        if (Interlocked.CompareExchange(ref _injectionInProgress, 1, 0) != 0)
+        {
+            _logger.LogWarning("Console hook injection into process {ProcessId} refused: another is in progress", processId);
+            return (false, "Injection refused: another injection is already in progress.");
+        }
+
+        try
+        {
+            return await InjectConsoleHookCoreAsync(processId);
+        }
+        finally
+        {
+            Volatile.Write(ref _injectionInProgress, 0);
+        }
+    }
+
+    private async Task<(bool Success, string Message)> InjectConsoleHookCoreAsync(int processId)
+    {
         try
         {
             var process = Process.GetProcessById(processId);
-            if (process.HasExited)
+            var targetCheck = CheckInjectionTarget(process);
+            if (!targetCheck.Success)
             {
-                return Task.FromResult((false, $"Process {processId} has exited"));
+                return targetCheck;
             }
 
-            var attachedProcessId = AttachedProcessId;
-            if (!attachedProcessId.HasValue)
+            var windowCheck = await WaitForServerWindowAsync(process);
+            if (!windowCheck.Success)
             {
-                return Task.FromResult((false,
-                    $"Injection refused: no process is attached; requested process is {processId}."));
+                return windowCheck;
             }
 
-            if (attachedProcessId.Value != processId)
+            // The wait can take seconds, long enough for the server to exit or the
+            // controller to attach elsewhere.
+            targetCheck = CheckInjectionTarget(process);
+            if (!targetCheck.Success)
             {
-                return Task.FromResult((false,
-                    $"Injection refused: attached process is {attachedProcessId.Value}; requested process is {processId}."));
+                return targetCheck;
             }
 
             var buildCheck = EnsureSupportedBuild(process);
             if (!buildCheck.Success)
             {
-                return Task.FromResult(buildCheck);
+                return buildCheck;
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to validate target process {ProcessId}", processId);
-            return Task.FromResult((false, $"Failed to validate target process {processId}: {ex.Message}"));
+            return (false, $"Failed to validate target process {processId}: {ex.Message}");
         }
 
-        return _injectedHookOutputReader.InjectAsync(processId);
+        return await _injectedHookOutputReader.InjectAsync(processId);
+    }
+
+    private (bool Success, string Message) CheckInjectionTarget(Process process)
+    {
+        if (process.HasExited)
+        {
+            return (false, $"Process {process.Id} has exited");
+        }
+
+        var attachedProcessId = AttachedProcessId;
+        if (!attachedProcessId.HasValue)
+        {
+            return (false, $"Injection refused: no process is attached; requested process is {process.Id}.");
+        }
+
+        if (attachedProcessId.Value != process.Id)
+        {
+            return (false,
+                $"Injection refused: attached process is {attachedProcessId.Value}; requested process is {process.Id}.");
+        }
+
+        return (true, string.Empty);
+    }
+
+    /// <summary>
+    /// How many times injection re-checks for the console window of a server that is
+    /// still starting. With <see cref="ServerWindowRetryDelay"/> that is 20 seconds:
+    /// a cold start measured 10.9 s before its window appeared, warm ones about 5 s.
+    /// </summary>
+    public const int ServerWindowRetries = 40;
+
+    /// <summary>The pause between those checks.</summary>
+    protected virtual TimeSpan ServerWindowRetryDelay => TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
+    /// A freshly started server has no console window at all until it has loaded -
+    /// about 11 seconds on the dev machine - and the build is read from that window's
+    /// title. So "no window yet" means "still starting" and is worth waiting out,
+    /// while a window whose title does not parse is a real <c>&lt;unreadable&gt;</c>
+    /// and is refused at once by <see cref="EnsureSupportedBuild"/>.
+    /// </summary>
+    private async Task<(bool Success, string Message)> WaitForServerWindowAsync(Process process)
+    {
+        if (HasServerWindow(process))
+        {
+            return (true, string.Empty);
+        }
+
+        var maxWait = ServerWindowRetryDelay * ServerWindowRetries;
+        _logger.LogInformation(
+            "Server process {ProcessId} is still starting (no console window yet); waiting up to {Seconds:0}s before injecting",
+            process.Id,
+            maxWait.TotalSeconds);
+        var waited = Stopwatch.StartNew();
+
+        for (var retry = 1; retry <= ServerWindowRetries; retry++)
+        {
+            await Task.Delay(ServerWindowRetryDelay);
+
+            if (process.HasExited)
+            {
+                return (false, $"Process {process.Id} has exited");
+            }
+
+            if (HasServerWindow(process))
+            {
+                _logger.LogInformation(
+                    "Server process {ProcessId} console window appeared after {Seconds:0.0}s",
+                    process.Id,
+                    waited.Elapsed.TotalSeconds);
+                return (true, string.Empty);
+            }
+        }
+
+        _logger.LogWarning(
+            "Server process {ProcessId} still has no console window after {Seconds:0}s",
+            process.Id,
+            maxWait.TotalSeconds);
+        return (false,
+            $"Injection refused: server process {process.Id} is still starting (no console window after {maxWait.TotalSeconds:0}s). Try again shortly.");
+    }
+
+    /// <summary>True once the process has a console window, which is when its title carries the build.</summary>
+    protected virtual bool HasServerWindow(Process process)
+    {
+        try
+        {
+            // Process caches the window handle and title from the first read.
+            process.Refresh();
+            return process.MainWindowHandle != IntPtr.Zero;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -2070,6 +2193,7 @@ public class ServerManager
     {
         try
         {
+            process.Refresh();
             return ParseServerBuild(process.MainWindowTitle);
         }
         catch
