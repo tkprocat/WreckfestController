@@ -977,6 +977,47 @@ public class ServerManagerTests
         Assert.Contains("<unreadable>", result.Message);
         Assert.Contains("1.308438", result.Message);
         injectedHookReader.Verify(r => r.InjectAsync(It.IsAny<int>()), Times.Never);
+        // The window exists, so its title is final: nothing to wait for.
+        Assert.Equal(1, serverManager.WindowChecks);
+    }
+
+    [Fact]
+    public async Task InjectConsoleHookAsync_WhenTheWindowAppearsWhileRetrying_Injects()
+    {
+        _mockConfiguration.Setup(c => c["WreckfestServer:SupportedBuild"])
+            .Returns("1.308438");
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        injectedHookReader
+            .Setup(r => r.InjectAsync(Process.GetCurrentProcess().Id))
+            .ReturnsAsync((true, "injected"));
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+        serverManager.ChecksWithoutWindow = 3;
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
+
+        var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
+
+        Assert.True(result.Success, result.Message);
+        Assert.Equal(4, serverManager.WindowChecks);
+        injectedHookReader.Verify(r => r.InjectAsync(Process.GetCurrentProcess().Id), Times.Once);
+    }
+
+    [Fact]
+    public async Task InjectConsoleHookAsync_WhenTheWindowNeverAppears_RefusesAfterTheRetries()
+    {
+        _mockConfiguration.Setup(c => c["WreckfestServer:SupportedBuild"])
+            .Returns("1.308438");
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+        serverManager.ChecksWithoutWindow = int.MaxValue;
+        serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
+
+        var result = await serverManager.InjectConsoleHookAsync(Process.GetCurrentProcess().Id);
+
+        Assert.False(result.Success);
+        Assert.Contains("still starting", result.Message);
+        Assert.DoesNotContain("<unreadable>", result.Message);
+        Assert.Equal(1 + ServerManager.ServerWindowRetries, serverManager.WindowChecks);
+        injectedHookReader.Verify(r => r.InjectAsync(It.IsAny<int>()), Times.Never);
     }
 
     [Fact]
@@ -1426,7 +1467,16 @@ public class ServerManagerTests
             _build = build;
         }
 
+        /// <summary>How many window checks report "no window yet" before one finds it.</summary>
+        public int ChecksWithoutWindow { get; set; }
+
+        public int WindowChecks { get; private set; }
+
         protected override string? GetServerBuild(Process process) => _build;
+
+        protected override bool HasServerWindow(Process process) => ++WindowChecks > ChecksWithoutWindow;
+
+        protected override TimeSpan ServerWindowRetryDelay => TimeSpan.Zero;
     }
 
     /// <summary>

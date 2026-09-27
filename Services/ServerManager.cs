@@ -1980,44 +1980,127 @@ public class ServerManager
     /// <summary>
     /// Injects the experimental console hook into an existing Wreckfest server process.
     /// </summary>
-    public virtual Task<(bool Success, string Message)> InjectConsoleHookAsync(int processId)
+    public virtual async Task<(bool Success, string Message)> InjectConsoleHookAsync(int processId)
     {
         _logger.LogInformation("Console hook injection requested for process {ProcessId}", processId);
 
         try
         {
             var process = Process.GetProcessById(processId);
-            if (process.HasExited)
+            var targetCheck = CheckInjectionTarget(process);
+            if (!targetCheck.Success)
             {
-                return Task.FromResult((false, $"Process {processId} has exited"));
+                return targetCheck;
             }
 
-            var attachedProcessId = AttachedProcessId;
-            if (!attachedProcessId.HasValue)
+            var windowCheck = await WaitForServerWindowAsync(process);
+            if (!windowCheck.Success)
             {
-                return Task.FromResult((false,
-                    $"Injection refused: no process is attached; requested process is {processId}."));
+                return windowCheck;
             }
 
-            if (attachedProcessId.Value != processId)
+            // The wait can take seconds, long enough for the server to exit or the
+            // controller to attach elsewhere.
+            targetCheck = CheckInjectionTarget(process);
+            if (!targetCheck.Success)
             {
-                return Task.FromResult((false,
-                    $"Injection refused: attached process is {attachedProcessId.Value}; requested process is {processId}."));
+                return targetCheck;
             }
 
             var buildCheck = EnsureSupportedBuild(process);
             if (!buildCheck.Success)
             {
-                return Task.FromResult(buildCheck);
+                return buildCheck;
             }
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to validate target process {ProcessId}", processId);
-            return Task.FromResult((false, $"Failed to validate target process {processId}: {ex.Message}"));
+            return (false, $"Failed to validate target process {processId}: {ex.Message}");
         }
 
-        return _injectedHookOutputReader.InjectAsync(processId);
+        return await _injectedHookOutputReader.InjectAsync(processId);
+    }
+
+    private (bool Success, string Message) CheckInjectionTarget(Process process)
+    {
+        if (process.HasExited)
+        {
+            return (false, $"Process {process.Id} has exited");
+        }
+
+        var attachedProcessId = AttachedProcessId;
+        if (!attachedProcessId.HasValue)
+        {
+            return (false, $"Injection refused: no process is attached; requested process is {process.Id}.");
+        }
+
+        if (attachedProcessId.Value != process.Id)
+        {
+            return (false,
+                $"Injection refused: attached process is {attachedProcessId.Value}; requested process is {process.Id}.");
+        }
+
+        return (true, string.Empty);
+    }
+
+    /// <summary>How many times injection re-checks for the console window of a server that is still starting.</summary>
+    public const int ServerWindowRetries = 5;
+
+    /// <summary>The pause between those checks.</summary>
+    protected virtual TimeSpan ServerWindowRetryDelay => TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// A freshly started server has no console window at all until it has loaded -
+    /// about 11 seconds on the dev machine - and the build is read from that window's
+    /// title. So "no window yet" means "still starting" and is worth waiting out,
+    /// while a window whose title does not parse is a real <c>&lt;unreadable&gt;</c>
+    /// and is refused at once by <see cref="EnsureSupportedBuild"/>.
+    /// </summary>
+    private async Task<(bool Success, string Message)> WaitForServerWindowAsync(Process process)
+    {
+        for (var retry = 1; !HasServerWindow(process); retry++)
+        {
+            if (retry > ServerWindowRetries)
+            {
+                _logger.LogWarning(
+                    "Server process {ProcessId} still has no console window after {Retries} retries",
+                    process.Id,
+                    ServerWindowRetries);
+                return (false,
+                    $"Injection refused: server process {process.Id} is still starting (no console window yet). Try again in a few seconds.");
+            }
+
+            _logger.LogInformation(
+                "Server process {ProcessId} is still starting (no console window yet); retry {Retry} of {Retries} in {Delay}s",
+                process.Id,
+                retry,
+                ServerWindowRetries,
+                ServerWindowRetryDelay.TotalSeconds);
+            await Task.Delay(ServerWindowRetryDelay);
+
+            if (process.HasExited)
+            {
+                return (false, $"Process {process.Id} has exited");
+            }
+        }
+
+        return (true, string.Empty);
+    }
+
+    /// <summary>True once the process has a console window, which is when its title carries the build.</summary>
+    protected virtual bool HasServerWindow(Process process)
+    {
+        try
+        {
+            // Process caches the window handle and title from the first read.
+            process.Refresh();
+            return process.MainWindowHandle != IntPtr.Zero;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -2070,6 +2153,7 @@ public class ServerManager
     {
         try
         {
+            process.Refresh();
             return ParseServerBuild(process.MainWindowTitle);
         }
         catch
