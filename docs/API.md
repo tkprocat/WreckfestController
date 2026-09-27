@@ -218,6 +218,47 @@ gives a value of the wrong type or `null`, or puts a line break in a string.
 | GET | `{id}` | One event |
 | POST | `{id}/activate` | Activate an event now |
 
+### Catalogue — `api/catalogue`
+
+The tracks, variants, tags, weather and mods the controller knows. The database ships
+with a built-in catalogue: the base-game tracks, plus the workshop tracks from 1.x's
+default vote list. Every built-in variant starts allowed for voting. Built-in rows are fully editable,
+but a built-in track's `key` and a built-in variant's `variantId` are fixed, and they
+cannot be deleted: hide them instead, and `reset` restores what shipped.
+
+Hidden tracks and variants are left out of lists unless `includeHidden=true`, but stay
+readable by id.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `tracks` | Tracks with their variants, by name. Filters: `tag` (slug), `gameMode` (`Racing`/`Derby`), `weather`, `origin` (`BaseGame`/`Dlc`/`Workshop`/`Custom`), `dlc`, `mod` (id), `availableOnly` (no mod, or a mod in the server config's `mods=`; **409** when the config cannot be read), `includeHidden`. |
+| GET | `tracks/{id}` | One track with all its variants. Sends an `ETag`. |
+| POST | `tracks` | `{ key, name, origin, dlcName, modId }`. 201. Supports every weather until `weather` is set. `dlcName` only for `Dlc`, `modId` only for `Workshop`. |
+| PUT | `tracks/{id}` | Same body. Needs `If-Match`. |
+| DELETE | `tracks/{id}` | 204, with its variants. **409** for a built-in track. |
+| POST | `tracks/{id}/hide`, `tracks/{id}/unhide` | Retire or restore without deleting. |
+| POST | `tracks/{id}/reset` | Built-in only: restores name, origin and weather. Not the hidden flag or the variants. |
+| PUT | `tracks/{id}/weather` | `{ weather: ["clear", ...] }`. Replaces the supported weather. |
+| GET | `variants` | Variants, by track then name. Filters: `search` (id, name or track name), `trackId`, `tag`, `gameMode`, `weather`, `votingOnly`, `includeHidden`. |
+| GET | `variants/{id}` | One variant. Sends an `ETag`. |
+| POST | `variants` | `{ trackId, variantId, name, gameMode, allowedForVoting }`. 201. `variantId` is `^[A-Za-z0-9_]{1,64}$` and unique ignoring case. |
+| PUT | `variants/{id}` | `{ variantId, name, gameMode }`. Needs `If-Match`. |
+| DELETE | `variants/{id}` | 204. **409** for a built-in variant. |
+| POST | `variants/{id}/hide`, `variants/{id}/unhide` | As for tracks. |
+| POST | `variants/{id}/reset` | Built-in only: restores name, mode, voting flag and tags, recreating a shipped tag that was deleted. |
+| PUT | `variants/{id}/voting` | `{ allowed }`. |
+| PUT | `variants/{id}/tags` | `{ tags: ["oval", ...] }` by slug. Replaces the tags. |
+| GET, POST | `tags` | List, or create `{ name, slug, color }`. `slug` is lower-case words joined by `-`; `color` is `#RRGGBB`. |
+| GET, PUT, DELETE | `tags/{id}` | Deleting a tag removes it from every variant. |
+| GET | `weather` | The weather names, in the game's order. |
+| GET, POST | `mods` | List, or create `{ name, folderName, workshopId }`. `folderName` is the name `mods=` uses. |
+| DELETE | `mods/{id}` | 204. **409** while tracks still come from it. |
+
+**Concurrency.** A track or variant carries a `version`, and `GET {id}` returns it as
+`ETag: "3"`. `PUT {id}` must send it back as `If-Match: "3"`: without the header the answer is
+**428**, and when someone saved in between it is **409** with the row as it is now
+(and its new `ETag`), so the editor can offer to reload or overwrite.
+
 ## Live updates — `/hubs/server`
 
 A SignalR hub pushes server events to the web UI, replacing the outbound webhooks.
