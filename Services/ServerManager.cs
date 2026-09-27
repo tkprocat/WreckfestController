@@ -2044,11 +2044,15 @@ public class ServerManager
         return (true, string.Empty);
     }
 
-    /// <summary>How many times injection re-checks for the console window of a server that is still starting.</summary>
-    public const int ServerWindowRetries = 5;
+    /// <summary>
+    /// How many times injection re-checks for the console window of a server that is
+    /// still starting. With <see cref="ServerWindowRetryDelay"/> that is 20 seconds:
+    /// a cold start measured 10.9 s before its window appeared, warm ones about 5 s.
+    /// </summary>
+    public const int ServerWindowRetries = 40;
 
     /// <summary>The pause between those checks.</summary>
-    protected virtual TimeSpan ServerWindowRetryDelay => TimeSpan.FromSeconds(1);
+    protected virtual TimeSpan ServerWindowRetryDelay => TimeSpan.FromMilliseconds(500);
 
     /// <summary>
     /// A freshly started server has no console window at all until it has loaded -
@@ -2059,33 +2063,43 @@ public class ServerManager
     /// </summary>
     private async Task<(bool Success, string Message)> WaitForServerWindowAsync(Process process)
     {
-        for (var retry = 1; !HasServerWindow(process); retry++)
+        if (HasServerWindow(process))
         {
-            if (retry > ServerWindowRetries)
-            {
-                _logger.LogWarning(
-                    "Server process {ProcessId} still has no console window after {Retries} retries",
-                    process.Id,
-                    ServerWindowRetries);
-                return (false,
-                    $"Injection refused: server process {process.Id} is still starting (no console window yet). Try again in a few seconds.");
-            }
+            return (true, string.Empty);
+        }
 
-            _logger.LogInformation(
-                "Server process {ProcessId} is still starting (no console window yet); retry {Retry} of {Retries} in {Delay}s",
-                process.Id,
-                retry,
-                ServerWindowRetries,
-                ServerWindowRetryDelay.TotalSeconds);
+        var maxWait = ServerWindowRetryDelay * ServerWindowRetries;
+        _logger.LogInformation(
+            "Server process {ProcessId} is still starting (no console window yet); waiting up to {Seconds:0}s before injecting",
+            process.Id,
+            maxWait.TotalSeconds);
+        var waited = Stopwatch.StartNew();
+
+        for (var retry = 1; retry <= ServerWindowRetries; retry++)
+        {
             await Task.Delay(ServerWindowRetryDelay);
 
             if (process.HasExited)
             {
                 return (false, $"Process {process.Id} has exited");
             }
+
+            if (HasServerWindow(process))
+            {
+                _logger.LogInformation(
+                    "Server process {ProcessId} console window appeared after {Seconds:0.0}s",
+                    process.Id,
+                    waited.Elapsed.TotalSeconds);
+                return (true, string.Empty);
+            }
         }
 
-        return (true, string.Empty);
+        _logger.LogWarning(
+            "Server process {ProcessId} still has no console window after {Seconds:0}s",
+            process.Id,
+            maxWait.TotalSeconds);
+        return (false,
+            $"Injection refused: server process {process.Id} is still starting (no console window after {maxWait.TotalSeconds:0}s). Try again shortly.");
     }
 
     /// <summary>True once the process has a console window, which is when its title carries the build.</summary>
