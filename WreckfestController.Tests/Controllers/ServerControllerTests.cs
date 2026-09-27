@@ -27,18 +27,11 @@ public class ServerControllerTests
         var mockPlayerTrackerLogger = new Mock<ILogger<PlayerTracker>>();
         var mockTrackChangeTrackerLogger = new Mock<ILogger<TrackChangeTracker>>();
         var mockServerInfoTrackerLogger = new Mock<ILogger<ServerInfoTracker>>();
-        var mockWebhookService = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        var mockEvents = new Mock<IServerEventPublisher>();
 
-        var playerTracker = new PlayerTracker(mockPlayerTrackerLogger.Object, mockWebhookService.Object);
-        var trackChangeTracker = new TrackChangeTracker(mockTrackChangeTrackerLogger.Object, mockWebhookService.Object);
+        var playerTracker = new PlayerTracker(mockPlayerTrackerLogger.Object, mockEvents.Object);
+        var trackChangeTracker = new TrackChangeTracker(mockTrackChangeTrackerLogger.Object, mockEvents.Object);
         var serverInfoTracker = new ServerInfoTracker(mockServerInfoTrackerLogger.Object);
-        var mockConsoleLogSender = new Mock<ConsoleLogWebhookSender>(
-            Mock.Of<HttpClient>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<ILogger<ConsoleLogWebhookSender>>());
 
         _mockServerManager = new Mock<ServerManager>(
             mockConfiguration.Object,
@@ -46,8 +39,7 @@ public class ServerControllerTests
             playerTracker,
             trackChangeTracker,
             serverInfoTracker,
-            mockWebhookService.Object,
-            mockConsoleLogSender.Object);
+            mockEvents.Object);
         _mockLogger = new Mock<ILogger<ServerController>>();
         _controller = new ServerController(_mockServerManager.Object, _mockLogger.Object);
     }

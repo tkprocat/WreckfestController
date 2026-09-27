@@ -15,18 +15,18 @@ public class EventsController : ControllerBase
 {
     private readonly EventStorageService _storageService;
     private readonly SmartRestartService _smartRestartService;
-    private readonly WreckfestWebWebhookService _webhookService;
+    private readonly IServerEventPublisher _events;
     private readonly ILogger<EventsController> _logger;
 
     public EventsController(
         EventStorageService storageService,
         SmartRestartService smartRestartService,
-        WreckfestWebWebhookService webhookService,
+        IServerEventPublisher events,
         ILogger<EventsController> logger)
     {
         _storageService = storageService;
         _smartRestartService = smartRestartService;
-        _webhookService = webhookService;
+        _events = events;
         _logger = logger;
     }
 
@@ -204,7 +204,7 @@ public class EventsController : ControllerBase
     /// <summary>
     /// Manually activates a specific event by ID.
     /// Finds the event, applies its configuration (server name, welcome message, track rotation),
-    /// marks it as active, and calls back to Laravel webhook.
+    /// marks it as active, and notifies the web UI.
     /// </summary>
     /// <param name="id">Event ID to activate</param>
     /// <returns>Success or error message</returns>
@@ -240,11 +240,11 @@ public class EventsController : ControllerBase
             // Capture individual services rather than `this` so the controller instance is not kept alive
             // by SmartRestartService for the duration of the restart (which can take several minutes).
             var storageService = _storageService;
-            var webhookService = _webhookService;
+            var events = _events;
             var logger = _logger;
             var restartInitiated = _smartRestartService.InitiateRestart(
                 eventToActivate,
-                @event => OnManualEventActivated(@event, storageService, webhookService, logger));
+                @event => OnManualEventActivated(@event, storageService, events, logger));
 
             if (!restartInitiated)
             {
@@ -284,7 +284,7 @@ public class EventsController : ControllerBase
     private static void OnManualEventActivated(
         Event @event,
         EventStorageService storageService,
-        WreckfestWebWebhookService webhookService,
+        IServerEventPublisher events,
         ILogger logger)
     {
         try
@@ -313,7 +313,7 @@ public class EventsController : ControllerBase
                     logger.LogError("Failed to save schedule after marking event {EventName} (ID {EventId}) as active", @event.Name, @event.Id);
             }
 
-            _ = webhookService.SendEventActivatedAsync(@event.Id, @event.Name);
+            _ = events.EventActivatedAsync(@event.Id, @event.Name);
 
             logger.LogInformation("Manual event activation workflow completed for {EventName} (ID {EventId})", @event.Name, @event.Id);
         }

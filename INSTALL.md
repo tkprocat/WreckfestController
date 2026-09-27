@@ -10,10 +10,9 @@ This guide will walk you through setting up the WreckfestController API to manag
 - **Wreckfest Dedicated Server** - Installed via SteamCmd or Steam
 - **SteamCmd** (optional, for automatic updates) - [Download](https://developer.valvesoftware.com/wiki/SteamCMD)
 
-### Required for WreckfestWeb Integration
-- **WreckfestWeb** - Web admin panel for managing your server ([https://github.com/tkprocat/WreckfestWeb](https://github.com/tkprocat/WreckfestWeb))
-  - Webhook integration enables player tracking, event notifications, and track changes
-  - WreckfestController can run standalone, but webhook features will be disabled without WreckfestWeb
+### WreckfestWeb
+- **WreckfestWeb** ([https://github.com/tkprocat/WreckfestWeb](https://github.com/tkprocat/WreckfestWeb)) works only with WreckfestController 1.x (`v1-final`).
+  - 2.0 no longer sends webhooks; its live updates come from the SignalR hub described in [docs/API.md](docs/API.md#live-updates--hubsserver).
 
 ## Installation Steps
 
@@ -62,18 +61,6 @@ Edit `appsettings.json` and update the following settings:
 ```
 
 Only needed if you want automatic server updates via the API.
-
-#### Webhook Configuration
-```json
-"Webhooks": {
-  "BaseUrl": "https://your-webhook-endpoint.example/api/webhooks",
-  "ApiKey": "replace-with-the-endpoint-api-key"
-}
-```
-
-Set this to the endpoint that receives controller notifications. `ApiKey` is sent with outbound requests in the `X-API-Key` header; it is separate from the inbound `Api:Key`.
-
-If no webhook base URL is configured, console-log webhooks are disabled and the API still functions for server control.
 
 #### Network Configuration
 ```json
@@ -218,26 +205,12 @@ Logs are written to the console by default. Configure logging in `appsettings.js
 }
 ```
 
-## Webhook Integration
+## Live Updates
 
-The controller sends webhooks to any configured endpoint for:
-- Player join/leave events
-- Track changes
-- Event activation
-
-Configure the outbound webhook endpoint in `appsettings.json`:
-```json
-"Webhooks": {
-  "BaseUrl": "https://your-webhook-endpoint.example/api/webhooks",
-  "ApiKey": "replace-with-the-endpoint-api-key"
-}
-```
-
-The controller sends data to these endpoint paths:
-- `POST /api/webhooks/player-joined`
-- `POST /api/webhooks/player-left`
-- `POST /api/webhooks/track-changed`
-- `POST /api/webhooks/event-activated`
+The controller pushes player, track, event and server notifications to connected
+web clients through a SignalR hub at `/hubs/server`, on the same port as the API.
+There is nothing to configure beyond enabling the API. See
+[docs/API.md](docs/API.md#live-updates--hubsserver) for the messages.
 
 ## File Locations
 

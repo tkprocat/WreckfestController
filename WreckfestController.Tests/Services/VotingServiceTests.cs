@@ -23,23 +23,19 @@ public class VotingServiceTests
         _mockLogger = new Mock<ILogger<VotingService>>();
         _config = CreateVoteConfig();
 
-        var mockWebhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        var mockEvents = new Mock<IServerEventPublisher>();
 
         _playerTracker = new PlayerTracker(
             Mock.Of<ILogger<PlayerTracker>>(),
-            mockWebhook.Object);
+            mockEvents.Object);
 
         _mockServerManager = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ServerManager>>(),
             _playerTracker,
-            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            mockWebhook.Object,
-            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+            mockEvents.Object);
 
         _mockServerManager
             .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
@@ -898,21 +894,17 @@ public class VotingServiceTests
             })
             .Build();
 
-        var mockWebhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        var mockEvents = new Mock<IServerEventPublisher>();
 
-        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
 
         var serverMock = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
-            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            mockWebhook.Object,
-            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+            mockEvents.Object);
 
         serverMock
             .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
@@ -975,20 +967,16 @@ public class VotingServiceTests
             .Build();
 
         var messages = new List<string>();
-        var mockWebhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        var mockEvents = new Mock<IServerEventPublisher>();
 
-        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
-            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            mockWebhook.Object,
-            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+            mockEvents.Object);
 
         serverMock
             .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
@@ -1024,20 +1012,16 @@ public class VotingServiceTests
             .Build();
 
         var messages = new List<string>();
-        var mockWebhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        var mockEvents = new Mock<IServerEventPublisher>();
 
-        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
-            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            mockWebhook.Object,
-            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+            mockEvents.Object);
 
         serverMock
             .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
@@ -1079,20 +1063,16 @@ public class VotingServiceTests
             .Build();
 
         var messages = new List<string>();
-        var mockWebhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        var mockEvents = new Mock<IServerEventPublisher>();
 
-        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
-            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            mockWebhook.Object,
-            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+            mockEvents.Object);
 
         serverMock
             .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
@@ -1126,20 +1106,16 @@ public class VotingServiceTests
             .Build();
 
         var messages = new List<string>();
-        var mockWebhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        var mockEvents = new Mock<IServerEventPublisher>();
 
-        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
-            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            mockWebhook.Object,
-            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+            mockEvents.Object);
 
         serverMock
             .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
@@ -1176,20 +1152,16 @@ public class VotingServiceTests
             .Build();
 
         var messages = new List<string>();
-        var mockWebhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        var mockEvents = new Mock<IServerEventPublisher>();
 
-        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
-            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            mockWebhook.Object,
-            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+            mockEvents.Object);
 
         serverMock
             .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
@@ -1230,20 +1202,16 @@ public class VotingServiceTests
         var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 
         var messages = new List<string>();
-        var mockWebhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
+        var mockEvents = new Mock<IServerEventPublisher>();
 
-        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockWebhook.Object);
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
             Mock.Of<IConfiguration>(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
-            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockWebhook.Object),
+            new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
-            mockWebhook.Object,
-            new Mock<ConsoleLogWebhookSender>(Mock.Of<HttpClient>(), Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConsoleLogWebhookSender>>()).Object);
+            mockEvents.Object);
 
         serverMock
             .Setup(m => m.SendCommandAsync(It.IsAny<string>()))

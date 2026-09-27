@@ -5,14 +5,14 @@ namespace WreckfestController.Services;
 
 /// <summary>
 /// Background service that periodically checks for events that need to be activated.
-/// Runs independently of WreckfestWeb and activates events at their scheduled time.
+/// Runs independently of the web UI and activates events at their scheduled time.
 /// </summary>
 public class EventSchedulerService : IHostedService, IDisposable
 {
     private readonly EventStorageService _storageService;
     private readonly SmartRestartService _smartRestartService;
     private readonly RecurringEventService _recurringEventService;
-    private readonly WreckfestWebWebhookService _webhookService;
+    private readonly IServerEventPublisher _events;
     private readonly ILogger<EventSchedulerService> _logger;
 
     private System.Threading.Timer? _timer;
@@ -28,13 +28,13 @@ public class EventSchedulerService : IHostedService, IDisposable
         SmartRestartService smartRestartService,
         RecurringEventService recurringEventService,
         ConfigService configService,
-        WreckfestWebWebhookService webhookService,
+        IServerEventPublisher events,
         ILogger<EventSchedulerService> logger)
     {
         _storageService = storageService;
         _smartRestartService = smartRestartService;
         _recurringEventService = recurringEventService;
-        _webhookService = webhookService;
+        _events = events;
         _logger = logger;
     }
 
@@ -241,8 +241,7 @@ public class EventSchedulerService : IHostedService, IDisposable
                 }
             }
 
-            // Send webhook to Laravel
-            _ = _webhookService.SendEventActivatedAsync(@event.Id, @event.Name);
+            _ = _events.EventActivatedAsync(@event.Id, @event.Name);
 
             // Handle recurring events
             if (@event.Repeat != null)

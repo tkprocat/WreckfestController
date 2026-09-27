@@ -12,7 +12,7 @@ public class SmartRestartService
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
     private readonly ConfigService _configService;
-    private readonly WreckfestWebWebhookService _webhookService;
+    private readonly IServerEventPublisher _events;
     private readonly ILogger<SmartRestartService> _logger;
     private readonly TimeProvider _timeProvider;
 
@@ -38,9 +38,9 @@ public class SmartRestartService
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ConfigService configService,
-        WreckfestWebWebhookService webhookService,
+        IServerEventPublisher events,
         ILogger<SmartRestartService> logger)
-        : this(serverManager, playerTracker, trackChangeTracker, configService, webhookService, logger, TimeProvider.System)
+        : this(serverManager, playerTracker, trackChangeTracker, configService, events, logger, TimeProvider.System)
     {
     }
 
@@ -49,7 +49,7 @@ public class SmartRestartService
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         ConfigService configService,
-        WreckfestWebWebhookService webhookService,
+        IServerEventPublisher events,
         ILogger<SmartRestartService> logger,
         TimeProvider timeProvider)
     {
@@ -58,7 +58,7 @@ public class SmartRestartService
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
         _configService = configService;
-        _webhookService = webhookService;
+        _events = events;
         _logger = logger;
 
         // Subscribe to track changes
@@ -222,8 +222,8 @@ public class SmartRestartService
 
     private async Task SendRestartPendingNotificationAsync(Models.ServerRestartPendingEvent notification)
     {
-        try { await _webhookService.SendServerRestartPendingAsync(notification); }
-        catch (Exception ex) { _logger.LogError(ex, "Failed to send server restart pending webhook"); }
+        try { await _events.ServerRestartPendingAsync(notification); }
+        catch (Exception ex) { _logger.LogError(ex, "Failed to publish server restart pending event"); }
     }
     /// <summary>
     /// Callback for lobby check timer ticks

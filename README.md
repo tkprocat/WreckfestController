@@ -13,7 +13,7 @@ Part of the WreckfestWeb ecosystem - integrates with [WreckfestWeb](https://gith
 - **🔧 Configuration Management** - Read/update server_config.cfg remotely
 - **🌐 WebSocket Streams** - Console output, player tracking, track changes
 - **🔄 SteamCmd Integration** - Automatic server updates
-- **📡 Webhook Notifications** - Player events, track changes, event activation
+- **📡 Live Updates** - SignalR hub for server, player, track and event notifications (see [docs/API.md](docs/API.md#live-updates--hubsserver))
 - **📝 Swagger UI** - Interactive API documentation
 - **✅ Comprehensive Tests** - 169+ unit tests covering all functionality
 

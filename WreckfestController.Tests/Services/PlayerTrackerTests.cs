@@ -13,11 +13,8 @@ public class PlayerTrackerTests
 
     public PlayerTrackerTests()
     {
-        var webhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
-        _playerTracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), webhook.Object);
+        var events = new Mock<IServerEventPublisher>();
+        _playerTracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events.Object);
     }
 
     [Fact]
@@ -147,13 +144,24 @@ public class PlayerTrackerTests
         Assert.False(player.IsPrivileged);
     }
 
+    [Fact]
+    public void ProcessServerEvent_PublishesJoinAndLeaveToTheWebUi()
+    {
+        var events = new Mock<IServerEventPublisher>();
+        var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events.Object);
+
+        tracker.ProcessServerEvent(new ServerEvent(ServerEvent.PlayerHasJoined, "*eRacer", []));
+        tracker.ProcessServerEvent(new ServerEvent(ServerEvent.QuitNormal, "eRacer", []));
+
+        events.Verify(e => e.PlayerJoinedAsync("eRacer", true), Times.Once);
+        events.Verify(e => e.PlayerLeftAsync("eRacer"), Times.Once);
+        events.Verify(e => e.PlayersUpdatedAsync(It.IsAny<IReadOnlyList<Player>>()), Times.Exactly(2));
+    }
+
     private static PlayerTracker CreateTracker()
     {
-        var webhook = new Mock<WreckfestWebWebhookService>(
-            Mock.Of<ILogger<WreckfestWebWebhookService>>(),
-            Mock.Of<IConfiguration>(),
-            Mock.Of<HttpClient>());
-        return new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), webhook.Object);
+        var events = new Mock<IServerEventPublisher>();
+        return new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events.Object);
     }
 
 }
