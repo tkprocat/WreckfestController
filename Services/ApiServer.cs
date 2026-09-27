@@ -177,7 +177,11 @@ public class ApiServer : IApiServer, IDisposable
         // Note: We're creating a new service collection, but we'll use the existing singletons
         builder.Services.AddSingleton(main.GetRequiredService<PlayerTracker>());
         builder.Services.AddSingleton(main.GetRequiredService<TrackChangeTracker>());
-        builder.Services.AddSingleton(main.GetRequiredService<HubServerEventPublisher>());
+        // One instance under both types: controllers take the interface, and
+        // ConfigurePipeline attaches this host's hub to the concrete publisher.
+        var publisher = main.GetRequiredService<HubServerEventPublisher>();
+        builder.Services.AddSingleton(publisher);
+        builder.Services.AddSingleton<IServerEventPublisher>(publisher);
         builder.Services.AddSingleton(main.GetRequiredService<ServerManager>());
         builder.Services.AddSingleton(main.GetRequiredService<ConfigService>());
         builder.Services.AddSingleton(main.GetRequiredService<EventStorageService>());
