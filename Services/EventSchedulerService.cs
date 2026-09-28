@@ -1,331 +1,222 @@
 using Microsoft.Extensions.Hosting;
-using WreckfestController.Models;
+using WreckfestController.Data.Events;
 
 namespace WreckfestController.Services;
 
 /// <summary>
-/// Background service that periodically checks for events that need to be activated.
-/// Runs independently of the web UI and activates events at their scheduled time.
+/// Starts scheduled events. Every half minute it asks the database for the earliest
+/// occurrence due within the <see cref="EventActivator.LeadIn"/> and hands it to the
+/// <see cref="EventActivator"/>, one at a time.
 /// </summary>
+/// <remarks>
+/// An occurrence more than <see cref="MissedGrace"/> overdue is recorded as
+/// <see cref="OccurrenceOutcome.Missed"/>, and the event moves on to its next occurrence.
+/// Starting a two-hour-old race night by surprise helps nobody: the miss is logged and
+/// sent to signed-in clients, and an admin activates the event by hand if it should
+/// still run. The grace covers waiting out another restart, which can take 15 minutes.
+/// </remarks>
 public class EventSchedulerService : IHostedService, IDisposable
 {
-    private readonly EventStorageService _storageService;
-    private readonly SmartRestartService _smartRestartService;
-    private readonly RecurringEventService _recurringEventService;
-    private readonly IServerEventPublisher _events;
+    public static readonly TimeSpan MissedGrace = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
+
+    private readonly EventStore _store;
+    private readonly EventActivator _activator;
+    private readonly TimeProvider _time;
     private readonly ILogger<EventSchedulerService> _logger;
-
-    private System.Threading.Timer? _timer;
-    private EventSchedule? _schedule;
     private readonly object _lock = new();
-    private bool _isProcessingEvent = false;
 
-    // Configuration
-    private const int CheckIntervalSeconds = 30;
+    private ITimer? _timer;
+    private bool _checking;
+
+    /// <summary>True from starting an occurrence until its restart has ended.</summary>
+    private bool _activating;
 
     public EventSchedulerService(
-        EventStorageService storageService,
-        SmartRestartService smartRestartService,
-        RecurringEventService recurringEventService,
-        ConfigService configService,
-        IServerEventPublisher events,
+        EventStore store,
+        EventActivator activator,
+        TimeProvider time,
         ILogger<EventSchedulerService> logger)
     {
-        _storageService = storageService;
-        _smartRestartService = smartRestartService;
-        _recurringEventService = recurringEventService;
-        _events = events;
+        _store = store;
+        _activator = activator;
+        _time = time;
         _logger = logger;
     }
 
-    /// <summary>
-    /// Starts the background service
-    /// </summary>
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Event Scheduler Service starting");
-
-        // Load schedule on startup
-        _schedule = _storageService.LoadSchedule();
-        _logger.LogInformation("Loaded schedule with {Count} events", _schedule.Events.Count);
-
-        // Log any events that were missed while service was down
-        CheckForMissedEvents();
-
-        // Start timer (check every 30 seconds)
-        _timer = new System.Threading.Timer(
-            CheckForDueEvents,
-            null,
-            TimeSpan.Zero, // Start immediately
-            TimeSpan.FromSeconds(CheckIntervalSeconds));
-
-        _logger.LogInformation("Event Scheduler Service started. Checking every {Seconds} seconds.", CheckIntervalSeconds);
-
+        _timer = _time.CreateTimer(_ => _ = CheckAsync(), null, TimeSpan.Zero, CheckInterval);
+        _logger.LogInformation("Event scheduler started; checking every {Seconds} seconds", CheckInterval.TotalSeconds);
         return Task.CompletedTask;
     }
 
-    /// <summary>
-    /// Stops the background service
-    /// </summary>
     public Task StopAsync(CancellationToken cancellationToken)
     {
-        _logger.LogInformation("Event Scheduler Service stopping");
-
-        _timer?.Change(Timeout.Infinite, 0);
-        _timer?.Dispose();
-
+        _timer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         return Task.CompletedTask;
     }
 
     /// <summary>
-    /// Checks for events that were due while the service was offline
+    /// Deals with whatever is due: skips missed occurrences and starts the earliest due
+    /// one. Does nothing while an earlier check or activation is still running.
     /// </summary>
-    private void CheckForMissedEvents()
-    {
-        if (_schedule == null) return;
-
-        var now = DateTime.UtcNow;
-        var missedEvents = _schedule.Events
-            .Where(e => !e.IsActive && !e.IsOccurrenceCompleted && e.StartTime < now.AddMinutes(-5))
-            .OrderBy(e => e.StartTime)
-            .ToList();
-
-        if (missedEvents.Count > 0)
-        {
-            _logger.LogWarning(
-                "Found {Count} events that were scheduled while service was offline (will not activate automatically):",
-                missedEvents.Count);
-
-            foreach (var evt in missedEvents)
-            {
-                _logger.LogWarning(
-                    "  - Event {EventName} (ID {EventId}) was scheduled for {StartTime}",
-                    evt.Name,
-                    evt.Id,
-                    evt.StartTime.ToLocalTime());
-            }
-        }
-    }
-
-    /// <summary>
-    /// Timer callback - checks for events that need to be activated
-    /// </summary>
-    private void CheckForDueEvents(object? state)
+    public async Task CheckAsync()
     {
         lock (_lock)
         {
-            // Skip if already processing an event
-            if (_isProcessingEvent)
-            {
-                _logger.LogDebug("Skipping event check - already processing an event");
-                return;
-            }
-
-            // Reload schedule from disk (in case Laravel updated it)
-            _schedule = _storageService.LoadSchedule();
-
-            if (_schedule == null || _schedule.Events.Count == 0)
+            if (_checking || _activating)
             {
                 return;
             }
 
-            // Get due events
-            var dueEvents = _schedule.GetDueEvents();
-
-            if (dueEvents.Count == 0)
-            {
-                // Log next upcoming event if any
-                var nextEvent = _schedule.GetNextUpcomingEvent();
-                if (nextEvent != null)
-                {
-                    var timeUntil = nextEvent.StartTime - DateTime.UtcNow;
-                    _logger.LogDebug(
-                        "No events due. Next event: {EventName} in {Minutes:F1} minutes ({StartTime})",
-                        nextEvent.Name,
-                        timeUntil.TotalMinutes,
-                        nextEvent.StartTime.ToLocalTime());
-                }
-                return;
-            }
-
-            // Process the first due event
-            var eventToActivate = dueEvents.First();
-            _logger.LogInformation(
-                "Event {EventName} (ID {EventId}) is due for activation (scheduled: {StartTime})",
-                eventToActivate.Name,
-                eventToActivate.Id,
-                eventToActivate.StartTime.ToLocalTime());
-
-            _isProcessingEvent = true;
-
-            // Activate event asynchronously
-            _ = Task.Run(() => ActivateEvent(eventToActivate));
+            _checking = true;
         }
-    }
 
-    /// <summary>
-    /// Activates an event by applying configuration and initiating smart restart
-    /// </summary>
-    private void ActivateEvent(Event @event)
-    {
         try
         {
-            _logger.LogInformation("Beginning activation for event: {EventName} (ID {EventId})", @event.Name, @event.Id);
-
-            // Initiate smart restart
-            var restartInitiated = _smartRestartService.InitiateRestart(@event, OnEventActivated, OnRestartFinished);
-
-            if (!restartInitiated)
+            // Bounded, in case a write keeps failing to move an event on.
+            for (var i = 0; i < 100; i++)
             {
-                _logger.LogError(
-                    "Failed to initiate restart for event {EventName} (ID {EventId}) - restart already in progress",
-                    @event.Name,
-                    @event.Id);
-
-                lock (_lock)
+                if (!await HandleNextDueAsync())
                 {
-                    _isProcessingEvent = false;
+                    return;
                 }
-
-                return;
             }
-
-            _logger.LogInformation(
-                "Smart restart initiated for event {EventName} (ID {EventId})",
-                @event.Name,
-                @event.Id);
-
-            // Smart restart service will handle the rest and call OnEventActivated when complete
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error activating event {EventName} (ID {EventId})", @event.Name, @event.Id);
-
+            _logger.LogError(ex, "Event scheduler check failed");
+        }
+        finally
+        {
             lock (_lock)
             {
-                _isProcessingEvent = false;
+                _checking = false;
             }
         }
     }
 
-    /// <summary>
-    /// Callback invoked when an event has been successfully activated
-    /// </summary>
-    private void OnEventActivated(Event @event)
+    /// <summary>True when it dealt with an occurrence without starting a restart, so there may be another.</summary>
+    private async Task<bool> HandleNextDueAsync()
     {
+        var now = _time.GetUtcNow().UtcDateTime;
+        var due = await _store.NextDueAsync(now + EventActivator.LeadIn);
+        if (due is null)
+        {
+            return false;
+        }
+
+        // Someone else - a manual activation - owns this event until its outcome is
+        // recorded. Counting it missed, or starting it again, would be wrong either way.
+        // Stop the scan: while its restart runs, nothing else could start anyway.
+        if (!_activator.TryClaim(due.Id))
+        {
+            return false;
+        }
+
+        var claimHeld = true;
         try
         {
-            _logger.LogInformation("Event {EventName} (ID {EventId}) activated successfully", @event.Name, @event.Id);
-
-            // Reload schedule
-            _schedule = _storageService.LoadSchedule();
-            if (_schedule == null)
+            // Re-read under the claim: what was due a moment ago may have been dealt with.
+            var evt = await _store.GetAsync(due.Id);
+            if (evt?.NextOccurrence is not { } occurrence || occurrence != due.NextOccurrence)
             {
-                _logger.LogError("Failed to reload schedule after event activation");
-                return;
+                return true;
             }
 
-            // Mark event as active
-            var activated = _schedule.ActivateEvent(@event.Id);
-            if (!activated)
+            return await HandleClaimedAsync(evt, occurrence, now, () => claimHeld = false);
+        }
+        finally
+        {
+            if (claimHeld)
             {
-                _logger.LogWarning("Event {EventName} (ID {EventId}) not found in schedule", @event.Name, @event.Id);
+                _activator.Release(due.Id);
             }
-            else
-            {
-                // Save updated schedule
-                var saved = _storageService.SaveSchedule(_schedule);
-                if (saved)
-                {
-                    _logger.LogInformation("Marked event {EventName} (ID {EventId}) as active in schedule", @event.Name, @event.Id);
-                }
-            }
+        }
+    }
 
-            _ = _events.EventActivatedAsync(@event.Id, @event.Name);
+    /// <param name="handOff">Called when the claim passes to a started activation.</param>
+    private async Task<bool> HandleClaimedAsync(ScheduledEvent evt, DateTime occurrence, DateTime now, Action handOff)
+    {
+        if (occurrence < now - MissedGrace)
+        {
+            await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Missed);
+            return true;
+        }
 
-            // Handle recurring events
-            if (@event.Repeat != null)
-            {
-                _logger.LogInformation(
-                    "Event {EventName} (ID {EventId}) is recurring - calculating next instance",
-                    @event.Name,
-                    @event.Id);
+        if (evt.IsActive)
+        {
+            _logger.LogInformation(
+                "Event {EventName} (ID {EventId}) is already active; its {Occurrence:u} occurrence needs no restart",
+                evt.Name,
+                evt.Id,
+                occurrence);
+            await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Activated);
+            return true;
+        }
 
-                // Reload to ensure we have latest
-                _schedule = _storageService.LoadSchedule();
-                if (_schedule != null)
-                {
-                    var eventInSchedule = _schedule.GetEventById(@event.Id);
-                    if (eventInSchedule != null)
-                    {
-                        var rescheduled = _recurringEventService.RescheduleEvent(
-                            eventInSchedule,
-                            _storageService,
-                            _schedule);
+        lock (_lock)
+        {
+            _activating = true;
+        }
 
-                        if (rescheduled)
-                        {
-                            _logger.LogInformation(
-                                "Event {EventName} (ID {EventId}) rescheduled successfully",
-                                @event.Name,
-                                @event.Id);
-                        }
-                        else
-                        {
-                            _logger.LogWarning(
-                                "Failed to reschedule recurring event {EventName} (ID {EventId})",
-                                @event.Name,
-                                @event.Id);
-                        }
-                    }
-                }
-            }
-
-            _logger.LogInformation("Event activation complete for {EventName} (ID {EventId})", @event.Name, @event.Id);
+        ActivationResult result;
+        try
+        {
+            // The activation takes the claim whatever happens: it releases it itself.
+            handOff();
+            result = _activator.StartOccurrence(evt, occurrence, outcome => Release(evt.Id, outcome));
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error in OnEventActivated callback for event {EventName} (ID {EventId})", @event.Name, @event.Id);
+            // The settings could not be written, so nothing restarted. One attempt per
+            // occurrence: retrying would fail the same way every half minute.
+            _logger.LogError(ex, "Could not apply event {EventName} (ID {EventId})", evt.Name, evt.Id);
+            ReleaseActivation();
+
+            // Claimed again, so the failure is recorded against the row as it is now.
+            if (_activator.TryClaim(evt.Id))
+            {
+                try
+                {
+                    await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Failed);
+                }
+                finally
+                {
+                    _activator.Release(evt.Id);
+                }
+            }
+
+            return true;
         }
+
+        if (result == ActivationResult.Busy)
+        {
+            // Someone else's restart is running. Try again next check, until MissedGrace.
+            _logger.LogInformation(
+                "Event {EventName} (ID {EventId}) is due, but a restart is in progress; will retry",
+                evt.Name,
+                evt.Id);
+            ReleaseActivation();
+        }
+
+        return false;
     }
 
-    private void OnRestartFinished(Event @event, RestartOutcome outcome)
+    private void Release(int eventId, RestartOutcome outcome)
+    {
+        ReleaseActivation();
+        _logger.LogInformation("Restart for event {EventId} finished with {Outcome}; scheduler released", eventId, outcome);
+    }
+
+    private void ReleaseActivation()
     {
         lock (_lock)
         {
-            _isProcessingEvent = false;
-        }
-        _logger.LogInformation("Restart for event {EventId} finished with {Outcome}; scheduler released", @event.Id, outcome);
-    }
-
-    /// <summary>
-    /// Gets the current schedule summary (for monitoring/debugging)
-    /// </summary>
-    public (int Total, int Active, int Upcoming, int Due) GetScheduleSummary()
-    {
-        if (_schedule == null)
-        {
-            return (0, 0, 0, 0);
-        }
-
-        return _schedule.GetScheduleSummary();
-    }
-
-    /// <summary>
-    /// Forces a reload of the schedule from disk (useful after Laravel pushes new schedule)
-    /// </summary>
-    public void ReloadSchedule()
-    {
-        lock (_lock)
-        {
-            _logger.LogInformation("Manually reloading schedule from disk");
-            _schedule = _storageService.LoadSchedule();
-            _logger.LogInformation("Reloaded schedule with {Count} events", _schedule?.Events.Count ?? 0);
+            _activating = false;
         }
     }
 
-    public void Dispose()
-    {
-        _timer?.Dispose();
-    }
+    public void Dispose() => _timer?.Dispose();
 }

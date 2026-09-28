@@ -211,15 +211,72 @@ text values are at most 128 characters, and no value contains a line break. An e
 
 ### Events — `api/events`
 
+Scheduled events: server settings and a rotation applied through a smart restart at a
+set time, once or on a repeat. They live in the controller's database.
+
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `schedule` | Replace the schedule. Body: `EventScheduleRequest` |
-| GET | `current` | Currently active event |
-| GET | `upcoming` | Future events |
-| GET | `due` | Events due now |
-| GET | `summary` | Schedule summary |
-| GET | `{id}` | One event |
-| POST | `{id}/activate` | Activate an event now |
+| GET | | Every event, past ones included: `{ count, events }`, upcoming soonest first, then finished ones |
+| POST | | Create. Body: `EventRequest`. 201 with an `ETag` |
+| GET | `{id}` | One event, with its `ETag` |
+| PUT | `{id}` | Replace. Needs `If-Match` |
+| DELETE | `{id}` | Delete. Needs `If-Match` |
+| GET | `current` | The active event, or 204 when there is none |
+| GET | `upcoming` | Events whose next occurrence is more than 5 minutes away |
+| GET | `due` | Events the scheduler will start at its next check |
+| GET | `summary` | `{ totalEvents, activeEvents, upcomingEvents, dueEvents, lastUpdated }` |
+| POST | `{id}/activate` | Activate now. 202; the event becomes active when the restart succeeds |
+
+`EventRequest` is `{ name, description?, startTime, timeZone?, repeat?, serverConfig?,
+collectionId?, tracks?, collectionName? }`:
+- `startTime` must carry an offset (`2026-10-02T18:00:00Z`); an unzoned time is 400.
+- `timeZone` is an IANA id such as `Europe/Copenhagen`, default `UTC`. A repeat's
+  `time` and `days` are wall-clock values in that zone, so a weekly 20:00 event stays
+  at 20:00 local across daylight saving.
+- `repeat` is `{ frequency: "daily" | "weekly", days: [0-6], time: "HH:MM" }`, days
+  counting from Sunday = 0. Weekly needs at least one day.
+- `serverConfig` overrides only the fields that are set. Text values must not contain
+  line breaks.
+- Give the rotation either as `collectionId`, which deploys that collection's tracks
+  as they are **at activation**, or inline as `tracks` (checked like `PUT
+  api/config/tracks`) with an optional `collectionName`. Neither leaves the server's
+  rotation alone. Deleting a collection copies its tracks into the events linked to
+  it, so they still deploy them.
+
+Responses add `repeatDescription`, `nextOccurrence`, `lastOccurrence`, `lastOutcome`, `isActive`,
+`activatedAt`, `createdBy` (the signed-in user who created it; null for API-key
+callers), `createdAt`, `updatedAt` and `version`. For a linked event, `tracks` and
+`collectionName` are the collection's current ones.
+
+**Concurrency.** `version` and the ETag cover what an admin edits. PUT and DELETE
+without `If-Match` get 428, and with a stale one 409 with the current event. The
+scheduler's own fields (`nextOccurrence`, `lastOccurrence`, `lastOutcome`, `isActive`, `activatedAt`)
+change without a new version, so the scheduler finishing an occurrence never
+invalidates an open editor, and an edit that leaves `startTime`, `timeZone` and
+`repeat` alone never moves the schedule. An edit that changes them picks the first
+occurrence of the new schedule that has not already run, failed, been cancelled or
+been missed: every occurrence dealt with is kept in the event's history, so an edit
+never runs one twice.
+
+**Scheduling.** An occurrence starts 5 minutes early, for the players' countdown.
+Each occurrence gets one attempt, and then the event moves to its next occurrence (or
+finishes, for a one-off event). `lastOutcome` records how it ended:
+- `Activated`: the restart succeeded, or the event was already active;
+- `Failed`: the settings could not be written, or the restart failed;
+- `Cancelled`: an admin cancelled the restart;
+- `Missed`: not started within 15 minutes of its time, because the app was not running
+  or another restart ran too long.
+
+Nothing is retried. Every outcome is sent to signed-in clients as
+`EventOccurrenceEnded`, and anything but `Activated` is also logged as a warning.
+Running a missed or failed event anyway is the admin's call, with `activate`. At most one event is active; activating another deactivates it. A manual
+activation within the 5 minutes before an occurrence counts as that occurrence.
+
+1.x's `POST schedule` (the Laravel bulk push) is gone, and 2.0 starts with no events:
+`event-schedule.json` is neither read nor deleted.
+
+`activate` answers 409 when the event is already active, another restart is running,
+or the event's settings cannot be written to the server config (with a `reason`).
 
 ### Catalogue — `api/catalogue`
 
@@ -316,6 +373,7 @@ anonymously, but what a connection receives depends on its group:
 | `ServerRestarted` | public | `{ oldProcessId, newProcessId, restartMethod, timestamp }` |
 | `ServerAttached` | public | `{ processId, processName, startTime, timestamp }` |
 | `ServerRestartPending` | public | `{ minutesRemaining, eventName, eventId, scheduledRestartTime, timestamp }` |
+| `EventOccurrenceEnded` | admin | `{ eventId, eventName, occurrence, outcome, timestamp }` — a scheduled occurrence was dealt with; `outcome` is `Activated`, `Failed`, `Cancelled` or `Missed` |
 | `ConsoleLog` | admin | `{ logs: [string] }` — console lines, batched about once a second (at most 1000 per message) |
 
 Timestamps are UTC. Events raised while no client is connected, or while the API is

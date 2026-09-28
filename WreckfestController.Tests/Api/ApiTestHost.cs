@@ -242,9 +242,10 @@ public sealed class ApiTestHost : IAsyncDisposable
             Mock.Of<IServerInputWriter>(),
             Mock.Of<IInjectedHookOutputReader>()));
         services.AddSingleton<ConfigService>();
-        services.AddSingleton<EventStorageService>();
-        services.AddSingleton<RecurringEventService>();
+        services.AddSingleton(TimeProvider.System);
         services.AddSingleton<SmartRestartService>();
+        services.AddSingleton<EventStore>();
+        services.AddSingleton<EventActivator>();
         return services.BuildServiceProvider();
     }
 

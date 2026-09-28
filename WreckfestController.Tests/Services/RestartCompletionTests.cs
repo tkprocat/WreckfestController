@@ -1,5 +1,4 @@
 using System.Reflection;
-using System.Threading.Channels;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -11,18 +10,13 @@ namespace WreckfestController.Tests.Services;
 
 public class RestartCompletionTests : IDisposable
 {
-    private readonly string _path = Path.Combine(Path.GetTempPath(), $"restart-{Guid.NewGuid()}.json");
     private readonly Mock<ServerManager> _server;
     private readonly PlayerTracker _players;
-    private readonly EventStorageService _storage;
     private readonly SmartRestartService _restart;
-    private readonly EventSchedulerService _scheduler;
-    private readonly SignalLogger<EventSchedulerService> _log = new();
 
     public RestartCompletionTests()
     {
-        var settings = new ConfigurationBuilder().AddInMemoryCollection(
-            new Dictionary<string, string?> { ["EventSchedulePath"] = _path }).Build();
+        var settings = new ConfigurationBuilder().Build();
         var events = Mock.Of<IServerEventPublisher>();
         _players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events);
         var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), events);
@@ -32,52 +26,6 @@ public class RestartCompletionTests : IDisposable
         config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig());
         _restart = new SmartRestartService(_server.Object, _players, tracks, config.Object, events,
             Mock.Of<ILogger<SmartRestartService>>());
-        _storage = new EventStorageService(settings, Mock.Of<ILogger<EventStorageService>>());
-        _scheduler = new EventSchedulerService(_storage, _restart,
-            new RecurringEventService(Mock.Of<ILogger<RecurringEventService>>()), config.Object, events, _log);
-    }
-
-    private void MakeDueAndCheck(int id)
-    {
-        Assert.True(_storage.SaveSchedule(new EventSchedule { Events = [
-            new Event { Id = id, Name = $"Event {id}", StartTime = DateTime.UtcNow.AddMinutes(-1) }] }));
-        typeof(EventSchedulerService).GetMethod("CheckForDueEvents", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(_scheduler, [null]);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task FailedOrThrowingRestartReleasesSchedulerAndAllowsLaterEvent(bool throws)
-    {
-        if (throws)
-            _server.Setup(s => s.RestartServerViaCommandAsync()).ThrowsAsync(new IOException("Restart failed"));
-        else
-            _server.Setup(s => s.RestartServerViaCommandAsync()).ReturnsAsync((false, "Restart failed"));
-
-        for (var id = 1; id <= 2; id++)
-        {
-            MakeDueAndCheck(id);
-            await _log.WaitFor($"Restart for event {id} finished with Failed; scheduler released");
-            Assert.Equal(SmartRestartState.Idle, _restart.GetState());
-            Assert.False(_storage.LoadSchedule().GetEventById(id)!.IsActive);
-        }
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Exactly(2));
-    }
-
-    [Fact]
-    public async Task CancellationReleasesSchedulerAndAllowsLaterEvent()
-    {
-        _players.ProcessHookPlayerSnapshot([new Player { PlayerId = 1, Name = "Player", IsBot = false }]);
-        for (var id = 1; id <= 2; id++)
-        {
-            MakeDueAndCheck(id);
-            await _log.WaitFor($"Smart restart initiated for event Event {id}");
-            Assert.True(_restart.CancelRestart());
-            await _log.WaitFor($"Restart for event {id} finished with Cancelled; scheduler released");
-            Assert.False(_storage.LoadSchedule().GetEventById(id)!.IsActive);
-        }
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
     }
 
     [Fact]
@@ -122,22 +70,5 @@ public class RestartCompletionTests : IDisposable
     public void Dispose()
     {
         _restart.CancelRestart();
-        _scheduler.Dispose();
-        File.Delete(_path);
-    }
-
-    private sealed class SignalLogger<T> : ILogger<T>
-    {
-        private readonly Channel<string> _messages = Channel.CreateUnbounded<string>();
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
-        public bool IsEnabled(LogLevel level) => true;
-        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? error, Func<TState, Exception?, string> formatter)
-            => _messages.Writer.TryWrite(formatter(state, error));
-        public async Task WaitFor(string prefix)
-        {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(10));
-            while (!(await _messages.Reader.ReadAsync(timeout.Token)).StartsWith(prefix)) { }
-        }
     }
 }

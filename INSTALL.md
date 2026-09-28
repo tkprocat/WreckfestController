@@ -216,8 +216,8 @@ There is nothing to configure beyond enabling the API. See
 
 After installation, these files will be created/managed:
 
-- **event-schedule.json** - In Wreckfest working directory (alongside server_config.cfg)
-  - Stores scheduled events for automatic server configuration changes
+- **controller.db** - In `%LocalAppData%\WreckfestController` (`Database:Path` moves it)
+  - Holds web accounts, the track catalogue, collections and scheduled events
 
 ## Next Steps
 

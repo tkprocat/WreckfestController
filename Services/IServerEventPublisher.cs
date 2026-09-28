@@ -1,4 +1,5 @@
 using WreckfestController.Models;
+using WreckfestController.Data.Events;
 
 namespace WreckfestController.Services;
 
@@ -15,6 +16,9 @@ public interface IServerEventPublisher
     Task PlayerLeftAsync(string playerName);
     Task TrackChangedAsync(string trackId);
     Task EventActivatedAsync(int eventId, string eventName);
+
+    /// <summary>A scheduled occurrence has been dealt with. Signed-in clients only.</summary>
+    Task EventOccurrenceEndedAsync(int eventId, string eventName, DateTime occurrence, OccurrenceOutcome outcome);
     Task ServerStartedAsync(ServerStartedEvent serverEvent);
     Task ServerStoppedAsync(ServerStoppedEvent serverEvent);
     Task ServerRestartedAsync(ServerRestartedEvent serverEvent);

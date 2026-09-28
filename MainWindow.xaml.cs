@@ -37,10 +37,9 @@ public partial class MainWindow : Window
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         SettingsService settingsService,
-        EventStorageService eventStorageService,
-        SmartRestartService smartRestartService,
+        EventStore eventStore,
+        EventActivator eventActivator,
         ConfigService configService,
-        IServerEventPublisher events,
         GuiLoggerProvider guiLoggerProvider,
         DatabaseState databaseState,
         DatabaseBootstrapper databaseBootstrapper,
@@ -76,9 +75,8 @@ public partial class MainWindow : Window
             _loggerFactory.CreateLogger<ConfigurationTab>());
 
         _eventSchedulerTab = new EventSchedulerTab(
-            eventStorageService,
-            smartRestartService,
-            events,
+            eventStore,
+            eventActivator,
             _loggerFactory.CreateLogger<EventSchedulerTab>());
 
         _controllerLogTab = new ControllerLogTab();

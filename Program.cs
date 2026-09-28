@@ -1,6 +1,7 @@
 using System.Windows;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WreckfestController.Data;
@@ -169,8 +170,9 @@ public class Program
                 services.AddSingleton<HubServerEventPublisher>();
                 services.AddSingleton<IServerEventPublisher>(sp => sp.GetRequiredService<HubServerEventPublisher>());
                 services.AddSingleton<ConfigService>();
-                services.AddSingleton<EventStorageService>();
-                services.AddSingleton<RecurringEventService>();
+                services.TryAddSingleton(TimeProvider.System);
+                services.AddSingleton<EventStore>();
+                services.AddSingleton<EventActivator>();
                 services.AddSingleton<SmartRestartService>();
                 services.AddSingleton<InjectedHookInputWriter>();
                 services.AddSingleton<IServerInputWriter>(sp => sp.GetRequiredService<InjectedHookInputWriter>());

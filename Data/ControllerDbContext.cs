@@ -1,14 +1,19 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WreckfestController.Data.Catalogue;
 using WreckfestController.Data.Collections;
+using WreckfestController.Data.Events;
 
 namespace WreckfestController.Data;
 
 /// <summary>
-/// The controller's own SQLite database: web UI users, the track catalogue and track
-/// collections today, and events and settings as later phases move them in.
+/// The controller's own SQLite database: web UI users, the track catalogue, track
+/// collections and scheduled events today, and settings as a later phase moves them in.
 /// </summary>
 public class ControllerDbContext : IdentityDbContext<AppUser>
 {
@@ -30,6 +35,10 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
     public DbSet<TrackCollection> TrackCollections => Set<TrackCollection>();
 
     public DbSet<TrackCollectionEntry> TrackCollectionEntries => Set<TrackCollectionEntry>();
+
+    public DbSet<ScheduledEvent> ScheduledEvents => Set<ScheduledEvent>();
+
+    public DbSet<EventOccurrenceRecord> EventOccurrences => Set<EventOccurrenceRecord>();
 
     /// <summary>
     /// Points <paramref name="options"/> at the SQLite file at <paramref name="databasePath"/>.
@@ -74,6 +83,7 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
 
         ConfigureCatalogue(builder);
         ConfigureCollections(builder);
+        ConfigureEvents(builder);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -215,5 +225,80 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
                 .HasForeignKey(e => e.TrackVariantId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
+    }
+
+    private static void ConfigureEvents(ModelBuilder builder)
+    {
+        builder.Entity<ScheduledEvent>(evt =>
+        {
+            evt.Property(e => e.Name).HasMaxLength(ScheduledEvent.NameMaxLength);
+            evt.Property(e => e.Description).HasMaxLength(ScheduledEvent.DescriptionMaxLength);
+            evt.Property(e => e.TimeZone).HasMaxLength(ScheduledEvent.TimeZoneMaxLength);
+            evt.Property(e => e.CollectionName).HasMaxLength(TrackCollection.NameMaxLength);
+            evt.Property(e => e.Version).IsConcurrencyToken();
+
+            // SQLite keeps no DateTimeKind: these are UTC in, and marked UTC out.
+            evt.Property(e => e.StartTime).HasConversion(UtcConverter);
+            evt.Property(e => e.NextOccurrence).HasConversion(UtcConverter);
+            evt.Property(e => e.LastOccurrence).HasConversion(UtcConverter);
+            evt.Property(e => e.ActivatedAt).HasConversion(UtcConverter);
+            evt.Property(e => e.LastOutcome).HasConversion<string>().HasMaxLength(16);
+
+            Json(evt.Property(e => e.Repeat));
+            Json(evt.Property(e => e.ServerConfig));
+            Json(evt.Property(e => e.Tracks)).IsRequired();
+
+            // The scheduler's query: the earliest occurrence due.
+            evt.HasIndex(e => e.NextOccurrence);
+
+            // The database, not just the store, keeps it to one active event.
+            evt.HasIndex(e => e.IsActive).IsUnique().HasFilter("\"IsActive\" = 1");
+
+            evt.HasOne(e => e.Collection)
+                .WithMany()
+                .HasForeignKey(e => e.CollectionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            evt.HasOne(e => e.CreatedBy)
+                .WithMany()
+                .HasForeignKey(e => e.CreatedById)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        builder.Entity<EventOccurrenceRecord>(record =>
+        {
+            record.Property(r => r.Occurrence).HasConversion(UtcConverter);
+            record.Property(r => r.RecordedAt).HasConversion(UtcConverter);
+            record.Property(r => r.Outcome).HasConversion<string>().HasMaxLength(16);
+            record.HasIndex(r => new { r.ScheduledEventId, r.Occurrence }).IsUnique();
+
+            // The history goes with its event.
+            record.HasOne(r => r.ScheduledEvent)
+                .WithMany()
+                .HasForeignKey(r => r.ScheduledEventId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+
+    private static readonly ValueConverter<DateTime, DateTime> UtcConverter = new(
+        v => v.Kind == DateTimeKind.Local ? v.ToUniversalTime() : DateTime.SpecifyKind(v, DateTimeKind.Utc),
+        v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+
+    private static readonly JsonSerializerOptions JsonColumnOptions = new(JsonSerializerDefaults.Web);
+
+    /// <summary>
+    /// Stores a small object graph as JSON text. Compared by its JSON, so changing a
+    /// nested value is noticed and saved.
+    /// </summary>
+    private static PropertyBuilder<T> Json<T>(PropertyBuilder<T> property)
+    {
+        property.HasConversion(
+            v => JsonSerializer.Serialize(v, JsonColumnOptions),
+            v => JsonSerializer.Deserialize<T>(v, JsonColumnOptions)!,
+            new ValueComparer<T>(
+                (a, b) => JsonSerializer.Serialize(a, JsonColumnOptions) == JsonSerializer.Serialize(b, JsonColumnOptions),
+                v => JsonSerializer.Serialize(v, JsonColumnOptions).GetHashCode(),
+                v => JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(v, JsonColumnOptions), JsonColumnOptions)!));
+        return property;
     }
 }

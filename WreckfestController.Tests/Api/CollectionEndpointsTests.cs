@@ -402,7 +402,7 @@ public class CollectionEndpointsTests
     }
 
     /// <summary>A server_config.cfg with an event loop section, and the settings that point ConfigService at it.</summary>
-    private sealed class ServerConfigFile : IDisposable
+    internal sealed class ServerConfigFile : IDisposable
     {
         private readonly string _directory = ApiTestHost.NewDataDirectory();
 

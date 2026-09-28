@@ -145,13 +145,31 @@ public class CollectionsController : ControllerBase
         return await RespondAsync(id);
     }
 
+    /// <summary>
+    /// Deletes the collection. Events linked to it keep its tracks, as they are now, as
+    /// their own rotation, so they still deploy what they would have.
+    /// </summary>
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
-        var collection = await _db.TrackCollections.FindAsync(id);
+        var collection = await LoadAsync(id);
         if (collection is null)
         {
             return NotFound();
+        }
+
+        // Events that deploy this collection keep deploying its tracks as they are now.
+        var tracks = collection.Entries
+            .OrderBy(e => e.Position)
+            .Select(CollectionMapping.ToEventLoopTrack)
+            .ToList();
+        var now = _time.GetUtcNow();
+        foreach (var evt in await _db.ScheduledEvents.Where(e => e.CollectionId == id).ToListAsync())
+        {
+            evt.CollectionId = null;
+            evt.Tracks = tracks.ToList();
+            evt.CollectionName = collection.Name;
+            evt.UpdatedAt = now;
         }
 
         _db.TrackCollections.Remove(collection);
