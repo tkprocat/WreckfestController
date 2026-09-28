@@ -90,6 +90,12 @@ public sealed class SettingsStore : ISettingsStore
     /// <summary>Whether a reader has been given the shipped defaults since the last load.</summary>
     private bool _servedDefaults;
 
+    /// <summary>
+    /// One save at a time, from its write to publishing the result, so a slower save can
+    /// never put an older version back into the cache after a newer one.
+    /// </summary>
+    private readonly SemaphoreSlim _saveGate = new(1, 1);
+
     /// <param name="shipped">The shipped appsettings.json only, without user-settings.json.</param>
     public SettingsStore(
         IDbContextFactory<ControllerDbContext> contexts,
@@ -132,56 +138,107 @@ public sealed class SettingsStore : ISettingsStore
         where T : class
     {
         var name = SettingsSections.NameOf(typeof(T));
-        EnsureLoaded();
-        lock (_lock)
-        {
-            if (_cache is null)
-            {
-                throw new SettingsUnavailableException("Settings cannot be saved while the database is unavailable.");
-            }
-        }
 
         // Normalize a copy: the caller's object stays as they passed it.
         var json = JsonSerializer.Serialize(SettingsSections.Normalize(typeof(T), Deserialize<T>(JsonSerializer.Serialize(value))));
 
-        await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
-        var updated = await db.SettingsSections
-            .Where(s => s.Section == name && s.Version == expectedVersion)
-            .ExecuteUpdateAsync(
-                s => s.SetProperty(r => r.Json, json).SetProperty(r => r.Version, r => r.Version + 1),
-                cancellationToken);
-
-        var current = await db.SettingsSections.AsNoTracking().SingleAsync(s => s.Section == name, cancellationToken);
-        lock (_lock)
+        await _saveGate.WaitAsync(cancellationToken);
+        int updated;
+        SettingsSection current;
+        bool changed;
+        try
         {
-            _cache![name] = (current.Json, current.Version);
+            EnsureLoaded();
+            lock (_lock)
+            {
+                if (_cache is null || !_database.IsReady)
+                {
+                    throw new SettingsUnavailableException("Settings cannot be saved while the database is unavailable.");
+                }
+            }
+
+            // From here the write may commit, so the rest runs to the end: a cancellation
+            // between the write and the cache update would leave readers on the old value.
+            await using var db = await _contexts.CreateDbContextAsync(CancellationToken.None);
+            updated = await db.SettingsSections
+                .Where(s => s.Section == name && s.Version == expectedVersion)
+                .ExecuteUpdateAsync(
+                    s => s.SetProperty(r => r.Json, json).SetProperty(r => r.Version, r => r.Version + 1),
+                    CancellationToken.None);
+
+            // A conflict reads the row too: another instance's save lands in this cache.
+            current = await db.SettingsSections.AsNoTracking().SingleAsync(s => s.Section == name, CancellationToken.None);
+            changed = Publish(name, current);
+        }
+        finally
+        {
+            _saveGate.Release();
+        }
+
+        if (updated > 0)
+        {
+            _logger.LogInformation("Saved the {Section} settings (version {Version})", name, current.Version);
+        }
+
+        if (changed)
+        {
+            RaiseChanged(typeof(T));
         }
 
         var entry = new SettingsEntry<T>(Deserialize<T>(current.Json), current.Version);
-        if (updated == 0)
-        {
-            return new(SettingsSaveStatus.Conflict, entry);
-        }
+        return new(updated > 0 ? SettingsSaveStatus.Saved : SettingsSaveStatus.Conflict, entry);
+    }
 
-        _logger.LogInformation("Saved the {Section} settings (version {Version})", name, current.Version);
-        RaiseChanged(typeof(T));
-        return new(SettingsSaveStatus.Saved, entry);
+    /// <summary>
+    /// Puts <paramref name="row"/> in the cache if it is newer than what is there. True
+    /// when that changed the section, so listeners must hear about it.
+    /// </summary>
+    private bool Publish(string name, SettingsSection row)
+    {
+        lock (_lock)
+        {
+            if (_cache is null
+                || (_cache.TryGetValue(name, out var cached) && cached.Version >= row.Version))
+            {
+                return false;
+            }
+
+            _cache[name] = (row.Json, row.Version);
+            return true;
+        }
     }
 
     private void OnDatabaseChanged()
     {
-        if (!_database.IsReady)
+        if (_database.IsReady)
         {
+            lock (_lock)
+            {
+                // Reload: a retry may have opened a different file than a failed first try.
+                _cache = null;
+            }
+
+            EnsureLoaded();
             return;
         }
 
+        bool wasLoaded;
         lock (_lock)
         {
-            // Reload: a retry may have opened a different file than a failed first try.
+            // Back to the shipped defaults, and saving refuses, as in recovery mode from
+            // the start. The next load replaces them, so it must be announced.
+            wasLoaded = _cache is not null;
             _cache = null;
+            _servedDefaults = true;
         }
 
-        EnsureLoaded();
+        if (wasLoaded)
+        {
+            foreach (var type in SettingsSections.Types)
+            {
+                RaiseChanged(type);
+            }
+        }
     }
 
     /// <summary>

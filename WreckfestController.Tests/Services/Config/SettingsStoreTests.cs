@@ -135,6 +135,85 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ParallelSaves_OfOneVersion_OneWins_AndTheCacheEndsOnTheNewest()
+    {
+        _database.MarkReady(null);
+        var store = CreateStore();
+        var read = store.GetEntry<VoteSettings>();
+
+        var results = await Task.WhenAll(Enumerable.Range(1, 8).Select(i => Task.Run(() =>
+        {
+            var edit = store.Get<VoteSettings>();
+            edit.MaxLapsAllowed = i;
+            return store.SaveAsync(edit, read.Version);
+        })));
+
+        var winner = Assert.Single(results, r => r.Status == SettingsSaveStatus.Saved);
+        Assert.Equal(2, store.GetEntry<VoteSettings>().Version);
+        Assert.Equal(winner.Current.Value.MaxLapsAllowed, store.Get<VoteSettings>().MaxLapsAllowed);
+    }
+
+    [Fact]
+    public async Task AConflict_BringsInAnotherInstancesSave_AndAnnouncesIt()
+    {
+        _database.MarkReady(null);
+        var mine = CreateStore();
+        var theirs = CreateStore();
+        var heard = new List<Type>();
+        mine.Changed += (_, e) => heard.Add(e.Section);
+        var read = mine.GetEntry<VoteSettings>();
+
+        var theirEdit = theirs.GetEntry<VoteSettings>();
+        theirEdit.Value.Mode = VoteModes.Off;
+        await theirs.SaveAsync(theirEdit.Value, theirEdit.Version);
+        var stale = await mine.SaveAsync(read.Value, read.Version);
+
+        Assert.Equal(SettingsSaveStatus.Conflict, stale.Status);
+        Assert.Equal((VoteModes.Off, 2), (mine.Get<VoteSettings>().Mode, mine.GetEntry<VoteSettings>().Version));
+        Assert.Equal([typeof(VoteSettings)], heard);
+    }
+
+    [Fact]
+    public async Task ACancelledSave_WritesNothing()
+    {
+        _database.MarkReady(null);
+        var store = CreateStore();
+        var read = store.GetEntry<VoteSettings>();
+        read.Value.Mode = VoteModes.Off;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => store.SaveAsync(read.Value, read.Version, new CancellationToken(canceled: true)));
+
+        Assert.Equal((VoteModes.Direct, 1), (store.Get<VoteSettings>().Mode, Rows().Single(r => r.Section == SettingsSections.Vote).Version));
+    }
+
+    [Fact]
+    public async Task FallingIntoRecoveryMode_GoesBackToTheDefaults_AndRefusesToSave()
+    {
+        _database.MarkReady(null);
+        var store = CreateStore();
+        var read = store.GetEntry<VoteSettings>();
+        read.Value.Mode = VoteModes.Off;
+        await store.SaveAsync(read.Value, read.Version);
+        var heard = new List<Type>();
+        store.Changed += (_, e) => heard.Add(e.Section);
+
+        _database.MarkFailed("disk gone", null);
+
+        var vote = store.GetEntry<VoteSettings>();
+        Assert.Equal((VoteModes.Direct, 0), (vote.Value.Mode, vote.Version));
+        await Assert.ThrowsAsync<SettingsUnavailableException>(() => store.SaveAsync(vote.Value, 2));
+        Assert.Equal(SettingsSections.Types.OrderBy(t => t.Name), heard.OrderBy(t => t.Name));
+
+        // A successful retry brings the stored values back, and says so.
+        heard.Clear();
+        _database.MarkReady(null);
+
+        Assert.Equal(VoteModes.Off, store.Get<VoteSettings>().Mode);
+        Assert.Equal(SettingsSections.Types.OrderBy(t => t.Name), heard.OrderBy(t => t.Name));
+    }
+
+    [Fact]
     public async Task Save_BringsValuesIntoRange_WithoutChangingTheCallersObject()
     {
         _database.MarkReady(null);
