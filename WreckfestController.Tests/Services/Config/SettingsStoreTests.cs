@@ -174,6 +174,30 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task AListenerThatSavesAnotherSection_DoesNotDeadlock()
+    {
+        _database.MarkReady(null);
+        var store = CreateStore();
+        store.Changed += (_, e) =>
+        {
+            if (e.Section == typeof(VoteSettings))
+            {
+                // Blocking on purpose: announcements run outside the save gate.
+                var steam = store.GetEntry<SteamCmdSettings>();
+                steam.Value.SteamCmdPath = "follows the vote";
+                store.SaveAsync(steam.Value, steam.Version).GetAwaiter().GetResult();
+            }
+        };
+        var read = store.GetEntry<VoteSettings>();
+        read.Value.Mode = VoteModes.Off;
+
+        var save = Task.Run(() => store.SaveAsync(read.Value, read.Version));
+
+        Assert.Same(save, await Task.WhenAny(save, Task.Delay(TimeSpan.FromSeconds(10))));
+        Assert.Equal("follows the vote", store.Get<SteamCmdSettings>().SteamCmdPath);
+    }
+
+    [Fact]
     public async Task ACancelledSave_WritesNothing()
     {
         _database.MarkReady(null);
@@ -203,14 +227,14 @@ public sealed class SettingsStoreTests : IDisposable
         var vote = store.GetEntry<VoteSettings>();
         Assert.Equal((VoteModes.Direct, 0), (vote.Value.Mode, vote.Version));
         await Assert.ThrowsAsync<SettingsUnavailableException>(() => store.SaveAsync(vote.Value, 2));
-        Assert.Equal(SettingsSections.Types.OrderBy(t => t.Name), heard.OrderBy(t => t.Name));
+        Assert.Equal([typeof(VoteSettings)], heard);
 
         // A successful retry brings the stored values back, and says so.
         heard.Clear();
         _database.MarkReady(null);
 
         Assert.Equal(VoteModes.Off, store.Get<VoteSettings>().Mode);
-        Assert.Equal(SettingsSections.Types.OrderBy(t => t.Name), heard.OrderBy(t => t.Name));
+        Assert.Equal([typeof(VoteSettings)], heard);
     }
 
     [Fact]
@@ -244,7 +268,7 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public void LeavingRecoveryMode_LoadsTheDatabase_AndAnnouncesEverySection()
+    public void LeavingRecoveryMode_LoadsTheDatabase_AndAnnouncesWhatDiffers()
     {
         using (var db = _contexts.CreateDbContext())
         {
@@ -259,8 +283,9 @@ public sealed class SettingsStoreTests : IDisposable
 
         _database.MarkReady(null);
 
+        // Only Vote's stored value differs from the defaults readers were given.
         Assert.Equal(VoteModes.Off, store.Get<VoteSettings>().Mode);
-        Assert.Equal(SettingsSections.Types.OrderBy(t => t.Name), changes.OrderBy(t => t.Name));
+        Assert.Equal([typeof(VoteSettings)], changes);
     }
 
     [Fact]
@@ -272,6 +297,7 @@ public sealed class SettingsStoreTests : IDisposable
         store.Changed += (_, _) => throw new InvalidOperationException("broken listener");
         store.Changed += (_, _) => heard++;
         var read = store.GetEntry<SteamCmdSettings>();
+        read.Value.SteamCmdPath = @"C:\steamcmd\steamcmd.exe";
 
         var saved = await store.SaveAsync(read.Value, read.Version);
 

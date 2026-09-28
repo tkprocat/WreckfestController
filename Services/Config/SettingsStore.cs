@@ -65,9 +65,15 @@ public interface ISettingsStore
 /// </para>
 /// <para>
 /// While the database is unavailable (recovery mode) every section reads as its shipped
-/// default, version 0, and saving throws. Once the database becomes ready, the store
-/// loads it and, if anyone read those defaults, raises <see cref="Changed"/> for every
-/// section, so readers pick up the stored values without a restart.
+/// default, version 0, and saving throws. When the database becomes ready the store
+/// loads it, and when it fails again the store drops back to the defaults.
+/// </para>
+/// <para>
+/// <see cref="Changed"/> follows one rule: the store remembers, per section, the value
+/// its listeners last heard of (or the first value anyone read), and after anything that
+/// can change a section - a save, a load, a drop to the defaults - it announces each
+/// section whose value now differs. Announcements are made outside every lock, so a
+/// listener may read or save settings itself.
 /// </para>
 /// <para>
 /// The cache holds JSON, and every read deserializes a fresh copy, so no caller can
@@ -87,8 +93,17 @@ public sealed class SettingsStore : ISettingsStore
     /// <summary>Section name to its stored JSON and version. Null until loaded.</summary>
     private Dictionary<string, (string Json, int Version)>? _cache;
 
-    /// <summary>Whether a reader has been given the shipped defaults since the last load.</summary>
-    private bool _servedDefaults;
+    /// <summary>
+    /// Bumped whenever the cache is dropped, so a save that began against an earlier
+    /// cache (perhaps an earlier database file) cannot publish into the current one.
+    /// </summary>
+    private int _generation;
+
+    /// <summary>Per section, the JSON listeners last heard of, or that a reader first saw.</summary>
+    private readonly Dictionary<string, string> _heard = new();
+
+    /// <summary>Per section, the shipped default's JSON.</summary>
+    private readonly Dictionary<string, string> _defaults = new();
 
     /// <summary>
     /// One save at a time, from its write to publishing the result, so a slower save can
@@ -119,19 +134,22 @@ public sealed class SettingsStore : ISettingsStore
     public SettingsEntry<T> GetEntry<T>() where T : class
     {
         var name = SettingsSections.NameOf(typeof(T));
-        EnsureLoaded();
-
-        lock (_lock)
+        if (EnsureLoaded())
         {
-            if (_cache is not null && _cache.TryGetValue(name, out var stored))
-            {
-                return new(Deserialize<T>(stored.Json), stored.Version);
-            }
-
-            _servedDefaults = true;
+            Announce(Reconcile());
         }
 
-        return new((T)SettingsSections.Default(typeof(T), _shipped), 0);
+        string json;
+        int version;
+        lock (_lock)
+        {
+            (json, version) = _cache is not null && _cache.TryGetValue(name, out var stored)
+                ? stored
+                : (DefaultJson(typeof(T)), 0);
+            _heard.TryAdd(name, json);
+        }
+
+        return new(Deserialize<T>(json), version);
     }
 
     public async Task<SettingsSaveResult<T>> SaveAsync<T>(T value, int expectedVersion, CancellationToken cancellationToken = default)
@@ -145,16 +163,18 @@ public sealed class SettingsStore : ISettingsStore
         await _saveGate.WaitAsync(cancellationToken);
         int updated;
         SettingsSection current;
-        bool changed;
         try
         {
             EnsureLoaded();
+            int generation;
             lock (_lock)
             {
                 if (_cache is null || !_database.IsReady)
                 {
                     throw new SettingsUnavailableException("Settings cannot be saved while the database is unavailable.");
                 }
+
+                generation = _generation;
             }
 
             // From here the write may commit, so the rest runs to the end: a cancellation
@@ -168,7 +188,7 @@ public sealed class SettingsStore : ISettingsStore
 
             // A conflict reads the row too: another instance's save lands in this cache.
             current = await db.SettingsSections.AsNoTracking().SingleAsync(s => s.Section == name, CancellationToken.None);
-            changed = Publish(name, current);
+            Publish(name, current, generation);
         }
         finally
         {
@@ -180,104 +200,119 @@ public sealed class SettingsStore : ISettingsStore
             _logger.LogInformation("Saved the {Section} settings (version {Version})", name, current.Version);
         }
 
-        if (changed)
-        {
-            RaiseChanged(typeof(T));
-        }
+        // Publish may have dropped the cache; reload it before announcing.
+        EnsureLoaded();
+        Announce(Reconcile());
 
         var entry = new SettingsEntry<T>(Deserialize<T>(current.Json), current.Version);
         return new(updated > 0 ? SettingsSaveStatus.Saved : SettingsSaveStatus.Conflict, entry);
     }
 
     /// <summary>
-    /// Puts <paramref name="row"/> in the cache if it is newer than what is there. True
-    /// when that changed the section, so listeners must hear about it.
+    /// Puts <paramref name="row"/> in the cache if it is newer than what is there. When the
+    /// cache has been dropped or replaced since the save began, the row may belong to
+    /// another database file, so the cache is dropped instead and the next read reloads it.
     /// </summary>
-    private bool Publish(string name, SettingsSection row)
+    private void Publish(string name, SettingsSection row, int generation)
     {
         lock (_lock)
         {
-            if (_cache is null
-                || (_cache.TryGetValue(name, out var cached) && cached.Version >= row.Version))
+            if (generation != _generation)
             {
-                return false;
+                _cache = null;
+                _generation++;
+                return;
             }
 
-            _cache[name] = (row.Json, row.Version);
-            return true;
+            if (_cache is not null && (!_cache.TryGetValue(name, out var cached) || cached.Version < row.Version))
+            {
+                _cache[name] = (row.Json, row.Version);
+            }
         }
     }
 
     private void OnDatabaseChanged()
     {
-        if (_database.IsReady)
-        {
-            lock (_lock)
-            {
-                // Reload: a retry may have opened a different file than a failed first try.
-                _cache = null;
-            }
-
-            EnsureLoaded();
-            return;
-        }
-
-        bool wasLoaded;
         lock (_lock)
         {
-            // Back to the shipped defaults, and saving refuses, as in recovery mode from
-            // the start. The next load replaces them, so it must be announced.
-            wasLoaded = _cache is not null;
+            // Failed: back to the shipped defaults, and saving refuses. Ready: reload, since
+            // a retry may have opened a different file than a failed first try.
             _cache = null;
-            _servedDefaults = true;
+            _generation++;
         }
 
-        if (wasLoaded)
-        {
-            foreach (var type in SettingsSections.Types)
-            {
-                RaiseChanged(type);
-            }
-        }
+        EnsureLoaded();
+        Announce(Reconcile());
     }
 
     /// <summary>
-    /// Loads every section, creating the missing ones, if the database is ready. Announces
-    /// every section when readers had been given the shipped defaults in the meantime,
-    /// since the stored values replace them.
+    /// Loads every section, creating the missing ones, if the database is ready and the
+    /// cache is empty. True when it loaded. Announces nothing: callers do, outside locks.
     /// </summary>
-    private void EnsureLoaded()
+    private bool EnsureLoaded()
     {
         lock (_lock)
         {
             if (_cache is not null || !_database.IsReady)
             {
-                return;
+                return false;
             }
 
             try
             {
                 _cache = Load();
+                return true;
             }
             catch (Exception ex)
             {
                 // Readers get the shipped defaults, and saving refuses, until the next try.
                 _logger.LogError(ex, "Could not load settings from the database; using the shipped defaults");
-                return;
+                return false;
             }
-
-            if (!_servedDefaults)
-            {
-                return;
-            }
-
-            _servedDefaults = false;
         }
+    }
 
-        foreach (var type in SettingsSections.Types)
+    /// <summary>
+    /// The sections whose current value differs from what listeners last heard, marking
+    /// them heard. A section nobody has heard of or read is only recorded.
+    /// </summary>
+    private List<Type> Reconcile()
+    {
+        var changed = new List<Type>();
+        lock (_lock)
         {
-            RaiseChanged(type);
+            foreach (var type in SettingsSections.Types)
+            {
+                var name = SettingsSections.NameOf(type);
+                var current = _cache is not null && _cache.TryGetValue(name, out var stored) ? stored.Json : DefaultJson(type);
+                if (_heard.TryGetValue(name, out var heard) && heard == current)
+                {
+                    continue;
+                }
+
+                if (heard is not null)
+                {
+                    changed.Add(type);
+                }
+
+                _heard[name] = current;
+            }
         }
+
+        return changed;
+    }
+
+    /// <summary>The shipped default's JSON. Call under <see cref="_lock"/>.</summary>
+    private string DefaultJson(Type type)
+    {
+        var name = SettingsSections.NameOf(type);
+        if (!_defaults.TryGetValue(name, out var json))
+        {
+            json = JsonSerializer.Serialize(SettingsSections.Default(type, _shipped), type);
+            _defaults[name] = json;
+        }
+
+        return json;
     }
 
     private Dictionary<string, (string Json, int Version)> Load()
@@ -295,7 +330,7 @@ public sealed class SettingsStore : ISettingsStore
 
             // First run for this section. INSERT OR IGNORE, so a row another instance has
             // just created wins over these defaults instead of failing the load.
-            var json = JsonSerializer.Serialize(SettingsSections.Default(type, _shipped), type);
+            var json = DefaultJson(type);
             db.Database.ExecuteSql(
                 $"INSERT OR IGNORE INTO SettingsSections (Section, Json, Version) VALUES ({name}, {json}, 1)");
             rows[name] = db.SettingsSections.AsNoTracking().Single(s => s.Section == name);
@@ -303,6 +338,14 @@ public sealed class SettingsStore : ISettingsStore
         }
 
         return rows.ToDictionary(r => r.Key, r => (r.Value.Json, r.Value.Version));
+    }
+
+    private void Announce(List<Type> sections)
+    {
+        foreach (var section in sections)
+        {
+            RaiseChanged(section);
+        }
     }
 
     private void RaiseChanged(Type section)
