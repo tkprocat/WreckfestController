@@ -11,9 +11,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 using WreckfestController.Data;
 using WreckfestController.Hubs;
+using WreckfestController.Models;
 using WreckfestController.Services.Cups;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Hook;
@@ -238,8 +240,13 @@ public sealed class ApiTestHost : IAsyncDisposable
         services.AddSingleton<PlayerTracker>();
         services.AddSingleton<TrackChangeTracker>();
         services.AddSingleton<ServerInfoTracker>();
+        // A test that points the server at a folder does it with the keys 1.x used.
+        IOptionsMonitor<WreckfestServerSettings> server = TestSettings.Server(
+            workingDirectory: configuration["WreckfestServer:WorkingDirectory"] ?? string.Empty,
+            serverArguments: configuration["WreckfestServer:ServerArguments"] ?? SettingsSections.DefaultServerArguments);
+        services.AddSingleton(server);
         services.AddSingleton(sp => new ServerManager(
-            sp.GetRequiredService<IConfiguration>(),
+            sp.GetRequiredService<IConfiguration>(), server, TestSettings.SteamCmd(),
             sp.GetRequiredService<ILogger<ServerManager>>(),
             sp.GetRequiredService<PlayerTracker>(),
             sp.GetRequiredService<TrackChangeTracker>(),

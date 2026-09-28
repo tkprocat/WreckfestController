@@ -154,7 +154,8 @@ public class Program
                 var tempConfig = config.Build();
                 var userSettingsPath = ResolveUserSettingsPath(tempConfig);
 
-                // Add user settings with override priority
+                // The startup file: the API's binding and key, the database path. Read only;
+                // the settings a person edits are in the database (SettingsStore).
                 config.AddJsonFile(userSettingsPath, optional: true, reloadOnChange: true);
             })
             .ConfigureServices((context, services) =>

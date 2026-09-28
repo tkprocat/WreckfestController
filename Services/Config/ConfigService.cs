@@ -1,27 +1,28 @@
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using WreckfestController.Models;
 
 namespace WreckfestController.Services.Config;
 
 public class ConfigService
 {
-    private readonly IConfiguration _configuration;
+    private readonly IOptionsMonitor<WreckfestServerSettings> _server;
     private readonly ILogger<ConfigService> _logger;
 
-    public ConfigService(IConfiguration configuration, ILogger<ConfigService> logger)
+    public ConfigService(IOptionsMonitor<WreckfestServerSettings> server, ILogger<ConfigService> logger)
     {
-        _configuration = configuration;
+        _server = server;
         _logger = logger;
     }
 
     private string GetConfigFilePath()
     {
-        var serverArgs = _configuration["WreckfestServer:ServerArguments"] ?? "";
-        var workingDir = _configuration["WreckfestServer:WorkingDirectory"];
+        var server = _server.CurrentValue;
+        var serverArgs = server.ServerArguments ?? "";
+        var workingDir = server.WorkingDirectory;
 
         if (string.IsNullOrEmpty(workingDir))
         {

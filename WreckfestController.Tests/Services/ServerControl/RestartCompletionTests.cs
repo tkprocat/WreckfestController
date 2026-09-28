@@ -23,9 +23,9 @@ public class RestartCompletionTests : IDisposable
         var events = Mock.Of<IServerEventPublisher>();
         _players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events);
         var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), events);
-        _server = new Mock<ServerManager>(settings, Mock.Of<ILogger<ServerManager>>(), _players, tracks,
+        _server = new Mock<ServerManager>(settings, TestSettings.Server(), TestSettings.SteamCmd(), Mock.Of<ILogger<ServerManager>>(), _players, tracks,
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), events);
-        var config = new Mock<ConfigService>(settings, Mock.Of<ILogger<ConfigService>>());
+        var config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>());
         config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig());
         _restart = new SmartRestartService(_server.Object, _players, tracks, config.Object, events,
             Mock.Of<ILogger<SmartRestartService>>());

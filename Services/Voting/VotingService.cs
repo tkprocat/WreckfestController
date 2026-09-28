@@ -1,5 +1,4 @@
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Primitives;
+using Microsoft.Extensions.Options;
 using WreckfestController.Models;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.ServerControl;
@@ -17,7 +16,7 @@ public class VotingService
     private readonly PlayerTracker _playerTracker;
     private readonly ConfigService _configService;
     private readonly ILogger<VotingService> _logger;
-    private readonly IConfiguration _configuration;
+    private readonly IOptionsMonitor<VoteSettings> _vote;
     private readonly IVotableTracks _votableTracks;
 
     private enum VoteState { Idle, Active }
@@ -47,14 +46,14 @@ public class VotingService
     private string? _pendingVoteRequester;
     private int? _pendingVoteLaps;
 
-    // Set by !voting. Kept here rather than written into IConfiguration: its indexer
-    // writes every provider, so the value would survive a reload of the settings file
-    // and leak into SettingsService's defaults.
+    // Set by !voting. Kept here rather than saved: a chat command changes the mode for
+    // now, and a saved change of the Vote settings puts the saved mode back.
     private volatile string? _chatModeOverride;
 
-    private string VoteMode => _chatModeOverride ?? VoteModes.Normalize(
-        _configuration["Vote:Mode"],
-        _configuration.GetValue<bool?>("Vote:Enabled"));
+    /// <summary>The Vote settings as they are now; the store keeps them in range.</summary>
+    private VoteSettings Settings => _vote.CurrentValue;
+
+    private string VoteMode => _chatModeOverride ?? Settings.Mode;
 
     private bool VotingEnabled => VoteMode != VoteModes.Off;
 
@@ -74,33 +73,30 @@ public class VotingService
     /// shares the pattern with driving, so the gate blocks chat when it should not.
     /// Turn on only once the state model is properly mapped.
     /// </summary>
-    private bool SuppressCommandsDuringRace =>
-        _configuration.GetValue("Vote:SuppressCommandsDuringRace", false);
+    private bool SuppressCommandsDuringRace => Settings.SuppressCommandsDuringRace;
 
-    private int DirectCooldownSeconds =>
-        Math.Clamp(_configuration.GetValue<int?>("Vote:DirectCooldownSeconds") ?? 30, 0, 3600);
-    private int VoteTimeoutSeconds =>
-        Math.Clamp(_configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30, 1, 3600);
-    private int MaxLapsAllowed => Math.Max(1, _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10);
-    private int MessageDelayMs => Math.Clamp(_configuration.GetValue<int?>("Vote:MessageDelayMs") ?? 250, 0, 5000);
+    private int DirectCooldownSeconds => Settings.DirectCooldownSeconds;
+    private int VoteTimeoutSeconds => Settings.VoteTimeoutSeconds;
+    private int MaxLapsAllowed => Settings.MaxLapsAllowed;
+    private int MessageDelayMs => Settings.MessageDelayMs;
 
     public VotingService(
         ServerManager serverManager,
         PlayerTracker playerTracker,
         ConfigService configService,
         ILogger<VotingService> logger,
-        IConfiguration configuration,
+        IOptionsMonitor<VoteSettings> vote,
         IVotableTracks votableTracks)
     {
         _serverManager = serverManager;
         _playerTracker = playerTracker;
         _configService = configService;
         _logger = logger;
-        _configuration = configuration;
+        _vote = vote;
         _votableTracks = votableTracks;
 
-        // A settings reload (including a save from the UI) restores the saved mode.
-        ChangeToken.OnChange(_configuration.GetReloadToken, () => _chatModeOverride = null);
+        // A saved change of the Vote settings (from the UI or the API) restores the saved mode.
+        _vote.OnChange((_, _) => _chatModeOverride = null);
 
         _serverManager.ChatCommandReceived += ProcessChatCommand;
     }
@@ -653,12 +649,6 @@ public class VotingService
             : $"Debug: humanPlayers={string.Join(", ", humanPlayers)}");
 
         return messages;
-    }
-
-    private string GetConfiguredValue(string key, string fallback)
-    {
-        var value = _configuration[key];
-        return string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     }
 
     private static bool TrackContainsNormalizedQuery(AllowedVoteTrack track, string normalizedQuery)

@@ -84,9 +84,6 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(
             [SettingsSections.SteamCmd, SettingsSections.Vote, SettingsSections.WreckfestServer],
             Rows().Select(r => r.Section));
-
-        // Votable tracks move to the catalogue; they are not copied into the section.
-        Assert.Empty(vote.Value.AllowedTracks);
     }
 
     [Fact]
@@ -247,13 +244,38 @@ public sealed class SettingsStoreTests : IDisposable
         edit.MessageDelayMs = 99_999;
         edit.VoteTimeoutSeconds = 0;
         edit.Mode = "direct";
-        edit.AllowedTracks = [new AllowedVoteTrack { Id = "urban09_1" }];
 
         var saved = (await store.SaveAsync(edit, read.Version)).Current.Value;
 
         Assert.Equal((5000, 1, VoteModes.Direct, true), (saved.MessageDelayMs, saved.VoteTimeoutSeconds, saved.Mode, saved.Enabled));
-        Assert.Empty(saved.AllowedTracks);
         Assert.Equal(99_999, edit.MessageDelayMs);
+    }
+
+    [Fact]
+    public async Task ARowFromAnOlderBuild_SavedUnchanged_AnnouncesNothing()
+    {
+        // Written by the store before VoteSettings lost AllowedTracks.
+        using (var db = _contexts.CreateDbContext())
+        {
+            db.SettingsSections.Add(new SettingsSection
+            {
+                Section = SettingsSections.Vote,
+                Json = """{"Enabled":true,"Mode":"Voting","DirectCooldownSeconds":30,"VoteTimeoutSeconds":30,"MaxLapsAllowed":10,"AllowedTracks":[],"MessageDelayMs":250,"SuppressCommandsDuringRace":false}""",
+                Version = 4,
+            });
+            db.SaveChanges();
+        }
+
+        _database.MarkReady(null);
+        var store = CreateStore();
+        var heard = new List<Type>();
+        var read = store.GetEntry<VoteSettings>();
+        store.Changed += (_, e) => heard.Add(e.Section);
+
+        var saved = await store.SaveAsync(read.Value, read.Version);
+
+        Assert.Equal(SettingsSaveStatus.Saved, saved.Status);
+        Assert.Empty(heard);
     }
 
     [Fact]

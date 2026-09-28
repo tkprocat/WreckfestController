@@ -27,13 +27,13 @@ public class RestartCountdownTests : IDisposable
         var players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events);
         players.ProcessHookPlayerSnapshot([new Player { PlayerId = 1, Name = "Player", IsBot = false }]);
         var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), events);
-        _server = new Mock<ServerManager>(settings, Mock.Of<ILogger<ServerManager>>(), players, tracks,
+        _server = new Mock<ServerManager>(settings, TestSettings.Server(), TestSettings.SteamCmd(), Mock.Of<ILogger<ServerManager>>(), players, tracks,
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), events);
         _server.Setup(s => s.SendCommandAsync(It.IsAny<string>())).Returns((string command) => {
             _messages.Add(command);
             return Task.FromResult((true, "Sent"));
         });
-        var config = new Mock<ConfigService>(settings, Mock.Of<ILogger<ConfigService>>());
+        var config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>());
         config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig());
         _restart = new SmartRestartService(_server.Object, players, tracks, config.Object, events,
             Mock.Of<ILogger<SmartRestartService>>(), _clock);

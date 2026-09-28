@@ -31,9 +31,9 @@ public class ConfigControllerTests
         var trackChangeTracker = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object);
         var serverInfoTracker = new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>());
 
-        _mockConfigService = new Mock<ConfigService>(mockConfiguration.Object, mockConfigLogger.Object) { CallBase = false };
+        _mockConfigService = new Mock<ConfigService>(TestSettings.Server(), mockConfigLogger.Object) { CallBase = false };
         _mockServerManager = new Mock<ServerManager>(
-            Mock.Of<Microsoft.Extensions.Configuration.IConfiguration>(),
+            Mock.Of<Microsoft.Extensions.Configuration.IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
             playerTracker,
             trackChangeTracker,

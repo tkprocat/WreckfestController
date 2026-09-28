@@ -1,5 +1,4 @@
 using System.IO;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using WreckfestController.Services.Config;
 
@@ -16,14 +15,7 @@ public sealed class ConfigServiceTests : IDisposable
     {
         Directory.CreateDirectory(_folder);
         _file = Path.Combine(_folder, "server_config.cfg");
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["WreckfestServer:WorkingDirectory"] = _folder,
-                ["WreckfestServer:ServerArguments"] = "-s server_config=server_config.cfg",
-            })
-            .Build();
-        _service = new ConfigService(configuration, NullLogger<ConfigService>.Instance);
+        _service = new ConfigService(TestSettings.Server(workingDirectory: _folder), NullLogger<ConfigService>.Instance);
     }
 
     public void Dispose() => Directory.Delete(_folder, recursive: true);

@@ -100,9 +100,6 @@ public static class SettingsSections
         vote.VoteTimeoutSeconds = Math.Clamp(vote.VoteTimeoutSeconds, 1, 3600);
         vote.MaxLapsAllowed = Math.Max(1, vote.MaxLapsAllowed);
         vote.MessageDelayMs = Math.Clamp(vote.MessageDelayMs, 0, 5000);
-
-        // Votable tracks move to the catalogue (#90), not into this section.
-        vote.AllowedTracks = [];
         return vote;
     }
 

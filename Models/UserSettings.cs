@@ -3,7 +3,8 @@ using System.Text.Json.Serialization;
 namespace WreckfestController.Models;
 
 /// <summary>
-/// Root model for user-settings.json
+/// The settings a person edits, one property per database section. In 1.x this was the
+/// shape of user-settings.json; 2.0 keeps the sections in the database.
 /// </summary>
 public class UserSettings
 {
@@ -89,13 +90,11 @@ public class VoteSettings
     /// <summary>Ignore chat commands while a race is running.</summary>
     [JsonPropertyName("SuppressCommandsDuringRace")]
     public bool SuppressCommandsDuringRace { get; set; }
-
-    [JsonPropertyName("AllowedTracks")]
-    public List<AllowedVoteTrack> AllowedTracks { get; set; } = new();
 }
 
 /// <summary>
-/// Track allowed for player-initiated votes.
+/// A votable track as voting uses it: the game's variant id and a display name. Comes
+/// from the catalogue (<c>IVotableTracks</c>).
 /// </summary>
 public class AllowedVoteTrack
 {

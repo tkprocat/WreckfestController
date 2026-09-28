@@ -3,6 +3,8 @@ using System.IO;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using WreckfestController.Models;
 using WreckfestController.Services.Hook;
 using WreckfestController.Services.Publishing;
 using WreckfestController.Services.Tracking;
@@ -12,7 +14,10 @@ namespace WreckfestController.Services.ServerControl;
 public class ServerManager
 {
     private Process? _serverProcess;
+    /// <summary>Only the build-tied <c>WreckfestServer:SupportedBuild</c>; everything a person edits comes from the settings sections.</summary>
     private readonly IConfiguration _configuration;
+    private readonly IOptionsMonitor<WreckfestServerSettings> _server;
+    private readonly IOptionsMonitor<SteamCmdSettings> _steamCmd;
     /// <summary>
     /// Event raised when console output is received from the server
     /// </summary>
@@ -133,6 +138,8 @@ public class ServerManager
 
     public ServerManager(
         IConfiguration configuration,
+        IOptionsMonitor<WreckfestServerSettings> server,
+        IOptionsMonitor<SteamCmdSettings> steamCmd,
         ILogger<ServerManager> logger,
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
@@ -140,6 +147,8 @@ public class ServerManager
         IServerEventPublisher events)
         : this(
             configuration,
+            server,
+            steamCmd,
             logger,
             playerTracker,
             trackChangeTracker,
@@ -154,6 +163,8 @@ public class ServerManager
 
     public ServerManager(
         IConfiguration configuration,
+        IOptionsMonitor<WreckfestServerSettings> server,
+        IOptionsMonitor<SteamCmdSettings> steamCmd,
         ILogger<ServerManager> logger,
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
@@ -162,6 +173,8 @@ public class ServerManager
         IServerInputWriter serverInputWriter)
         : this(
             configuration,
+            server,
+            steamCmd,
             logger,
             playerTracker,
             trackChangeTracker,
@@ -175,6 +188,8 @@ public class ServerManager
 
     public ServerManager(
         IConfiguration configuration,
+        IOptionsMonitor<WreckfestServerSettings> server,
+        IOptionsMonitor<SteamCmdSettings> steamCmd,
         ILogger<ServerManager> logger,
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
@@ -184,6 +199,8 @@ public class ServerManager
         IInjectedHookOutputReader injectedHookOutputReader)
     {
         _configuration = configuration;
+        _server = server;
+        _steamCmd = steamCmd;
         _logger = logger;
         _playerTracker = playerTracker;
         _trackChangeTracker = trackChangeTracker;
@@ -281,9 +298,10 @@ public class ServerManager
 
             try
             {
-                var serverPath = _configuration["WreckfestServer:ServerPath"];
-                var serverArguments = _configuration["WreckfestServer:ServerArguments"] ?? "";
-                var workingDirectory = _configuration["WreckfestServer:WorkingDirectory"];
+                var server = _server.CurrentValue;
+                var serverPath = server.ServerPath;
+                var serverArguments = server.ServerArguments ?? "";
+                var workingDirectory = server.WorkingDirectory;
 
                 if (string.IsNullOrEmpty(serverPath) || !File.Exists(serverPath))
                 {
@@ -885,9 +903,10 @@ public class ServerManager
         }
 
         // Get steamcmd configuration
-        var steamCmdPath = _configuration["SteamCmd:SteamCmdPath"];
-        var appId = _configuration["SteamCmd:WreckfestAppId"];
-        var installDir = _configuration["WreckfestServer:WorkingDirectory"];
+        var steamCmd = _steamCmd.CurrentValue;
+        var steamCmdPath = steamCmd.SteamCmdPath;
+        var appId = steamCmd.WreckfestAppId;
+        var installDir = _server.CurrentValue.WorkingDirectory;
 
         if (string.IsNullOrEmpty(steamCmdPath) || !File.Exists(steamCmdPath))
         {
@@ -1261,8 +1280,9 @@ public class ServerManager
     {
         try
         {
-            var serverArgs = _configuration["WreckfestServer:ServerArguments"] ?? "";
-            var workingDir = _configuration["WreckfestServer:WorkingDirectory"];
+            var server = _server.CurrentValue;
+            var serverArgs = server.ServerArguments ?? "";
+            var workingDir = server.WorkingDirectory;
 
             if (string.IsNullOrEmpty(workingDir))
             {
@@ -1327,7 +1347,7 @@ public class ServerManager
         // Fall back to appsettings.json if not found in server config
         if (string.IsNullOrEmpty(logFilePath))
         {
-            logFilePath = _configuration["WreckfestServer:LogFilePath"];
+            logFilePath = _server.CurrentValue.LogFilePath;
         }
 
         if (string.IsNullOrEmpty(logFilePath))
