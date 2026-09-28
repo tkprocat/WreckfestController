@@ -288,6 +288,32 @@ activation within the 5 minutes before an occurrence counts as that occurrence.
 `activate` answers 409 when the cup is already active, another restart is running,
 or the cup's settings cannot be written to the server config (with a `reason`).
 
+### Settings — `api/settings`
+
+The settings a person edits, kept in the controller's database one section at a time:
+`wreckfestServer` (`serverPath`, `serverArguments`, `workingDirectory`, `logFilePath`),
+`steamCmd` (`steamCmdPath`, `wreckfestAppId`) and `vote` (`mode`, `directCooldownSeconds`,
+`voteTimeoutSeconds`, `maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`).
+The WPF Configuration tab edits the same sections.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | | Every section: `{ wreckfestServer, steamCmd, vote }`, each with its `version` |
+| GET | `{section}` | One section, with its `ETag` |
+| PUT | `{section}` | Change the fields in the body; the rest keep their values. Needs `If-Match` |
+
+- A PUT with a stale `If-Match` gets 409 with the section as it is now; without one, 428.
+  A body that repeats `version` is fine: `If-Match` is what counts.
+- Unknown fields, wrong types and out-of-range values are 400 with a field error:
+  `mode` is `Off`, `Voting` or `Direct` (any case); `directCooldownSeconds` 0-3600,
+  `voteTimeoutSeconds` 1-3600, `maxLapsAllowed` 1-999, `messageDelayMs` 0-5000; paths and
+  arguments are one line of at most 1024 characters; `wreckfestAppId` is digits only.
+- A change takes effect at once: voting reads it on the next command, and a saved `vote`
+  change ends a `!voting` override.
+- The startup settings (`Api:*`, `Database:Path`) are not here and have no route. They stay
+  in user-settings.json, edited by hand, so a lockout can be fixed without the web UI.
+  2.0 never writes that file.
+
 ### Catalogue — `api/catalogue`
 
 The tracks, variants, tags, weather and mods the controller knows. The database ships

@@ -194,6 +194,7 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddSingleton(main.GetRequiredService<CupActivator>());
         builder.Services.AddSingleton(main.GetRequiredService<SmartRestartService>());
         builder.Services.AddSingleton(main.GetRequiredService<DatabaseState>());
+        builder.Services.AddSingleton(main.GetRequiredService<ISettingsStore>());
 
         builder.Services.AddApiAuthentication(main, configuration);
         builder.Services.AddTrustedProxies(configuration);
