@@ -89,7 +89,7 @@
                                              Margin="0,2,10,0"/>
 
                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                        <TextBlock Text="The database could not be opened. Web sign-in is unavailable and scheduled events will not activate."
+                        <TextBlock Text="The database could not be opened. Web sign-in is unavailable and cups will not activate."
                                    Foreground="{StaticResource TextPrimary}"
                                    FontWeight="SemiBold"
                                    TextWrapping="Wrap"/>
@@ -136,9 +136,9 @@
                     <ContentControl x:Name="ControllerLogTabContent"/>
                 </TabItem>
 
-                <!-- Event Scheduler Tab -->
-                <TabItem Header="Event Scheduler">
-                    <ContentControl x:Name="EventSchedulerTabContent"/>
+                <!-- Cups Tab -->
+                <TabItem Header="Cups">
+                    <ContentControl x:Name="CupsTabContent"/>
                 </TabItem>
 
                 <!-- Process Manager Tab -->

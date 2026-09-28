@@ -1,17 +1,17 @@
 using System.Text.RegularExpressions;
-using WreckfestController.Data.Events;
+using WreckfestController.Data.Cups;
 using WreckfestController.Models;
-using WreckfestController.Services;
+using WreckfestController.Services.Cups;
 
 namespace WreckfestController.Controllers;
 
 /// <summary>
-/// An event as the API returns it. <see cref="Tracks"/> is what activation would deploy
-/// now: a linked collection's current tracks, else the event's own.
+/// A cup as the API returns it. <see cref="Tracks"/> is what activation would deploy
+/// now: a linked collection's current tracks, else the cup's own.
 /// <see cref="Version"/> (and the ETag) covers what an admin edits; the scheduler's
 /// fields from <see cref="NextOccurrence"/> on change without it.
 /// </summary>
-public sealed record EventResponse(
+public sealed record CupResponse(
     int Id,
     string Name,
     string Description,
@@ -20,6 +20,8 @@ public sealed record EventResponse(
     RepeatSchedule? Repeat,
     string RepeatDescription,
     EventServerConfig? ServerConfig,
+    string? SessionMode,
+    string? GridOrder,
     int? CollectionId,
     string CollectionName,
     IReadOnlyList<EventLoopTrack> Tracks,
@@ -34,48 +36,50 @@ public sealed record EventResponse(
     int Version)
 {
     /// <summary>Expects the linked collection's entries, with their variants, and the creator loaded.</summary>
-    public static EventResponse From(ScheduledEvent evt)
+    public static CupResponse From(Cup cup)
     {
-        var deployed = EventStore.ToRestartEvent(evt);
+        var deployed = CupStore.ToRestartEvent(cup);
         return new(
-            evt.Id,
-            evt.Name,
-            evt.Description,
-            evt.StartTime,
-            evt.TimeZone,
-            evt.Repeat,
-            EventRecurrence.Describe(evt.Repeat),
-            evt.ServerConfig,
-            evt.CollectionId,
+            cup.Id,
+            cup.Name,
+            cup.Description,
+            cup.StartTime,
+            cup.TimeZone,
+            cup.Repeat,
+            CupRecurrence.Describe(cup.Repeat),
+            cup.ServerConfig,
+            cup.SessionMode,
+            cup.GridOrder,
+            cup.CollectionId,
             deployed.CollectionName,
             deployed.Tracks,
-            evt.NextOccurrence,
-            evt.LastOccurrence,
-            evt.LastOutcome,
-            evt.IsActive,
-            evt.ActivatedAt,
-            evt.CreatedBy is { } user ? user.DisplayName ?? user.UserName : null,
-            evt.CreatedAt,
-            evt.UpdatedAt,
-            evt.Version);
+            cup.NextOccurrence,
+            cup.LastOccurrence,
+            cup.LastOutcome,
+            cup.IsActive,
+            cup.ActivatedAt,
+            cup.CreatedBy is { } user ? user.DisplayName ?? user.UserName : null,
+            cup.CreatedAt,
+            cup.UpdatedAt,
+            cup.Version);
     }
 }
 
-public sealed record EventListResponse(int Count, IReadOnlyList<EventResponse> Events);
+public sealed record CupListResponse(int Count, IReadOnlyList<CupResponse> Cups);
 
-public sealed record EventSummaryResponse(
-    int TotalEvents,
-    int ActiveEvents,
-    int UpcomingEvents,
-    int DueEvents,
+public sealed record CupSummaryResponse(
+    int TotalCups,
+    int ActiveCups,
+    int UpcomingCups,
+    int DueCups,
     DateTimeOffset? LastUpdated);
 
 /// <summary>
-/// Create or replace an event. Either link a collection with <see cref="CollectionId"/>,
+/// Create or replace a cup. Either link a collection with <see cref="CollectionId"/>,
 /// or give the rotation inline in <see cref="Tracks"/> and <see cref="CollectionName"/>;
 /// no tracks at all leaves the server's rotation alone on activation.
 /// </summary>
-public sealed class EventRequest
+public sealed class CupRequest
 {
     public string? Name { get; init; }
 
@@ -91,6 +95,15 @@ public sealed class EventRequest
 
     public EventServerConfig? ServerConfig { get; init; }
 
+    /// <summary>
+    /// <c>session_mode</c>: a cup points system such as "30p-aggr", "normal" for no cup
+    /// points, or a qualifying session. Omit to keep the server's own.
+    /// </summary>
+    public string? SessionMode { get; init; }
+
+    /// <summary><c>grid_order</c>, such as "cup_reverse". Omit to keep the server's own.</summary>
+    public string? GridOrder { get; init; }
+
     public int? CollectionId { get; init; }
 
     public List<EventLoopTrack?>? Tracks { get; init; }
@@ -98,13 +111,13 @@ public sealed class EventRequest
     public string? CollectionName { get; init; }
 }
 
-/// <summary>What an event request must satisfy. Everything here ends up in server_config.cfg or the schedule.</summary>
-public static class EventRules
+/// <summary>What a cup request must satisfy. Everything here ends up in server_config.cfg or the schedule.</summary>
+public static class CupRules
 {
     private const int ServerTextMaxLength = 256;
     private static readonly Regex TimeOfDay = new("^([01][0-9]|2[0-3]):[0-5][0-9]$", RegexOptions.CultureInvariant);
 
-    public static EventLoopError? Validate(EventRequest request, out EventDefinition? definition)
+    public static EventLoopError? Validate(CupRequest request, out CupDefinition? definition)
     {
         definition = null;
 
@@ -115,21 +128,21 @@ public static class EventRules
 
         var name = request.Name.Trim();
 
-        // Becomes "#CollectionName Event: <name>" when no collection name is given.
+        // Becomes "#CollectionName Cup: <name>" when no collection name is given.
         if (name.AsSpan().IndexOfAny('\r', '\n') >= 0)
         {
             return new("name", "name must not contain line breaks.");
         }
 
-        if (name.Length > ScheduledEvent.NameMaxLength)
+        if (name.Length > Cup.NameMaxLength)
         {
-            return new("name", $"name must be at most {ScheduledEvent.NameMaxLength} characters.");
+            return new("name", $"name must be at most {Cup.NameMaxLength} characters.");
         }
 
         var description = request.Description?.Trim() ?? string.Empty;
-        if (description.Length > ScheduledEvent.DescriptionMaxLength)
+        if (description.Length > Cup.DescriptionMaxLength)
         {
-            return new("description", $"description must be at most {ScheduledEvent.DescriptionMaxLength} characters.");
+            return new("description", $"description must be at most {Cup.DescriptionMaxLength} characters.");
         }
 
         if (request.StartTime is not { } startTime)
@@ -137,14 +150,14 @@ public static class EventRules
             return new("startTime", "startTime is required.");
         }
 
-        // An unzoned time is ambiguous; 1.x guessed UTC and moved events by the machine's offset.
+        // An unzoned time is ambiguous; 1.x guessed UTC and moved cups by the machine's offset.
         if (startTime.Kind == DateTimeKind.Unspecified)
         {
             return new("startTime", "startTime needs a UTC offset, such as 2026-10-02T18:00:00Z.");
         }
 
-        var timeZone = string.IsNullOrWhiteSpace(request.TimeZone) ? ScheduledEvent.DefaultTimeZone : request.TimeZone.Trim();
-        if (timeZone.Length > ScheduledEvent.TimeZoneMaxLength || EventRecurrence.FindZone(timeZone) is null)
+        var timeZone = string.IsNullOrWhiteSpace(request.TimeZone) ? Cup.DefaultTimeZone : request.TimeZone.Trim();
+        if (timeZone.Length > Cup.TimeZoneMaxLength || CupRecurrence.FindZone(timeZone) is null)
         {
             return new("timeZone", $"timeZone '{timeZone}' is not a known time zone, such as Europe/Copenhagen.");
         }
@@ -159,6 +172,16 @@ public static class EventRules
             return configError;
         }
 
+        if (ValidateChoice("sessionMode", request.SessionMode, CupScoring.SessionModes, out var sessionMode) is { } sessionModeError)
+        {
+            return sessionModeError;
+        }
+
+        if (ValidateChoice("gridOrder", request.GridOrder, CupScoring.GridOrders, out var gridOrder) is { } gridOrderError)
+        {
+            return gridOrderError;
+        }
+
         var tracks = new List<EventLoopTrack>();
         var collectionName = string.Empty;
         if (request.CollectionId is not null)
@@ -170,7 +193,7 @@ public static class EventRules
         }
         else if (request.Tracks is { Count: > 0 })
         {
-            // The name is optional: activation falls back to "Event: <name>".
+            // The name is optional: activation falls back to "Cup: <name>".
             var tracksError = EventLoopTrackRules.ValidateTracks(request.Tracks)
                 ?? (string.IsNullOrWhiteSpace(request.CollectionName)
                     ? null
@@ -184,7 +207,7 @@ public static class EventRules
             collectionName = request.CollectionName?.Trim() ?? string.Empty;
         }
 
-        definition = new EventDefinition(
+        definition = new CupDefinition(
             name,
             description,
             startTime.ToUniversalTime(),
@@ -193,8 +216,28 @@ public static class EventRules
             Normalize(request.ServerConfig),
             request.CollectionId,
             tracks,
-            collectionName);
+            collectionName,
+            sessionMode,
+            gridOrder);
         return null;
+    }
+
+    /// <summary>
+    /// Blank is "not set". Anything else must be one of <paramref name="allowed"/>, ignoring
+    /// case, and is stored as the server spells it: it becomes a line of server_config.cfg.
+    /// </summary>
+    private static EventLoopError? ValidateChoice(string field, string? value, IReadOnlyList<string> allowed, out string? normalized)
+    {
+        normalized = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        normalized = allowed.FirstOrDefault(a => string.Equals(a, value.Trim(), StringComparison.OrdinalIgnoreCase));
+        return normalized is null
+            ? new(field, $"{field} must be one of: {string.Join(", ", allowed)}.")
+            : null;
     }
 
     private static EventLoopError? ValidateRepeat(RepeatSchedule? repeat, out RepeatSchedule? normalized)

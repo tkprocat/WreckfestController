@@ -45,7 +45,7 @@ public class ServerAttachedEvent
 public class ServerRestartPendingEvent
 {
     public int MinutesRemaining { get; set; }
-    public string? EventName { get; set; }
-    public int? EventId { get; set; }
+    public string? CupName { get; set; }
+    public int? CupId { get; set; }
     public DateTime? ScheduledRestartTime { get; set; }
 }

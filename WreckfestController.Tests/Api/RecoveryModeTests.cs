@@ -6,7 +6,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using WreckfestController.Data;
-using WreckfestController.Services;
+using WreckfestController.Services.Cups;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Hosting;
 using WreckfestController.Services.ServerControl;
@@ -46,8 +46,8 @@ public sealed class RecoveryModeTests : IDisposable
         host.Services.GetRequiredService<ServerManager>();
         host.Services.GetRequiredService<PlayerTracker>();
         host.Services.GetRequiredService<SettingsService>();
-        host.Services.GetRequiredService<EventStore>();
-        host.Services.GetRequiredService<EventActivator>();
+        host.Services.GetRequiredService<CupStore>();
+        host.Services.GetRequiredService<CupActivator>();
         host.Services.GetRequiredService<SmartRestartService>();
         host.Services.GetRequiredService<IApiServer>();
 
@@ -55,7 +55,7 @@ public sealed class RecoveryModeTests : IDisposable
         try
         {
             var gate = host.Services.GetServices<IHostedService>()
-                .OfType<DatabaseGatedHostedService<EventSchedulerService>>()
+                .OfType<DatabaseGatedHostedService<CupSchedulerService>>()
                 .Single();
             Assert.False(gate.IsStarted);
         }

@@ -147,7 +147,7 @@ public class CollectionsController : ControllerBase
     }
 
     /// <summary>
-    /// Deletes the collection. Events linked to it keep its tracks, as they are now, as
+    /// Deletes the collection. Cups linked to it keep its tracks, as they are now, as
     /// their own rotation, so they still deploy what they would have.
     /// </summary>
     [HttpDelete("{id:int}")]
@@ -159,18 +159,18 @@ public class CollectionsController : ControllerBase
             return NotFound();
         }
 
-        // Events that deploy this collection keep deploying its tracks as they are now.
+        // Cups that deploy this collection keep deploying its tracks as they are now.
         var tracks = collection.Entries
             .OrderBy(e => e.Position)
             .Select(CollectionMapping.ToEventLoopTrack)
             .ToList();
         var now = _time.GetUtcNow();
-        foreach (var evt in await _db.ScheduledEvents.Where(e => e.CollectionId == id).ToListAsync())
+        foreach (var cup in await _db.Cups.Where(e => e.CollectionId == id).ToListAsync())
         {
-            evt.CollectionId = null;
-            evt.Tracks = tracks.ToList();
-            evt.CollectionName = collection.Name;
-            evt.UpdatedAt = now;
+            cup.CollectionId = null;
+            cup.Tracks = tracks.ToList();
+            cup.CollectionName = collection.Name;
+            cup.UpdatedAt = now;
         }
 
         _db.TrackCollections.Remove(collection);

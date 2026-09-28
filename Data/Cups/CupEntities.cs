@@ -3,13 +3,20 @@ using WreckfestController.Data.Catalogue;
 using WreckfestController.Data.Collections;
 using WreckfestController.Models;
 
-namespace WreckfestController.Data.Events;
+namespace WreckfestController.Data.Cups;
 
 /// <summary>
-/// A scheduled event: server settings and a rotation applied through a smart restart at
-/// a set time, once or on a repeat.
+/// A cup: an event loop (the rotation) and the rules it runs under, applied through a
+/// smart restart at a set time, once or on a repeat.
 /// </summary>
 /// <remarks>
+/// <para>
+/// Named after Wreckfest's own Cup Mode. In the game an <i>event</i> is one race of the
+/// loop (<c>el_add</c> in server_config.cfg), and a cup is a run of events scored with cup
+/// points. <see cref="SessionMode"/> picks the points system; <c>normal</c> turns cup
+/// points off.
+/// </para>
+/// <para>
 /// The row holds two kinds of state with different writers:
 /// <list type="bullet">
 /// <item>What an admin edits (name through tracks). Saved through the change tracker,
@@ -19,12 +26,14 @@ namespace WreckfestController.Data.Events;
 /// occurrence done never invalidates an editor's If-Match, and an edit that leaves the
 /// schedule alone never writes these columns back.</item>
 /// </list>
+/// </para>
 /// </remarks>
-public class ScheduledEvent : IVersioned
+public class Cup : IVersioned
 {
     public const int NameMaxLength = 128;
     public const int DescriptionMaxLength = 2000;
     public const int TimeZoneMaxLength = 64;
+    public const int ScoringMaxLength = 32;
     public const string DefaultTimeZone = "UTC";
 
     public int Id { get; set; }
@@ -34,7 +43,7 @@ public class ScheduledEvent : IVersioned
     public string Description { get; set; } = string.Empty;
 
     /// <summary>
-    /// UTC. The one occurrence of a one-off event; the first of a recurring one when it
+    /// UTC. The one occurrence of a one-off cup; the first of a recurring one when it
     /// is still ahead, and otherwise only an anchor.
     /// </summary>
     public DateTime StartTime { get; set; }
@@ -42,11 +51,24 @@ public class ScheduledEvent : IVersioned
     /// <summary>IANA (or Windows) zone the repeat's wall-clock time is in.</summary>
     public string TimeZone { get; set; } = DefaultTimeZone;
 
-    /// <summary>Null for a one-off event. Stored as JSON.</summary>
+    /// <summary>Null for a one-off cup. Stored as JSON.</summary>
     public RepeatSchedule? Repeat { get; set; }
 
     /// <summary>Only the fields that are set are applied. Stored as JSON.</summary>
     public EventServerConfig? ServerConfig { get; set; }
+
+    /// <summary>
+    /// <c>session_mode</c>: a cup points system such as <c>30p-aggr</c>, <c>normal</c> for
+    /// no cup points, or a qualifying session. Null keeps the server's own. One of
+    /// <see cref="CupScoring.SessionModes"/>.
+    /// </summary>
+    public string? SessionMode { get; set; }
+
+    /// <summary>
+    /// <c>grid_order</c>, such as <c>cup_reverse</c> to start the leader at the back.
+    /// Null keeps the server's own. One of <see cref="CupScoring.GridOrders"/>.
+    /// </summary>
+    public string? GridOrder { get; set; }
 
     /// <summary>
     /// The collection whose tracks deploy at activation, as they are then. Cleared when the
@@ -57,8 +79,8 @@ public class ScheduledEvent : IVersioned
     public TrackCollection? Collection { get; set; }
 
     /// <summary>
-    /// The rotation to deploy when no collection is linked. For a linked event, the
-    /// collection's tracks as they were when the event was saved. Stored as JSON.
+    /// The rotation to deploy when no collection is linked. For a linked cup, the
+    /// collection's tracks as they were when the cup was saved. Stored as JSON.
     /// </summary>
     public List<EventLoopTrack> Tracks { get; set; } = new();
 
@@ -76,9 +98,9 @@ public class ScheduledEvent : IVersioned
 
     public int Version { get; set; } = 1;
 
-    // ---- Scheduler state: written only through EventStore's targeted updates. ----
+    // ---- Scheduler state: written only through CupStore's targeted updates. ----
 
-    /// <summary>UTC. The occurrence the scheduler waits for; null once a one-off event is over.</summary>
+    /// <summary>UTC. The occurrence the scheduler waits for; null once a one-off cup is over.</summary>
     public DateTime? NextOccurrence { get; set; }
 
     /// <summary>UTC. The occurrence most recently dealt with: activated, failed or missed.</summary>
@@ -87,27 +109,27 @@ public class ScheduledEvent : IVersioned
     /// <summary>What happened to <see cref="LastOccurrence"/>, so a miss or failure is visible.</summary>
     public OccurrenceOutcome? LastOutcome { get; set; }
 
-    /// <summary>At most one event is active: the one whose settings the server is running.</summary>
+    /// <summary>At most one cup is active: the one whose settings the server is running.</summary>
     public bool IsActive { get; set; }
 
-    /// <summary>UTC. When the event last became active.</summary>
+    /// <summary>UTC. When the cup last became active.</summary>
     public DateTime? ActivatedAt { get; set; }
 }
 
 /// <summary>
-/// One occurrence of an event that has been dealt with, and how. The history is what
+/// One occurrence of a cup that has been dealt with, and how. The history is what
 /// keeps an edit from running an occurrence twice: when the schedule changes, the next
 /// occurrence is the first one under the new schedule that is not recorded here.
 /// </summary>
-public class EventOccurrenceRecord
+public class CupOccurrenceRecord
 {
     public int Id { get; set; }
 
-    public int ScheduledEventId { get; set; }
+    public int CupId { get; set; }
 
-    public ScheduledEvent ScheduledEvent { get; set; } = null!;
+    public Cup Cup { get; set; } = null!;
 
-    /// <summary>UTC. Unique per event.</summary>
+    /// <summary>UTC. Unique per cup.</summary>
     public DateTime Occurrence { get; set; }
 
     public OccurrenceOutcome Outcome { get; set; }
@@ -123,7 +145,7 @@ public class EventOccurrenceRecord
 [JsonConverter(typeof(JsonStringEnumConverter<OccurrenceOutcome>))]
 public enum OccurrenceOutcome
 {
-    /// <summary>The restart succeeded, or the event was already active.</summary>
+    /// <summary>The restart succeeded, or the cup was already active.</summary>
     Activated,
 
     /// <summary>The settings could not be written, or the restart failed.</summary>
@@ -133,7 +155,7 @@ public enum OccurrenceOutcome
     Cancelled,
 
     /// <summary>
-    /// Not started within <see cref="Services.EventSchedulerService.MissedGrace"/> of its
+    /// Not started within <see cref="Services.CupSchedulerService.MissedGrace"/> of its
     /// time: the app was not running, or another restart ran too long.
     /// </summary>
     Missed,

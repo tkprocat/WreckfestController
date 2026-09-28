@@ -38,13 +38,13 @@ public class ControllerActivationTests
     }
 
     [Fact]
-    public async Task AnEventsEndpoint_Answers()
+    public async Task ACupsEndpoint_Answers()
     {
         await using var host = await ApiTestHost.StartAsync();
         using var client = host.CreateAuthenticatedClient();
 
-        var response = await client.GetAsync("/api/events/current", TestContext.Current.CancellationToken);
+        var response = await client.GetAsync("/api/cups/current", TestContext.Current.CancellationToken);
 
-        Assert.True((int)response.StatusCode < 500, $"GET /api/events/current returned {(int)response.StatusCode}");
+        Assert.True((int)response.StatusCode < 500, $"GET /api/cups/current returned {(int)response.StatusCode}");
     }
 }

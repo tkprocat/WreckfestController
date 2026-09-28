@@ -7,6 +7,7 @@ using WreckfestController.Data;
 using WreckfestController.Hubs;
 using WreckfestController.Services.Auth;
 using WreckfestController.Services.Config;
+using WreckfestController.Services.Cups;
 using WreckfestController.Services.Publishing;
 using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Tracking;
@@ -189,8 +190,8 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddSingleton<IServerEventPublisher>(publisher);
         builder.Services.AddSingleton(main.GetRequiredService<ServerManager>());
         builder.Services.AddSingleton(main.GetRequiredService<ConfigService>());
-        builder.Services.AddSingleton(main.GetRequiredService<EventStore>());
-        builder.Services.AddSingleton(main.GetRequiredService<EventActivator>());
+        builder.Services.AddSingleton(main.GetRequiredService<CupStore>());
+        builder.Services.AddSingleton(main.GetRequiredService<CupActivator>());
         builder.Services.AddSingleton(main.GetRequiredService<SmartRestartService>());
         builder.Services.AddSingleton(main.GetRequiredService<DatabaseState>());
 

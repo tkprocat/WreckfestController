@@ -86,7 +86,7 @@ public sealed class DatabaseBootstrapper
             {
                 _logger.LogError(
                     ex,
-                    "Database at {DatabasePath} could not be prepared. Running in recovery mode: sign-in is unavailable and scheduled events will not activate.",
+                    "Database at {DatabasePath} could not be prepared. Running in recovery mode: sign-in is unavailable and cups will not activate.",
                     _state.DatabasePath);
                 _state.MarkFailed(ex.Message, backupPath);
                 return false;

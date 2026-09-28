@@ -3,8 +3,8 @@ using System.Text.Json.Serialization;
 namespace WreckfestController.Models;
 
 /// <summary>
-/// What a smart restart applies when an event activates: its server settings and the
-/// rotation to deploy. Built from a <see cref="Data.Events.ScheduledEvent"/> at the
+/// What a smart restart applies when a cup activates: its server settings, scoring and
+/// the rotation to deploy. Built from a <see cref="Data.Cups.Cup"/> at the
 /// moment of activation, with a linked collection's tracks as they are then.
 /// </summary>
 public class Event
@@ -16,16 +16,22 @@ public class Event
     /// <summary>Only the fields that are set are applied.</summary>
     public EventServerConfig? ServerConfig { get; set; }
 
+    /// <summary><c>session_mode</c>; null keeps the server's own.</summary>
+    public string? SessionMode { get; set; }
+
+    /// <summary><c>grid_order</c>; null keeps the server's own.</summary>
+    public string? GridOrder { get; set; }
+
     /// <summary>The rotation to deploy. Empty leaves the server's rotation alone.</summary>
     public List<EventLoopTrack> Tracks { get; set; } = new();
 
-    /// <summary>The <c>#CollectionName</c> line; "Event: &lt;name&gt;" when empty.</summary>
+    /// <summary>The <c>#CollectionName</c> line; "Cup: &lt;name&gt;" when empty.</summary>
     public string CollectionName { get; set; } = string.Empty;
 }
 
 /// <summary>
-/// Server configuration settings that can be overridden by an event.
-/// Only the fields that are set (not null/empty) will be applied during event activation.
+/// Server configuration settings that can be overridden by a cup.
+/// Only the fields that are set (not null/empty) will be applied during cup activation.
 /// </summary>
 public class EventServerConfig
 {

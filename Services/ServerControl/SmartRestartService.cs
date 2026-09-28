@@ -106,14 +106,14 @@ public class SmartRestartService
             if (_state != SmartRestartState.Idle)
             {
                 _logger.LogWarning(
-                    "Cannot initiate restart for event {EventName} - restart already in progress (state: {State})",
+                    "Cannot initiate restart for cup {CupName} - restart already in progress (state: {State})",
                     @event.Name,
                     _state);
                 return false;
             }
 
             _logger.LogInformation(
-                "Initiating smart restart for event: {EventName} (ID: {EventId})",
+                "Initiating smart restart for cup: {CupName} (ID: {CupId})",
                 @event.Name,
                 @event.Id);
 
@@ -194,8 +194,8 @@ public class SmartRestartService
             notification = new Models.ServerRestartPendingEvent
             {
                 MinutesRemaining = minutesRemaining,
-                EventName = _pendingEvent?.Name,
-                EventId = _pendingEvent?.Id,
+                CupName = _pendingEvent?.Name,
+                CupId = _pendingEvent?.Id,
                 ScheduledRestartTime = _countdownStartTime.AddMinutes(CountdownMinutes)
             };
 
@@ -343,7 +343,7 @@ public class SmartRestartService
         try
         {
             _logger.LogInformation(
-                "Executing restart for event: {EventName} (ID: {EventId})",
+                "Executing restart for cup: {CupName} (ID: {CupId})",
                 eventToActivate.Name,
                 eventToActivate.Id);
 
@@ -360,7 +360,7 @@ public class SmartRestartService
             // Wait a moment for server to stabilize
             await Task.Delay(2000);
 
-            _logger.LogInformation("Event {EventName} activated successfully", eventToActivate.Name);
+            _logger.LogInformation("Cup {CupName} activated successfully", eventToActivate.Name);
 
             // Mark as completed
             lock (_stateLock)
@@ -412,7 +412,7 @@ public class SmartRestartService
     {
         try
         {
-            _logger.LogInformation("Applying configuration for event: {EventName}", @event.Name);
+            _logger.LogInformation("Applying configuration for cup: {CupName}", @event.Name);
 
             // Read current config
             var currentConfig = _configService.ReadBasicConfig();
@@ -448,8 +448,18 @@ public class SmartRestartService
 
                 if (eventConfig.LobbyCountdown.HasValue)
                     currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value;
+            }
 
-                // Write updated config
+            // The cup's scoring. The restart below starts a new server process, which
+            // reads these and begins with no cup points.
+            if (@event.SessionMode != null)
+                currentConfig.SessionMode = @event.SessionMode;
+
+            if (@event.GridOrder != null)
+                currentConfig.GridOrder = @event.GridOrder;
+
+            if (@event.ServerConfig != null || @event.SessionMode != null || @event.GridOrder != null)
+            {
                 _configService.WriteBasicConfig(currentConfig);
                 _logger.LogInformation("Server configuration updated");
             }
@@ -458,7 +468,7 @@ public class SmartRestartService
             if (@event.Tracks != null && @event.Tracks.Count > 0)
             {
                 var collectionName = string.IsNullOrWhiteSpace(@event.CollectionName)
-                    ? $"Event: {@event.Name}"
+                    ? $"Cup: {@event.Name}"
                     : @event.CollectionName;
 
                 _configService.WriteEventLoopTracks(collectionName, @event.Tracks);
@@ -521,7 +531,7 @@ public class SmartRestartService
                 return false;
             }
 
-            _logger.LogInformation("Cancelling restart for event: {EventName}", _pendingEvent?.Name ?? "Unknown");
+            _logger.LogInformation("Cancelling restart for cup: {CupName}", _pendingEvent?.Name ?? "Unknown");
 
             _ = SendServerMessageAsync("Server restart cancelled.");
 

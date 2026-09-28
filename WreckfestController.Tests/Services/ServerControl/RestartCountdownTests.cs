@@ -4,7 +4,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using WreckfestController.Models;
 using Xunit;
-using WreckfestController.Data.Events;
+using WreckfestController.Data.Cups;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Publishing;
 using WreckfestController.Services.ServerControl;
@@ -50,7 +50,7 @@ public class RestartCountdownTests : IDisposable
             _clock.Timer!.Fire();
             var payload = await _published.Next();
             Assert.Equal(5 - minute, payload.MinutesRemaining);
-            Assert.Equal(7, payload.EventId);
+            Assert.Equal(7, payload.CupId);
             Assert.Equal(deadline, payload.ScheduledRestartTime);
             Assert.Equal(minute < 5 ? SmartRestartState.Warning : SmartRestartState.Pending, _restart.GetState());
         }
@@ -230,8 +230,8 @@ public class RestartCountdownTests : IDisposable
         public Task PlayerJoinedAsync(string playerName, bool isBot) => Task.CompletedTask;
         public Task PlayerLeftAsync(string playerName) => Task.CompletedTask;
         public Task TrackChangedAsync(string trackId) => Task.CompletedTask;
-        public Task EventActivatedAsync(int eventId, string eventName) => Task.CompletedTask;
-        public Task EventOccurrenceEndedAsync(int eventId, string eventName, DateTime occurrence, OccurrenceOutcome outcome) => Task.CompletedTask;
+        public Task CupActivatedAsync(int cupId, string cupName) => Task.CompletedTask;
+        public Task CupOccurrenceEndedAsync(int cupId, string cupName, DateTime occurrence, OccurrenceOutcome outcome) => Task.CompletedTask;
         public Task ServerStartedAsync(ServerStartedEvent serverEvent) => Task.CompletedTask;
         public Task ServerStoppedAsync(ServerStoppedEvent serverEvent) => Task.CompletedTask;
         public Task ServerRestartedAsync(ServerRestartedEvent serverEvent) => Task.CompletedTask;
