@@ -1,447 +1,207 @@
+using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using WreckfestController.Models;
+using WreckfestController.Data.Events;
 using WreckfestController.Services;
 
 namespace WreckfestController.Controllers;
 
 /// <summary>
-/// API controller for managing scheduled server events
+/// Scheduled events. Edits and deletes need If-Match with the version the caller read,
+/// so two admins, or an admin and the WPF window, cannot silently undo each other.
 /// </summary>
 [ApiController]
 [Authorize(Policy = ApiAuthentication.AdminPolicy)]
-[Route("api/[controller]")]
+[Route("api/events")]
 public class EventsController : ControllerBase
 {
-    private readonly EventStorageService _storageService;
-    private readonly SmartRestartService _smartRestartService;
-    private readonly IServerEventPublisher _events;
+    private readonly EventStore _store;
+    private readonly EventActivator _activator;
+    private readonly TimeProvider _time;
     private readonly ILogger<EventsController> _logger;
 
     public EventsController(
-        EventStorageService storageService,
-        SmartRestartService smartRestartService,
-        IServerEventPublisher events,
+        EventStore store,
+        EventActivator activator,
+        TimeProvider time,
         ILogger<EventsController> logger)
     {
-        _storageService = storageService;
-        _smartRestartService = smartRestartService;
-        _events = events;
+        _store = store;
+        _activator = activator;
+        _time = time;
         _logger = logger;
     }
 
-    /// <summary>
-    /// Receives the complete event schedule from Laravel and replaces the existing schedule
-    /// </summary>
-    /// <param name="request">Request containing list of events</param>
-    /// <returns>Success or error message</returns>
-    [HttpPost("schedule")]
-    public IActionResult UpdateSchedule([FromBody] EventScheduleRequest request)
-    {
-        if (request?.Events == null)
-        {
-            _logger.LogWarning("Received null or invalid schedule update request");
-            return BadRequest(new { message = "Invalid request: events list is required" });
-        }
+    private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
 
-        _logger.LogInformation("Received schedule update with {Count} events from Laravel", request.Events.Count);
+    /// <summary>Every event, past ones included: upcoming soonest first, then finished ones.</summary>
+    [HttpGet]
+    public async Task<EventListResponse> List() => ToList(await _store.ListAsync());
 
-        // Validate events
-        var validationErrors = ValidateEvents(request.Events);
-        if (validationErrors.Count > 0)
-        {
-            _logger.LogWarning("Schedule validation failed with {Count} errors", validationErrors.Count);
-            return BadRequest(new
-            {
-                message = "Schedule validation failed",
-                errors = validationErrors
-            });
-        }
-
-        // Save schedule
-        var success = _storageService.ReplaceSchedule(request.Events);
-
-        if (success)
-        {
-            _logger.LogInformation("Successfully saved schedule with {Count} events", request.Events.Count);
-            return Ok(new
-            {
-                message = "Event schedule updated successfully",
-                eventsReceived = request.Events.Count
-            });
-        }
-
-        _logger.LogError("Failed to save event schedule");
-        return StatusCode(500, new { message = "Failed to save event schedule" });
-    }
-
-    /// <summary>
-    /// Gets the currently active event
-    /// </summary>
-    /// <returns>The active event or null if none is active</returns>
     [HttpGet("current")]
-    public IActionResult GetCurrentEvent()
+    public async Task<ActionResult<EventResponse>> Current()
     {
-        try
-        {
-            var schedule = _storageService.LoadSchedule();
-            var activeEvent = schedule.GetActiveEvent();
-
-            if (activeEvent == null)
-            {
-                _logger.LogDebug("No active event found");
-                return Ok(new { activeEvent = (Event?)null });
-            }
-
-            _logger.LogDebug("Active event: {EventName} (ID: {EventId})", activeEvent.Name, activeEvent.Id);
-            return Ok(activeEvent);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving current event");
-            return StatusCode(500, new { message = "Error retrieving current event" });
-        }
+        var active = (await _store.ListAsync()).FirstOrDefault(e => e.IsActive);
+        return active is null ? NoContent() : EventResponse.From(active);
     }
 
-    /// <summary>
-    /// Gets all upcoming events (not active, scheduled for the future)
-    /// </summary>
-    /// <returns>List of upcoming events ordered by start time</returns>
+    /// <summary>Events whose next occurrence is past the lead-in window, soonest first.</summary>
     [HttpGet("upcoming")]
-    public IActionResult GetUpcomingEvents()
+    public async Task<EventListResponse> Upcoming()
     {
-        try
-        {
-            var schedule = _storageService.LoadSchedule();
-            var upcomingEvents = schedule.GetUpcomingEvents();
-
-            _logger.LogDebug("Found {Count} upcoming events", upcomingEvents.Count);
-
-            var now = DateTime.UtcNow;
-            var eventsWithStartsIn = upcomingEvents.Select(e => new
-            {
-                e.Id,
-                e.Name,
-                e.Description,
-                e.StartTime,
-                e.IsActive,
-                e.ServerConfig,
-                e.Tracks,
-                e.CollectionName,
-                e.Repeat,
-                StartsIn = FormatTimeUntil(e.StartTime, now),
-                StartsInMinutes = (e.StartTime - now).TotalMinutes
-            }).ToList();
-
-            return Ok(new
-            {
-                count = eventsWithStartsIn.Count,
-                events = eventsWithStartsIn
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving upcoming events");
-            return StatusCode(500, new { message = "Error retrieving upcoming events" });
-        }
+        var dueBy = UtcNow + EventActivator.LeadIn;
+        return ToList((await _store.ListAsync()).Where(e => e.NextOccurrence > dueBy));
     }
 
-    /// <summary>
-    /// Gets events that are due to be activated (start time has passed but not yet active)
-    /// </summary>
-    /// <returns>List of due events</returns>
+    /// <summary>Events the scheduler will start at its next check.</summary>
     [HttpGet("due")]
-    public IActionResult GetDueEvents()
+    public async Task<EventListResponse> Due()
     {
-        try
-        {
-            var schedule = _storageService.LoadSchedule();
-            var dueEvents = schedule.GetDueEvents();
-
-            _logger.LogDebug("Found {Count} due events", dueEvents.Count);
-
-            return Ok(new
-            {
-                count = dueEvents.Count,
-                events = dueEvents
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving due events");
-            return StatusCode(500, new { message = "Error retrieving due events" });
-        }
+        var dueBy = UtcNow + EventActivator.LeadIn;
+        return ToList((await _store.ListAsync()).Where(e => e.NextOccurrence <= dueBy));
     }
 
-    /// <summary>
-    /// Gets a summary of the event schedule status
-    /// </summary>
-    /// <returns>Schedule summary with counts</returns>
     [HttpGet("summary")]
-    public IActionResult GetScheduleSummary()
+    public async Task<EventSummaryResponse> Summary()
     {
-        try
-        {
-            var schedule = _storageService.LoadSchedule();
-            var summary = schedule.GetScheduleSummary();
+        var events = await _store.ListAsync();
+        var dueBy = UtcNow + EventActivator.LeadIn;
+        return new EventSummaryResponse(
+            events.Count,
+            events.Count(e => e.IsActive),
+            events.Count(e => e.NextOccurrence > dueBy),
+            events.Count(e => e.NextOccurrence <= dueBy),
+            events.Count == 0 ? null : events.Max(e => e.UpdatedAt));
+    }
 
-            return Ok(new
-            {
-                totalEvents = summary.Total,
-                activeEvents = summary.Active,
-                upcomingEvents = summary.Upcoming,
-                dueEvents = summary.Due,
-                lastUpdated = schedule.LastUpdated
-            });
-        }
-        catch (Exception ex)
+    [HttpGet("{id:int}")]
+    public async Task<ActionResult<EventResponse>> Get(int id)
+    {
+        var evt = await _store.GetAsync(id);
+        if (evt is null)
         {
-            _logger.LogError(ex, "Error retrieving schedule summary");
-            return StatusCode(500, new { message = "Error retrieving schedule summary" });
+            return NotFound();
         }
+
+        this.SetETag(evt.Version);
+        return EventResponse.From(evt);
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<EventResponse>> Create(EventRequest request)
+    {
+        if (EventRules.Validate(request, out var definition) is { } error)
+        {
+            return this.Invalid(error.Field, error.Message);
+        }
+
+        // A signed-in user; API-key callers have no user id.
+        var createdById = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var (status, evt) = await _store.CreateAsync(definition!, createdById);
+        if (status == EventWriteStatus.UnknownCollection)
+        {
+            return UnknownCollection();
+        }
+
+        _logger.LogInformation("{Caller} created event {Name} (ID {Id})", this.Caller(), evt!.Name, evt.Id);
+        this.SetETag(evt.Version);
+        return CreatedAtAction(nameof(Get), new { id = evt.Id }, EventResponse.From(evt));
+    }
+
+    /// <summary>Replaces everything an admin sets. Needs If-Match; a stale one gets 409 with the current event.</summary>
+    [HttpPut("{id:int}")]
+    public async Task<ActionResult<EventResponse>> Update(int id, EventRequest request)
+    {
+        if (this.ReadIfMatch(out var expected) is { } badPrecondition)
+        {
+            return badPrecondition;
+        }
+
+        if (EventRules.Validate(request, out var definition) is { } error)
+        {
+            return this.Invalid(error.Field, error.Message);
+        }
+
+        var (status, evt) = await _store.UpdateAsync(id, definition!, expected);
+        switch (status)
+        {
+            case EventWriteStatus.NotFound:
+                return NotFound();
+            case EventWriteStatus.UnknownCollection:
+                return UnknownCollection();
+            case EventWriteStatus.Conflict:
+                return this.VersionConflict(EventResponse.From(evt!), evt!.Version);
+        }
+
+        _logger.LogInformation("{Caller} saved event {Name} (ID {Id})", this.Caller(), evt!.Name, id);
+        this.SetETag(evt.Version);
+        return EventResponse.From(evt);
+    }
+
+    /// <summary>Needs If-Match, like PUT: deleting an event someone just changed would lose their change.</summary>
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        if (this.ReadIfMatch(out var expected) is { } badPrecondition)
+        {
+            return badPrecondition;
+        }
+
+        var (status, current) = await _store.DeleteAsync(id, expected);
+        switch (status)
+        {
+            case EventWriteStatus.NotFound:
+                return NotFound();
+            case EventWriteStatus.Conflict:
+                return this.VersionConflict(EventResponse.From(current!), current!.Version);
+        }
+
+        _logger.LogInformation("{Caller} deleted event {Id}", this.Caller(), id);
+        return NoContent();
     }
 
     /// <summary>
-    /// Manually activates a specific event by ID.
-    /// Finds the event, applies its configuration (server name, welcome message, track rotation),
-    /// marks it as active, and notifies the web UI.
+    /// Applies the event's settings and starts a smart restart; the event becomes active
+    /// when the restart succeeds. 202, because that can take minutes.
     /// </summary>
-    /// <param name="id">Event ID to activate</param>
-    /// <returns>Success or error message</returns>
-    [HttpPost("{id}/activate")]
-    public async Task<IActionResult> ActivateEvent(int id)
+    [HttpPost("{id:int}/activate")]
+    public async Task<IActionResult> Activate(int id)
     {
-        _logger.LogInformation("Received manual activation request for event ID {EventId}", id);
-
+        ActivationResult result;
         try
         {
-            // 1. Find the event by ID from the schedule
-            var schedule = _storageService.LoadSchedule();
-            var eventToActivate = schedule.GetEventById(id);
-
-            if (eventToActivate == null)
-            {
-                _logger.LogWarning("Event ID {EventId} not found in schedule", id);
-                return NotFound(new { message = $"Event with ID {id} not found in schedule" });
-            }
-
-            if (eventToActivate.IsActive)
-            {
-                _logger.LogWarning("Event ID {EventId} is already active", id);
-                return BadRequest(new { message = $"Event '{eventToActivate.Name}' is already active" });
-            }
-
-            _logger.LogInformation(
-                "Activating event: {EventName} (ID: {EventId})",
-                eventToActivate.Name,
-                eventToActivate.Id);
-
-            // 2. Initiate smart restart to apply the event's configuration
-            // Capture individual services rather than `this` so the controller instance is not kept alive
-            // by SmartRestartService for the duration of the restart (which can take several minutes).
-            var storageService = _storageService;
-            var events = _events;
-            var logger = _logger;
-            var restartInitiated = _smartRestartService.InitiateRestart(
-                eventToActivate,
-                @event => OnManualEventActivated(@event, storageService, events, logger));
-
-            if (!restartInitiated)
-            {
-                _logger.LogError(
-                    "Failed to initiate restart for event {EventName} (ID {EventId}) - restart already in progress",
-                    eventToActivate.Name,
-                    eventToActivate.Id);
-
-                return Conflict(new
-                {
-                    message = "A server restart is already in progress. Please wait for it to complete.",
-                    eventId = id,
-                    eventName = eventToActivate.Name
-                });
-            }
-
-            _logger.LogInformation(
-                "Smart restart initiated for event {EventName} (ID {EventId}). Configuration will be applied and server will restart.",
-                eventToActivate.Name,
-                eventToActivate.Id);
-
-            return Ok(new
-            {
-                message = "Event activation initiated. Server will restart with new configuration.",
-                eventId = id,
-                eventName = eventToActivate.Name,
-                note = "The server will warn players and restart gracefully. Configuration will be applied automatically."
-            });
+            result = await _activator.ActivateAsync(id);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ConfigWriteFailure.From(ex) is { } failure)
         {
-            _logger.LogError(ex, "Error activating event ID {EventId}", id);
-            return StatusCode(500, new { message = "Error activating event", error = ex.Message });
+            _logger.LogWarning(ex, "Could not activate event {Id}: {Reason}", id, failure.Reason);
+            return this.Refused(failure.Message, ("reason", failure.Reason));
         }
+
+        switch (result)
+        {
+            case ActivationResult.NotFound:
+                return NotFound();
+            case ActivationResult.AlreadyActive:
+                return this.Refused("The event is already active.");
+            case ActivationResult.Busy:
+                return this.Refused("A server restart is already in progress. Try again when it has finished.");
+        }
+
+        _logger.LogInformation("{Caller} activated event {Id}", this.Caller(), id);
+        return Accepted(new
+        {
+            message = "Activation started. Players are warned, and the server restarts with the event's settings.",
+            eventId = id,
+        });
     }
 
-    private static void OnManualEventActivated(
-        Event @event,
-        EventStorageService storageService,
-        IServerEventPublisher events,
-        ILogger logger)
+    private ActionResult UnknownCollection() =>
+        this.Invalid("collectionId", "There is no collection with that id.");
+
+    private static EventListResponse ToList(IEnumerable<ScheduledEvent> events)
     {
-        try
-        {
-            logger.LogInformation(
-                "Manual event activation completed for {EventName} (ID: {EventId})",
-                @event.Name,
-                @event.Id);
-
-            var schedule = storageService.LoadSchedule();
-            var activated = schedule.ActivateEvent(@event.Id);
-
-            if (!activated)
-            {
-                logger.LogWarning(
-                    "Event {EventName} (ID {EventId}) not found in schedule when marking as active",
-                    @event.Name,
-                    @event.Id);
-            }
-            else
-            {
-                var saved = storageService.SaveSchedule(schedule);
-                if (saved)
-                    logger.LogInformation("Marked event {EventName} (ID {EventId}) as active in schedule", @event.Name, @event.Id);
-                else
-                    logger.LogError("Failed to save schedule after marking event {EventName} (ID {EventId}) as active", @event.Name, @event.Id);
-            }
-
-            _ = events.EventActivatedAsync(@event.Id, @event.Name);
-
-            logger.LogInformation("Manual event activation workflow completed for {EventName} (ID {EventId})", @event.Name, @event.Id);
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Error in manual event activation callback for {EventName} (ID {EventId})", @event.Name, @event.Id);
-        }
+        var list = events.Select(EventResponse.From).ToList();
+        return new EventListResponse(list.Count, list);
     }
-
-    /// <summary>
-    /// Gets a specific event by ID
-    /// </summary>
-    /// <param name="id">Event ID</param>
-    /// <returns>The event or 404 if not found</returns>
-    [HttpGet("{id}")]
-    public IActionResult GetEventById(int id)
-    {
-        try
-        {
-            var schedule = _storageService.LoadSchedule();
-            var evt = schedule.GetEventById(id);
-
-            if (evt == null)
-            {
-                return NotFound(new { message = $"Event with ID {id} not found" });
-            }
-
-            return Ok(evt);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error retrieving event ID {EventId}", id);
-            return StatusCode(500, new { message = "Error retrieving event" });
-        }
-    }
-
-    /// <summary>
-    /// Validates a list of events for common errors
-    /// </summary>
-    private List<string> ValidateEvents(List<Event> events)
-    {
-        var errors = new List<string>();
-
-        for (int i = 0; i < events.Count; i++)
-        {
-            var evt = events[i];
-
-            if (evt.Id <= 0)
-            {
-                errors.Add($"Event {i}: ID must be greater than 0");
-            }
-
-            if (string.IsNullOrWhiteSpace(evt.Name))
-            {
-                errors.Add($"Event {i} (ID {evt.Id}): Name is required");
-            }
-
-            if (evt.StartTime == default)
-            {
-                errors.Add($"Event {i} (ID {evt.Id}): StartTime is required");
-            }
-
-            // Validate tracks if present
-            if (evt.Tracks != null && evt.Tracks.Count > 0)
-            {
-                for (int j = 0; j < evt.Tracks.Count; j++)
-                {
-                    var track = evt.Tracks[j];
-                    if (string.IsNullOrWhiteSpace(track.Track))
-                    {
-                        errors.Add($"Event {i} (ID {evt.Id}), Track {j}: Track path is required");
-                    }
-                }
-            }
-
-            // Validate repeat schedule if present
-            if (evt.Repeat != null)
-            {
-                if (evt.Repeat.IsWeekly &&
-                    (evt.Repeat.Days == null || evt.Repeat.Days.Count == 0))
-                {
-                    errors.Add($"Event {i} (ID {evt.Id}): Weekly repeating events must specify at least one day");
-                }
-            }
-        }
-
-        return errors;
-    }
-
-    /// <summary>
-    /// Formats the time until an event starts into a human-readable string
-    /// </summary>
-    private static string FormatTimeUntil(DateTime eventTime, DateTime now)
-    {
-        var timeSpan = eventTime - now;
-
-        if (timeSpan.TotalSeconds < 0)
-            return "overdue";
-
-        if (timeSpan.TotalDays >= 1)
-        {
-            var days = (int)timeSpan.TotalDays;
-            var hours = timeSpan.Hours;
-            return hours > 0 ? $"{days}d {hours}h" : $"{days}d";
-        }
-
-        if (timeSpan.TotalHours >= 1)
-        {
-            var hours = (int)timeSpan.TotalHours;
-            var minutes = timeSpan.Minutes;
-            return minutes > 0 ? $"{hours}h {minutes}m" : $"{hours}h";
-        }
-
-        if (timeSpan.TotalMinutes >= 1)
-        {
-            var minutes = (int)timeSpan.TotalMinutes;
-            var seconds = timeSpan.Seconds;
-            return seconds > 0 ? $"{minutes}m {seconds}s" : $"{minutes}m";
-        }
-
-        return $"{(int)timeSpan.TotalSeconds}s";
-    }
-}
-
-/// <summary>
-/// Request model for updating the event schedule
-/// </summary>
-public class EventScheduleRequest
-{
-    public List<Event> Events { get; set; } = new();
 }

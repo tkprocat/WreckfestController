@@ -56,8 +56,8 @@
                                        Binding="{Binding Name}"
                                        Width="2*"/>
 
-                    <DataGridTextColumn Header="Start Time"
-                                       Binding="{Binding StartTime, StringFormat='yyyy-MM-dd HH:mm'}"
+                    <DataGridTextColumn Header="Next"
+                                       Binding="{Binding Next}"
                                        Width="1.5*"/>
 
                     <DataGridTextColumn Header="Tracks"
@@ -159,7 +159,7 @@
                                 Cursor="Arrow"/>
 
                         <!-- Start Time -->
-                        <TextBlock Text="Start Time"
+                        <TextBlock Text="Next Occurrence"
                                   Foreground="{StaticResource TextSecondary}"
                                   FontSize="11"
                                   Margin="0,0,0,5"/>

@@ -3,86 +3,24 @@ using System.Text.Json.Serialization;
 namespace WreckfestController.Models;
 
 /// <summary>
-/// Represents a scheduled server event that can be automatically activated at a specific time.
-/// Events can override server configuration and deploy custom track rotations.
+/// What a smart restart applies when an event activates: its server settings and the
+/// rotation to deploy. Built from a <see cref="Data.Events.ScheduledEvent"/> at the
+/// moment of activation, with a linked collection's tracks as they are then.
 /// </summary>
 public class Event
 {
-    /// <summary>
-    /// Unique identifier for the event (matches Laravel database ID)
-    /// </summary>
-    [JsonPropertyName("id")]
     public int Id { get; set; }
 
-    /// <summary>
-    /// Display name of the event
-    /// </summary>
-    [JsonPropertyName("name")]
     public string Name { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Detailed description of the event
-    /// </summary>
-    [JsonPropertyName("description")]
-    public string Description { get; set; } = string.Empty;
-
-    /// <summary>
-    /// UTC timestamp when the event should be activated
-    /// </summary>
-    [JsonPropertyName("startTime")]
-    public DateTime StartTime { get; set; }
-
-    /// <summary>
-    /// Indicates whether this event is currently active on the server
-    /// </summary>
-    [JsonPropertyName("isActive")]
-    public bool IsActive { get; set; }
-
-    /// <summary>The scheduled occurrence most recently activated, retained after deactivation.</summary>
-    [JsonPropertyName("lastActivatedStartTime")]
-    public DateTime? LastActivatedStartTime { get; set; }
-
-    [JsonIgnore]
-    public bool IsOccurrenceCompleted =>
-        LastActivatedStartTime is { } last && AsUtcInstant(last) == AsUtcInstant(StartTime);
-
-    /// <summary>
-    /// The UTC instant a schedule timestamp denotes. A refresh may express the same
-    /// occurrence as UTC, as a local offset, or with no zone at all - PHP emits
-    /// "2026-09-06T20:00:00", which deserializes as Unspecified. Every scheduler
-    /// comparison is against DateTime.UtcNow, so an unzoned value is already a UTC
-    /// instant; ToUniversalTime alone would reinterpret it as local and shift the
-    /// event by the machine's offset.
-    /// </summary>
-    public static DateTime AsUtcInstant(DateTime value) => value.Kind == DateTimeKind.Unspecified
-        ? DateTime.SpecifyKind(value, DateTimeKind.Utc)
-        : value.ToUniversalTime();
-
-    /// <summary>
-    /// Server configuration overrides to apply when event activates.
-    /// Only populated fields will be applied; null/default values are ignored.
-    /// </summary>
-    [JsonPropertyName("serverConfig")]
+    /// <summary>Only the fields that are set are applied.</summary>
     public EventServerConfig? ServerConfig { get; set; }
 
-    /// <summary>
-    /// Track rotation to deploy when event activates
-    /// </summary>
-    [JsonPropertyName("tracks")]
+    /// <summary>The rotation to deploy. Empty leaves the server's rotation alone.</summary>
     public List<EventLoopTrack> Tracks { get; set; } = new();
 
-    /// <summary>
-    /// Name of the track collection being deployed
-    /// </summary>
-    [JsonPropertyName("collectionName")]
+    /// <summary>The <c>#CollectionName</c> line; "Event: &lt;name&gt;" when empty.</summary>
     public string CollectionName { get; set; } = string.Empty;
-
-    /// <summary>
-    /// Optional recurring schedule for automatic rescheduling after activation.
-    /// Null for single-occurrence events.
-    /// </summary>
-    [JsonPropertyName("repeat")]
-    public RepeatSchedule? Repeat { get; set; }
 }
 
 /// <summary>
@@ -149,8 +87,8 @@ public class EventServerConfig
 }
 
 /// <summary>
-/// Defines how an event should recur after activation.
-/// Matches the Laravel event schedule format.
+/// How an event recurs. <see cref="Time"/> and <see cref="Days"/> are wall-clock values
+/// in the event's time zone, so "20:00 on Fridays" stays 20:00 across daylight saving.
 /// </summary>
 public class RepeatSchedule
 {
@@ -168,7 +106,7 @@ public class RepeatSchedule
     public List<int>? Days { get; set; }
 
     /// <summary>
-    /// Time of day when event should activate (format: "HH:MM")
+    /// Time of day when event should activate (format: "HH:MM"), in the event's time zone
     /// </summary>
     [JsonPropertyName("time")]
     public string Time { get; set; } = "00:00";
@@ -181,7 +119,7 @@ public class RepeatSchedule
     {
         get
         {
-            if (TimeSpan.TryParse(Time, out var result))
+            if (TimeSpan.TryParse(Time, System.Globalization.CultureInfo.InvariantCulture, out var result))
                 return result;
             return TimeSpan.Zero;
         }

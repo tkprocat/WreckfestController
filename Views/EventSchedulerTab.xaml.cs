@@ -2,105 +2,73 @@ using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Extensions.Logging;
-using WreckfestController.Models;
+using WreckfestController.Data.Events;
 using WreckfestController.Services;
 
 namespace WreckfestController.Views;
 
+/// <summary>
+/// Lists scheduled events and activates one on demand. Events are created and edited in
+/// the web UI; activation goes through the same <see cref="EventActivator"/> as the API
+/// and the scheduler.
+/// </summary>
 public partial class EventSchedulerTab : UserControl
 {
-    private readonly EventStorageService _eventStorage;
-    private readonly SmartRestartService _smartRestartService;
-    private readonly IServerEventPublisher _publisher;
+    private readonly EventStore _store;
+    private readonly EventActivator _activator;
     private readonly ILogger<EventSchedulerTab> _logger;
     private readonly ObservableCollection<EventViewModel> _events = new();
-    private Event? _selectedEvent;
+    private ScheduledEvent? _selectedEvent;
 
     public EventSchedulerTab(
-        EventStorageService eventStorage,
-        SmartRestartService smartRestartService,
-        IServerEventPublisher publisher,
+        EventStore store,
+        EventActivator activator,
         ILogger<EventSchedulerTab> logger)
     {
         InitializeComponent();
 
-        _eventStorage = eventStorage;
-        _smartRestartService = smartRestartService;
-        _publisher = publisher;
+        _store = store;
+        _activator = activator;
         _logger = logger;
 
         EventsDataGrid.ItemsSource = _events;
 
-        // Initial load
-        LoadUpcomingEvents();
+        _ = LoadEventsAsync();
     }
 
-    private void LoadUpcomingEvents()
+    private async Task LoadEventsAsync()
     {
         try
         {
-            // Save currently selected event ID
             var selectedEventId = _selectedEvent?.Id;
-
-            var schedule = _eventStorage.LoadSchedule();
-            var allEvents = schedule.Events;
+            var events = await _store.ListAsync();
 
             _events.Clear();
-            foreach (var evt in allEvents.OrderBy(e => e.StartTime))
+            foreach (var evt in events)
             {
-                _events.Add(new EventViewModel
-                {
-                    Id = evt.Id,
-                    Name = evt.Name,
-                    StartTime = evt.StartTime,
-                    TrackCount = evt.Tracks?.Count ?? 0,
-                    RepeatSchedule = GetRepeatDisplay(evt),
-                    Event = evt
-                });
+                _events.Add(new EventViewModel(evt));
             }
 
             _logger.LogDebug("Loaded {Count} events", _events.Count);
 
-            // Restore selection if the event still exists
-            if (selectedEventId.HasValue)
+            if (selectedEventId is { } id && _events.FirstOrDefault(e => e.Event.Id == id) is { } reselect)
             {
-                var eventToSelect = _events.FirstOrDefault(e => e.Id == selectedEventId.Value);
-                if (eventToSelect != null)
-                {
-                    EventsDataGrid.SelectedItem = eventToSelect;
-                }
+                EventsDataGrid.SelectedItem = reselect;
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error loading events");
+            // Recovery mode: the database banner already says why.
+            _logger.LogError(ex, "Could not load events");
         }
-    }
-
-    private string GetRepeatDisplay(Event evt)
-    {
-        if (evt.Repeat == null)
-            return "One-time";
-
-        if (evt.Repeat.IsDaily)
-            return $"Daily at {evt.Repeat.Time}";
-
-        if (evt.Repeat.IsWeekly && evt.Repeat.Days != null && evt.Repeat.Days.Count > 0)
-        {
-            var dayNames = new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
-            var days = string.Join(", ", evt.Repeat.Days.Select(d => dayNames[d]));
-            return $"Weekly ({days}) at {evt.Repeat.Time}";
-        }
-
-        return "Repeating";
     }
 
     private void OnEventSelected(object sender, SelectionChangedEventArgs e)
     {
-        if (EventsDataGrid.SelectedItem is EventViewModel selectedViewModel)
+        if (EventsDataGrid.SelectedItem is EventViewModel selected)
         {
-            _selectedEvent = selectedViewModel.Event;
-            ShowEventDetails(_selectedEvent);
+            _selectedEvent = selected.Event;
+            ShowEventDetails(selected);
             ActivateButton.IsEnabled = true;
         }
         else
@@ -111,25 +79,22 @@ public partial class EventSchedulerTab : UserControl
         }
     }
 
-    private void ShowEventDetails(Event evt)
+    private void ShowEventDetails(EventViewModel selected)
     {
         NoSelectionText.Visibility = Visibility.Collapsed;
         DetailsContent.Visibility = Visibility.Visible;
 
-        EventNameText.Text = evt.Name;
-        StartTimeText.Text = evt.StartTime.ToString("yyyy-MM-dd HH:mm:ss");
+        var evt = selected.Event;
+        EventNameText.Text = evt.IsActive ? $"{evt.Name} (active)" : evt.Name;
+        StartTimeText.Text = selected.Next;
         ServerNameText.Text = evt.ServerConfig?.ServerName ?? "N/A";
 
-        if (evt.Tracks != null && evt.Tracks.Count > 0)
-        {
-            TracksText.Text = string.Join("\n", evt.Tracks.Select((t, i) => $"{i + 1}. {t.Track}"));
-        }
-        else
-        {
-            TracksText.Text = "No tracks defined";
-        }
+        var deployed = EventStore.ToRestartEvent(evt);
+        TracksText.Text = deployed.Tracks.Count > 0
+            ? string.Join("\n", deployed.Tracks.Select((t, i) => $"{i + 1}. {t.Track}"))
+            : "No tracks defined";
 
-        RecurringText.Text = GetRepeatDisplay(evt);
+        RecurringText.Text = selected.RepeatSchedule;
     }
 
     private void HideEventDetails()
@@ -138,10 +103,7 @@ public partial class EventSchedulerTab : UserControl
         DetailsContent.Visibility = Visibility.Collapsed;
     }
 
-    private void OnRefreshClicked(object sender, RoutedEventArgs e)
-    {
-        LoadUpcomingEvents();
-    }
+    private async void OnRefreshClicked(object sender, RoutedEventArgs e) => await LoadEventsAsync();
 
     private async void OnActivateClicked(object sender, RoutedEventArgs e)
     {
@@ -151,50 +113,45 @@ public partial class EventSchedulerTab : UserControl
 
         try
         {
-            // Check if smart restart is already in progress
-            var state = _smartRestartService.GetState();
-            if (state != SmartRestartState.Idle)
-            {
-                await DialogService.ShowWarningAsync(
-                    $"Smart restart is already in progress (State: {state}). Please wait for it to complete.",
-                    "Cannot Activate");
-                return;
-            }
-
-            // Confirm with user
-            var result = await DialogService.ShowConfirmationAsync(
+            var confirmed = await DialogService.ShowConfirmationAsync(
                 $"This will initiate a smart restart to activate event:\n\n" +
                 $"'{eventToActivate.Name}'\n\n" +
                 $"The server will send countdown warnings to players and restart at the next lobby.\n\n" +
                 $"Continue?",
                 "Confirm Event Activation");
 
-            if (!result)
+            if (!confirmed)
                 return;
 
+            ActivateButton.IsEnabled = false;
             _logger.LogInformation("Manually activating event: {EventName} (ID: {EventId})", eventToActivate.Name, eventToActivate.Id);
 
-            // Disable button during activation
-            ActivateButton.IsEnabled = false;
+            var result = await _activator.ActivateAsync(
+                eventToActivate.Id,
+                _ => Dispatcher.InvokeAsync(LoadEventsAsync));
 
-            // The shared entry point checks idle state before writing configuration.
-            // Another request may have started a restart while confirmation was open.
-            var restartInitiated = _smartRestartService.InitiateRestart(eventToActivate, OnEventActivated);
-            if (!restartInitiated)
+            switch (result)
             {
-                await DialogService.ShowWarningAsync(
-                    "A server restart is already in progress. Please wait for it to complete.",
-                    "Cannot Activate");
-                return;
+                case ActivationResult.Started:
+                    await DialogService.ShowSuccessAsync(
+                        "Event activation initiated!\n\n" +
+                        "The server will begin the countdown process and restart at the next opportunity.",
+                        "Activation Started");
+                    break;
+                case ActivationResult.Busy:
+                    await DialogService.ShowWarningAsync(
+                        "A server restart is already in progress. Please wait for it to complete.",
+                        "Cannot Activate");
+                    break;
+                case ActivationResult.AlreadyActive:
+                    await DialogService.ShowWarningAsync($"'{eventToActivate.Name}' is already active.", "Cannot Activate");
+                    break;
+                case ActivationResult.NotFound:
+                    await DialogService.ShowWarningAsync($"'{eventToActivate.Name}' has been deleted.", "Cannot Activate");
+                    break;
             }
 
-            await DialogService.ShowSuccessAsync(
-                $"Event activation initiated!\n\n" +
-                $"The server will begin the countdown process and restart at the next opportunity.",
-                "Activation Started");
-
-            // Refresh the event list
-            LoadUpcomingEvents();
+            await LoadEventsAsync();
         }
         catch (Exception ex)
         {
@@ -206,48 +163,27 @@ public partial class EventSchedulerTab : UserControl
             ActivateButton.IsEnabled = _selectedEvent != null;
         }
     }
-
-    /// <summary>
-    /// Callback invoked when the event has been activated (restart completed)
-    /// </summary>
-    private void OnEventActivated(Event @event)
-    {
-        try
-        {
-            _logger.LogInformation("Event {EventName} (ID {EventId}) activated successfully", @event.Name, @event.Id);
-
-            // Mark event as active in storage
-            var schedule = _eventStorage.LoadSchedule();
-            var activated = schedule.ActivateEvent(@event.Id);
-            if (activated)
-            {
-                _eventStorage.SaveSchedule(schedule);
-                _logger.LogInformation("Marked event {EventName} as active in schedule", @event.Name);
-            }
-
-            _ = _publisher.EventActivatedAsync(@event.Id, @event.Name);
-
-            // Re-enable button on UI thread
-            Dispatcher.Invoke(() =>
-            {
-                ActivateButton.IsEnabled = true;
-                LoadUpcomingEvents();
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error in event activation callback");
-            Dispatcher.Invoke(() => ActivateButton.IsEnabled = true);
-        }
-    }
 }
 
 public class EventViewModel
 {
-    public int Id { get; set; }
-    public string Name { get; set; } = string.Empty;
-    public DateTime StartTime { get; set; }
-    public int TrackCount { get; set; }
-    public string RepeatSchedule { get; set; } = string.Empty;
-    public Event Event { get; set; } = null!;
+    public EventViewModel(ScheduledEvent evt)
+    {
+        Event = evt;
+        Name = evt.IsActive ? $"{evt.Name} (active)" : evt.Name;
+        Next = evt.NextOccurrence is { } next ? next.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "Finished";
+        TrackCount = EventStore.ToRestartEvent(evt).Tracks.Count;
+        RepeatSchedule = evt.Repeat is null
+            ? "One-time"
+            : $"{EventRecurrence.Describe(evt.Repeat)} ({evt.TimeZone})";
+    }
+
+    public ScheduledEvent Event { get; }
+    public string Name { get; }
+
+    /// <summary>The next occurrence in this machine's local time.</summary>
+    public string Next { get; }
+
+    public int TrackCount { get; }
+    public string RepeatSchedule { get; }
 }

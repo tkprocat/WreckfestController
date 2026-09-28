@@ -42,7 +42,8 @@ public sealed class RecoveryModeTests : IDisposable
         host.Services.GetRequiredService<ServerManager>();
         host.Services.GetRequiredService<PlayerTracker>();
         host.Services.GetRequiredService<SettingsService>();
-        host.Services.GetRequiredService<EventStorageService>();
+        host.Services.GetRequiredService<EventStore>();
+        host.Services.GetRequiredService<EventActivator>();
         host.Services.GetRequiredService<SmartRestartService>();
         host.Services.GetRequiredService<IApiServer>();
 

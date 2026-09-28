@@ -184,8 +184,8 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddSingleton<IServerEventPublisher>(publisher);
         builder.Services.AddSingleton(main.GetRequiredService<ServerManager>());
         builder.Services.AddSingleton(main.GetRequiredService<ConfigService>());
-        builder.Services.AddSingleton(main.GetRequiredService<EventStorageService>());
-        builder.Services.AddSingleton(main.GetRequiredService<RecurringEventService>());
+        builder.Services.AddSingleton(main.GetRequiredService<EventStore>());
+        builder.Services.AddSingleton(main.GetRequiredService<EventActivator>());
         builder.Services.AddSingleton(main.GetRequiredService<SmartRestartService>());
         builder.Services.AddSingleton(main.GetRequiredService<DatabaseState>());
 
