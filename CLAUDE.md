@@ -27,6 +27,12 @@ requires Visual Studio with the Desktop development with C++ workload.
 MinHook is vendored under `NativeHooks/WreckfestConsoleHook/third_party/minhook`
 so the build needs no network.
 
+`dotnet build` also builds the Vue web app in `web/` (`BuildWebApp`): `npm ci` when the
+lockfile changes, `npm run build` when a source changes, then `web/dist` is copied to
+`wwwroot` next to the exe, where `ApiServer` serves it. It needs Node.js on PATH;
+`-p:SkipWebBuild=true` skips it for C#-only work. `web/` uses Naive UI, not PrimeVue
+(PrimeVue 5 left MIT): check a package's license before adding it.
+
 ### Never pass `--nologo` to `dotnet test`
 
 The test project is **xunit.v3 on Microsoft.Testing.Platform** (`global.json` selects the
