@@ -183,18 +183,23 @@
   <!--
     The web app (web/, Vue + Vite). Built with npm into web/dist, then copied to
     wwwroot next to the exe, where ApiServer serves it. Node.js LTS is a build
-    requirement like the C++ workload; -p:SkipWebBuild=true builds the C# alone and
-    the controller then serves the API without a web page.
+    requirement like the C++ workload; -p:SkipWebBuild=true builds the C# alone, and
+    still copies whatever web/dist an earlier build left (none: the API alone).
 
-    Inputs/Outputs make both steps no-ops when nothing changed: npm ci only when the
-    lockfile is newer than the installed packages, the build only when a source is
-    newer than dist/index.html.
+    Inputs/Outputs make both steps no-ops when nothing changed: npm ci only when
+    package.json or the lockfile is newer than the installed packages, the build only
+    when a source is newer than dist/index.html. MSBuild compares timestamps only, so
+    two stamp files cover what that misses: the list of sources (a deleted or added
+    file changes it) and the list of files the last build produced (one gone from dist
+    forces a rebuild).
   -->
   <PropertyGroup>
     <WebAppDir>$(MSBuildProjectDirectory)\web</WebAppDir>
     <WebAppDist>$(WebAppDir)\dist</WebAppDist>
     <WebAppLock>$(WebAppDir)\package-lock.json</WebAppLock>
     <WebAppInstalled>$(WebAppDir)\node_modules\.wfc-installed</WebAppInstalled>
+    <WebAppInputList>$(MSBuildProjectDirectory)\obj\webapp.inputs</WebAppInputList>
+    <WebAppOutputList>$(MSBuildProjectDirectory)\obj\webapp.outputs</WebAppOutputList>
   </PropertyGroup>
 
   <ItemGroup>
@@ -212,17 +217,42 @@
   </Target>
 
   <Target Name="InstallWebAppPackages" DependsOnTargets="CheckNodeForWebApp" Condition="'$(SkipWebBuild)' != 'true'"
-          Inputs="$(WebAppLock)" Outputs="$(WebAppInstalled)">
+          Inputs="$(WebAppDir)\package.json;$(WebAppLock)" Outputs="$(WebAppInstalled)">
     <Message Importance="high" Text="Installing web app packages (npm ci)..." />
     <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(WebAppDir)" />
     <!-- npm's own marker files keep old timestamps, so this target keeps its own. -->
     <Touch Files="$(WebAppInstalled)" AlwaysCreate="true" />
   </Target>
 
-  <Target Name="BuildWebApp" BeforeTargets="BeforeBuild" DependsOnTargets="InstallWebAppPackages" Condition="'$(SkipWebBuild)' != 'true'"
-          Inputs="@(WebAppSource)" Outputs="$(WebAppDist)\index.html">
+  <!-- Rewritten only when the list differs, so its timestamp moves only then. -->
+  <Target Name="RecordWebAppInputs" Condition="'$(SkipWebBuild)' != 'true'">
+    <WriteLinesToFile File="$(WebAppInputList)" Lines="@(WebAppSource->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- A file the last build produced is missing from dist: build again. -->
+  <Target Name="CheckWebAppOutputs" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(WebAppOutputList)')">
+    <ReadLinesFromFile File="$(WebAppOutputList)">
+      <Output TaskParameter="Lines" ItemName="RecordedWebAppOutput" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <MissingWebAppOutput Include="@(RecordedWebAppOutput)" Condition="!Exists('%(Identity)')" />
+    </ItemGroup>
+    <Message Importance="high" Text="Web app output is incomplete; rebuilding." Condition="'@(MissingWebAppOutput)' != ''" />
+    <Delete Files="$(WebAppDist)\index.html" Condition="'@(MissingWebAppOutput)' != ''" />
+  </Target>
+
+  <Target Name="BuildWebApp" BeforeTargets="BeforeBuild"
+          DependsOnTargets="InstallWebAppPackages;RecordWebAppInputs;CheckWebAppOutputs" Condition="'$(SkipWebBuild)' != 'true'"
+          Inputs="@(WebAppSource);$(WebAppInputList);$(WebAppInstalled)" Outputs="$(WebAppDist)\index.html">
     <Message Importance="high" Text="Building web app (npm run build)..." />
     <Exec Command="npm run build" WorkingDirectory="$(WebAppDir)" />
+  </Target>
+
+  <Target Name="RecordWebAppOutputs" AfterTargets="BuildWebApp" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(WebAppDist)\index.html')">
+    <ItemGroup>
+      <ProducedWebAppOutput Include="$(WebAppDist)\**\*" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(WebAppOutputList)" Lines="@(ProducedWebAppOutput->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
   <!-- Replaces wwwroot whole, so assets from an earlier build do not linger. -->
