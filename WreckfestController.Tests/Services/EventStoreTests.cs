@@ -93,6 +93,20 @@ public sealed class EventStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task MovingACancelledOneOffToAnEarlierFutureTime_RunsIt()
+    {
+        // 12:05 was cancelled at 12:01; 12:04 is a different occurrence, still ahead.
+        var cancelled = _db.Clock.UtcNow.AddMinutes(5);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Race night", cancelled));
+        await _db.Store.AdvanceAsync(evt.Id, cancelled, OccurrenceOutcome.Cancelled, Ct);
+
+        var earlier = _db.Clock.UtcNow.AddMinutes(4);
+        var (_, saved) = await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Race night", earlier), 1, Ct);
+
+        Assert.Equal(earlier, saved!.NextOccurrence);
+    }
+
+    [Fact]
     public async Task Advance_AfterAnAdminRescheduled_LeavesTheNewTime()
     {
         var start = _db.Clock.UtcNow.AddMinutes(2);

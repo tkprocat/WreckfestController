@@ -101,19 +101,44 @@ public class EventSchedulerService : IHostedService, IDisposable
     private async Task<bool> HandleNextDueAsync()
     {
         var now = _time.GetUtcNow().UtcDateTime;
-        var evt = await _store.NextDueAsync(now + EventActivator.LeadIn);
-        if (evt?.NextOccurrence is not { } occurrence)
+        var due = await _store.NextDueAsync(now + EventActivator.LeadIn);
+        if (due is null)
         {
             return false;
         }
 
-        // A manual activation owns this occurrence until its restart has been recorded;
-        // counting it missed, or starting it again, would be wrong either way.
-        if (_activator.IsInFlight(evt.Id))
+        // Someone else - a manual activation - owns this event until its outcome is
+        // recorded. Counting it missed, or starting it again, would be wrong either way.
+        // Stop the scan: while its restart runs, nothing else could start anyway.
+        if (!_activator.TryClaim(due.Id))
         {
             return false;
         }
 
+        var claimHeld = true;
+        try
+        {
+            // Re-read under the claim: what was due a moment ago may have been dealt with.
+            var evt = await _store.GetAsync(due.Id);
+            if (evt?.NextOccurrence is not { } occurrence || occurrence != due.NextOccurrence)
+            {
+                return true;
+            }
+
+            return await HandleClaimedAsync(evt, occurrence, now, () => claimHeld = false);
+        }
+        finally
+        {
+            if (claimHeld)
+            {
+                _activator.Release(due.Id);
+            }
+        }
+    }
+
+    /// <param name="handOff">Called when the claim passes to a started activation.</param>
+    private async Task<bool> HandleClaimedAsync(ScheduledEvent evt, DateTime occurrence, DateTime now, Action handOff)
+    {
         if (occurrence < now - MissedGrace)
         {
             await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Missed);
@@ -139,6 +164,8 @@ public class EventSchedulerService : IHostedService, IDisposable
         ActivationResult result;
         try
         {
+            // The activation takes the claim whatever happens: it releases it itself.
+            handOff();
             result = _activator.StartOccurrence(evt, occurrence, outcome => Release(evt.Id, outcome));
         }
         catch (Exception ex)
@@ -147,7 +174,20 @@ public class EventSchedulerService : IHostedService, IDisposable
             // occurrence: retrying would fail the same way every half minute.
             _logger.LogError(ex, "Could not apply event {EventName} (ID {EventId})", evt.Name, evt.Id);
             ReleaseActivation();
-            await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Failed);
+
+            // Claimed again, so the failure is recorded against the row as it is now.
+            if (_activator.TryClaim(evt.Id))
+            {
+                try
+                {
+                    await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Failed);
+                }
+                finally
+                {
+                    _activator.Release(evt.Id);
+                }
+            }
+
             return true;
         }
 

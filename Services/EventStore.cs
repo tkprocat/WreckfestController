@@ -134,8 +134,9 @@ public sealed class EventStore
             var next = FirstOccurrence(evt);
 
             // Removing the repeat during the lead-in, say, gives back the occurrence the
-            // scheduler has already run. Treat it as done rather than run it twice.
-            if (next is { } first && evt.LastOccurrence is { } last && first <= last)
+            // scheduler has already run. Treat that one as done rather than run it twice.
+            // Only that exact one: a new time before it is a genuine reschedule.
+            if (next is { } first && evt.LastOccurrence is { } last && first == last)
             {
                 next = EventRecurrence.After(last, evt.Repeat, ZoneOf(evt.TimeZone), UtcNow);
             }

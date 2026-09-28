@@ -39,11 +39,14 @@ public sealed class EventActivator
     private readonly ILogger<EventActivator> _logger;
 
     /// <summary>
-    /// Events whose restart is running, from before it starts until its occurrence has
-    /// been recorded. SmartRestartService reports Idle before its finish callback runs,
-    /// so its state alone would let the scheduler start or skip the occurrence again.
+    /// Claimed events. Whoever acts on an event - an activation, or the scheduler
+    /// recording a miss - claims it first and re-reads it afterwards. A running
+    /// activation holds its claim until its outcome has been recorded, and records the
+    /// outcome before releasing. So a claimer either fails to claim or sees the recorded
+    /// row, never a stale one. SmartRestartService's own state is no substitute: it
+    /// reports Idle before its finish callback runs.
     /// </summary>
-    private readonly HashSet<int> _inFlight = new();
+    private readonly HashSet<int> _claimed = new();
 
     public EventActivator(
         EventStore store,
@@ -66,50 +69,78 @@ public sealed class EventActivator
     /// <param name="onActivated">Called after the event has been marked active.</param>
     public async Task<ActivationResult> ActivateAsync(int id, Action<ScheduledEvent>? onActivated = null)
     {
-        var evt = await _store.GetAsync(id);
+        if (!TryClaim(id))
+        {
+            // This event is already being activated, or the scheduler is dealing with it.
+            return ActivationResult.Busy;
+        }
+
+        ScheduledEvent? evt;
+        try
+        {
+            // Read after claiming, so an outcome recorded just before is seen.
+            evt = await _store.GetAsync(id);
+        }
+        catch
+        {
+            Release(id);
+            throw;
+        }
+
         if (evt is null)
         {
+            Release(id);
             return ActivationResult.NotFound;
         }
 
         if (evt.IsActive)
         {
+            Release(id);
             return ActivationResult.AlreadyActive;
         }
 
         var dueBy = _time.GetUtcNow().UtcDateTime + LeadIn;
         var occurrence = evt.NextOccurrence <= dueBy ? evt.NextOccurrence : null;
-        return Start(evt, occurrence, onActivated, onFinished: null);
+        return StartClaimed(evt, occurrence, onActivated, onFinished: null);
     }
 
     /// <summary>
-    /// Starts the scheduled <paramref name="occurrence"/> of <paramref name="evt"/>.
-    /// Throws, as <see cref="ActivateAsync"/> does, when the settings cannot be written.
+    /// Starts the scheduled <paramref name="occurrence"/> of <paramref name="evt"/>. The
+    /// caller must hold the claim (<see cref="TryClaim"/>) and have read
+    /// <paramref name="evt"/> after taking it; the claim passes to the activation, which
+    /// releases it once the outcome is recorded, or at once if nothing started. Throws,
+    /// as <see cref="ActivateAsync"/> does, when the settings cannot be written.
     /// </summary>
     /// <param name="onFinished">Called once the restart has ended, after the event has moved on.</param>
     public ActivationResult StartOccurrence(ScheduledEvent evt, DateTime occurrence, Action<RestartOutcome> onFinished) =>
-        Start(evt, occurrence, onActivated: null, onFinished);
+        StartClaimed(evt, occurrence, onActivated: null, onFinished);
 
-    /// <summary>True while an activation of <paramref name="eventId"/>, manual or scheduled, is running.</summary>
-    public bool IsInFlight(int eventId)
+    /// <summary>
+    /// Claims <paramref name="eventId"/> for the caller. False when someone else holds it:
+    /// an activation that has not finished, or the scheduler.
+    /// </summary>
+    public bool TryClaim(int eventId)
     {
-        lock (_inFlight)
+        lock (_claimed)
         {
-            return _inFlight.Contains(eventId);
+            return _claimed.Add(eventId);
         }
     }
 
-    private ActivationResult Start(
+    public void Release(int eventId)
+    {
+        lock (_claimed)
+        {
+            _claimed.Remove(eventId);
+        }
+    }
+
+    private ActivationResult StartClaimed(
         ScheduledEvent evt,
         DateTime? occurrence,
         Action<ScheduledEvent>? onActivated,
         Action<RestartOutcome>? onFinished)
     {
-        lock (_inFlight)
-        {
-            _inFlight.Add(evt.Id);
-        }
-
         bool started;
         try
         {
@@ -128,8 +159,7 @@ public sealed class EventActivator
         {
             Release(evt.Id);
         }
-
-        if (started)
+        else
         {
             _logger.LogInformation(
                 "Activating event {EventName} (ID {EventId}){Occurrence}",
@@ -217,16 +247,9 @@ public sealed class EventActivator
         }
         finally
         {
+            // After the outcome is recorded, so the next claimer reads the recorded row.
             Release(evt.Id);
             onFinished?.Invoke(outcome);
-        }
-    }
-
-    private void Release(int eventId)
-    {
-        lock (_inFlight)
-        {
-            _inFlight.Remove(eventId);
         }
     }
 }

@@ -292,10 +292,40 @@ public sealed class EventActivationTests : IDisposable
         Assert.Equal(OccurrenceOutcome.Cancelled, cancelled.LastOutcome);
         Assert.Equal(start, cancelled.LastOccurrence);
         Assert.Equal(SmartRestartState.Idle, _restart.GetState());
-        Assert.False(_activator.IsInFlight(evt.Id));
+        Assert.True(_activator.TryClaim(evt.Id), "the activation's claim was not released");
+        _activator.Release(evt.Id);
         // Applied once, by the manual activation; nothing started it a second time.
         Assert.Equal(["settings:New name"], _writes);
         _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+    }
+
+    [Fact]
+    public async Task ASecondActivationOfTheSameEvent_IsRefused_AndLeavesTheFirstOneProtected()
+    {
+        _players.ProcessHookPlayerSnapshot([new Player { PlayerId = 1, Name = "Player", IsBot = false }]);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Race night", Now.AddMinutes(-14)));
+        Assert.Equal(ActivationResult.Started, await _activator.ActivateAsync(evt.Id));
+
+        Assert.Equal(ActivationResult.Busy, await _activator.ActivateAsync(evt.Id));
+
+        // The refused request must not have released the first activation's claim.
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(2);
+        await _scheduler.CheckAsync();
+        Assert.Null((await _db.ReloadAsync(evt.Id)).LastOutcome);
+    }
+
+    [Fact]
+    public async Task TheScheduler_LeavesAClaimedEventAlone_UntilItIsReleased()
+    {
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Yesterday", Now.AddDays(-1)));
+        Assert.True(_activator.TryClaim(evt.Id));
+
+        await _scheduler.CheckAsync();
+        Assert.Null((await _db.ReloadAsync(evt.Id)).LastOutcome);
+
+        _activator.Release(evt.Id);
+        await _scheduler.CheckAsync();
+        Assert.Equal(OccurrenceOutcome.Missed, (await _db.ReloadAsync(evt.Id)).LastOutcome);
     }
 
     [Fact]
