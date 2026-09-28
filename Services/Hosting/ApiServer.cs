@@ -197,7 +197,7 @@ public class ApiServer : IApiServer, IDisposable
 
         builder.Services.AddApiAuthentication(main, configuration);
         builder.Services.AddTrustedProxies(configuration);
-        builder.Services.AddLoginRateLimit();
+        builder.Services.AddRateLimits();
         builder.Services.AddSignalR();
     }
 

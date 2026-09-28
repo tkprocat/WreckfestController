@@ -29,6 +29,8 @@ public class EndpointAuthorizationTests
         // adds the admin group (console log) only for a caller that passes Admin.
         "* /hubs/server/negotiate",
         "* /hubs/server",
+        // The public home page. A dedicated DTO of public fields, and rate-limited.
+        "GET /api/public/overview",
     };
 
     [Fact]
