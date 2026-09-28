@@ -11,7 +11,7 @@ namespace WreckfestController.Tests.Services.Config;
 public class SettingsServiceTests
 {
     [Fact]
-    public void LoadSettings_WhenUserSettingsHasEmptyAllowedTracks_FillsConfiguredDefaultTracks()
+    public void LoadSettings_LeavesTheFilesTracksAlone()
     {
         var settingsPath = Path.Combine(Path.GetTempPath(), $"wreckfest-settings-{Guid.NewGuid():N}.json");
         try
@@ -34,7 +34,6 @@ public class SettingsServiceTests
                 {
                     ["UserSettingsPath"] = settingsPath,
                     ["Vote:AllowedTracks:0:Id"] = "misc_birkeland",
-                    ["Vote:AllowedTracks:0:Name"] = "TVTP Misc Birkeland"
                 })
                 .Build();
 
@@ -42,10 +41,10 @@ public class SettingsServiceTests
 
             var settings = service.LoadSettings();
 
+            // Votable tracks come from the catalogue now; nothing fills the file's list,
+            // not even a Vote:AllowedTracks left in configuration.
             Assert.NotNull(settings.Vote);
-            var track = Assert.Single(settings.Vote.AllowedTracks);
-            Assert.Equal("misc_birkeland", track.Id);
-            Assert.Equal("TVTP Misc Birkeland", track.Name);
+            Assert.Empty(settings.Vote.AllowedTracks);
         }
         finally
         {

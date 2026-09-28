@@ -143,16 +143,13 @@ public class SettingsService
                     _configuration.GetValue<bool?>("Vote:Enabled")),
                 DirectCooldownSeconds = _configuration.GetValue<int?>("Vote:DirectCooldownSeconds") ?? 30,
                 VoteTimeoutSeconds = _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30,
-                MaxLapsAllowed = _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10,
-                AllowedTracks = AllowedTrackConfiguration.Read(_configuration)
+                MaxLapsAllowed = _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10
             }
         };
     }
 
     private UserSettings NormalizeSettings(UserSettings settings)
     {
-        var defaultTracks = AllowedTrackConfiguration.Read(_configuration);
-
         settings.Vote ??= new VoteSettings
         {
             Enabled = _configuration.GetValue("Vote:Enabled", true),
@@ -169,11 +166,6 @@ public class SettingsService
         // would let the two disagree.
         settings.Vote.Mode = VoteModes.Normalize(settings.Vote.Mode, settings.Vote.Enabled);
         settings.Vote.Enabled = settings.Vote.Mode != VoteModes.Off;
-
-        if (settings.Vote.AllowedTracks.Count == 0 && defaultTracks.Count > 0)
-        {
-            settings.Vote.AllowedTracks = defaultTracks;
-        }
 
         settings.WreckfestServer ??= new WreckfestServerSettings();
         settings.WreckfestServer.OutputMode = ServerOutputModes.InjectedHook;

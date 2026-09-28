@@ -299,6 +299,11 @@ cannot be deleted: hide them instead, and `reset` restores what shipped.
 Hidden tracks and variants are left out of lists unless `includeHidden=true`, but stay
 readable by id.
 
+**Voting.** In-game `!track`, `!vote` and `!lucky` pick from the catalogue: every variant
+allowed for voting (`PUT variants/{id}/voting`), except hidden ones and those of a hidden
+track, named "Track - Variant". A change counts at once. 1.x's `Vote:AllowedTracks`
+list is no longer read.
+
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `tracks` | Tracks with their variants, by name. Filters: `tag` (slug), `gameMode` (`Racing`/`Derby`), `weather`, `origin` (`BaseGame`/`Dlc`/`Workshop`/`Custom`), `dlc`, `mod` (id), `availableOnly` (no mod, or a mod in the server config's `mods=`; **409** when the config cannot be read), `includeHidden`. |

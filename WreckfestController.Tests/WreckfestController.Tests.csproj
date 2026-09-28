@@ -43,4 +43,9 @@
     <None Include="Data\Fixtures\*.db" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Data 1.x shipped, kept so the tests can check nothing was lost in the move. -->
+  <ItemGroup>
+    <None Include="Data\Fixtures\*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
