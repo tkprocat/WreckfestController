@@ -253,7 +253,10 @@ without `If-Match` get 428, and with a stale one 409 with the current event. The
 scheduler's own fields (`nextOccurrence`, `lastOccurrence`, `lastOutcome`, `isActive`, `activatedAt`)
 change without a new version, so the scheduler finishing an occurrence never
 invalidates an open editor, and an edit that leaves `startTime`, `timeZone` and
-`repeat` alone never moves the schedule.
+`repeat` alone never moves the schedule. An edit that changes them picks the first
+occurrence of the new schedule that has not already run, failed, been cancelled or
+been missed: every occurrence dealt with is kept in the event's history, so an edit
+never runs one twice.
 
 **Scheduling.** An occurrence starts 5 minutes early, for the players' countdown.
 Each occurrence gets one attempt, and then the event moves to its next occurrence (or

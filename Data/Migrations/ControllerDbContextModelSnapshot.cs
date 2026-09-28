@@ -514,6 +514,34 @@ namespace WreckfestController.Data.Migrations
                     b.ToTable("TrackCollectionEntries");
                 });
 
+            modelBuilder.Entity("WreckfestController.Data.Events.EventOccurrenceRecord", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("Occurrence")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Outcome")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ScheduledEventId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScheduledEventId", "Occurrence")
+                        .IsUnique();
+
+                    b.ToTable("EventOccurrences");
+                });
+
             modelBuilder.Entity("WreckfestController.Data.Events.ScheduledEvent", b =>
                 {
                     b.Property<int>("Id")
@@ -718,6 +746,17 @@ namespace WreckfestController.Data.Migrations
                     b.Navigation("Collection");
 
                     b.Navigation("TrackVariant");
+                });
+
+            modelBuilder.Entity("WreckfestController.Data.Events.EventOccurrenceRecord", b =>
+                {
+                    b.HasOne("WreckfestController.Data.Events.ScheduledEvent", "ScheduledEvent")
+                        .WithMany()
+                        .HasForeignKey("ScheduledEventId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ScheduledEvent");
                 });
 
             modelBuilder.Entity("WreckfestController.Data.Events.ScheduledEvent", b =>

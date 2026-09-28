@@ -100,8 +100,8 @@ public sealed class EventStore
     /// <summary>
     /// Replaces what an admin sets, if the event is still at <paramref name="expectedVersion"/>.
     /// The next occurrence is recomputed only when the start, zone or repeat changed; any
-    /// other edit leaves the scheduler's columns as they are. A recomputed occurrence that
-    /// has already been dealt with is not run again.
+    /// other edit leaves the scheduler's columns as they are. The recomputed occurrence is
+    /// the first under the new schedule that has not been dealt with already.
     /// </summary>
     public async Task<(EventWriteStatus Status, ScheduledEvent? Event)> UpdateAsync(
         int id,
@@ -131,17 +131,17 @@ public sealed class EventStore
 
         if (schedule != (evt.StartTime, evt.TimeZone, Serialize(evt.Repeat)))
         {
+            // Removing or changing a repeat can give back occurrences that have already
+            // run or been cancelled. The history says exactly which, so skip those.
+            var handled = (await db.EventOccurrences
+                    .Where(o => o.ScheduledEventId == id)
+                    .Select(o => o.Occurrence)
+                    .ToListAsync(cancellationToken))
+                .ToHashSet();
             var next = FirstOccurrence(evt);
-
-            // Removing or changing a repeat can give back a start that has already been
-            // dealt with. That is the last one dealt with, or an earlier one that is now in
-            // the past: occurrences are only dealt with from their lead-in on, so a later
-            // one being done means every earlier past one had its turn. A future start that
-            // is not the last one is new and runs - a cancelled 12:05 moved to 12:04, say.
-            if (next is { } first && evt.LastOccurrence is { } last
-                && (first == last || (first < last && first < UtcNow)))
+            for (var i = 0; i < 1000 && next is { } candidate && handled.Contains(candidate); i++)
             {
-                next = EventRecurrence.After(last, evt.Repeat, ZoneOf(evt.TimeZone), UtcNow);
+                next = EventRecurrence.After(candidate, evt.Repeat, ZoneOf(evt.TimeZone), UtcNow);
             }
 
             evt.NextOccurrence = next;
@@ -231,7 +231,8 @@ public sealed class EventStore
     }
 
     /// <summary>
-    /// Records <paramref name="occurrence"/> as dealt with, and how, and moves the event to what
+    /// Records <paramref name="occurrence"/> as dealt with, and how, in the event's history,
+    /// and moves the event to what
     /// follows it: the next occurrence after it and after now, or none for a one-off.
     /// Does nothing, returning false, if the event no longer waits for that occurrence -
     /// it was rescheduled or deleted since.
@@ -267,8 +268,21 @@ public sealed class EventStore
                     .SetProperty(e => e.LastOccurrence, occurrence)
                     .SetProperty(e => e.LastOutcome, outcome),
                 cancellationToken);
+        if (updated == 0)
+        {
+            return false;
+        }
+
+        db.EventOccurrences.Add(new EventOccurrenceRecord
+        {
+            ScheduledEventId = id,
+            Occurrence = occurrence,
+            Outcome = outcome,
+            RecordedAt = UtcNow,
+        });
+        await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return updated > 0;
+        return true;
     }
 
     /// <summary>What activation deploys: the linked collection's tracks as they are now, else the event's own.</summary>

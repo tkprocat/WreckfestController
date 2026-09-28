@@ -157,6 +157,62 @@ public sealed class EventStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task OverlappingLeadIns_DoNotBringBackACancelledOccurrence()
+    {
+        // Starts 12:04, repeats daily at 12:05: both cancelled while still ahead, then
+        // the repeat is removed. 12:04 is earlier than the last one but was dealt with.
+        var start = _db.Clock.UtcNow.AddMinutes(4);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Daily", start, Daily("12:05")));
+        await _db.Store.AdvanceAsync(evt.Id, start, OccurrenceOutcome.Cancelled, Ct);
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(1);
+        await _db.Store.AdvanceAsync(evt.Id, start.AddMinutes(1), OccurrenceOutcome.Cancelled, Ct);
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(1);
+
+        var (_, saved) = await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Daily", start), 1, Ct);
+
+        Assert.Null(saved!.NextOccurrence);
+    }
+
+    [Fact]
+    public async Task ARescheduleIntoTheRecentPast_Runs()
+    {
+        // A cancelled 12:05 one-off moved, at 12:02, to 12:00: never scheduled before,
+        // and within the scheduler's grace.
+        var cancelled = _db.Clock.UtcNow.AddMinutes(5);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Race night", cancelled));
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(1);
+        await _db.Store.AdvanceAsync(evt.Id, cancelled, OccurrenceOutcome.Cancelled, Ct);
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(1);
+        var noon = cancelled.AddMinutes(-5);
+
+        var (_, saved) = await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Race night", noon), 1, Ct);
+
+        Assert.Equal(noon, saved!.NextOccurrence);
+    }
+
+    [Fact]
+    public async Task History_RecordsEachOccurrence_AndGoesWithItsEvent()
+    {
+        var start = _db.Clock.UtcNow.AddMinutes(2);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Daily", start, Daily("12:02")));
+        await _db.Store.AdvanceAsync(evt.Id, start, OccurrenceOutcome.Activated, Ct);
+        await _db.Store.AdvanceAsync(evt.Id, start.AddDays(1), OccurrenceOutcome.Missed, Ct);
+
+        await using (var db = await _db.Contexts.CreateDbContextAsync(Ct))
+        {
+            var history = db.EventOccurrences.Where(o => o.ScheduledEventId == evt.Id).OrderBy(o => o.Occurrence).ToList();
+            Assert.Equal([OccurrenceOutcome.Activated, OccurrenceOutcome.Missed], history.Select(o => o.Outcome));
+        }
+
+        await _db.Store.DeleteAsync(evt.Id, 1, Ct);
+
+        await using (var db = await _db.Contexts.CreateDbContextAsync(Ct))
+        {
+            Assert.Empty(db.EventOccurrences);
+        }
+    }
+
+    [Fact]
     public async Task Advance_AfterAnAdminRescheduled_LeavesTheNewTime()
     {
         var start = _db.Clock.UtcNow.AddMinutes(2);

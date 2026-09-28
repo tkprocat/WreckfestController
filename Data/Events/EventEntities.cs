@@ -95,6 +95,28 @@ public class ScheduledEvent : IVersioned
 }
 
 /// <summary>
+/// One occurrence of an event that has been dealt with, and how. The history is what
+/// keeps an edit from running an occurrence twice: when the schedule changes, the next
+/// occurrence is the first one under the new schedule that is not recorded here.
+/// </summary>
+public class EventOccurrenceRecord
+{
+    public int Id { get; set; }
+
+    public int ScheduledEventId { get; set; }
+
+    public ScheduledEvent ScheduledEvent { get; set; } = null!;
+
+    /// <summary>UTC. Unique per event.</summary>
+    public DateTime Occurrence { get; set; }
+
+    public OccurrenceOutcome Outcome { get; set; }
+
+    /// <summary>UTC. When it was recorded.</summary>
+    public DateTime RecordedAt { get; set; }
+}
+
+/// <summary>
 /// How an occurrence ended. Every occurrence gets one attempt; anything but
 /// <see cref="Activated"/> is left for an admin to act on, by activating it by hand.
 /// </summary>

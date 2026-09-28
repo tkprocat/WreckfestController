@@ -53,6 +53,34 @@ namespace WreckfestController.Data.Migrations
                         onDelete: ReferentialAction.SetNull);
                 });
 
+            migrationBuilder.CreateTable(
+                name: "EventOccurrences",
+                columns: table => new
+                {
+                    Id = table.Column<int>(type: "INTEGER", nullable: false)
+                        .Annotation("Sqlite:Autoincrement", true),
+                    ScheduledEventId = table.Column<int>(type: "INTEGER", nullable: false),
+                    Occurrence = table.Column<DateTime>(type: "TEXT", nullable: false),
+                    Outcome = table.Column<string>(type: "TEXT", maxLength: 16, nullable: false),
+                    RecordedAt = table.Column<DateTime>(type: "TEXT", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_EventOccurrences", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_EventOccurrences_ScheduledEvents_ScheduledEventId",
+                        column: x => x.ScheduledEventId,
+                        principalTable: "ScheduledEvents",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.Cascade);
+                });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_EventOccurrences_ScheduledEventId_Occurrence",
+                table: "EventOccurrences",
+                columns: new[] { "ScheduledEventId", "Occurrence" },
+                unique: true);
+
             migrationBuilder.CreateIndex(
                 name: "IX_ScheduledEvents_CollectionId",
                 table: "ScheduledEvents",
@@ -79,6 +107,9 @@ namespace WreckfestController.Data.Migrations
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropTable(
+                name: "EventOccurrences");
+
             migrationBuilder.DropTable(
                 name: "ScheduledEvents");
         }

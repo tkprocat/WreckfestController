@@ -38,6 +38,8 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
 
     public DbSet<ScheduledEvent> ScheduledEvents => Set<ScheduledEvent>();
 
+    public DbSet<EventOccurrenceRecord> EventOccurrences => Set<EventOccurrenceRecord>();
+
     /// <summary>
     /// Points <paramref name="options"/> at the SQLite file at <paramref name="databasePath"/>.
     /// Shared by the app's registration and the design-time factory so both open the
@@ -261,6 +263,20 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
                 .WithMany()
                 .HasForeignKey(e => e.CreatedById)
                 .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        builder.Entity<EventOccurrenceRecord>(record =>
+        {
+            record.Property(r => r.Occurrence).HasConversion(UtcConverter);
+            record.Property(r => r.RecordedAt).HasConversion(UtcConverter);
+            record.Property(r => r.Outcome).HasConversion<string>().HasMaxLength(16);
+            record.HasIndex(r => new { r.ScheduledEventId, r.Occurrence }).IsUnique();
+
+            // The history goes with its event.
+            record.HasOne(r => r.ScheduledEvent)
+                .WithMany()
+                .HasForeignKey(r => r.ScheduledEventId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 
