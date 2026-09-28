@@ -350,12 +350,18 @@ public sealed class SettingsStore : ISettingsStore
         IEnumerable<(Type Section, string Name)> sections,
         Dictionary<Type, SettingsSection> rows)
     {
-        foreach (var (section, name) in sections)
+        // One query, so one snapshot: read separately, another instance's batch could commit
+        // between two reads and leave some sections before it and others after.
+        var wanted = sections.ToList();
+        var names = wanted.Select(w => w.Name).ToList();
+        var found = await db.SettingsSections
+            .AsNoTracking()
+            .Where(s => names.Contains(s.Section))
+            .ToDictionaryAsync(s => s.Section, CancellationToken.None)
+            .ConfigureAwait(false);
+        foreach (var (section, name) in wanted)
         {
-            rows[section] = await db.SettingsSections
-                .AsNoTracking()
-                .SingleAsync(s => s.Section == name, CancellationToken.None)
-                .ConfigureAwait(false);
+            rows[section] = found[name];
         }
     }
 
