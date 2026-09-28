@@ -82,6 +82,14 @@ public class VoteSettings
     [JsonPropertyName("MaxLapsAllowed")]
     public int MaxLapsAllowed { get; set; } = 10;
 
+    /// <summary>Pause between the lines of a multi-line chat reply, so the game shows them in order.</summary>
+    [JsonPropertyName("MessageDelayMs")]
+    public int MessageDelayMs { get; set; } = 250;
+
+    /// <summary>Ignore chat commands while a race is running.</summary>
+    [JsonPropertyName("SuppressCommandsDuringRace")]
+    public bool SuppressCommandsDuringRace { get; set; }
+
     [JsonPropertyName("AllowedTracks")]
     public List<AllowedVoteTrack> AllowedTracks { get; set; } = new();
 }

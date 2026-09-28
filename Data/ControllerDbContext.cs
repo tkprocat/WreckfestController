@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WreckfestController.Data.Catalogue;
 using WreckfestController.Data.Collections;
 using WreckfestController.Data.Cups;
+using WreckfestController.Data.Settings;
 
 namespace WreckfestController.Data;
 
@@ -39,6 +40,8 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
     public DbSet<Cup> Cups => Set<Cup>();
 
     public DbSet<CupOccurrenceRecord> CupOccurrences => Set<CupOccurrenceRecord>();
+
+    public DbSet<SettingsSection> SettingsSections => Set<SettingsSection>();
 
     /// <summary>
     /// Points <paramref name="options"/> at the SQLite file at <paramref name="databasePath"/>.
@@ -84,6 +87,12 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
         ConfigureCatalogue(builder);
         ConfigureCollections(builder);
         ConfigureCups(builder);
+
+        builder.Entity<SettingsSection>(section =>
+        {
+            section.HasKey(s => s.Section);
+            section.Property(s => s.Section).HasMaxLength(SettingsSection.NameMaxLength);
+        });
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
