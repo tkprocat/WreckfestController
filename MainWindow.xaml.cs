@@ -136,6 +136,13 @@ public partial class MainWindow : Window
     {
         try
         {
+#if DEBUG
+            var seeded = await _accountService.SeedDevAdminAsync();
+            if (seeded is not null)
+            {
+                _logger.LogWarning("Debug build: seeded web admin {UserName} from DevSeed configuration", seeded);
+            }
+#endif
             if (!await _accountService.NeedsFirstAdminAsync())
             {
                 return;

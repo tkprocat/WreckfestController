@@ -78,8 +78,79 @@ public sealed class AccountServiceTests : IDisposable
         Assert.Contains(duplicate.Errors, e => e.Code == "DuplicateUserName");
     }
 
+#if DEBUG
+    [Fact]
+    public async Task DevSeed_CreatesTheConfiguredAdmin_OnAnEmptyDatabase()
+    {
+        var accounts = await CreateAsync(apiEnabled: true, extra: DevSeed("dev@example.com", Password));
+
+        var seeded = await accounts.SeedDevAdminAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("dev@example.com", seeded);
+        Assert.Equal(1, await accounts.CountUsersAsync(TestContext.Current.CancellationToken));
+        Assert.False(await accounts.NeedsFirstAdminAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task DevSeed_UsesTheConfiguredUserName()
+    {
+        var extra = DevSeed("dev@example.com", Password);
+        extra["DevSeed:UserName"] = "dev";
+        var accounts = await CreateAsync(apiEnabled: true, extra: extra);
+
+        Assert.Equal("dev", await accounts.SeedDevAdminAsync(TestContext.Current.CancellationToken));
+    }
+
+    // An existing database keeps its accounts; the seed never adds a second admin.
+    [Fact]
+    public async Task DevSeed_DoesNothing_OnceAnAccountExists()
+    {
+        var accounts = await CreateAsync(apiEnabled: true, extra: DevSeed("dev@example.com", Password));
+        await accounts.CreateAccountAsync("admin", "admin@example.com", Password);
+
+        Assert.Null(await accounts.SeedDevAdminAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(1, await accounts.CountUsersAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task DevSeed_DoesNothing_WhenNotConfigured()
+    {
+        var accounts = await CreateAsync(apiEnabled: true);
+
+        Assert.Null(await accounts.SeedDevAdminAsync(TestContext.Current.CancellationToken));
+        Assert.True(await accounts.NeedsFirstAdminAsync(TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task DevSeed_DoesNothing_InRecoveryMode()
+    {
+        var accounts = await CreateAsync(
+            apiEnabled: true, databaseReady: false, extra: DevSeed("dev@example.com", Password));
+
+        Assert.Null(await accounts.SeedDevAdminAsync(TestContext.Current.CancellationToken));
+    }
+
+    // A bad seed fails loudly instead of leaving a database no one can sign in to.
+    [Fact]
+    public async Task DevSeed_Throws_WhenIdentityRejectsIt()
+    {
+        var accounts = await CreateAsync(apiEnabled: true, extra: DevSeed("dev@example.com", "short"));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => accounts.SeedDevAdminAsync(TestContext.Current.CancellationToken));
+        Assert.Contains("DevSeed", error.Message);
+    }
+
+    private static Dictionary<string, string?> DevSeed(string email, string password) => new()
+    {
+        ["DevSeed:Email"] = email,
+        ["DevSeed:Password"] = password,
+    };
+#endif
+
     /// <summary>The desktop host's real registration, on a migrated temp database.</summary>
-    private async Task<AccountService> CreateAsync(bool apiEnabled, bool databaseReady = true)
+    private async Task<AccountService> CreateAsync(
+        bool apiEnabled, bool databaseReady = true, Dictionary<string, string?>? extra = null)
     {
         Directory.CreateDirectory(_directory);
         var databasePath = Path.Combine(_directory, $"{Guid.NewGuid():N}.db");
@@ -91,8 +162,9 @@ public sealed class AccountServiceTests : IDisposable
 
         var services = new ServiceCollection();
         services.AddLogging();
+        var settings = new Dictionary<string, string?>(extra ?? []) { ["Api:Enabled"] = apiEnabled.ToString() };
         services.AddSingleton<IConfiguration>(new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?> { ["Api:Enabled"] = apiEnabled.ToString() })
+            .AddInMemoryCollection(settings)
             .Build());
         services.AddSingleton(state);
         services.AddDbContextFactory<ControllerDbContext>(
