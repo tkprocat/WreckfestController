@@ -8,9 +8,14 @@ using WreckfestController.Services.ServerControl;
 
 namespace WreckfestController.Controllers;
 
+/// <summary>
+/// The server's own config file, server_config.cfg: its settings and its event loop. A
+/// file that cannot be read or written answers 409 with the reason; a bad request answers
+/// 400 with the field at fault.
+/// </summary>
 [ApiController]
 [Authorize(Policy = ApiAuthentication.AdminPolicy)]
-[Route("api/[controller]")]
+[Route("api/config")]
 public class ConfigController : ControllerBase
 {
     private readonly ConfigService _configService;
@@ -24,136 +29,129 @@ public class ConfigController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>
-    /// Get all basic server configuration settings
-    /// </summary>
+    /// <summary>The server settings in server_config.cfg.</summary>
     [HttpGet("basic")]
-    public IActionResult GetBasicConfig()
+    public ActionResult<ServerConfig> GetBasicConfig()
     {
         try
         {
-            _logger.LogInformation("Received request to get basic config");
-            var config = _configService.ReadBasicConfig();
-            return Ok(config);
+            return _configService.ReadBasicConfig();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to read basic config");
-            return BadRequest(new { message = $"Failed to read basic config: {ex.Message}" });
+            return this.Refused($"Failed to read basic config: {ex.Message}");
         }
     }
 
     /// <summary>
-    /// Update basic server configuration settings. Only the fields present in the body
-    /// change; everything else keeps its current value.
+    /// Changes server settings. Only the fields present in the body change; everything
+    /// else keeps its current value. Returns the settings as they now are.
     /// </summary>
     [HttpPut("basic")]
-    public IActionResult UpdateBasicConfig([FromBody] JsonElement patch)
+    public ActionResult<ServerConfig> UpdateBasicConfig([FromBody] JsonElement patch)
     {
+        ServerConfig config;
         try
         {
-            _logger.LogInformation("Received request to update basic config");
-            var config = _configService.ReadBasicConfig();
-            if (!ServerConfigPatch.TryApply(config, patch, out var error))
-            {
-                return BadRequest(new { message = error });
-            }
+            config = _configService.ReadBasicConfig();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read basic config");
+            return this.Refused($"Failed to read basic config: {ex.Message}");
+        }
 
+        if (!ServerConfigPatch.TryApply(config, patch, out var error))
+        {
+            return this.Invalid(error!.Field, error.Message);
+        }
+
+        try
+        {
             _configService.WriteBasicConfig(config);
-            return Ok(new { message = "Basic config updated successfully" });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update basic config");
-            return BadRequest(new { message = $"Failed to update basic config: {ex.Message}" });
+            return this.Refused($"Failed to update basic config: {ex.Message}");
         }
+
+        _logger.LogInformation("{Caller} updated the basic config", this.Caller());
+        return config;
     }
 
-    /// <summary>
-    /// Get the name of the track collection for event loops
-    /// </summary>
+    /// <summary>The event loop's <c>#CollectionName</c>.</summary>
     [HttpGet("tracks/collection-name")]
-    public IActionResult GetTrackCollectionName()
+    public ActionResult<CollectionNameResponse> GetTrackCollectionName()
     {
         try
         {
-            _logger.LogInformation("Received request to get track collection name");
-            var collectionName = _configService.GetCurrentCollectionName();
-            return Ok(new { collectionName });
+            return new CollectionNameResponse(_configService.GetCurrentCollectionName());
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to read track collection name");
-            return BadRequest(new { message = $"Failed to read track collection name: {ex.Message}" });
+            return this.Refused($"Failed to read track collection name: {ex.Message}");
         }
     }
 
-
-    /// <summary>
-    /// Get all event loop tracks
-    /// </summary>
+    /// <summary>The event loop: the tracks the server rotates through.</summary>
     [HttpGet("tracks")]
-    public IActionResult GetEventLoopTracks()
+    public ActionResult<EventLoopResponse> GetEventLoopTracks()
     {
         try
         {
-            _logger.LogInformation("Received request to get event loop tracks");
             var tracks = _configService.ReadEventLoopTracks();
-            return Ok(new { count = tracks.Count, tracks });
+            return new EventLoopResponse(tracks.Count, tracks);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to read event loop tracks");
-            return BadRequest(new { message = $"Failed to read event loop tracks: {ex.Message}" });
+            return this.Refused($"Failed to read event loop tracks: {ex.Message}");
         }
     }
 
-    /// <summary>
-    /// Set all event loop tracks (replaces existing tracks)
-    /// </summary>
+    /// <summary>Replaces the event loop. Returns it as written.</summary>
     [HttpPut("tracks")]
-    public IActionResult UpdateEventLoopTracks([FromBody] UpdateEventLoopTracksRequest request)
+    public ActionResult<EventLoopResponse> UpdateEventLoopTracks(UpdateEventLoopTracksRequest request)
     {
+        if (EventLoopTrackRules.Validate(request.CollectionName, request.Tracks) is { } error)
+        {
+            return this.Invalid(error.Field, error.Message);
+        }
+
         try
         {
-            _logger.LogInformation("Received request to update event loop tracks");
-            if (EventLoopTrackRules.Validate(request.CollectionName, request.Tracks) is { } error)
-            {
-                return BadRequest(new { message = error.Message });
-            }
-
             _configService.WriteEventLoopTracks(request.CollectionName, request.Tracks);
-            return Ok(new { message = "Event loop tracks updated successfully", count = request.Tracks.Count });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update event loop tracks");
-            return BadRequest(new { message = $"Failed to update event loop tracks: {ex.Message}" });
+            return this.Refused($"Failed to update event loop tracks: {ex.Message}");
         }
+
+        _logger.LogInformation("{Caller} replaced the event loop ({Count} tracks)", this.Caller(), request.Tracks.Count);
+        return new EventLoopResponse(request.Tracks.Count, request.Tracks);
     }
 
-    /// <summary>
-    /// Get live server info by sending ? command to the running server
-    /// </summary>
+    /// <summary>Live server info, asked of the running server with its <c>?</c> command.</summary>
     [HttpGet("serverinfo")]
-    public async Task<IActionResult> GetServerInfo()
+    public async Task<ActionResult<ServerConfig>> GetServerInfo()
     {
         try
         {
-            _logger.LogInformation("Received request to get live server info");
             var result = await _serverManager.GetServerInfoAsync();
-
-            if (!result.Success)
-            {
-                return BadRequest(new { message = result.Message });
-            }
-
-            return Ok(result.Config);
+            return result.Success && result.Config is { } config ? config : this.Refused(result.Message);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to retrieve server info");
-            return BadRequest(new { message = $"Failed to retrieve server info: {ex.Message}" });
+            return this.Refused($"Failed to retrieve server info: {ex.Message}");
         }
     }
 }
+
+public sealed record CollectionNameResponse(string CollectionName);
+
+public sealed record EventLoopResponse(int Count, IReadOnlyList<EventLoopTrack> Tracks);

@@ -1,14 +1,21 @@
+using System.ComponentModel.DataAnnotations;
+using System.Reflection;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using System.Reflection;
+using WreckfestController.Models;
 using WreckfestController.Services.Auth;
 using WreckfestController.Services.ServerControl;
 
 namespace WreckfestController.Controllers;
 
+/// <summary>
+/// Controls the dedicated server: start, stop, restart, update, commands and the hook.
+/// An action the server's state does not allow (not running, already running, no hook)
+/// answers 409 with the reason as the problem's title.
+/// </summary>
 [ApiController]
 [Authorize(Policy = ApiAuthentication.AdminPolicy)]
-[Route("api/[controller]")]
+[Route("api/server")]
 public class ServerController : ControllerBase
 {
     private readonly ServerManager _serverManager;
@@ -21,137 +28,81 @@ public class ServerController : ControllerBase
     }
 
     [HttpGet("version")]
-    public IActionResult GetVersion()
+    public VersionResponse GetVersion()
     {
         var assembly = Assembly.GetExecutingAssembly();
         var version = assembly.GetName().Version;
         var informationalVersion = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
 
-        return Ok(new
-        {
-            version = informationalVersion ?? version?.ToString() ?? "Unknown",
-            assemblyVersion = version?.ToString() ?? "Unknown",
-            product = "WreckfestController"
-        });
+        return new VersionResponse(
+            informationalVersion ?? version?.ToString() ?? "Unknown",
+            version?.ToString() ?? "Unknown",
+            "WreckfestController");
     }
 
     [HttpGet("status")]
-    public IActionResult GetStatus()
-    {
-        var status = _serverManager.GetStatus();
-        return Ok(status);
-    }
+    public ServerStatusResponse GetStatus() => ServerStatusResponse.From(_serverManager.GetStatus());
 
     [HttpPost("start")]
-    public async Task<IActionResult> StartServer()
+    public async Task<ActionResult<ServerActionResponse>> StartServer()
     {
         _logger.LogInformation("Received request to start server");
-        var result = await _serverManager.StartServerAsync();
-
-        if (result.Success)
-        {
-            return Ok(new { message = result.Message });
-        }
-
-        return BadRequest(new { message = result.Message });
+        return Answer(await _serverManager.StartServerAsync());
     }
 
+    /// <summary>Stops the server with its own <c>exit</c> command.</summary>
     [HttpPost("stop")]
-    public async Task<IActionResult> StopServer()
+    public async Task<ActionResult<ServerActionResponse>> StopServer()
     {
         _logger.LogInformation("Received request to stop server (using graceful 'exit' command)");
-        var result = await _serverManager.StopServerViaCommandAsync();
-
-        if (result.Success)
-        {
-            return Ok(new { message = result.Message });
-        }
-
-        return BadRequest(new { message = result.Message });
+        return Answer(await _serverManager.StopServerViaCommandAsync());
     }
 
+    /// <summary>Kills the server process.</summary>
     [HttpPost("forcestop")]
-    public async Task<IActionResult> ForceStopServer()
+    public async Task<ActionResult<ServerActionResponse>> ForceStopServer()
     {
         _logger.LogInformation("Received request to force stop server (kill process)");
-        var result = await _serverManager.StopServerAsync();
-
-        if (result.Success)
-        {
-            return Ok(new { message = result.Message });
-        }
-
-        return BadRequest(new { message = result.Message });
+        return Answer(await _serverManager.StopServerAsync());
     }
 
+    /// <summary>Restarts with the in-game <c>/restart</c> command.</summary>
     [HttpPost("restart")]
-    public async Task<IActionResult> RestartServer()
+    public async Task<ActionResult<ServerActionResponse>> RestartServer()
     {
         _logger.LogInformation("Received request to restart server (using in-game /restart command)");
-        var result = await _serverManager.RestartServerViaCommandAsync();
-
-        if (result.Success)
-        {
-            return Ok(new { message = result.Message });
-        }
-
-        return BadRequest(new { message = result.Message });
+        return Answer(await _serverManager.RestartServerViaCommandAsync());
     }
 
+    /// <summary>Stops the process and starts it again.</summary>
     [HttpPost("forcerestart")]
-    public async Task<IActionResult> ForceRestartServer()
+    public async Task<ActionResult<ServerActionResponse>> ForceRestartServer()
     {
         _logger.LogInformation("Received request to force restart server (stop + start)");
-        var result = await _serverManager.RestartServerAsync();
-
-        if (result.Success)
-        {
-            return Ok(new { message = result.Message });
-        }
-
-        return BadRequest(new { message = result.Message });
+        return Answer(await _serverManager.RestartServerAsync());
     }
 
+    /// <summary>Updates the server with SteamCMD.</summary>
     [HttpPost("update")]
-    public async Task<IActionResult> UpdateServer()
+    public async Task<ActionResult<ServerActionResponse>> UpdateServer()
     {
         _logger.LogInformation("Received request to update server");
-        var result = await _serverManager.UpdateServerAsync();
-
-        if (result.Success)
-        {
-            return Ok(new { message = result.Message });
-        }
-
-        return BadRequest(new { message = result.Message });
+        return Answer(await _serverManager.UpdateServerAsync());
     }
 
+    /// <summary>Sends a console command through the hook.</summary>
     [HttpPost("command")]
-    public async Task<IActionResult> SendCommand([FromBody] ServerCommandRequest request)
+    public async Task<ActionResult<ServerActionResponse>> SendCommand(ServerCommandRequest request)
     {
         _logger.LogInformation("Received request to send command: {Command}", request.Command);
-        var result = await _serverManager.SendCommandAsync(request.Command);
-
-        if (result.Success)
-        {
-            return Ok(new { message = result.Message });
-        }
-
-        return BadRequest(new { message = result.Message });
+        return Answer(await _serverManager.SendCommandAsync(request.Command));
     }
 
-    [HttpPost("attach/{pid}")]
-    public IActionResult AttachToProcess(int pid)
+    [HttpPost("attach/{pid:int}")]
+    public ActionResult<ServerActionResponse> AttachToProcess(int pid)
     {
         _logger.LogInformation("Received request to attach to process {PID}", pid);
-        var result = _serverManager.AttachToExistingProcess(pid);
-
-        if (result.Success)
-        {
-            return Ok(new { message = result.Message });
-        }
-
-        return BadRequest(new { message = result.Message });
+        return Answer(_serverManager.AttachToExistingProcess(pid));
     }
 
     /// <summary>
@@ -159,57 +110,49 @@ public class ServerController : ControllerBase
     /// output into the controller. Mirrors the Process Manager INJECT button so
     /// the full start -> inject cycle can be driven without the GUI.
     /// </summary>
-    [HttpPost("inject/{pid}")]
-    public async Task<IActionResult> InjectConsoleHook(int pid)
+    [HttpPost("inject/{pid:int}")]
+    public async Task<ActionResult<InjectResponse>> InjectConsoleHook(int pid)
     {
         _logger.LogInformation("Received request to inject console hook into process {PID}", pid);
         var result = await _serverManager.InjectConsoleHookAsync(pid);
-
         if (!result.Success)
         {
-            return BadRequest(new { message = result.Message });
+            return this.Refused(result.Message);
         }
 
         _serverManager.ProcessConsoleHookOutput = true;
-        return Ok(new { message = result.Message, processId = pid });
+        return new InjectResponse(result.Message, pid);
     }
 
-    /// <summary>
-    /// Injects the console hook into the currently tracked server process.
-    /// </summary>
+    /// <summary>Injects the console hook into the currently tracked server process.</summary>
     [HttpPost("inject")]
-    public async Task<IActionResult> InjectConsoleHookIntoTrackedProcess()
+    public async Task<ActionResult<InjectResponse>> InjectConsoleHookIntoTrackedProcess()
     {
         var status = _serverManager.GetStatus();
         if (!status.IsRunning || status.ProcessId is not int pid)
         {
-            return BadRequest(new { message = "No tracked server process to inject into" });
+            return this.Refused("No tracked server process to inject into.");
         }
 
         return await InjectConsoleHook(pid);
     }
 
+    /// <summary>The last lines of the server's log file, read from disk.</summary>
     [HttpGet("logfile")]
-    public IActionResult GetLogFile([FromQuery] int lines = 100)
+    public ActionResult<LogFileResponse> GetLogFile([FromQuery, Range(1, 10_000)] int lines = 100)
     {
         var result = _serverManager.GetLogFileContent(lines);
-
         if (!result.Success)
         {
-            return BadRequest(new { message = result.Message });
+            return this.Refused(result.Message);
         }
 
-        return Ok(new
-        {
-            Lines = result.Lines?.Count ?? 0,
-            Source = "logfile",
-            LogFilePath = result.LogFilePath,
-            Output = result.Lines
-        });
+        var output = result.Lines ?? [];
+        return new LogFileResponse(output.Count, "logfile", result.LogFilePath, output);
     }
 
     [HttpGet("players")]
-    public async Task<IActionResult> GetPlayers()
+    public async Task<PlayerListResponse> GetPlayers()
     {
         _logger.LogInformation("Received request to get player list");
 
@@ -219,12 +162,35 @@ public class ServerController : ControllerBase
         // relying on scrollback or on a "list" echo the hook never produces.
         await _serverManager.TryRefreshPlayersFromHookAsync();
 
-        var playerList = _serverManager.GetPlayerList();
-        return Ok(playerList);
+        return _serverManager.GetPlayerList();
     }
+
+    private ActionResult<ServerActionResponse> Answer((bool Success, string Message) result) =>
+        result.Success ? new ServerActionResponse(result.Message) : this.Refused(result.Message);
 }
 
 public class ServerCommandRequest
 {
+    /// <summary>A console command, such as <c>/message Hello</c>.</summary>
+    [Required]
     public string Command { get; set; } = string.Empty;
+}
+
+public sealed record VersionResponse(string Version, string AssemblyVersion, string Product);
+
+/// <summary>A server action that went through, and what the server manager said.</summary>
+public sealed record ServerActionResponse(string Message);
+
+public sealed record InjectResponse(string Message, int ProcessId);
+
+public sealed record LogFileResponse(int Lines, string Source, string? LogFilePath, IReadOnlyList<string> Output);
+
+/// <summary>Whether the server runs, and for how long, in whole seconds.</summary>
+public sealed record ServerStatusResponse(bool IsRunning, int? ProcessId, long? UptimeSeconds, string? CurrentTrack)
+{
+    public static ServerStatusResponse From(ServerStatus status) => new(
+        status.IsRunning,
+        status.ProcessId,
+        status.Uptime is { } uptime ? (long)uptime.TotalSeconds : null,
+        string.IsNullOrEmpty(status.CurrentTrack) ? null : status.CurrentTrack);
 }

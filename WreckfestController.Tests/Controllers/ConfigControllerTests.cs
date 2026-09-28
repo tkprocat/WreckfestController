@@ -40,7 +40,7 @@ public class ConfigControllerTests
             serverInfoTracker,
             mockEvents.Object) { CallBase = false };
         _mockLogger = new Mock<ILogger<ConfigController>>();
-        _controller = new ConfigController(_mockConfigService.Object, _mockServerManager.Object, _mockLogger.Object);
+        _controller = new ConfigController(_mockConfigService.Object, _mockServerManager.Object, _mockLogger.Object).Hosted();
     }
 
     [Fact]
@@ -61,26 +61,21 @@ public class ConfigControllerTests
         var result = _controller.GetBasicConfig();
 
         // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        var config = Assert.IsType<ServerConfig>(okResult.Value);
+        var config = result.Value!;
         Assert.Equal("Test Server", config.ServerName);
         Assert.Equal(24, config.MaxPlayers);
         _mockConfigService.Verify(s => s.ReadBasicConfig(), Times.Once);
     }
 
     [Fact]
-    public void GetBasicConfig_WhenException_ReturnsBadRequest()
+    public void GetBasicConfig_WhenTheFileCannotBeRead_IsRefused()
     {
-        // Arrange
         _mockConfigService.Setup(s => s.ReadBasicConfig())
             .Throws(new System.IO.FileNotFoundException("Config file not found"));
 
-        // Act
         var result = _controller.GetBasicConfig();
 
-        // Assert
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
+        Assert.Contains("Config file not found", ControllerTesting.RefusalOf(result), StringComparison.Ordinal);
     }
 
     private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
@@ -109,7 +104,8 @@ public class ConfigControllerTests
 
         var result = _controller.UpdateBasicConfig(Json("""{"serverName":"New name","maxPlayers":20}"""));
 
-        Assert.IsType<OkObjectResult>(result);
+        // The settings as they now are.
+        Assert.Equal(("New name", 20), (result.Value!.ServerName, result.Value.MaxPlayers));
         Assert.NotNull(written);
         Assert.Equal("New name", written.ServerName);
         Assert.Equal(20, written.MaxPlayers);
@@ -128,30 +124,30 @@ public class ConfigControllerTests
 
         var result = _controller.UpdateBasicConfig(Json("""{"ServerName":"New name"}"""));
 
-        Assert.IsType<OkObjectResult>(result);
+        Assert.NotNull(result.Value);
         Assert.Equal("New name", written?.ServerName);
     }
 
     [Theory]
-    [InlineData("""{"serverNmae":"typo"}""")]
-    [InlineData("""{"maxPlayers":"lots"}""")]
-    [InlineData("""{"maxPlayers":null}""")]
-    [InlineData("""{"serverName":null}""")]
-    [InlineData("""{"serverName":"a\nlaps=99"}""")]
-    [InlineData("""["serverName"]""")]
-    public void UpdateBasicConfig_InvalidBody_ReturnsBadRequestWithoutWriting(string body)
+    [InlineData("""{"serverNmae":"typo"}""", "serverNmae")]
+    [InlineData("""{"maxPlayers":"lots"}""", "maxPlayers")]
+    [InlineData("""{"maxPlayers":null}""", "maxPlayers")]
+    [InlineData("""{"serverName":null}""", "serverName")]
+    [InlineData("""{"serverName":"a\nlaps=99"}""", "serverName")]
+    [InlineData("""["serverName"]""", "body")]
+    public void UpdateBasicConfig_InvalidBody_NamesTheField_AndWritesNothing(string body, string field)
     {
         var current = SetUpCurrentConfig();
 
         var result = _controller.UpdateBasicConfig(Json(body));
 
-        Assert.IsType<BadRequestObjectResult>(result);
+        ControllerTesting.AssertFieldError(result, field);
         _mockConfigService.Verify(s => s.WriteBasicConfig(It.IsAny<ServerConfig>()), Times.Never);
         Assert.Equal("Old name", current.ServerName);
     }
 
     [Fact]
-    public void UpdateBasicConfig_WhenException_ReturnsBadRequest()
+    public void UpdateBasicConfig_WhenTheFileCannotBeWritten_IsRefused()
     {
         SetUpCurrentConfig();
         _mockConfigService.Setup(s => s.WriteBasicConfig(It.IsAny<ServerConfig>()))
@@ -159,8 +155,7 @@ public class ConfigControllerTests
 
         var result = _controller.UpdateBasicConfig(Json("""{"serverName":"New name"}"""));
 
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
+        Assert.Contains("Write failed", ControllerTesting.RefusalOf(result), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -180,24 +175,20 @@ public class ConfigControllerTests
         var result = _controller.GetEventLoopTracks();
 
         // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
+        Assert.Equal(2, result.Value!.Count);
+        Assert.Equal(["track1", "track2"], result.Value.Tracks.Select(t => t.Track));
         _mockConfigService.Verify(s => s.ReadEventLoopTracks(), Times.Once);
     }
 
     [Fact]
-    public void GetEventLoopTracks_WhenException_ReturnsBadRequest()
+    public void GetEventLoopTracks_WhenTheFileCannotBeRead_IsRefused()
     {
-        // Arrange
         _mockConfigService.Setup(s => s.ReadEventLoopTracks())
             .Throws(new System.Exception("Read failed"));
 
-        // Act
         var result = _controller.GetEventLoopTracks();
 
-        // Assert
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
+        Assert.Contains("Read failed", ControllerTesting.RefusalOf(result), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -214,26 +205,21 @@ public class ConfigControllerTests
         var result = _controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest(collectionName, tracks));
 
         // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
+        Assert.Equal(1, result.Value!.Count);
         _mockConfigService.Verify(s => s.WriteEventLoopTracks(collectionName, tracks), Times.Once);
     }
 
     [Fact]
-    public void UpdateEventLoopTracks_WhenException_ReturnsBadRequest()
+    public void UpdateEventLoopTracks_WhenTheFileCannotBeWritten_IsRefused()
     {
-        // Arrange
-        var collectionName = "New collection"; 
-        var tracks = new List<EventLoopTrack>();
+        var collectionName = "New collection";
+        var tracks = new List<EventLoopTrack> { new() { Track = "track1" } };
         _mockConfigService.Setup(s => s.WriteEventLoopTracks(collectionName, It.IsAny<List<EventLoopTrack>>()))
             .Throws(new System.Exception("Write failed"));
 
-        // Act
         var result = _controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest(collectionName, tracks));
 
-        // Assert
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
+        Assert.Contains("Write failed", ControllerTesting.RefusalOf(result), StringComparison.Ordinal);
     }
 
     public static TheoryData<string, List<EventLoopTrack>?> InvalidTrackRequests => new()
@@ -259,7 +245,8 @@ public class ConfigControllerTests
     {
         var result = _controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest(collectionName, tracks!));
 
-        Assert.IsType<BadRequestObjectResult>(result);
+        var invalid = Assert.IsAssignableFrom<ObjectResult>(result.Result);
+        Assert.IsType<ValidationProblemDetails>(invalid.Value);
         _mockConfigService.Verify(
             s => s.WriteEventLoopTracks(It.IsAny<string>(), It.IsAny<List<EventLoopTrack>>()), Times.Never);
     }

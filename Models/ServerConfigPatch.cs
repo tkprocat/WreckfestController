@@ -20,13 +20,14 @@ public static class ServerConfigPatch
 
     /// <summary>
     /// Copies every field present in <paramref name="patch"/> onto
-    /// <paramref name="target"/>. Nothing is applied unless the whole patch is valid.
+    /// <paramref name="target"/>. Nothing is applied unless the whole patch is valid; the
+    /// error names the field, as the request spelled it, for a field-level 400.
     /// </summary>
-    public static bool TryApply(ServerConfig target, JsonElement patch, out string? error)
+    public static bool TryApply(ServerConfig target, JsonElement patch, out EventLoopError? error)
     {
         if (patch.ValueKind != JsonValueKind.Object)
         {
-            error = "Body must be a JSON object of the fields to change.";
+            error = new("body", "Body must be a JSON object of the fields to change.");
             return false;
         }
 
@@ -35,7 +36,7 @@ public static class ServerConfigPatch
         {
             if (!Properties.TryGetValue(field.Name, out var property))
             {
-                error = $"Unknown field '{field.Name}'.";
+                error = new(field.Name, $"Unknown field '{field.Name}'.");
                 return false;
             }
 
@@ -51,7 +52,7 @@ public static class ServerConfigPatch
 
             if (value is null)
             {
-                error = $"Field '{field.Name}' must be a {(property.PropertyType == typeof(int) ? "number" : "string")}.";
+                error = new(field.Name, $"{field.Name} must be a {(property.PropertyType == typeof(int) ? "number" : "string")}.");
                 return false;
             }
 
@@ -59,7 +60,7 @@ public static class ServerConfigPatch
             // extra key=value lines the caller never named.
             if (value is string text && text.AsSpan().IndexOfAny('\r', '\n') >= 0)
             {
-                error = $"Field '{field.Name}' must not contain line breaks.";
+                error = new(field.Name, $"{field.Name} must not contain line breaks.");
                 return false;
             }
 
