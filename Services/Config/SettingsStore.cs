@@ -257,6 +257,10 @@ public sealed class SettingsStore : ISettingsStore
 
                         if (conflict is null)
                         {
+                            // Read inside the transaction: these are this save's rows. Read after
+                            // the commit, another instance's save could slip in between, and its
+                            // version would be handed back with this caller's values.
+                            await ReadRowsAsync(db, writes.Select(w => (w.Section, w.Name)), rows).ConfigureAwait(false);
                             await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
                         }
                         else
@@ -265,19 +269,14 @@ public sealed class SettingsStore : ISettingsStore
                         }
                     }
 
-                    foreach (var write in writes)
+                    if (conflict is not null)
                     {
-                        rows[write.Section] = await db.SettingsSections
-                            .AsNoTracking()
-                            .SingleAsync(s => s.Section == write.Name, CancellationToken.None)
-                            .ConfigureAwait(false);
+                        // Rolled back: read what is committed, which may include another's saves.
+                        await ReadRowsAsync(db, writes.Select(w => (w.Section, w.Name)), rows).ConfigureAwait(false);
                     }
                 }
 
-                foreach (var write in writes)
-                {
-                    Publish(write.Name, rows[write.Section], generation);
-                }
+                PublishAll(writes.ToDictionary(w => w.Name, w => rows[w.Section]), generation);
             }
             finally
             {
@@ -318,8 +317,10 @@ public sealed class SettingsStore : ISettingsStore
     /// database change waits for saves, so the generation should always match; if it does
     /// not, the row is not trusted, and the cache is dropped for the next read to reload.
     /// </summary>
-    private void Publish(string name, SettingsSection row, int generation)
+    private void PublishAll(Dictionary<string, SettingsSection> rows, int generation)
     {
+        // One lock for the whole batch, so no reader sees some of a save's sections new
+        // and others old.
         lock (_lock)
         {
             if (generation != _generation)
@@ -329,11 +330,45 @@ public sealed class SettingsStore : ISettingsStore
                 return;
             }
 
-            if (_cache is not null && (!_cache.TryGetValue(name, out var cached) || cached.Version < row.Version))
+            if (_cache is null)
             {
-                _cache[name] = (row.Json, row.Version);
+                return;
+            }
+
+            foreach (var (name, row) in rows)
+            {
+                if (!_cache.TryGetValue(name, out var cached) || cached.Version < row.Version)
+                {
+                    _cache[name] = (Canonical(name, row.Json), row.Version);
+                }
             }
         }
+    }
+
+    private static async Task ReadRowsAsync(
+        ControllerDbContext db,
+        IEnumerable<(Type Section, string Name)> sections,
+        Dictionary<Type, SettingsSection> rows)
+    {
+        foreach (var (section, name) in sections)
+        {
+            rows[section] = await db.SettingsSections
+                .AsNoTracking()
+                .SingleAsync(s => s.Section == name, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// A stored section as its type serializes it today. Rows written by an older build may
+    /// carry fields the model has since dropped (Vote's AllowedTracks); comparing raw JSON
+    /// would call the first unchanged save of such a row a change.
+    /// </summary>
+    private static string Canonical(string name, string json)
+    {
+        // A section this build does not know (a newer build's, after a rollback) is kept as is.
+        var type = SettingsSections.Types.FirstOrDefault(t => SettingsSections.NameOf(t) == name);
+        return type is null ? json : JsonSerializer.Serialize(JsonSerializer.Deserialize(json, type, JsonOptions), type);
     }
 
     private void OnDatabaseChanged()
@@ -447,7 +482,7 @@ public sealed class SettingsStore : ISettingsStore
             _logger.LogInformation("Created the {Section} settings from the shipped defaults", name);
         }
 
-        return rows.ToDictionary(r => r.Key, r => (r.Value.Json, r.Value.Version));
+        return rows.ToDictionary(r => r.Key, r => (Canonical(r.Key, r.Value.Json), r.Value.Version));
     }
 
     private void Announce(List<Type> sections)
