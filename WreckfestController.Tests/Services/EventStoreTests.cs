@@ -213,6 +213,25 @@ public sealed class EventStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task AdvancingPastAReschedule_SkipsOccurrencesAlreadyDealtWith()
+    {
+        // Daily 12:05; today's 12:05 cancelled at 12:01. At 12:02 the start moves to 12:04,
+        // which is then cancelled too. The next occurrence must be tomorrow, not 12:05.
+        var cancelled = _db.Clock.UtcNow.AddMinutes(5);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Daily", cancelled, Daily("12:05")));
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(1);
+        await _db.Store.AdvanceAsync(evt.Id, cancelled, OccurrenceOutcome.Cancelled, Ct);
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(1);
+        var moved = cancelled.AddMinutes(-1);
+        var (_, rescheduled) = await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Daily", moved, Daily("12:05")), 1, Ct);
+        Assert.Equal(moved, rescheduled!.NextOccurrence);
+
+        Assert.True(await _db.Store.AdvanceAsync(evt.Id, moved, OccurrenceOutcome.Cancelled, Ct));
+
+        Assert.Equal(cancelled.AddDays(1), (await _db.ReloadAsync(evt.Id)).NextOccurrence);
+    }
+
+    [Fact]
     public async Task Advance_AfterAnAdminRescheduled_LeavesTheNewTime()
     {
         var start = _db.Clock.UtcNow.AddMinutes(2);

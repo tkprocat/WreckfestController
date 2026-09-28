@@ -133,18 +133,8 @@ public sealed class EventStore
         {
             // Removing or changing a repeat can give back occurrences that have already
             // run or been cancelled. The history says exactly which, so skip those.
-            var handled = (await db.EventOccurrences
-                    .Where(o => o.ScheduledEventId == id)
-                    .Select(o => o.Occurrence)
-                    .ToListAsync(cancellationToken))
-                .ToHashSet();
-            var next = FirstOccurrence(evt);
-            for (var i = 0; i < 1000 && next is { } candidate && handled.Contains(candidate); i++)
-            {
-                next = EventRecurrence.After(candidate, evt.Repeat, ZoneOf(evt.TimeZone), UtcNow);
-            }
-
-            evt.NextOccurrence = next;
+            var handled = await HandledAsync(db, id, cancellationToken);
+            evt.NextOccurrence = SkipHandled(FirstOccurrence(evt), handled, evt.Repeat, ZoneOf(evt.TimeZone));
 
             // Written even when unchanged from what was loaded: it is this edit's answer.
             db.Entry(evt).Property(e => e.NextOccurrence).IsModified = true;
@@ -257,7 +247,12 @@ public sealed class EventStore
             return false;
         }
 
-        var next = EventRecurrence.After(occurrence, schedule.Repeat, ZoneOf(schedule.TimeZone), UtcNow);
+        // The history as well as the repeat: an earlier reschedule can put occurrences
+        // already dealt with after this one.
+        var zone = ZoneOf(schedule.TimeZone);
+        var handled = await HandledAsync(db, id, cancellationToken);
+        handled.Add(occurrence);
+        var next = SkipHandled(EventRecurrence.After(occurrence, schedule.Repeat, zone, UtcNow), handled, schedule.Repeat, zone);
 
         // Still compare-and-set, as a second line of defence.
         var updated = await db.ScheduledEvents
@@ -273,16 +268,49 @@ public sealed class EventStore
             return false;
         }
 
-        db.EventOccurrences.Add(new EventOccurrenceRecord
+        // Should never be there already, since the next occurrence skips the history. If it
+        // somehow is, the advance must still go through: a failing insert would roll it back
+        // and leave the occurrence due, blocking the scheduler on every check.
+        if (!await db.EventOccurrences.AnyAsync(
+                o => o.ScheduledEventId == id && o.Occurrence == occurrence, cancellationToken))
         {
-            ScheduledEventId = id,
-            Occurrence = occurrence,
-            Outcome = outcome,
-            RecordedAt = UtcNow,
-        });
-        await db.SaveChangesAsync(cancellationToken);
+            db.EventOccurrences.Add(new EventOccurrenceRecord
+            {
+                ScheduledEventId = id,
+                Occurrence = occurrence,
+                Outcome = outcome,
+                RecordedAt = UtcNow,
+            });
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
         await transaction.CommitAsync(cancellationToken);
         return true;
+    }
+
+    private static async Task<HashSet<DateTime>> HandledAsync(
+        ControllerDbContext db,
+        int id,
+        CancellationToken cancellationToken) =>
+        (await db.EventOccurrences
+            .Where(o => o.ScheduledEventId == id)
+            .Select(o => o.Occurrence)
+            .ToListAsync(cancellationToken))
+        .ToHashSet();
+
+    /// <summary>
+    /// <paramref name="candidate"/>, or the first occurrence after it that is not in
+    /// <paramref name="handled"/>. Null once a one-off event has none left.
+    /// </summary>
+    private DateTime? SkipHandled(DateTime? candidate, HashSet<DateTime> handled, RepeatSchedule? repeat, TimeZoneInfo zone)
+    {
+        // Bounded: each step moves strictly later, and the history is finite.
+        for (var i = 0; i <= handled.Count && candidate is { } at && handled.Contains(at); i++)
+        {
+            candidate = EventRecurrence.After(at, repeat, zone, UtcNow);
+        }
+
+        return candidate;
     }
 
     /// <summary>What activation deploys: the linked collection's tracks as they are now, else the event's own.</summary>
