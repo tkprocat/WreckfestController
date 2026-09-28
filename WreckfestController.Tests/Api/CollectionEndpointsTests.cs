@@ -206,6 +206,54 @@ public class CollectionEndpointsTests
     }
 
     [Fact]
+    public async Task Deploy_ToAReadOnlyConfig_SaysAccessWasDenied_AndChangesNothing()
+    {
+        using var server = new ServerConfigFile();
+        await using var host = await ApiTestHost.StartAsync(server.Settings);
+        using var client = host.CreateAuthenticatedClient();
+        var id = await CreateAsync(client, "Locked out", "bigstadium_figure_8");
+        var before = File.ReadAllText(server.Path);
+        File.SetAttributes(server.Path, FileAttributes.ReadOnly);
+
+        using var deploy = await client.PostAsync($"/api/collections/{id}/deploy", null, Ct);
+
+        await AssertRefusedAsync(deploy, "accessDenied", "write permission");
+        Assert.Equal(before, File.ReadAllText(server.Path));
+    }
+
+    [Fact]
+    public async Task Deploy_WhileAnotherProgramHoldsTheConfig_SaysItIsInUse()
+    {
+        using var server = new ServerConfigFile();
+        await using var host = await ApiTestHost.StartAsync(server.Settings);
+        using var client = host.CreateAuthenticatedClient();
+        var id = await CreateAsync(client, "Busy", "bigstadium_figure_8");
+
+        HttpResponseMessage deploy;
+        using (new FileStream(server.Path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            deploy = await client.PostAsync($"/api/collections/{id}/deploy", null, Ct);
+        }
+
+        using (deploy)
+        {
+            await AssertRefusedAsync(deploy, "fileInUse", "Close it and try again");
+        }
+    }
+
+    [Fact]
+    public async Task Deploy_WithoutAServerConfig_SaysWhereToLook()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+        var id = await CreateAsync(client, "Nowhere", "bigstadium_figure_8");
+
+        using var deploy = await client.PostAsync($"/api/collections/{id}/deploy", null, Ct);
+
+        await AssertRefusedAsync(deploy, "notConfigured", "not set up");
+    }
+
+    [Fact]
     public async Task UsedVariantsAndTracks_CannotBeDeleted_UntilNoCollectionUsesThem()
     {
         await using var host = await ApiTestHost.StartAsync();
@@ -265,6 +313,14 @@ public class CollectionEndpointsTests
         var entry = Entry(await GetAsync(client, collectionId));
         Assert.Equal("bigstadium_figure_8", entry.GetProperty("track").GetString());
         Assert.True(entry.GetProperty("variant").GetProperty("isHidden").GetBoolean());
+    }
+
+    private static async Task AssertRefusedAsync(HttpResponseMessage response, string reason, string hint)
+    {
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(reason, problem.GetProperty("reason").GetString());
+        Assert.Contains(hint, problem.GetProperty("title").GetString());
     }
 
     private static JsonElement Entry(JsonElement collection) =>
@@ -340,6 +396,15 @@ public class CollectionEndpointsTests
             ["WreckfestServer:ServerArguments"] = "-s server_config=server_config.cfg",
         };
 
-        public void Dispose() => ApiTestHost.DeleteDataDirectory(_directory);
+        public void Dispose()
+        {
+            // A test may leave it read-only, which would stop the folder being deleted.
+            if (File.Exists(Path))
+            {
+                File.SetAttributes(Path, FileAttributes.Normal);
+            }
+
+            ApiTestHost.DeleteDataDirectory(_directory);
+        }
     }
 }

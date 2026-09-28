@@ -288,7 +288,7 @@ leaves it in collections, with `isHidden: true`.
 | PUT | `{id}` | Same body; replaces the name and every track, which is also how to reorder. Needs `If-Match`. |
 | DELETE | `{id}` | 204. |
 | POST | `{id}/duplicate` | Optional `{ name }`, else "*name* (copy)", then "(copy 2)" and on. 201. |
-| POST | `{id}/deploy` | Writes the tracks to the server config's event loop, with the name on `#CollectionName`. `{ message, collectionName, count }`. **409** for an empty collection, or when the config cannot be written. |
+| POST | `{id}/deploy` | Writes the tracks to the server config's event loop, with the name on `#CollectionName`. `{ message, collectionName, count }`. **409** for an empty collection, or when the config cannot be written; then `reason` is `accessDenied` (no write permission, or the file is read-only), `fileInUse` (another program has it open), `notFound`, `notConfigured` or `ioError`, and `title` says what to fix. |
 
 Concurrency works as for the catalogue: `version`, `ETag`, `If-Match`, 428 and 409.
 

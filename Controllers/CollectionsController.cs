@@ -247,10 +247,10 @@ public class CollectionsController : ControllerBase
         {
             _config.WriteEventLoopTracks(collection.Name, tracks);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception ex) when (ConfigWriteFailure.From(ex) is { } failure)
         {
-            _logger.LogWarning(ex, "Could not deploy collection {Name}", collection.Name);
-            return this.Refused($"Cannot write the server config: {ex.Message}");
+            _logger.LogWarning(ex, "Could not deploy collection {Name}: {Reason}", collection.Name, failure.Reason);
+            return this.Refused(failure.Message, ("reason", failure.Reason));
         }
 
         _logger.LogInformation(
