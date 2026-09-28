@@ -3,7 +3,11 @@ using System.Windows.Controls;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
 using WreckfestController.Models;
-using WreckfestController.Services;
+using WreckfestController.Services.Auth;
+using WreckfestController.Services.Config;
+using WreckfestController.Services.Desktop;
+using WreckfestController.Services.Hook;
+using WreckfestController.Services.Voting;
 
 namespace WreckfestController.Views;
 

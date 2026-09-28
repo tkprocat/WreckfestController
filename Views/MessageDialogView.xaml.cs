@@ -1,6 +1,6 @@
 using System.Windows.Controls;
 
-namespace WreckfestController.Services;
+namespace WreckfestController.Views;
 
 public partial class MessageDialogView : UserControl
 {

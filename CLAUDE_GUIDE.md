@@ -822,7 +822,7 @@ The Configuration tab provides a user-friendly interface for managing settings:
 
 ### SettingsService
 
-**Services/SettingsService.cs** manages user settings:
+**Services/Config/SettingsService.cs** manages user settings:
 
 ```csharp
 public class SettingsService
@@ -1270,7 +1270,7 @@ C# EventSchedulerService (Background Timer - 30s intervals)
 - `GET /api/Events/{id}` - Get specific event by ID
 - `POST /api/Events/{id}/activate` - Manually trigger event activation (reserved for future use)
 
-✅ **Smart Restart System** (`Services/SmartRestartService.cs`)
+✅ **Smart Restart System** (`Services/ServerControl/SmartRestartService.cs`)
 - **5-Minute Countdown**: Sends in-game messages every minute (T-5, T-4, T-3, T-2, T-1)
 - **Lobby Detection**: Waits for track change event (players return to lobby between races)
 - **Player-Aware**: Restarts immediately if no players online

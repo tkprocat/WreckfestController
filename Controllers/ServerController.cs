@@ -1,7 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Reflection;
-using WreckfestController.Services;
+using WreckfestController.Services.Auth;
+using WreckfestController.Services.ServerControl;
 
 namespace WreckfestController.Controllers;
 

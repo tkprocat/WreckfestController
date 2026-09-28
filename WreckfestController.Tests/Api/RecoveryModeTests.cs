@@ -7,6 +7,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using WreckfestController.Data;
 using WreckfestController.Services;
+using WreckfestController.Services.Config;
+using WreckfestController.Services.Hosting;
+using WreckfestController.Services.ServerControl;
+using WreckfestController.Services.Tracking;
 
 namespace WreckfestController.Tests.Api;
 

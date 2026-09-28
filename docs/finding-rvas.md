@@ -23,7 +23,7 @@ timestamp `0x6509731D`).
 | `ServerNamespaceTagRva` | `0x065E6308` | tag for the SERVER namespace |
 | `ChatHandlerRva` | `0x0038FC10` | unified input handler for the server console and player chat; the hook patches this too |
 
-`Services/VotingService.cs`:
+`Services/Voting/VotingService.cs`:
 
 | Constant | RVA | What it is |
 | --- | --- | --- |

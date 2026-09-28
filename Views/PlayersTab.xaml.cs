@@ -4,7 +4,9 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using Microsoft.Extensions.Logging;
 using WreckfestController.Models;
-using WreckfestController.Services;
+using WreckfestController.Services.Desktop;
+using WreckfestController.Services.ServerControl;
+using WreckfestController.Services.Tracking;
 
 namespace WreckfestController.Views;
 

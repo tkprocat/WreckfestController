@@ -5,7 +5,8 @@ using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
 using WreckfestController.Data.Collections;
 using WreckfestController.Models;
-using WreckfestController.Services;
+using WreckfestController.Services.Auth;
+using WreckfestController.Services.Config;
 
 namespace WreckfestController.Controllers;
 

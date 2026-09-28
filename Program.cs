@@ -6,6 +6,15 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WreckfestController.Data;
 using WreckfestController.Services;
+using WreckfestController.Services.Auth;
+using WreckfestController.Services.Config;
+using WreckfestController.Services.Desktop;
+using WreckfestController.Services.Hook;
+using WreckfestController.Services.Hosting;
+using WreckfestController.Services.Publishing;
+using WreckfestController.Services.ServerControl;
+using WreckfestController.Services.Tracking;
+using WreckfestController.Services.Voting;
 
 namespace WreckfestController;
 

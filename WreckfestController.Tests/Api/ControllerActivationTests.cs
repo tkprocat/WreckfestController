@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
-using WreckfestController.Services;
+using WreckfestController.Services.Hosting;
 
 namespace WreckfestController.Tests.Api;
 

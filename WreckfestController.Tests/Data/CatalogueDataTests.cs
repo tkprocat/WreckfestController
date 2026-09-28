@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using WreckfestController.Data;
 using WreckfestController.Data.Catalogue;
-using WreckfestController.Services;
+using WreckfestController.Services.Voting;
 
 namespace WreckfestController.Tests.Data;
 

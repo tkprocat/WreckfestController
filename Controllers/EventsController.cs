@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using WreckfestController.Data.Events;
 using WreckfestController.Services;
+using WreckfestController.Services.Auth;
+using WreckfestController.Services.Config;
 
 namespace WreckfestController.Controllers;
 

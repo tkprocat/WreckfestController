@@ -63,7 +63,7 @@ public class VoteSettings
     public bool Enabled { get; set; } = true;
 
     /// <summary>
-    /// Off, Voting or Direct. See <c>Services/VoteModes.cs</c>. Held as a string,
+    /// Off, Voting or Direct. See <c>Services/Voting/VoteModes.cs</c>. Held as a string,
     /// not an enum, so an unrecognised value degrades instead of throwing.
     /// </summary>
     [JsonPropertyName("Mode")]
