@@ -172,6 +172,9 @@ public class EventViewModel
         Event = evt;
         Name = evt.IsActive ? $"{evt.Name} (active)" : evt.Name;
         Next = evt.NextOccurrence is { } next ? next.ToLocalTime().ToString("yyyy-MM-dd HH:mm") : "Finished";
+        Last = evt.LastOccurrence is { } last
+            ? $"{evt.LastOutcome} {last.ToLocalTime():yyyy-MM-dd HH:mm}"
+            : "-";
         TrackCount = EventStore.ToRestartEvent(evt).Tracks.Count;
         RepeatSchedule = evt.Repeat is null
             ? "One-time"
@@ -183,6 +186,12 @@ public class EventViewModel
 
     /// <summary>The next occurrence in this machine's local time.</summary>
     public string Next { get; }
+
+    /// <summary>
+    /// How the last occurrence ended, such as "Missed 2026-10-02 20:00". A missed, failed
+    /// or cancelled occurrence is not retried; activate the event to run it anyway.
+    /// </summary>
+    public string Last { get; }
 
     public int TrackCount { get; }
     public string RepeatSchedule { get; }

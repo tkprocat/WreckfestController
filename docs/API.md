@@ -243,24 +243,31 @@ collectionId?, tracks?, collectionName? }`:
   rotation alone. Deleting a collection copies its tracks into the events linked to
   it, so they still deploy them.
 
-Responses add `repeatDescription`, `nextOccurrence`, `lastOccurrence`, `isActive`,
+Responses add `repeatDescription`, `nextOccurrence`, `lastOccurrence`, `lastOutcome`, `isActive`,
 `activatedAt`, `createdBy` (the signed-in user who created it; null for API-key
 callers), `createdAt`, `updatedAt` and `version`. For a linked event, `tracks` and
 `collectionName` are the collection's current ones.
 
 **Concurrency.** `version` and the ETag cover what an admin edits. PUT and DELETE
 without `If-Match` get 428, and with a stale one 409 with the current event. The
-scheduler's own fields (`nextOccurrence`, `lastOccurrence`, `isActive`, `activatedAt`)
+scheduler's own fields (`nextOccurrence`, `lastOccurrence`, `lastOutcome`, `isActive`, `activatedAt`)
 change without a new version, so the scheduler finishing an occurrence never
 invalidates an open editor, and an edit that leaves `startTime`, `timeZone` and
 `repeat` alone never moves the schedule.
 
 **Scheduling.** An occurrence starts 5 minutes early, for the players' countdown.
-Each occurrence gets one attempt: once its restart succeeds, fails or is cancelled,
-the event moves to its next occurrence (or finishes, for a one-off event). One more
-than 30 minutes overdue - the app was not running - is skipped and logged. At most one
-event is active; activating another deactivates it. A manual activation within the 5
-minutes before an occurrence counts as that occurrence.
+Each occurrence gets one attempt, and then the event moves to its next occurrence (or
+finishes, for a one-off event). `lastOutcome` records how it ended:
+- `Activated`: the restart succeeded, or the event was already active;
+- `Failed`: the settings could not be written, or the restart failed;
+- `Cancelled`: an admin cancelled the restart;
+- `Missed`: not started within 15 minutes of its time, because the app was not running
+  or another restart ran too long.
+
+Nothing is retried. Every outcome is sent to signed-in clients as
+`EventOccurrenceEnded`, and anything but `Activated` is also logged as a warning.
+Running a missed or failed event anyway is the admin's call, with `activate`. At most one event is active; activating another deactivates it. A manual
+activation within the 5 minutes before an occurrence counts as that occurrence.
 
 1.x's `POST schedule` (the Laravel bulk push) is gone, and 2.0 starts with no events:
 `event-schedule.json` is neither read nor deleted.
@@ -363,6 +370,7 @@ anonymously, but what a connection receives depends on its group:
 | `ServerRestarted` | public | `{ oldProcessId, newProcessId, restartMethod, timestamp }` |
 | `ServerAttached` | public | `{ processId, processName, startTime, timestamp }` |
 | `ServerRestartPending` | public | `{ minutesRemaining, eventName, eventId, scheduledRestartTime, timestamp }` |
+| `EventOccurrenceEnded` | admin | `{ eventId, eventName, occurrence, outcome, timestamp }` — a scheduled occurrence was dealt with; `outcome` is `Activated`, `Failed`, `Cancelled` or `Missed` |
 | `ConsoleLog` | admin | `{ logs: [string] }` — console lines, batched about once a second (at most 1000 per message) |
 
 Timestamps are UTC. Events raised while no client is connected, or while the API is

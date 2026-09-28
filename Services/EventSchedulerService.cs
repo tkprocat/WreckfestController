@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Hosting;
+using WreckfestController.Data.Events;
 
 namespace WreckfestController.Services;
 
@@ -8,13 +9,15 @@ namespace WreckfestController.Services;
 /// <see cref="EventActivator"/>, one at a time.
 /// </summary>
 /// <remarks>
-/// An occurrence more than <see cref="MissedGrace"/> overdue - the app was not running,
-/// or the event was created in the past - is skipped: logged, and the event moves on to
-/// its next occurrence. Starting a two-hour-old race night by surprise helps nobody.
+/// An occurrence more than <see cref="MissedGrace"/> overdue is recorded as
+/// <see cref="OccurrenceOutcome.Missed"/>, and the event moves on to its next occurrence.
+/// Starting a two-hour-old race night by surprise helps nobody: the miss is logged and
+/// sent to signed-in clients, and an admin activates the event by hand if it should
+/// still run. The grace covers waiting out another restart, which can take 15 minutes.
 /// </remarks>
 public class EventSchedulerService : IHostedService, IDisposable
 {
-    public static readonly TimeSpan MissedGrace = TimeSpan.FromMinutes(30);
+    public static readonly TimeSpan MissedGrace = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
 
     private readonly EventStore _store;
@@ -106,13 +109,7 @@ public class EventSchedulerService : IHostedService, IDisposable
 
         if (occurrence < now - MissedGrace)
         {
-            _logger.LogWarning(
-                "Skipped event {EventName} (ID {EventId}): its {Occurrence:u} occurrence was missed by more than {Minutes} minutes",
-                evt.Name,
-                evt.Id,
-                occurrence,
-                MissedGrace.TotalMinutes);
-            await _store.AdvanceAsync(evt.Id, occurrence);
+            await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Missed);
             return true;
         }
 
@@ -123,7 +120,7 @@ public class EventSchedulerService : IHostedService, IDisposable
                 evt.Name,
                 evt.Id,
                 occurrence);
-            await _store.AdvanceAsync(evt.Id, occurrence);
+            await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Activated);
             return true;
         }
 
@@ -141,14 +138,9 @@ public class EventSchedulerService : IHostedService, IDisposable
         {
             // The settings could not be written, so nothing restarted. One attempt per
             // occurrence: retrying would fail the same way every half minute.
-            _logger.LogError(
-                ex,
-                "Could not apply event {EventName} (ID {EventId}); its {Occurrence:u} occurrence is skipped",
-                evt.Name,
-                evt.Id,
-                occurrence);
+            _logger.LogError(ex, "Could not apply event {EventName} (ID {EventId})", evt.Name, evt.Id);
             ReleaseActivation();
-            await _store.AdvanceAsync(evt.Id, occurrence);
+            await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Failed);
             return true;
         }
 

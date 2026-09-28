@@ -134,23 +134,46 @@ public sealed class EventActivator
         }
     }
 
+    /// <summary>
+    /// Records how <paramref name="occurrence"/> ended and moves the event past it. Anything
+    /// but <see cref="OccurrenceOutcome.Activated"/> is logged as a warning and sent to
+    /// signed-in clients: the occurrence is not retried, so an admin decides whether to
+    /// activate it by hand.
+    /// </summary>
+    public async Task EndOccurrenceAsync(ScheduledEvent evt, DateTime occurrence, OccurrenceOutcome outcome)
+    {
+        if (!await _store.AdvanceAsync(evt.Id, occurrence, outcome))
+        {
+            // Rescheduled or deleted meanwhile: the admin's change stands.
+            return;
+        }
+
+        if (outcome != OccurrenceOutcome.Activated)
+        {
+            _logger.LogWarning(
+                "The {Occurrence:u} occurrence of event {EventName} (ID {EventId}) was {Outcome} and will not be retried; activate it by hand if it should still run",
+                occurrence,
+                evt.Name,
+                evt.Id,
+                outcome);
+        }
+
+        _ = _publisher.EventOccurrenceEndedAsync(evt.Id, evt.Name, occurrence, outcome);
+    }
+
     private void Finish(ScheduledEvent evt, DateTime? occurrence, RestartOutcome outcome, Action<RestartOutcome>? onFinished)
     {
         try
         {
             if (occurrence is { } at)
             {
-                if (outcome != RestartOutcome.Succeeded)
+                var ended = outcome switch
                 {
-                    _logger.LogWarning(
-                        "The {Occurrence:u} occurrence of event {EventName} (ID {EventId}) ended {Outcome}; it will not be retried",
-                        at,
-                        evt.Name,
-                        evt.Id,
-                        outcome);
-                }
-
-                _store.AdvanceAsync(evt.Id, at).GetAwaiter().GetResult();
+                    RestartOutcome.Succeeded => OccurrenceOutcome.Activated,
+                    RestartOutcome.Cancelled => OccurrenceOutcome.Cancelled,
+                    _ => OccurrenceOutcome.Failed,
+                };
+                EndOccurrenceAsync(evt, at, ended).GetAwaiter().GetResult();
             }
         }
         catch (Exception ex)

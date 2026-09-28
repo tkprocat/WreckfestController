@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 using WreckfestController.Hubs;
 using WreckfestController.Models;
+using WreckfestController.Data.Events;
 
 namespace WreckfestController.Services;
 
@@ -100,6 +101,12 @@ public sealed class HubServerEventPublisher : IServerEventPublisher, IDisposable
         PublishAsync(
             nameof(IServerHubClient.EventActivated),
             c => c.EventActivated(new EventActivatedMessage(eventId, eventName, DateTime.UtcNow)));
+
+    public Task EventOccurrenceEndedAsync(int eventId, string eventName, DateTime occurrence, OccurrenceOutcome outcome) =>
+        PublishAsync(
+            nameof(IServerHubClient.EventOccurrenceEnded),
+            c => c.EventOccurrenceEnded(new EventOccurrenceEndedMessage(eventId, eventName, occurrence, outcome, DateTime.UtcNow)),
+            ServerHub.AdminGroup);
 
     public Task ServerStartedAsync(ServerStartedEvent e) =>
         PublishAsync(

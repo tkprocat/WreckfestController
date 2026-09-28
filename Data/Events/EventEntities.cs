@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using WreckfestController.Data.Catalogue;
 using WreckfestController.Data.Collections;
 using WreckfestController.Models;
@@ -83,9 +84,35 @@ public class ScheduledEvent : IVersioned
     /// <summary>UTC. The occurrence most recently dealt with: activated, failed or missed.</summary>
     public DateTime? LastOccurrence { get; set; }
 
+    /// <summary>What happened to <see cref="LastOccurrence"/>, so a miss or failure is visible.</summary>
+    public OccurrenceOutcome? LastOutcome { get; set; }
+
     /// <summary>At most one event is active: the one whose settings the server is running.</summary>
     public bool IsActive { get; set; }
 
     /// <summary>UTC. When the event last became active.</summary>
     public DateTime? ActivatedAt { get; set; }
+}
+
+/// <summary>
+/// How an occurrence ended. Every occurrence gets one attempt; anything but
+/// <see cref="Activated"/> is left for an admin to act on, by activating it by hand.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter<OccurrenceOutcome>))]
+public enum OccurrenceOutcome
+{
+    /// <summary>The restart succeeded, or the event was already active.</summary>
+    Activated,
+
+    /// <summary>The settings could not be written, or the restart failed.</summary>
+    Failed,
+
+    /// <summary>An admin cancelled the restart.</summary>
+    Cancelled,
+
+    /// <summary>
+    /// Not started within <see cref="Services.EventSchedulerService.MissedGrace"/> of its
+    /// time: the app was not running, or another restart ran too long.
+    /// </summary>
+    Missed,
 }

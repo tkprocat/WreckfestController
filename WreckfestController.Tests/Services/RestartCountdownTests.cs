@@ -5,6 +5,7 @@ using Moq;
 using WreckfestController.Models;
 using WreckfestController.Services;
 using Xunit;
+using WreckfestController.Data.Events;
 
 namespace WreckfestController.Tests.Services;
 
@@ -227,6 +228,7 @@ public class RestartCountdownTests : IDisposable
         public Task PlayerLeftAsync(string playerName) => Task.CompletedTask;
         public Task TrackChangedAsync(string trackId) => Task.CompletedTask;
         public Task EventActivatedAsync(int eventId, string eventName) => Task.CompletedTask;
+        public Task EventOccurrenceEndedAsync(int eventId, string eventName, DateTime occurrence, OccurrenceOutcome outcome) => Task.CompletedTask;
         public Task ServerStartedAsync(ServerStartedEvent serverEvent) => Task.CompletedTask;
         public Task ServerStoppedAsync(ServerStoppedEvent serverEvent) => Task.CompletedTask;
         public Task ServerRestartedAsync(ServerRestartedEvent serverEvent) => Task.CompletedTask;

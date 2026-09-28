@@ -76,7 +76,9 @@ public sealed class EventActivationTests : IDisposable
 
         Assert.True(current.IsActive);
         Assert.Equal(start, current.LastOccurrence);
+        Assert.Equal(OccurrenceOutcome.Activated, current.LastOutcome);
         _publisher.Verify(p => p.EventActivatedAsync(evt.Id, "Race night"), Times.Once);
+        _publisher.Verify(p => p.EventOccurrenceEndedAsync(evt.Id, "Race night", start, OccurrenceOutcome.Activated), Times.Once);
     }
 
     [Fact]
@@ -118,6 +120,8 @@ public sealed class EventActivationTests : IDisposable
         await _scheduler.CheckAsync();
         var failed = await EventuallyAsync(first.Id, e => e.NextOccurrence is null);
         Assert.False(failed.IsActive);
+        Assert.Equal(OccurrenceOutcome.Failed, failed.LastOutcome);
+        _publisher.Verify(p => p.EventOccurrenceEndedAsync(first.Id, "First", It.IsAny<DateTime>(), OccurrenceOutcome.Failed), Times.Once);
         await EventuallyIdleAsync();
 
         var second = await _db.CreateAsync(EventTestDatabase.Definition("Second", Now.AddMinutes(2)));
@@ -141,12 +145,13 @@ public sealed class EventActivationTests : IDisposable
         await _scheduler.CheckAsync();
 
         Assert.False(current.IsActive);
+        Assert.Equal(OccurrenceOutcome.Cancelled, current.LastOutcome);
         Assert.Equal(SmartRestartState.Idle, _restart.GetState());
         _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
     }
 
     [Fact]
-    public async Task AMissedOccurrence_IsSkipped_WithoutARestart()
+    public async Task AMissedOccurrence_IsRecordedAndReported_WithoutARestart()
     {
         var oneOff = await _db.CreateAsync(EventTestDatabase.Definition("Yesterday", Now.AddDays(-1)));
         var start = Now.AddHours(1);
@@ -160,16 +165,22 @@ public sealed class EventActivationTests : IDisposable
         var skipped = await _db.ReloadAsync(oneOff.Id);
         Assert.Null(skipped.NextOccurrence);
         Assert.False(skipped.IsActive);
+        Assert.Equal(OccurrenceOutcome.Missed, skipped.LastOutcome);
         var moved = await _db.ReloadAsync(daily.Id);
         Assert.Equal(start, moved.LastOccurrence);
+        Assert.Equal(OccurrenceOutcome.Missed, moved.LastOutcome);
         Assert.Equal(start.AddDays(1), moved.NextOccurrence);
+        _publisher.Verify(p => p.EventOccurrenceEndedAsync(daily.Id, "Daily", start, OccurrenceOutcome.Missed), Times.Once);
+
+        // Still the admin's to run: a manual activation works as normal.
+        Assert.Equal(ActivationResult.Started, await _activator.ActivateAsync(oneOff.Id));
     }
 
     [Fact]
     public async Task ALateOccurrence_WithinTheGrace_StillStarts()
     {
         var evt = await _db.CreateAsync(EventTestDatabase.Definition("Race night", Now.AddMinutes(1)));
-        _db.Clock.Now = _db.Clock.Now.AddMinutes(20);
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(10);
 
         await _scheduler.CheckAsync();
 
@@ -189,6 +200,7 @@ public sealed class EventActivationTests : IDisposable
         var skipped = await _db.ReloadAsync(broken.Id);
         Assert.False(skipped.IsActive);
         Assert.Null(skipped.NextOccurrence);
+        Assert.Equal(OccurrenceOutcome.Failed, skipped.LastOutcome);
         Assert.True((await EventuallyAsync(plain.Id, e => e.IsActive)).IsActive);
         _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Once);
     }

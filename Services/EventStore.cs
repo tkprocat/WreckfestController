@@ -209,12 +209,16 @@ public sealed class EventStore
     }
 
     /// <summary>
-    /// Records <paramref name="occurrence"/> as dealt with and moves the event to what
+    /// Records <paramref name="occurrence"/> as dealt with, and how, and moves the event to what
     /// follows it: the next occurrence after it and after now, or none for a one-off.
     /// Does nothing, returning false, if the event no longer waits for that occurrence -
     /// it was rescheduled or deleted since.
     /// </summary>
-    public async Task<bool> AdvanceAsync(int id, DateTime occurrence, CancellationToken cancellationToken = default)
+    public async Task<bool> AdvanceAsync(
+        int id,
+        DateTime occurrence,
+        OccurrenceOutcome outcome,
+        CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
         var schedule = await db.ScheduledEvents
@@ -233,7 +237,10 @@ public sealed class EventStore
         var updated = await db.ScheduledEvents
             .Where(e => e.Id == id && e.NextOccurrence == occurrence)
             .ExecuteUpdateAsync(
-                s => s.SetProperty(e => e.NextOccurrence, next).SetProperty(e => e.LastOccurrence, occurrence),
+                s => s
+                    .SetProperty(e => e.NextOccurrence, next)
+                    .SetProperty(e => e.LastOccurrence, occurrence)
+                    .SetProperty(e => e.LastOutcome, outcome),
                 cancellationToken);
         return updated > 0;
     }

@@ -32,6 +32,7 @@ namespace WreckfestController.Data.Migrations
                     Version = table.Column<int>(type: "INTEGER", nullable: false),
                     NextOccurrence = table.Column<DateTime>(type: "TEXT", nullable: true),
                     LastOccurrence = table.Column<DateTime>(type: "TEXT", nullable: true),
+                    LastOutcome = table.Column<string>(type: "TEXT", maxLength: 16, nullable: true),
                     IsActive = table.Column<bool>(type: "INTEGER", nullable: false),
                     ActivatedAt = table.Column<DateTime>(type: "TEXT", nullable: true)
                 },

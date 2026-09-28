@@ -240,6 +240,7 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
             evt.Property(e => e.NextOccurrence).HasConversion(UtcConverter);
             evt.Property(e => e.LastOccurrence).HasConversion(UtcConverter);
             evt.Property(e => e.ActivatedAt).HasConversion(UtcConverter);
+            evt.Property(e => e.LastOutcome).HasConversion<string>().HasMaxLength(16);
 
             Json(evt.Property(e => e.Repeat));
             Json(evt.Property(e => e.ServerConfig));

@@ -11,7 +11,7 @@ using WreckfestController.Data;
 namespace WreckfestController.Data.Migrations
 {
     [DbContext(typeof(ControllerDbContext))]
-    [Migration("20260928074210_ScheduledEvents")]
+    [Migration("20260928091358_ScheduledEvents")]
     partial class ScheduledEvents
     {
         /// <inheritdoc />
@@ -549,6 +549,10 @@ namespace WreckfestController.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("LastOccurrence")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastOutcome")
+                        .HasMaxLength(16)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Name")

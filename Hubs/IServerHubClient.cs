@@ -1,3 +1,4 @@
+using WreckfestController.Data.Events;
 namespace WreckfestController.Hubs;
 
 /// <summary>
@@ -21,6 +22,7 @@ public interface IServerHubClient
 
     // admin group
     Task ConsoleLog(ConsoleLogMessage message);
+    Task EventOccurrenceEnded(EventOccurrenceEndedMessage message);
 }
 
 public sealed record PlayerSummary(
@@ -41,6 +43,13 @@ public sealed record PlayerLeftMessage(string PlayerName);
 public sealed record TrackChangedMessage(string TrackId);
 
 public sealed record EventActivatedMessage(int EventId, string EventName, DateTime Timestamp);
+
+public sealed record EventOccurrenceEndedMessage(
+    int EventId,
+    string EventName,
+    DateTime Occurrence,
+    OccurrenceOutcome Outcome,
+    DateTime Timestamp);
 
 public sealed record ServerStartedMessage(int ProcessId, string ProcessName, DateTime StartTime, DateTime Timestamp);
 

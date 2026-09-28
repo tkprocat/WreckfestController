@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using WreckfestController.Data.Events;
 using WreckfestController.Hubs;
 using WreckfestController.Services;
 
@@ -44,6 +45,35 @@ public class ServerHubTests
         await WaitUntilAsync(() => anonymousLog.TrackIds.Contains("fields14"));
 
         Assert.Empty(anonymousLog.ConsoleLines);
+    }
+
+    [Fact]
+    public async Task OccurrenceOutcomes_GoToAdminsOnly()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        var publisher = host.MainServices.GetRequiredService<HubServerEventPublisher>();
+
+        await using var anonymous = host.CreateHubConnection();
+        await using var admin = host.CreateHubConnection(o => o.Headers["X-Api-Key"] = ApiTestHost.ApiKey);
+        var anonymousLog = Record(anonymous);
+        var adminLog = Record(admin);
+        await anonymous.StartAsync(Ct);
+        await admin.StartAsync(Ct);
+        await PublishUntilAsync(() => publisher.TrackChangedAsync("ready"),
+            () => anonymousLog.TrackIds.Contains("ready") && adminLog.TrackIds.Contains("ready"));
+
+        var occurrence = new DateTime(2026, 10, 2, 18, 0, 0, DateTimeKind.Utc);
+        await publisher.EventOccurrenceEndedAsync(7, "Race night", occurrence, OccurrenceOutcome.Missed);
+        await WaitUntilAsync(() => !adminLog.Outcomes.IsEmpty);
+
+        await publisher.TrackChangedAsync("fields14");
+        await WaitUntilAsync(() => anonymousLog.TrackIds.Contains("fields14"));
+
+        var ended = Assert.Single(adminLog.Outcomes);
+        Assert.Equal(7, ended.GetProperty("eventId").GetInt32());
+        Assert.Equal("Missed", ended.GetProperty("outcome").GetString());
+        Assert.Equal(occurrence, ended.GetProperty("occurrence").GetDateTime().ToUniversalTime());
+        Assert.Empty(anonymousLog.Outcomes);
     }
 
     [Fact]
@@ -112,6 +142,7 @@ public class ServerHubTests
     {
         public ConcurrentQueue<string> TrackIdQueue { get; } = new();
         public ConcurrentQueue<IReadOnlyList<string>> Batches { get; } = new();
+        public ConcurrentQueue<System.Text.Json.JsonElement> Outcomes { get; } = new();
         public IReadOnlyList<string> TrackIds => TrackIdQueue.ToList();
         public IReadOnlyList<IReadOnlyList<string>> ConsoleBatches => Batches.ToList();
         public IReadOnlyList<string> ConsoleLines => Batches.SelectMany(b => b).ToList();
@@ -124,6 +155,10 @@ public class ServerHubTests
             m => received.TrackIdQueue.Enqueue(m.TrackId));
         connection.On<ConsoleLogMessage>(nameof(IServerHubClient.ConsoleLog),
             m => received.Batches.Enqueue(m.Logs));
+
+        // Raw JSON, to see the wire format a browser gets.
+        connection.On<System.Text.Json.JsonElement>(nameof(IServerHubClient.EventOccurrenceEnded),
+            m => received.Outcomes.Enqueue(m));
         return received;
     }
 

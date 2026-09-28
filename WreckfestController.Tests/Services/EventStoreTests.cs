@@ -1,4 +1,5 @@
 using WreckfestController.Data.Collections;
+using WreckfestController.Data.Events;
 using WreckfestController.Models;
 using WreckfestController.Services;
 
@@ -52,7 +53,7 @@ public sealed class EventStoreTests : IDisposable
 
         // The scheduler marks the occurrence done while an editor holds version 1.
         Assert.True(await _db.Store.SetActiveAsync(evt.Id, Ct));
-        Assert.True(await _db.Store.AdvanceAsync(evt.Id, start, Ct));
+        Assert.True(await _db.Store.AdvanceAsync(evt.Id, start, OccurrenceOutcome.Activated, Ct));
 
         var (status, saved) = await _db.Store.UpdateAsync(
             evt.Id, EventTestDatabase.Definition("Renamed", start, Daily("12:02")), expectedVersion: 1, Ct);
@@ -72,7 +73,7 @@ public sealed class EventStoreTests : IDisposable
         var moved = start.AddDays(1);
         await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Race night", moved), 1, Ct);
 
-        Assert.False(await _db.Store.AdvanceAsync(evt.Id, start, Ct));
+        Assert.False(await _db.Store.AdvanceAsync(evt.Id, start, OccurrenceOutcome.Activated, Ct));
 
         var current = await _db.ReloadAsync(evt.Id);
         Assert.Equal(moved, current.NextOccurrence);
@@ -84,11 +85,12 @@ public sealed class EventStoreTests : IDisposable
     {
         var evt = await _db.CreateAsync(EventTestDatabase.Definition("Race night", InOneHour));
 
-        Assert.True(await _db.Store.AdvanceAsync(evt.Id, InOneHour, Ct));
+        Assert.True(await _db.Store.AdvanceAsync(evt.Id, InOneHour, OccurrenceOutcome.Missed, Ct));
 
         var current = await _db.ReloadAsync(evt.Id);
         Assert.Null(current.NextOccurrence);
         Assert.Equal(InOneHour, current.LastOccurrence);
+        Assert.Equal(OccurrenceOutcome.Missed, current.LastOutcome);
         Assert.Equal(1, current.Version);
     }
 

@@ -60,6 +60,10 @@
                                        Binding="{Binding Next}"
                                        Width="1.5*"/>
 
+                    <DataGridTextColumn Header="Last Run"
+                                       Binding="{Binding Last}"
+                                       Width="1.5*"/>
+
                     <DataGridTextColumn Header="Tracks"
                                        Binding="{Binding TrackCount}"
                                        Width="0.7*"/>

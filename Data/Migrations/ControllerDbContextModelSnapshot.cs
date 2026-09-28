@@ -548,6 +548,10 @@ namespace WreckfestController.Data.Migrations
                     b.Property<DateTime?>("LastOccurrence")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("LastOutcome")
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(128)
