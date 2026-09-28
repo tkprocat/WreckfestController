@@ -200,6 +200,7 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddTrustedProxies(configuration);
         builder.Services.AddRateLimits();
         builder.Services.AddSignalR();
+        builder.Services.AddSingleton(WebApp.Resolve(configuration));
     }
 
     /// <summary>
@@ -210,6 +211,10 @@ public class ApiServer : IApiServer, IDisposable
     {
         // Before anything reads the client IP or the scheme.
         app.UseForwardedHeaders();
+
+        // The web app's files, which need neither the database nor a signed-in user.
+        var web = app.Services.GetRequiredService<WebApp>();
+        web.UseFiles(app);
 
         // Next, so recovery mode answers before anything touches the user store.
         app.UseMiddleware<DatabaseUnavailableMiddleware>();
@@ -222,6 +227,14 @@ public class ApiServer : IApiServer, IDisposable
         // Anonymous so the public page gets live updates. What a connection receives
         // is decided by its group, and only ServerHub puts a signed-in caller in admin.
         app.MapHub<ServerHub>(ServerHub.Route).AllowAnonymous();
+
+        // After the API and the hub: only what neither of them answers.
+        web.MapFallback(app);
+        app.Logger.LogInformation(
+            web.Files is null
+                ? "No web app at {WebRoot}; serving the API only"
+                : "Serving the web app from {WebRoot}",
+            web.Root);
 
         // The publisher belongs to the WPF app and outlives this host, so it is
         // pointed at this host's hub only while the host is running.

@@ -4,9 +4,10 @@ using WreckfestController.Data;
 namespace WreckfestController.Services.Hosting;
 
 /// <summary>
-/// Recovery mode for the API. While the database is unavailable, the only answer is
+/// Recovery mode for the API. While the database is unavailable, the only API answer is
 /// the anonymous <c>/api/auth/state</c>, reporting <c>degraded: true</c> so the web UI
-/// can say why sign-in is unavailable. Every other request fails closed with 503.
+/// can say why sign-in is unavailable. Every other API and hub request fails closed with
+/// 503. The web app's own pages still load: they are files, and need no database.
 /// </summary>
 public sealed class DatabaseUnavailableMiddleware
 {
@@ -23,7 +24,7 @@ public sealed class DatabaseUnavailableMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
-        if (_state.IsReady)
+        if (_state.IsReady || WebApp.IsAppPath(context.Request.Path))
         {
             await _next(context);
             return;

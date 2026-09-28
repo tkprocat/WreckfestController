@@ -45,7 +45,8 @@ yes. Votes can finish early when a majority of all online humans agrees.
 
 ### For Building from Source
 - .NET 10.0 SDK or later
-- Visual Studio 2022 (recommended) or Visual Studio Code
+- Visual Studio 2022 (recommended) or Visual Studio Code, with the Desktop development with C++ workload (for the injected hook)
+- Node.js LTS, for the web app in `web/`. `-p:SkipWebBuild=true` builds without it, and the controller then serves the API without a web page.
 - Wreckfest Dedicated Server
 
 ## Quick Start (Visual Studio 2022)
