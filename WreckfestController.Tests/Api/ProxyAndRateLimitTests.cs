@@ -130,7 +130,7 @@ public class ProxyAndRateLimitTests
         });
         using var browser = Browser(host, peer);
 
-        for (var attempt = 0; attempt < LoginRateLimit.PermitsPerWindow; attempt++)
+        for (var attempt = 0; attempt < RateLimits.LoginPermitsPerWindow; attempt++)
         {
             SetForwardedFor(browser, $"198.51.100.{attempt}");
             using var allowed = await browser.LoginAsync("nobody", ApiTestHost.Password);
@@ -200,7 +200,7 @@ public class ProxyAndRateLimitTests
     /// <summary>Uses up the window with an unknown account, so no account locks.</summary>
     private static async Task ExhaustLoginLimitAsync(BrowserClient browser)
     {
-        for (var attempt = 0; attempt < LoginRateLimit.PermitsPerWindow; attempt++)
+        for (var attempt = 0; attempt < RateLimits.LoginPermitsPerWindow; attempt++)
         {
             using var response = await browser.LoginAsync("nobody", ApiTestHost.Password);
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);

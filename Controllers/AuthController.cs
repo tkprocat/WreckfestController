@@ -80,7 +80,7 @@ public class AuthController : ControllerBase
     /// </summary>
     [HttpPost("login")]
     [AllowAnonymous]
-    [EnableRateLimiting(LoginRateLimit.PolicyName)]
+    [EnableRateLimiting(RateLimits.LoginPolicy)]
     public async Task<ActionResult<UserResponse>> Login(LoginRequest request)
     {
         var user = await _users.FindByNameAsync(request.Login)

@@ -134,6 +134,24 @@ named as in the request. The older controllers below still answer `{ message }`.
 | PUT | `me` | `{ email, displayName, timeZone }`. `timeZone` is an IANA id (`Europe/Copenhagen`) or null for the browser's zone. Changing the email ends the caller's other sessions. |
 | POST | `me/password` | `{ currentPassword, newPassword }`. 204. Keeps this session and ends the others. |
 
+### Public — `api/public`
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `overview` | Anonymous. The public home page's data, below. |
+
+`overview` is `{ serverName, maxPlayers, status: { isRunning, uptimeSeconds }, currentTrack,
+players: { humans, bots, list: [{ name, isBot }] }, rotation: { name, tracks: [{ id, name,
+gameMode, laps }] }, activeCup: { name, activatedAt }, upcomingCups: [{ name, description,
+nextOccurrence, repeat }], updatedAt }`.
+- A track's `name` is the catalogue's "Track - Variant", or its id when the catalogue does
+  not know it. `serverName`, `maxPlayers` and the rotation are null or empty while the
+  server config cannot be read.
+- It is built from public fields only: never the server password, the admin or moderator
+  Steam ids, or a cup's server settings.
+- 60 requests a minute per client IP; beyond that **429** with `Retry-After`. Live changes
+  come from the hub's public group, so a page need not poll.
+
 ### Users — `api/users`
 
 | Method | Path | Purpose |
