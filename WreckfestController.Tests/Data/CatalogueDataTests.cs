@@ -1,9 +1,8 @@
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using WreckfestController.Data;
 using WreckfestController.Data.Catalogue;
-using WreckfestController.Services.Voting;
 
 namespace WreckfestController.Tests.Data;
 
@@ -68,11 +67,10 @@ public sealed class CatalogueDataTests : IAsyncLifetime
     [Fact]
     public async Task EveryVoteTrackFrom1x_IsInTheCatalogue_AndAllowedForVoting()
     {
-        var configuration = new ConfigurationBuilder()
-            .AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"))
-            .Build();
-        var allowed = AllowedTrackConfiguration.Read(configuration).Select(t => t.Id).ToList();
-        Assert.NotEmpty(allowed);
+        // 1.x shipped these in appsettings.json; 2.0 votes from the catalogue instead.
+        using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Data", "Fixtures", "vote-tracks-1x.json")));
+        var allowed = fixture.RootElement.GetProperty("ids").EnumerateArray().Select(id => id.GetString()!).ToList();
+        Assert.Equal(284, allowed.Count);
 
         await using var db = CreateContext();
         var voting = await db.TrackVariants

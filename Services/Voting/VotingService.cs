@@ -18,6 +18,7 @@ public class VotingService
     private readonly ConfigService _configService;
     private readonly ILogger<VotingService> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IVotableTracks _votableTracks;
 
     private enum VoteState { Idle, Active }
     private VoteState _state = VoteState.Idle;
@@ -88,13 +89,15 @@ public class VotingService
         PlayerTracker playerTracker,
         ConfigService configService,
         ILogger<VotingService> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IVotableTracks votableTracks)
     {
         _serverManager = serverManager;
         _playerTracker = playerTracker;
         _configService = configService;
         _logger = logger;
         _configuration = configuration;
+        _votableTracks = votableTracks;
 
         // A settings reload (including a save from the UI) restores the saved mode.
         ChangeToken.OnChange(_configuration.GetReloadToken, () => _chatModeOverride = null);
@@ -425,9 +428,23 @@ public class VotingService
             : new VoteTrackResolution(VoteTrackResolutionKind.None, null, []);
     }
 
-    private List<AllowedVoteTrack> GetAllowedTracks()
+    /// <summary>The catalogue's votable tracks. See <see cref="CatalogueVotableTracks"/>.</summary>
+    private List<AllowedVoteTrack> GetAllowedTracks() => _votableTracks.Get();
+
+    /// <summary>
+    /// Refuses, telling the players, when <paramref name="trackId"/> is no longer votable:
+    /// an admin disallowed or hid it after it was offered or voted on.
+    /// </summary>
+    private bool RefuseIfNoLongerVotable(string trackId)
     {
-        return AllowedTrackConfiguration.Read(_configuration);
+        if (GetAllowedTracks().Any(t => string.Equals(t.Id, trackId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        _logger.LogInformation("Refused track change to {TrackId}: no longer votable", trackId);
+        _ = BroadcastMessage($"{trackId} is no longer available. Next race unchanged.");
+        return true;
     }
 
     private void StartLuckyVote(string playerName)
@@ -991,6 +1008,13 @@ public class VotingService
     /// </summary>
     private void StartTrackChange(string playerName, string trackId, int? laps)
     {
+        // A !confirm option was picked from an earlier list; the catalogue may have
+        // changed since.
+        if (RefuseIfNoLongerVotable(trackId))
+        {
+            return;
+        }
+
         // The event loop owns track selection when it is running - Wreckfest rotates
         // and runs its own end-of-race track vote - so a track set here would just be
         // overwritten, or fight it. Refuse rather than race the rotation.
@@ -1686,6 +1710,12 @@ public class VotingService
     /// </summary>
     private async Task<bool> ApplyTrackChange(string trackId, int? laps, TrackChangeMessages messages)
     {
+        // A vote can outlast its track's place in the catalogue.
+        if (RefuseIfNoLongerVotable(trackId))
+        {
+            return false;
+        }
+
         try
         {
             var trackResult = await _serverManager.SendCommandAsync($"track={trackId}");
