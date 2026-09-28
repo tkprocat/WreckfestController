@@ -1,12 +1,12 @@
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
-using WreckfestController.Data.Events;
+using WreckfestController.Data.Cups;
 using WreckfestController.Models;
 
-namespace WreckfestController.Services;
+namespace WreckfestController.Services.Cups;
 
-/// <summary>What an admin sets on an event. Validated by <see cref="EventRules"/> before it gets here.</summary>
-public sealed record EventDefinition(
+/// <summary>What an admin sets on a cup. Validated by <see cref="CupRules"/> before it gets here.</summary>
+public sealed record CupDefinition(
     string Name,
     string Description,
     DateTime StartTime,
@@ -15,9 +15,11 @@ public sealed record EventDefinition(
     EventServerConfig? ServerConfig,
     int? CollectionId,
     IReadOnlyList<EventLoopTrack> Tracks,
-    string CollectionName);
+    string CollectionName,
+    string? SessionMode = null,
+    string? GridOrder = null);
 
-public enum EventWriteStatus
+public enum CupWriteStatus
 {
     Saved,
     NotFound,
@@ -30,23 +32,23 @@ public enum EventWriteStatus
 }
 
 /// <summary>
-/// Scheduled events in the database. Every write touches one event, and none of them
+/// Scheduled cups in the database. Every write touches one cup, and none of them
 /// loads the schedule and saves it back, so the scheduler, the API and the WPF window
 /// can all write at once without one silently undoing another.
 /// </summary>
 /// <remarks>
-/// Admin edits are checked against <see cref="ScheduledEvent.Version"/>. An edit and the
+/// Admin edits are checked against <see cref="Cup.Version"/>. An edit and the
 /// scheduler's advance each read and write inside one transaction, which SQLite opens
 /// with <c>BEGIN IMMEDIATE</c> (Microsoft.Data.Sqlite's default), so they run one after
 /// the other and each sees the other's result: an advance never uses a repeat an admin
 /// has just removed, and an edit never keeps an occurrence the scheduler has just moved.
 /// </remarks>
-public sealed class EventStore
+public sealed class CupStore
 {
     private readonly IDbContextFactory<ControllerDbContext> _contexts;
     private readonly TimeProvider _time;
 
-    public EventStore(IDbContextFactory<ControllerDbContext> contexts, TimeProvider time)
+    public CupStore(IDbContextFactory<ControllerDbContext> contexts, TimeProvider time)
     {
         _contexts = contexts;
         _time = time;
@@ -54,14 +56,14 @@ public sealed class EventStore
 
     private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
 
-    /// <summary>Every event, with its linked collection's tracks loaded, in order of next occurrence.</summary>
-    public async Task<List<ScheduledEvent>> ListAsync(CancellationToken cancellationToken = default)
+    /// <summary>Every cup, with its linked collection's tracks loaded, in order of next occurrence.</summary>
+    public async Task<List<Cup>> ListAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
-        var events = await WithCollection(db.ScheduledEvents.AsNoTracking()).ToListAsync(cancellationToken);
+        var cups = await WithCollection(db.Cups.AsNoTracking()).ToListAsync(cancellationToken);
 
         // Upcoming first, soonest first; finished ones after, most recent first.
-        return events
+        return cups
             .OrderBy(e => e.NextOccurrence is null)
             .ThenBy(e => e.NextOccurrence)
             .ThenByDescending(e => e.LastOccurrence ?? e.StartTime)
@@ -69,81 +71,81 @@ public sealed class EventStore
             .ToList();
     }
 
-    public async Task<ScheduledEvent?> GetAsync(int id, CancellationToken cancellationToken = default)
+    public async Task<Cup?> GetAsync(int id, CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
-        return await WithCollection(db.ScheduledEvents.AsNoTracking()).SingleOrDefaultAsync(e => e.Id == id, cancellationToken);
+        return await WithCollection(db.Cups.AsNoTracking()).SingleOrDefaultAsync(e => e.Id == id, cancellationToken);
     }
 
-    public async Task<(EventWriteStatus Status, ScheduledEvent? Event)> CreateAsync(
-        EventDefinition definition,
+    public async Task<(CupWriteStatus Status, Cup? Cup)> CreateAsync(
+        CupDefinition definition,
         string? createdById,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
         var now = _time.GetUtcNow();
-        var evt = new ScheduledEvent { CreatedById = createdById, CreatedAt = now };
+        var cup = new Cup { CreatedById = createdById, CreatedAt = now };
 
-        if (!await ApplyAsync(db, evt, definition, cancellationToken))
+        if (!await ApplyAsync(db, cup, definition, cancellationToken))
         {
-            return (EventWriteStatus.UnknownCollection, null);
+            return (CupWriteStatus.UnknownCollection, null);
         }
 
-        evt.UpdatedAt = now;
-        evt.NextOccurrence = FirstOccurrence(evt);
-        db.ScheduledEvents.Add(evt);
+        cup.UpdatedAt = now;
+        cup.NextOccurrence = FirstOccurrence(cup);
+        db.Cups.Add(cup);
         await db.SaveChangesAsync(cancellationToken);
 
-        return (EventWriteStatus.Saved, await GetAsync(evt.Id, cancellationToken));
+        return (CupWriteStatus.Saved, await GetAsync(cup.Id, cancellationToken));
     }
 
     /// <summary>
-    /// Replaces what an admin sets, if the event is still at <paramref name="expectedVersion"/>.
+    /// Replaces what an admin sets, if the cup is still at <paramref name="expectedVersion"/>.
     /// The next occurrence is recomputed only when the start, zone or repeat changed; any
     /// other edit leaves the scheduler's columns as they are. The recomputed occurrence is
     /// the first under the new schedule that has not been dealt with already.
     /// </summary>
-    public async Task<(EventWriteStatus Status, ScheduledEvent? Event)> UpdateAsync(
+    public async Task<(CupWriteStatus Status, Cup? Cup)> UpdateAsync(
         int id,
-        EventDefinition definition,
+        CupDefinition definition,
         int expectedVersion,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var evt = await db.ScheduledEvents.SingleOrDefaultAsync(e => e.Id == id, cancellationToken);
-        if (evt is null)
+        var cup = await db.Cups.SingleOrDefaultAsync(e => e.Id == id, cancellationToken);
+        if (cup is null)
         {
-            return (EventWriteStatus.NotFound, null);
+            return (CupWriteStatus.NotFound, null);
         }
 
-        if (evt.Version != expectedVersion)
+        if (cup.Version != expectedVersion)
         {
             await transaction.RollbackAsync(cancellationToken);
-            return (EventWriteStatus.Conflict, await GetAsync(id, cancellationToken));
+            return (CupWriteStatus.Conflict, await GetAsync(id, cancellationToken));
         }
 
-        var schedule = (evt.StartTime, evt.TimeZone, Repeat: Serialize(evt.Repeat));
-        if (!await ApplyAsync(db, evt, definition, cancellationToken))
+        var schedule = (cup.StartTime, cup.TimeZone, Repeat: Serialize(cup.Repeat));
+        if (!await ApplyAsync(db, cup, definition, cancellationToken))
         {
-            return (EventWriteStatus.UnknownCollection, null);
+            return (CupWriteStatus.UnknownCollection, null);
         }
 
-        if (schedule != (evt.StartTime, evt.TimeZone, Serialize(evt.Repeat)))
+        if (schedule != (cup.StartTime, cup.TimeZone, Serialize(cup.Repeat)))
         {
             // Removing or changing a repeat can give back occurrences that have already
             // run or been cancelled. The history says exactly which, so skip those.
             var handled = await HandledAsync(db, id, cancellationToken);
-            evt.NextOccurrence = SkipHandled(FirstOccurrence(evt), handled, evt.Repeat, ZoneOf(evt.TimeZone));
+            cup.NextOccurrence = SkipHandled(FirstOccurrence(cup), handled, cup.Repeat, ZoneOf(cup.TimeZone));
 
             // Written even when unchanged from what was loaded: it is this edit's answer.
-            db.Entry(evt).Property(e => e.NextOccurrence).IsModified = true;
+            db.Entry(cup).Property(e => e.NextOccurrence).IsModified = true;
         }
 
-        evt.UpdatedAt = _time.GetUtcNow();
+        cup.UpdatedAt = _time.GetUtcNow();
 
         // The UPDATE checks the version the caller read, not only the one loaded above.
-        db.Entry(evt).Property(e => e.Version).OriginalValue = expectedVersion;
+        db.Entry(cup).Property(e => e.Version).OriginalValue = expectedVersion;
         try
         {
             await db.SaveChangesAsync(cancellationToken);
@@ -153,36 +155,36 @@ public sealed class EventStore
         {
             await transaction.RollbackAsync(cancellationToken);
             var current = await GetAsync(id, cancellationToken);
-            return (current is null ? EventWriteStatus.NotFound : EventWriteStatus.Conflict, current);
+            return (current is null ? CupWriteStatus.NotFound : CupWriteStatus.Conflict, current);
         }
 
-        return (EventWriteStatus.Saved, await GetAsync(id, cancellationToken));
+        return (CupWriteStatus.Saved, await GetAsync(id, cancellationToken));
     }
 
-    /// <summary>Deletes the event if it is still at <paramref name="expectedVersion"/>.</summary>
-    public async Task<(EventWriteStatus Status, ScheduledEvent? Current)> DeleteAsync(
+    /// <summary>Deletes the cup if it is still at <paramref name="expectedVersion"/>.</summary>
+    public async Task<(CupWriteStatus Status, Cup? Current)> DeleteAsync(
         int id,
         int expectedVersion,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
-        var deleted = await db.ScheduledEvents
+        var deleted = await db.Cups
             .Where(e => e.Id == id && e.Version == expectedVersion)
             .ExecuteDeleteAsync(cancellationToken);
         if (deleted > 0)
         {
-            return (EventWriteStatus.Saved, null);
+            return (CupWriteStatus.Saved, null);
         }
 
         var current = await GetAsync(id, cancellationToken);
-        return (current is null ? EventWriteStatus.NotFound : EventWriteStatus.Conflict, current);
+        return (current is null ? CupWriteStatus.NotFound : CupWriteStatus.Conflict, current);
     }
 
-    /// <summary>The event whose next occurrence is earliest, if it is at or before <paramref name="dueBy"/>.</summary>
-    public async Task<ScheduledEvent?> NextDueAsync(DateTime dueBy, CancellationToken cancellationToken = default)
+    /// <summary>The cup whose next occurrence is earliest, if it is at or before <paramref name="dueBy"/>.</summary>
+    public async Task<Cup?> NextDueAsync(DateTime dueBy, CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
-        return await WithCollection(db.ScheduledEvents.AsNoTracking())
+        return await WithCollection(db.Cups.AsNoTracking())
             .Where(e => e.NextOccurrence != null && e.NextOccurrence <= dueBy)
             .OrderBy(e => e.NextOccurrence)
             .ThenBy(e => e.Id)
@@ -190,8 +192,8 @@ public sealed class EventStore
     }
 
     /// <summary>
-    /// Makes <paramref name="id"/> the active event and every other event inactive, in one
-    /// transaction. False, changing nothing, when the event no longer exists.
+    /// Makes <paramref name="id"/> the active cup and every other cup inactive, in one
+    /// transaction. False, changing nothing, when the cup no longer exists.
     /// </summary>
     public async Task<bool> SetActiveAsync(int id, CancellationToken cancellationToken = default)
     {
@@ -199,12 +201,12 @@ public sealed class EventStore
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
         // Deactivate first: the unique index allows one active row at a time.
-        await db.ScheduledEvents
+        await db.Cups
             .Where(e => e.IsActive && e.Id != id)
             .ExecuteUpdateAsync(s => s.SetProperty(e => e.IsActive, false), cancellationToken);
 
         var now = UtcNow;
-        var activated = await db.ScheduledEvents
+        var activated = await db.Cups
             .Where(e => e.Id == id)
             .ExecuteUpdateAsync(
                 s => s.SetProperty(e => e.IsActive, true).SetProperty(e => e.ActivatedAt, now),
@@ -221,10 +223,10 @@ public sealed class EventStore
     }
 
     /// <summary>
-    /// Records <paramref name="occurrence"/> as dealt with, and how, in the event's history,
-    /// and moves the event to what
+    /// Records <paramref name="occurrence"/> as dealt with, and how, in the cup's history,
+    /// and moves the cup to what
     /// follows it: the next occurrence after it and after now, or none for a one-off.
-    /// Does nothing, returning false, if the event no longer waits for that occurrence -
+    /// Does nothing, returning false, if the cup no longer waits for that occurrence -
     /// it was rescheduled or deleted since.
     /// </summary>
     public async Task<bool> AdvanceAsync(
@@ -237,7 +239,7 @@ public sealed class EventStore
 
         // Read and write under one lock, so the repeat used is the one in force.
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var schedule = await db.ScheduledEvents
+        var schedule = await db.Cups
             .AsNoTracking()
             .Where(e => e.Id == id)
             .Select(e => new { e.Repeat, e.TimeZone, e.NextOccurrence })
@@ -252,10 +254,10 @@ public sealed class EventStore
         var zone = ZoneOf(schedule.TimeZone);
         var handled = await HandledAsync(db, id, cancellationToken);
         handled.Add(occurrence);
-        var next = SkipHandled(EventRecurrence.After(occurrence, schedule.Repeat, zone, UtcNow), handled, schedule.Repeat, zone);
+        var next = SkipHandled(CupRecurrence.After(occurrence, schedule.Repeat, zone, UtcNow), handled, schedule.Repeat, zone);
 
         // Still compare-and-set, as a second line of defence.
-        var updated = await db.ScheduledEvents
+        var updated = await db.Cups
             .Where(e => e.Id == id && e.NextOccurrence == occurrence)
             .ExecuteUpdateAsync(
                 s => s
@@ -271,12 +273,12 @@ public sealed class EventStore
         // Should never be there already, since the next occurrence skips the history. If it
         // somehow is, the advance must still go through: a failing insert would roll it back
         // and leave the occurrence due, blocking the scheduler on every check.
-        if (!await db.EventOccurrences.AnyAsync(
-                o => o.ScheduledEventId == id && o.Occurrence == occurrence, cancellationToken))
+        if (!await db.CupOccurrences.AnyAsync(
+                o => o.CupId == id && o.Occurrence == occurrence, cancellationToken))
         {
-            db.EventOccurrences.Add(new EventOccurrenceRecord
+            db.CupOccurrences.Add(new CupOccurrenceRecord
             {
-                ScheduledEventId = id,
+                CupId = id,
                 Occurrence = occurrence,
                 Outcome = outcome,
                 RecordedAt = UtcNow,
@@ -292,37 +294,39 @@ public sealed class EventStore
         ControllerDbContext db,
         int id,
         CancellationToken cancellationToken) =>
-        (await db.EventOccurrences
-            .Where(o => o.ScheduledEventId == id)
+        (await db.CupOccurrences
+            .Where(o => o.CupId == id)
             .Select(o => o.Occurrence)
             .ToListAsync(cancellationToken))
         .ToHashSet();
 
     /// <summary>
     /// <paramref name="candidate"/>, or the first occurrence after it that is not in
-    /// <paramref name="handled"/>. Null once a one-off event has none left.
+    /// <paramref name="handled"/>. Null once a one-off cup has none left.
     /// </summary>
     private DateTime? SkipHandled(DateTime? candidate, HashSet<DateTime> handled, RepeatSchedule? repeat, TimeZoneInfo zone)
     {
         // Bounded: each step moves strictly later, and the history is finite.
         for (var i = 0; i <= handled.Count && candidate is { } at && handled.Contains(at); i++)
         {
-            candidate = EventRecurrence.After(at, repeat, zone, UtcNow);
+            candidate = CupRecurrence.After(at, repeat, zone, UtcNow);
         }
 
         return candidate;
     }
 
-    /// <summary>What activation deploys: the linked collection's tracks as they are now, else the event's own.</summary>
-    public static Event ToRestartEvent(ScheduledEvent evt)
+    /// <summary>What activation deploys: the linked collection's tracks as they are now, else the cup's own.</summary>
+    public static Event ToRestartEvent(Cup cup)
     {
-        if (evt.Collection is { } collection)
+        if (cup.Collection is { } collection)
         {
             return new Event
             {
-                Id = evt.Id,
-                Name = evt.Name,
-                ServerConfig = evt.ServerConfig,
+                Id = cup.Id,
+                Name = cup.Name,
+                ServerConfig = cup.ServerConfig,
+                SessionMode = cup.SessionMode,
+                GridOrder = cup.GridOrder,
                 Tracks = collection.Entries
                     .OrderBy(e => e.Position)
                     .Select(Controllers.CollectionMapping.ToEventLoopTrack)
@@ -333,42 +337,46 @@ public sealed class EventStore
 
         return new Event
         {
-            Id = evt.Id,
-            Name = evt.Name,
-            ServerConfig = evt.ServerConfig,
-            Tracks = evt.Tracks,
-            CollectionName = evt.CollectionName,
+            Id = cup.Id,
+            Name = cup.Name,
+            ServerConfig = cup.ServerConfig,
+            SessionMode = cup.SessionMode,
+            GridOrder = cup.GridOrder,
+            Tracks = cup.Tracks,
+            CollectionName = cup.CollectionName,
         };
     }
 
-    /// <summary>Unknown zones fall back to UTC; <see cref="EventRules"/> keeps them out.</summary>
-    public static TimeZoneInfo ZoneOf(string timeZone) => EventRecurrence.FindZone(timeZone) ?? TimeZoneInfo.Utc;
+    /// <summary>Unknown zones fall back to UTC; <see cref="CupRules"/> keeps them out.</summary>
+    public static TimeZoneInfo ZoneOf(string timeZone) => CupRecurrence.FindZone(timeZone) ?? TimeZoneInfo.Utc;
 
-    private DateTime? FirstOccurrence(ScheduledEvent evt) =>
-        EventRecurrence.FirstOccurrence(evt.StartTime, evt.Repeat, ZoneOf(evt.TimeZone), UtcNow);
+    private DateTime? FirstOccurrence(Cup cup) =>
+        CupRecurrence.FirstOccurrence(cup.StartTime, cup.Repeat, ZoneOf(cup.TimeZone), UtcNow);
 
     /// <summary>
-    /// Copies <paramref name="definition"/> onto <paramref name="evt"/>. A linked event also
+    /// Copies <paramref name="definition"/> onto <paramref name="cup"/>. A linked cup also
     /// keeps a snapshot of the collection's tracks. False when the collection is missing.
     /// </summary>
     private static async Task<bool> ApplyAsync(
         ControllerDbContext db,
-        ScheduledEvent evt,
-        EventDefinition definition,
+        Cup cup,
+        CupDefinition definition,
         CancellationToken cancellationToken)
     {
-        evt.Name = definition.Name;
-        evt.Description = definition.Description;
-        evt.StartTime = definition.StartTime;
-        evt.TimeZone = definition.TimeZone;
-        evt.Repeat = definition.Repeat;
-        evt.ServerConfig = definition.ServerConfig;
-        evt.CollectionId = definition.CollectionId;
+        cup.Name = definition.Name;
+        cup.Description = definition.Description;
+        cup.StartTime = definition.StartTime;
+        cup.TimeZone = definition.TimeZone;
+        cup.Repeat = definition.Repeat;
+        cup.ServerConfig = definition.ServerConfig;
+        cup.SessionMode = definition.SessionMode;
+        cup.GridOrder = definition.GridOrder;
+        cup.CollectionId = definition.CollectionId;
 
         if (definition.CollectionId is not { } collectionId)
         {
-            evt.Tracks = definition.Tracks.ToList();
-            evt.CollectionName = definition.CollectionName;
+            cup.Tracks = definition.Tracks.ToList();
+            cup.CollectionName = definition.CollectionName;
             return true;
         }
 
@@ -382,15 +390,15 @@ public sealed class EventStore
             return false;
         }
 
-        evt.Tracks = collection.Entries
+        cup.Tracks = collection.Entries
             .OrderBy(e => e.Position)
             .Select(Controllers.CollectionMapping.ToEventLoopTrack)
             .ToList();
-        evt.CollectionName = collection.Name;
+        cup.CollectionName = collection.Name;
         return true;
     }
 
-    private static IQueryable<ScheduledEvent> WithCollection(IQueryable<ScheduledEvent> query) =>
+    private static IQueryable<Cup> WithCollection(IQueryable<Cup> query) =>
         query
             .AsSplitQuery()
             .Include(e => e.CreatedBy)

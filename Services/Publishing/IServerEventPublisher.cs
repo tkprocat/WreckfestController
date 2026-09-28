@@ -1,5 +1,5 @@
 using WreckfestController.Models;
-using WreckfestController.Data.Events;
+using WreckfestController.Data.Cups;
 
 namespace WreckfestController.Services.Publishing;
 
@@ -15,10 +15,10 @@ public interface IServerEventPublisher
     Task PlayerJoinedAsync(string playerName, bool isBot);
     Task PlayerLeftAsync(string playerName);
     Task TrackChangedAsync(string trackId);
-    Task EventActivatedAsync(int eventId, string eventName);
+    Task CupActivatedAsync(int cupId, string cupName);
 
     /// <summary>A scheduled occurrence has been dealt with. Signed-in clients only.</summary>
-    Task EventOccurrenceEndedAsync(int eventId, string eventName, DateTime occurrence, OccurrenceOutcome outcome);
+    Task CupOccurrenceEndedAsync(int cupId, string cupName, DateTime occurrence, OccurrenceOutcome outcome);
     Task ServerStartedAsync(ServerStartedEvent serverEvent);
     Task ServerStoppedAsync(ServerStoppedEvent serverEvent);
     Task ServerRestartedAsync(ServerRestartedEvent serverEvent);

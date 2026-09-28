@@ -5,7 +5,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WreckfestController.Data;
-using WreckfestController.Services;
+using WreckfestController.Services.Cups;
 using WreckfestController.Services.Auth;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Desktop;
@@ -42,10 +42,10 @@ public class Program
             // window, the scheduler and the API all read from DatabaseState.
             host.Services.GetRequiredService<DatabaseBootstrapper>().Run();
 
-            // Start hosted services, including EventSchedulerService, before entering
+            // Start hosted services, including CupSchedulerService, before entering
             // the WPF message loop.
             //
-            // Guarded because EventSchedulerService.StartAsync does real work up front -
+            // Guarded because CupSchedulerService.StartAsync does real work up front -
             // it loads the schedule file and scans for missed events synchronously - and
             // this runs before MainWindow is shown. An unreadable or corrupt schedule
             // would otherwise kill the app with no UI to report it. Losing the scheduler
@@ -113,7 +113,7 @@ public class Program
     }
 
     // The host failed to start, so hosted services - the event scheduler above all -
-    // are not running: scheduled events will not activate until the app is restarted.
+    // are not running: cups will not activate until the app is restarted.
     // Everything reached through the DI container still works, so the app carries on.
     private static void ReportHostStartFailure(IHost host, Exception ex)
     {
@@ -125,7 +125,7 @@ public class Program
                 ?.CreateLogger(typeof(Program))
                 .LogError(
                     ex,
-                    "Hosted services failed to start; continuing without them. Scheduled events will not activate.");
+                    "Hosted services failed to start; continuing without them. Cups will not activate.");
         }
         catch
         {
@@ -180,8 +180,8 @@ public class Program
                 services.AddSingleton<IServerEventPublisher>(sp => sp.GetRequiredService<HubServerEventPublisher>());
                 services.AddSingleton<ConfigService>();
                 services.TryAddSingleton(TimeProvider.System);
-                services.AddSingleton<EventStore>();
-                services.AddSingleton<EventActivator>();
+                services.AddSingleton<CupStore>();
+                services.AddSingleton<CupActivator>();
                 services.AddSingleton<SmartRestartService>();
                 services.AddSingleton<InjectedHookInputWriter>();
                 services.AddSingleton<IServerInputWriter>(sp => sp.GetRequiredService<InjectedHookInputWriter>());
@@ -206,8 +206,8 @@ public class Program
 
                 // Register hosted services (background services)
                 // The scheduler waits while the database is unavailable (recovery mode).
-                services.AddSingleton<EventSchedulerService>();
-                services.AddHostedService<DatabaseGatedHostedService<EventSchedulerService>>();
+                services.AddSingleton<CupSchedulerService>();
+                services.AddHostedService<DatabaseGatedHostedService<CupSchedulerService>>();
             });
 
     /// <summary>

@@ -1,4 +1,4 @@
-using WreckfestController.Data.Events;
+using WreckfestController.Data.Cups;
 namespace WreckfestController.Hubs;
 
 /// <summary>
@@ -13,7 +13,7 @@ public interface IServerHubClient
     Task PlayerJoined(PlayerJoinedMessage message);
     Task PlayerLeft(PlayerLeftMessage message);
     Task TrackChanged(TrackChangedMessage message);
-    Task EventActivated(EventActivatedMessage message);
+    Task CupActivated(CupActivatedMessage message);
     Task ServerStarted(ServerStartedMessage message);
     Task ServerStopped(ServerStoppedMessage message);
     Task ServerRestarted(ServerRestartedMessage message);
@@ -22,7 +22,7 @@ public interface IServerHubClient
 
     // admin group
     Task ConsoleLog(ConsoleLogMessage message);
-    Task EventOccurrenceEnded(EventOccurrenceEndedMessage message);
+    Task CupOccurrenceEnded(CupOccurrenceEndedMessage message);
 }
 
 public sealed record PlayerSummary(
@@ -42,11 +42,11 @@ public sealed record PlayerLeftMessage(string PlayerName);
 
 public sealed record TrackChangedMessage(string TrackId);
 
-public sealed record EventActivatedMessage(int EventId, string EventName, DateTime Timestamp);
+public sealed record CupActivatedMessage(int CupId, string CupName, DateTime Timestamp);
 
-public sealed record EventOccurrenceEndedMessage(
-    int EventId,
-    string EventName,
+public sealed record CupOccurrenceEndedMessage(
+    int CupId,
+    string CupName,
     DateTime Occurrence,
     OccurrenceOutcome Outcome,
     DateTime Timestamp);
@@ -61,8 +61,8 @@ public sealed record ServerAttachedMessage(int ProcessId, string ProcessName, Da
 
 public sealed record ServerRestartPendingMessage(
     int MinutesRemaining,
-    string? EventName,
-    int? EventId,
+    string? CupName,
+    int? CupId,
     DateTime? ScheduledRestartTime,
     DateTime Timestamp);
 

@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
-using WreckfestController.Data.Events;
+using WreckfestController.Data.Cups;
 using WreckfestController.Hubs;
 using WreckfestController.Services.Publishing;
 
@@ -63,14 +63,14 @@ public class ServerHubTests
             () => anonymousLog.TrackIds.Contains("ready") && adminLog.TrackIds.Contains("ready"));
 
         var occurrence = new DateTime(2026, 10, 2, 18, 0, 0, DateTimeKind.Utc);
-        await publisher.EventOccurrenceEndedAsync(7, "Race night", occurrence, OccurrenceOutcome.Missed);
+        await publisher.CupOccurrenceEndedAsync(7, "Race night", occurrence, OccurrenceOutcome.Missed);
         await WaitUntilAsync(() => !adminLog.Outcomes.IsEmpty);
 
         await publisher.TrackChangedAsync("fields14");
         await WaitUntilAsync(() => anonymousLog.TrackIds.Contains("fields14"));
 
         var ended = Assert.Single(adminLog.Outcomes);
-        Assert.Equal(7, ended.GetProperty("eventId").GetInt32());
+        Assert.Equal(7, ended.GetProperty("cupId").GetInt32());
         Assert.Equal("Missed", ended.GetProperty("outcome").GetString());
         Assert.Equal(occurrence, ended.GetProperty("occurrence").GetDateTime().ToUniversalTime());
         Assert.Empty(anonymousLog.Outcomes);
@@ -114,14 +114,14 @@ public class ServerHubTests
         await PublishUntilAsync(
             () => publisher.ServerRestartPendingAsync(new Models.ServerRestartPendingEvent
             {
-                MinutesRemaining = 3, EventName = "Friday night", EventId = 7, ScheduledRestartTime = deadline,
+                MinutesRemaining = 3, CupName = "Friday night", CupId = 7, ScheduledRestartTime = deadline,
             }),
             () => restartPending.Task.IsCompleted);
 
         var message = await restartPending.Task;
         Assert.Equal(3, message.MinutesRemaining);
-        Assert.Equal("Friday night", message.EventName);
-        Assert.Equal(7, message.EventId);
+        Assert.Equal("Friday night", message.CupName);
+        Assert.Equal(7, message.CupId);
         Assert.Equal(deadline, message.ScheduledRestartTime);
     }
 
@@ -157,7 +157,7 @@ public class ServerHubTests
             m => received.Batches.Enqueue(m.Logs));
 
         // Raw JSON, to see the wire format a browser gets.
-        connection.On<System.Text.Json.JsonElement>(nameof(IServerHubClient.EventOccurrenceEnded),
+        connection.On<System.Text.Json.JsonElement>(nameof(IServerHubClient.CupOccurrenceEnded),
             m => received.Outcomes.Enqueue(m));
         return received;
     }

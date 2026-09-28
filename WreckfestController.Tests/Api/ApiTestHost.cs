@@ -14,7 +14,7 @@ using Microsoft.Extensions.Logging;
 using Moq;
 using WreckfestController.Data;
 using WreckfestController.Hubs;
-using WreckfestController.Services;
+using WreckfestController.Services.Cups;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Hook;
 using WreckfestController.Services.Hosting;
@@ -250,8 +250,8 @@ public sealed class ApiTestHost : IAsyncDisposable
         services.AddSingleton<ConfigService>();
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<SmartRestartService>();
-        services.AddSingleton<EventStore>();
-        services.AddSingleton<EventActivator>();
+        services.AddSingleton<CupStore>();
+        services.AddSingleton<CupActivator>();
         return services.BuildServiceProvider();
     }
 

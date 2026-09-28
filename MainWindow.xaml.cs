@@ -5,7 +5,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Extensions.Logging;
 using WreckfestController.Data;
-using WreckfestController.Services;
+using WreckfestController.Services.Cups;
 using WreckfestController.Views;
 using WreckfestController.Services.Auth;
 using WreckfestController.Services.Config;
@@ -33,7 +33,7 @@ public partial class MainWindow : Window
     private ProcessManagerTab? _processManagerTab;
     private ServerControlTab? _serverControlTab;
     private ConfigurationTab? _configurationTab;
-    private EventSchedulerTab? _eventSchedulerTab;
+    private CupsTab? _cupsTab;
     private ControllerLogTab? _controllerLogTab;
     private PlayersTab? _playersTab;
 
@@ -42,8 +42,8 @@ public partial class MainWindow : Window
         PlayerTracker playerTracker,
         TrackChangeTracker trackChangeTracker,
         SettingsService settingsService,
-        EventStore eventStore,
-        EventActivator eventActivator,
+        CupStore eventStore,
+        CupActivator eventActivator,
         ConfigService configService,
         GuiLoggerProvider guiLoggerProvider,
         DatabaseState databaseState,
@@ -79,10 +79,10 @@ public partial class MainWindow : Window
             accountService,
             _loggerFactory.CreateLogger<ConfigurationTab>());
 
-        _eventSchedulerTab = new EventSchedulerTab(
+        _cupsTab = new CupsTab(
             eventStore,
             eventActivator,
-            _loggerFactory.CreateLogger<EventSchedulerTab>());
+            _loggerFactory.CreateLogger<CupsTab>());
 
         _controllerLogTab = new ControllerLogTab();
 
@@ -102,7 +102,7 @@ public partial class MainWindow : Window
         ServerControlTabContent.Content = _serverControlTab;
         PlayersTabContent.Content = _playersTab;
         ConfigurationTabContent.Content = _configurationTab;
-        EventSchedulerTabContent.Content = _eventSchedulerTab;
+        CupsTabContent.Content = _cupsTab;
         ControllerLogTabContent.Content = _controllerLogTab;
 
         // Setup status update timer

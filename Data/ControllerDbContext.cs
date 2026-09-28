@@ -7,13 +7,13 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WreckfestController.Data.Catalogue;
 using WreckfestController.Data.Collections;
-using WreckfestController.Data.Events;
+using WreckfestController.Data.Cups;
 
 namespace WreckfestController.Data;
 
 /// <summary>
 /// The controller's own SQLite database: web UI users, the track catalogue, track
-/// collections and scheduled events today, and settings as a later phase moves them in.
+/// collections and cups today, and settings as a later phase moves them in.
 /// </summary>
 public class ControllerDbContext : IdentityDbContext<AppUser>
 {
@@ -36,9 +36,9 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
 
     public DbSet<TrackCollectionEntry> TrackCollectionEntries => Set<TrackCollectionEntry>();
 
-    public DbSet<ScheduledEvent> ScheduledEvents => Set<ScheduledEvent>();
+    public DbSet<Cup> Cups => Set<Cup>();
 
-    public DbSet<EventOccurrenceRecord> EventOccurrences => Set<EventOccurrenceRecord>();
+    public DbSet<CupOccurrenceRecord> CupOccurrences => Set<CupOccurrenceRecord>();
 
     /// <summary>
     /// Points <paramref name="options"/> at the SQLite file at <paramref name="databasePath"/>.
@@ -83,7 +83,7 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
 
         ConfigureCatalogue(builder);
         ConfigureCollections(builder);
-        ConfigureEvents(builder);
+        ConfigureCups(builder);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -227,55 +227,57 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
         });
     }
 
-    private static void ConfigureEvents(ModelBuilder builder)
+    private static void ConfigureCups(ModelBuilder builder)
     {
-        builder.Entity<ScheduledEvent>(evt =>
+        builder.Entity<Cup>(cup =>
         {
-            evt.Property(e => e.Name).HasMaxLength(ScheduledEvent.NameMaxLength);
-            evt.Property(e => e.Description).HasMaxLength(ScheduledEvent.DescriptionMaxLength);
-            evt.Property(e => e.TimeZone).HasMaxLength(ScheduledEvent.TimeZoneMaxLength);
-            evt.Property(e => e.CollectionName).HasMaxLength(TrackCollection.NameMaxLength);
-            evt.Property(e => e.Version).IsConcurrencyToken();
+            cup.Property(e => e.Name).HasMaxLength(Cup.NameMaxLength);
+            cup.Property(e => e.Description).HasMaxLength(Cup.DescriptionMaxLength);
+            cup.Property(e => e.TimeZone).HasMaxLength(Cup.TimeZoneMaxLength);
+            cup.Property(e => e.CollectionName).HasMaxLength(TrackCollection.NameMaxLength);
+            cup.Property(e => e.SessionMode).HasMaxLength(Cup.ScoringMaxLength);
+            cup.Property(e => e.GridOrder).HasMaxLength(Cup.ScoringMaxLength);
+            cup.Property(e => e.Version).IsConcurrencyToken();
 
             // SQLite keeps no DateTimeKind: these are UTC in, and marked UTC out.
-            evt.Property(e => e.StartTime).HasConversion(UtcConverter);
-            evt.Property(e => e.NextOccurrence).HasConversion(UtcConverter);
-            evt.Property(e => e.LastOccurrence).HasConversion(UtcConverter);
-            evt.Property(e => e.ActivatedAt).HasConversion(UtcConverter);
-            evt.Property(e => e.LastOutcome).HasConversion<string>().HasMaxLength(16);
+            cup.Property(e => e.StartTime).HasConversion(UtcConverter);
+            cup.Property(e => e.NextOccurrence).HasConversion(UtcConverter);
+            cup.Property(e => e.LastOccurrence).HasConversion(UtcConverter);
+            cup.Property(e => e.ActivatedAt).HasConversion(UtcConverter);
+            cup.Property(e => e.LastOutcome).HasConversion<string>().HasMaxLength(16);
 
-            Json(evt.Property(e => e.Repeat));
-            Json(evt.Property(e => e.ServerConfig));
-            Json(evt.Property(e => e.Tracks)).IsRequired();
+            Json(cup.Property(e => e.Repeat));
+            Json(cup.Property(e => e.ServerConfig));
+            Json(cup.Property(e => e.Tracks)).IsRequired();
 
             // The scheduler's query: the earliest occurrence due.
-            evt.HasIndex(e => e.NextOccurrence);
+            cup.HasIndex(e => e.NextOccurrence);
 
-            // The database, not just the store, keeps it to one active event.
-            evt.HasIndex(e => e.IsActive).IsUnique().HasFilter("\"IsActive\" = 1");
+            // The database, not just the store, keeps it to one active cup.
+            cup.HasIndex(e => e.IsActive).IsUnique().HasFilter("\"IsActive\" = 1");
 
-            evt.HasOne(e => e.Collection)
+            cup.HasOne(e => e.Collection)
                 .WithMany()
                 .HasForeignKey(e => e.CollectionId)
                 .OnDelete(DeleteBehavior.SetNull);
 
-            evt.HasOne(e => e.CreatedBy)
+            cup.HasOne(e => e.CreatedBy)
                 .WithMany()
                 .HasForeignKey(e => e.CreatedById)
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
-        builder.Entity<EventOccurrenceRecord>(record =>
+        builder.Entity<CupOccurrenceRecord>(record =>
         {
             record.Property(r => r.Occurrence).HasConversion(UtcConverter);
             record.Property(r => r.RecordedAt).HasConversion(UtcConverter);
             record.Property(r => r.Outcome).HasConversion<string>().HasMaxLength(16);
-            record.HasIndex(r => new { r.ScheduledEventId, r.Occurrence }).IsUnique();
+            record.HasIndex(r => new { r.CupId, r.Occurrence }).IsUnique();
 
-            // The history goes with its event.
-            record.HasOne(r => r.ScheduledEvent)
+            // The history goes with its cup.
+            record.HasOne(r => r.Cup)
                 .WithMany()
-                .HasForeignKey(r => r.ScheduledEventId)
+                .HasForeignKey(r => r.CupId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

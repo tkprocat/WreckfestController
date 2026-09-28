@@ -1,18 +1,18 @@
 using WreckfestController.Models;
 
-namespace WreckfestController.Services;
+namespace WreckfestController.Services.Cups;
 
 /// <summary>
-/// Occurrence arithmetic for recurring events. Pure: every method takes the time it
+/// Occurrence arithmetic for recurring cups. Pure: every method takes the time it
 /// works from, so the scheduler, the API and tests agree on the answer.
 /// </summary>
 /// <remarks>
-/// A repeat's time and days are wall-clock values in the event's time zone. The
+/// A repeat's time and days are wall-clock values in the cup's time zone. The
 /// arithmetic is done in that zone and converted to UTC per occurrence, so a weekly
-/// 20:00 event stays at 20:00 local when daylight saving starts or ends. 1.x did it in
-/// UTC, which moved such an event by an hour twice a year.
+/// 20:00 cup stays at 20:00 local when daylight saving starts or ends. 1.x did it in
+/// UTC, which moved such a cup by an hour twice a year.
 /// </remarks>
-public static class EventRecurrence
+public static class CupRecurrence
 {
     /// <summary>
     /// The first occurrence strictly after <paramref name="afterUtc"/>, or null when the
@@ -50,9 +50,9 @@ public static class EventRecurrence
     }
 
     /// <summary>
-    /// The occurrence a new or rescheduled event waits for. A start time still ahead is
+    /// The occurrence a new or rescheduled cup waits for. A start time still ahead is
     /// the first occurrence, whether or not it fits the repeat. A past one is the start
-    /// of a one-off event, which the scheduler will skip as missed, or the anchor of a
+    /// of a one-off cup, which the scheduler will skip as missed, or the anchor of a
     /// recurring one, which then waits for its next occurrence after now.
     /// </summary>
     public static DateTime? FirstOccurrence(DateTime startTimeUtc, RepeatSchedule? repeat, TimeZoneInfo zone, DateTime nowUtc)
@@ -68,7 +68,7 @@ public static class EventRecurrence
 
     /// <summary>
     /// What follows <paramref name="occurrenceUtc"/> once it has been dealt with: nothing
-    /// for a one-off event, and otherwise the next occurrence after both it and now, so
+    /// for a one-off cup, and otherwise the next occurrence after both it and now, so
     /// an occurrence activated early is not repeated and missed ones are not replayed.
     /// </summary>
     public static DateTime? After(DateTime occurrenceUtc, RepeatSchedule? repeat, TimeZoneInfo zone, DateTime nowUtc)

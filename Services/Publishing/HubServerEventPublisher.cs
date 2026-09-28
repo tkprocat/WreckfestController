@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 using WreckfestController.Hubs;
 using WreckfestController.Models;
-using WreckfestController.Data.Events;
+using WreckfestController.Data.Cups;
 
 namespace WreckfestController.Services.Publishing;
 
@@ -97,15 +97,15 @@ public sealed class HubServerEventPublisher : IServerEventPublisher, IDisposable
     public Task TrackChangedAsync(string trackId) =>
         PublishAsync(nameof(IServerHubClient.TrackChanged), c => c.TrackChanged(new TrackChangedMessage(trackId)));
 
-    public Task EventActivatedAsync(int eventId, string eventName) =>
+    public Task CupActivatedAsync(int cupId, string cupName) =>
         PublishAsync(
-            nameof(IServerHubClient.EventActivated),
-            c => c.EventActivated(new EventActivatedMessage(eventId, eventName, DateTime.UtcNow)));
+            nameof(IServerHubClient.CupActivated),
+            c => c.CupActivated(new CupActivatedMessage(cupId, cupName, DateTime.UtcNow)));
 
-    public Task EventOccurrenceEndedAsync(int eventId, string eventName, DateTime occurrence, OccurrenceOutcome outcome) =>
+    public Task CupOccurrenceEndedAsync(int cupId, string cupName, DateTime occurrence, OccurrenceOutcome outcome) =>
         PublishAsync(
-            nameof(IServerHubClient.EventOccurrenceEnded),
-            c => c.EventOccurrenceEnded(new EventOccurrenceEndedMessage(eventId, eventName, occurrence, outcome, DateTime.UtcNow)),
+            nameof(IServerHubClient.CupOccurrenceEnded),
+            c => c.CupOccurrenceEnded(new CupOccurrenceEndedMessage(cupId, cupName, occurrence, outcome, DateTime.UtcNow)),
             ServerHub.AdminGroup);
 
     public Task ServerStartedAsync(ServerStartedEvent e) =>
@@ -133,7 +133,7 @@ public sealed class HubServerEventPublisher : IServerEventPublisher, IDisposable
         PublishAsync(
             nameof(IServerHubClient.ServerRestartPending),
             c => c.ServerRestartPending(new ServerRestartPendingMessage(
-                e.MinutesRemaining, e.EventName, e.EventId, e.ScheduledRestartTime, DateTime.UtcNow)));
+                e.MinutesRemaining, e.CupName, e.CupId, e.ScheduledRestartTime, DateTime.UtcNow)));
 
     public void AddConsoleLog(string line)
     {

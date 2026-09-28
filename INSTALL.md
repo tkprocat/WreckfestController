@@ -152,10 +152,10 @@ Once installed, you can manage your server using these endpoints:
 - `GET /api/server/players` - Get current player list
 - WebSocket: `ws://localhost:5100/ws/players` - Real-time player updates
 
-### Event Scheduling
-- `GET /api/events/schedule` - Get scheduled events
-- `PUT /api/events/schedule` - Update event schedule
-- Events automatically change server configuration at scheduled times
+### Cups
+- `GET /api/cups` - List cups
+- `POST /api/cups` - Create a cup (see `docs/API.md`)
+- A cup applies its rotation, settings and scoring through a smart restart at its scheduled time
 
 ### WebSocket Endpoints
 - `ws://localhost:5100/ws/console` - Real-time server console output
@@ -217,13 +217,13 @@ There is nothing to configure beyond enabling the API. See
 After installation, these files will be created/managed:
 
 - **controller.db** - In `%LocalAppData%\WreckfestController` (`Database:Path` moves it)
-  - Holds web accounts, the track catalogue, collections and scheduled events
+  - Holds web accounts, the track catalogue, collections and cups
 
 ## Next Steps
 
 1. **Test the API** - Use Swagger UI to test endpoints
 2. **Start Your Server** - `POST /api/server/start`
-3. **Configure Events** - Set up scheduled events via `/api/events/schedule`
+3. **Configure Cups** - Set up cups via `/api/cups`
 4. **Monitor Players** - Connect to WebSocket endpoints for real-time updates
 
 ## Support

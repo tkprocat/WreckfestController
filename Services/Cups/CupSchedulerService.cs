@@ -1,30 +1,30 @@
 using Microsoft.Extensions.Hosting;
-using WreckfestController.Data.Events;
+using WreckfestController.Data.Cups;
 using WreckfestController.Services.ServerControl;
 
-namespace WreckfestController.Services;
+namespace WreckfestController.Services.Cups;
 
 /// <summary>
-/// Starts scheduled events. Every half minute it asks the database for the earliest
-/// occurrence due within the <see cref="EventActivator.LeadIn"/> and hands it to the
-/// <see cref="EventActivator"/>, one at a time.
+/// Starts scheduled cups. Every half minute it asks the database for the earliest
+/// occurrence due within the <see cref="CupActivator.LeadIn"/> and hands it to the
+/// <see cref="CupActivator"/>, one at a time.
 /// </summary>
 /// <remarks>
 /// An occurrence more than <see cref="MissedGrace"/> overdue is recorded as
-/// <see cref="OccurrenceOutcome.Missed"/>, and the event moves on to its next occurrence.
+/// <see cref="OccurrenceOutcome.Missed"/>, and the cup moves on to its next occurrence.
 /// Starting a two-hour-old race night by surprise helps nobody: the miss is logged and
-/// sent to signed-in clients, and an admin activates the event by hand if it should
+/// sent to signed-in clients, and an admin activates the cup by hand if it should
 /// still run. The grace covers waiting out another restart, which can take 15 minutes.
 /// </remarks>
-public class EventSchedulerService : IHostedService, IDisposable
+public class CupSchedulerService : IHostedService, IDisposable
 {
     public static readonly TimeSpan MissedGrace = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
 
-    private readonly EventStore _store;
-    private readonly EventActivator _activator;
+    private readonly CupStore _store;
+    private readonly CupActivator _activator;
     private readonly TimeProvider _time;
-    private readonly ILogger<EventSchedulerService> _logger;
+    private readonly ILogger<CupSchedulerService> _logger;
     private readonly object _lock = new();
 
     private ITimer? _timer;
@@ -33,11 +33,11 @@ public class EventSchedulerService : IHostedService, IDisposable
     /// <summary>True from starting an occurrence until its restart has ended.</summary>
     private bool _activating;
 
-    public EventSchedulerService(
-        EventStore store,
-        EventActivator activator,
+    public CupSchedulerService(
+        CupStore store,
+        CupActivator activator,
         TimeProvider time,
-        ILogger<EventSchedulerService> logger)
+        ILogger<CupSchedulerService> logger)
     {
         _store = store;
         _activator = activator;
@@ -48,7 +48,7 @@ public class EventSchedulerService : IHostedService, IDisposable
     public Task StartAsync(CancellationToken cancellationToken)
     {
         _timer = _time.CreateTimer(_ => _ = CheckAsync(), null, TimeSpan.Zero, CheckInterval);
-        _logger.LogInformation("Event scheduler started; checking every {Seconds} seconds", CheckInterval.TotalSeconds);
+        _logger.LogInformation("Cup scheduler started; checking every {Seconds} seconds", CheckInterval.TotalSeconds);
         return Task.CompletedTask;
     }
 
@@ -76,7 +76,7 @@ public class EventSchedulerService : IHostedService, IDisposable
 
         try
         {
-            // Bounded, in case a write keeps failing to move an event on.
+            // Bounded, in case a write keeps failing to move a cup on.
             for (var i = 0; i < 100; i++)
             {
                 if (!await HandleNextDueAsync())
@@ -87,7 +87,7 @@ public class EventSchedulerService : IHostedService, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Event scheduler check failed");
+            _logger.LogError(ex, "Cup scheduler check failed");
         }
         finally
         {
@@ -102,13 +102,13 @@ public class EventSchedulerService : IHostedService, IDisposable
     private async Task<bool> HandleNextDueAsync()
     {
         var now = _time.GetUtcNow().UtcDateTime;
-        var due = await _store.NextDueAsync(now + EventActivator.LeadIn);
+        var due = await _store.NextDueAsync(now + CupActivator.LeadIn);
         if (due is null)
         {
             return false;
         }
 
-        // Someone else - a manual activation - owns this event until its outcome is
+        // Someone else - a manual activation - owns this cup until its outcome is
         // recorded. Counting it missed, or starting it again, would be wrong either way.
         // Stop the scan: while its restart runs, nothing else could start anyway.
         if (!_activator.TryClaim(due.Id))
@@ -120,13 +120,13 @@ public class EventSchedulerService : IHostedService, IDisposable
         try
         {
             // Re-read under the claim: what was due a moment ago may have been dealt with.
-            var evt = await _store.GetAsync(due.Id);
-            if (evt?.NextOccurrence is not { } occurrence || occurrence != due.NextOccurrence)
+            var cup = await _store.GetAsync(due.Id);
+            if (cup?.NextOccurrence is not { } occurrence || occurrence != due.NextOccurrence)
             {
                 return true;
             }
 
-            return await HandleClaimedAsync(evt, occurrence, now, () => claimHeld = false);
+            return await HandleClaimedAsync(cup, occurrence, now, () => claimHeld = false);
         }
         finally
         {
@@ -138,22 +138,22 @@ public class EventSchedulerService : IHostedService, IDisposable
     }
 
     /// <param name="handOff">Called when the claim passes to a started activation.</param>
-    private async Task<bool> HandleClaimedAsync(ScheduledEvent evt, DateTime occurrence, DateTime now, Action handOff)
+    private async Task<bool> HandleClaimedAsync(Cup cup, DateTime occurrence, DateTime now, Action handOff)
     {
         if (occurrence < now - MissedGrace)
         {
-            await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Missed);
+            await _activator.EndOccurrenceAsync(cup, occurrence, OccurrenceOutcome.Missed);
             return true;
         }
 
-        if (evt.IsActive)
+        if (cup.IsActive)
         {
             _logger.LogInformation(
-                "Event {EventName} (ID {EventId}) is already active; its {Occurrence:u} occurrence needs no restart",
-                evt.Name,
-                evt.Id,
+                "Cup {CupName} (ID {CupId}) is already active; its {Occurrence:u} occurrence needs no restart",
+                cup.Name,
+                cup.Id,
                 occurrence);
-            await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Activated);
+            await _activator.EndOccurrenceAsync(cup, occurrence, OccurrenceOutcome.Activated);
             return true;
         }
 
@@ -167,25 +167,25 @@ public class EventSchedulerService : IHostedService, IDisposable
         {
             // The activation takes the claim whatever happens: it releases it itself.
             handOff();
-            result = _activator.StartOccurrence(evt, occurrence, outcome => Release(evt.Id, outcome));
+            result = _activator.StartOccurrence(cup, occurrence, outcome => Release(cup.Id, outcome));
         }
         catch (Exception ex)
         {
             // The settings could not be written, so nothing restarted. One attempt per
             // occurrence: retrying would fail the same way every half minute.
-            _logger.LogError(ex, "Could not apply event {EventName} (ID {EventId})", evt.Name, evt.Id);
+            _logger.LogError(ex, "Could not apply cup {CupName} (ID {CupId})", cup.Name, cup.Id);
             ReleaseActivation();
 
             // Claimed again, so the failure is recorded against the row as it is now.
-            if (_activator.TryClaim(evt.Id))
+            if (_activator.TryClaim(cup.Id))
             {
                 try
                 {
-                    await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Failed);
+                    await _activator.EndOccurrenceAsync(cup, occurrence, OccurrenceOutcome.Failed);
                 }
                 finally
                 {
-                    _activator.Release(evt.Id);
+                    _activator.Release(cup.Id);
                 }
             }
 
@@ -196,19 +196,19 @@ public class EventSchedulerService : IHostedService, IDisposable
         {
             // Someone else's restart is running. Try again next check, until MissedGrace.
             _logger.LogInformation(
-                "Event {EventName} (ID {EventId}) is due, but a restart is in progress; will retry",
-                evt.Name,
-                evt.Id);
+                "Cup {CupName} (ID {CupId}) is due, but a restart is in progress; will retry",
+                cup.Name,
+                cup.Id);
             ReleaseActivation();
         }
 
         return false;
     }
 
-    private void Release(int eventId, RestartOutcome outcome)
+    private void Release(int cupId, RestartOutcome outcome)
     {
         ReleaseActivation();
-        _logger.LogInformation("Restart for event {EventId} finished with {Outcome}; scheduler released", eventId, outcome);
+        _logger.LogInformation("Restart for cup {CupId} finished with {Outcome}; scheduler released", cupId, outcome);
     }
 
     private void ReleaseActivation()
