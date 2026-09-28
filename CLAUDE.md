@@ -13,7 +13,7 @@ it for a specific topic, and trust the code over it.
 ```bash
 dotnet build WreckfestController.csproj -c Debug
 dotnet test
-dotnet test --filter-class WreckfestController.Tests.Services.PlayerTrackerTests
+dotnet test --filter-class WreckfestController.Tests.Services.Tracking.PlayerTrackerTests
 ```
 
 `dotnet build` also builds the injected C++ hook. The csproj shells out to full

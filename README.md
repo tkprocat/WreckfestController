@@ -332,10 +332,10 @@ WreckfestController/
 ├── Controllers/          # API endpoints
 │   ├── ServerController.cs
 │   └── ConfigController.cs
-├── Services/            # Business logic
-│   ├── ServerManager.cs     # Server process management
-│   ├── PlayerTracker.cs     # Real-time player tracking
-│   └── ConfigService.cs     # Server configuration management
+├── Services/            # Business logic, one folder per feature
+│   ├── ServerControl/       # Server process management (ServerManager)
+│   ├── Tracking/            # Real-time player tracking (PlayerTracker)
+│   └── Config/              # Server configuration management (ConfigService)
 ├── Models/              # Data models
 ├── WebSockets/          # WebSocket handlers
 └── WreckfestController.Tests/  # Unit tests

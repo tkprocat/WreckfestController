@@ -200,7 +200,7 @@ Logs are written to the console by default. Configure logging in `appsettings.js
   "LogLevel": {
     "Default": "Information",
     "Microsoft.AspNetCore": "Warning",
-    "WreckfestController.Services.ServerManager": "Debug"
+    "WreckfestController.Services.ServerControl.ServerManager": "Debug"
   }
 }
 ```
