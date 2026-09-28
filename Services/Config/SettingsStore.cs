@@ -70,10 +70,16 @@ public interface ISettingsStore
 /// </para>
 /// <para>
 /// <see cref="Changed"/> follows one rule: the store remembers, per section, the value
-/// its listeners last heard of (or the first value anyone read), and after anything that
-/// can change a section - a save, a load, a drop to the defaults - it announces each
-/// section whose value now differs. Announcements are made outside every lock, so a
-/// listener may read or save settings itself.
+/// its listeners last heard of (or the first value anyone read). Every read, save and
+/// database change updates the cache and compares it with those in one step under the
+/// lock, then announces each section whose value now differs. Announcements are made
+/// outside every lock, so a listener may read or save settings itself.
+/// </para>
+/// <para>
+/// A database change (recovery mode, or a retry out of it) waits for a save in progress,
+/// so a save never runs against a database state it did not check. Saves never resume
+/// on the caller's thread, so a UI thread that retries the database while its own save
+/// is running cannot deadlock.
 /// </para>
 /// <para>
 /// The cache holds JSON, and every read deserializes a fresh copy, so no caller can
@@ -95,7 +101,7 @@ public sealed class SettingsStore : ISettingsStore
 
     /// <summary>
     /// Bumped whenever the cache is dropped, so a save that began against an earlier
-    /// cache (perhaps an earlier database file) cannot publish into the current one.
+    /// cache cannot publish into the current one.
     /// </summary>
     private int _generation;
 
@@ -107,7 +113,8 @@ public sealed class SettingsStore : ISettingsStore
 
     /// <summary>
     /// One save at a time, from its write to publishing the result, so a slower save can
-    /// never put an older version back into the cache after a newer one.
+    /// never put an older version back into the cache after a newer one. Database changes
+    /// take it too.
     /// </summary>
     private readonly SemaphoreSlim _saveGate = new(1, 1);
 
@@ -134,21 +141,21 @@ public sealed class SettingsStore : ISettingsStore
     public SettingsEntry<T> GetEntry<T>() where T : class
     {
         var name = SettingsSections.NameOf(typeof(T));
-        if (EnsureLoaded())
-        {
-            Announce(Reconcile());
-        }
-
         string json;
         int version;
+        List<Type> changed;
         lock (_lock)
         {
+            // Load, read and compare in one step: what this reader gets is what listeners
+            // are told about, even if the cache was being reloaded a moment ago.
+            EnsureLoadedLocked();
             (json, version) = _cache is not null && _cache.TryGetValue(name, out var stored)
                 ? stored
                 : (DefaultJson(typeof(T)), 0);
-            _heard.TryAdd(name, json);
+            changed = ReconcileLocked();
         }
 
+        Announce(changed);
         return new(Deserialize<T>(json), version);
     }
 
@@ -160,39 +167,64 @@ public sealed class SettingsStore : ISettingsStore
         // Normalize a copy: the caller's object stays as they passed it.
         var json = JsonSerializer.Serialize(SettingsSections.Normalize(typeof(T), Deserialize<T>(JsonSerializer.Serialize(value))));
 
-        await _saveGate.WaitAsync(cancellationToken);
         int updated;
         SettingsSection current;
         try
         {
-            EnsureLoaded();
-            int generation;
-            lock (_lock)
+            // ConfigureAwait(false) throughout: see the class remarks on deadlocks.
+            await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
             {
-                if (_cache is null || !_database.IsReady)
+                int generation;
+                lock (_lock)
                 {
-                    throw new SettingsUnavailableException("Settings cannot be saved while the database is unavailable.");
+                    EnsureLoadedLocked();
+                    if (_cache is null || !_database.IsReady)
+                    {
+                        throw new SettingsUnavailableException("Settings cannot be saved while the database is unavailable.");
+                    }
+
+                    generation = _generation;
                 }
 
-                generation = _generation;
+                // From here the write may commit, so the rest runs to the end: a cancellation
+                // between the write and the cache update would leave readers on the old value.
+                var db = await _contexts.CreateDbContextAsync(CancellationToken.None).ConfigureAwait(false);
+                await using (db.ConfigureAwait(false))
+                {
+                    updated = await db.SettingsSections
+                        .Where(s => s.Section == name && s.Version == expectedVersion)
+                        .ExecuteUpdateAsync(
+                            s => s.SetProperty(r => r.Json, json).SetProperty(r => r.Version, r => r.Version + 1),
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                    // A conflict reads the row too: another instance's save lands in this cache.
+                    current = await db.SettingsSections
+                        .AsNoTracking()
+                        .SingleAsync(s => s.Section == name, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+
+                Publish(name, current, generation);
             }
-
-            // From here the write may commit, so the rest runs to the end: a cancellation
-            // between the write and the cache update would leave readers on the old value.
-            await using var db = await _contexts.CreateDbContextAsync(CancellationToken.None);
-            updated = await db.SettingsSections
-                .Where(s => s.Section == name && s.Version == expectedVersion)
-                .ExecuteUpdateAsync(
-                    s => s.SetProperty(r => r.Json, json).SetProperty(r => r.Version, r => r.Version + 1),
-                    CancellationToken.None);
-
-            // A conflict reads the row too: another instance's save lands in this cache.
-            current = await db.SettingsSections.AsNoTracking().SingleAsync(s => s.Section == name, CancellationToken.None);
-            Publish(name, current, generation);
+            finally
+            {
+                _saveGate.Release();
+            }
         }
         finally
         {
-            _saveGate.Release();
+            // Even when the save failed: it may have loaded the cache, which listeners
+            // must hear about.
+            List<Type> changed;
+            lock (_lock)
+            {
+                EnsureLoadedLocked();
+                changed = ReconcileLocked();
+            }
+
+            Announce(changed);
         }
 
         if (updated > 0)
@@ -200,18 +232,14 @@ public sealed class SettingsStore : ISettingsStore
             _logger.LogInformation("Saved the {Section} settings (version {Version})", name, current.Version);
         }
 
-        // Publish may have dropped the cache; reload it before announcing.
-        EnsureLoaded();
-        Announce(Reconcile());
-
         var entry = new SettingsEntry<T>(Deserialize<T>(current.Json), current.Version);
         return new(updated > 0 ? SettingsSaveStatus.Saved : SettingsSaveStatus.Conflict, entry);
     }
 
     /// <summary>
-    /// Puts <paramref name="row"/> in the cache if it is newer than what is there. When the
-    /// cache has been dropped or replaced since the save began, the row may belong to
-    /// another database file, so the cache is dropped instead and the next read reloads it.
+    /// Puts <paramref name="row"/> in the cache if it is newer than what is there. A
+    /// database change waits for saves, so the generation should always match; if it does
+    /// not, the row is not trusted, and the cache is dropped for the next read to reload.
     /// </summary>
     private void Publish(string name, SettingsSection row, int generation)
     {
@@ -233,70 +261,75 @@ public sealed class SettingsStore : ISettingsStore
 
     private void OnDatabaseChanged()
     {
-        lock (_lock)
+        // Wait for a save in progress: it checked the database state and must finish
+        // against it. Saves never need this thread to finish.
+        List<Type> changed;
+        _saveGate.Wait();
+        try
         {
-            // Failed: back to the shipped defaults, and saving refuses. Ready: reload, since
-            // a retry may have opened a different file than a failed first try.
-            _cache = null;
-            _generation++;
+            lock (_lock)
+            {
+                // Failed: back to the shipped defaults, and saving refuses. Ready: reload.
+                _cache = null;
+                _generation++;
+                EnsureLoadedLocked();
+                changed = ReconcileLocked();
+            }
+        }
+        finally
+        {
+            _saveGate.Release();
         }
 
-        EnsureLoaded();
-        Announce(Reconcile());
+        Announce(changed);
     }
 
     /// <summary>
     /// Loads every section, creating the missing ones, if the database is ready and the
-    /// cache is empty. True when it loaded. Announces nothing: callers do, outside locks.
+    /// cache is empty. Call under <see cref="_lock"/>. Announces nothing: callers do,
+    /// outside locks, after <see cref="ReconcileLocked"/>.
     /// </summary>
-    private bool EnsureLoaded()
+    private void EnsureLoadedLocked()
     {
-        lock (_lock)
+        if (_cache is not null || !_database.IsReady)
         {
-            if (_cache is not null || !_database.IsReady)
-            {
-                return false;
-            }
+            return;
+        }
 
-            try
-            {
-                _cache = Load();
-                return true;
-            }
-            catch (Exception ex)
-            {
-                // Readers get the shipped defaults, and saving refuses, until the next try.
-                _logger.LogError(ex, "Could not load settings from the database; using the shipped defaults");
-                return false;
-            }
+        try
+        {
+            _cache = Load();
+        }
+        catch (Exception ex)
+        {
+            // Readers get the shipped defaults, and saving refuses, until the next try.
+            _logger.LogError(ex, "Could not load settings from the database; using the shipped defaults");
         }
     }
 
     /// <summary>
     /// The sections whose current value differs from what listeners last heard, marking
-    /// them heard. A section nobody has heard of or read is only recorded.
+    /// them heard. A section nobody has heard of or read is only recorded. Call under
+    /// <see cref="_lock"/>.
     /// </summary>
-    private List<Type> Reconcile()
+    private List<Type> ReconcileLocked()
     {
         var changed = new List<Type>();
-        lock (_lock)
+        foreach (var type in SettingsSections.Types)
         {
-            foreach (var type in SettingsSections.Types)
+            var name = SettingsSections.NameOf(type);
+            var current = _cache is not null && _cache.TryGetValue(name, out var stored) ? stored.Json : DefaultJson(type);
+            if (_heard.TryGetValue(name, out var heard) && heard == current)
             {
-                var name = SettingsSections.NameOf(type);
-                var current = _cache is not null && _cache.TryGetValue(name, out var stored) ? stored.Json : DefaultJson(type);
-                if (_heard.TryGetValue(name, out var heard) && heard == current)
-                {
-                    continue;
-                }
-
-                if (heard is not null)
-                {
-                    changed.Add(type);
-                }
-
-                _heard[name] = current;
+                continue;
             }
+
+            if (heard is not null)
+            {
+                changed.Add(type);
+            }
+
+            _heard[name] = current;
         }
 
         return changed;
