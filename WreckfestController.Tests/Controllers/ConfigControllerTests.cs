@@ -243,6 +243,10 @@ public class ConfigControllerTests
         { "rotation", [new EventLoopTrack { Track = "track1" }, new EventLoopTrack { Track = " " }] },
         { "rotation", [new EventLoopTrack { Track = "track1\nel_laps=99" }] },
         { "rotation", [new EventLoopTrack { Track = "track1", Weather = "rain\r\n" }] },
+        { "rotation", [new EventLoopTrack { Track = "track 1" }] },
+        { "rotation", [new EventLoopTrack { Track = "track1", Laps = -1 }] },
+        { "rotation", [new EventLoopTrack { Track = "track1", CarResetDisabled = 2 }] },
+        { new string('x', 129), [new EventLoopTrack { Track = "track1" }] },
     };
 
     [Theory]

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
 using WreckfestController.Data.Catalogue;
+using WreckfestController.Data.Collections;
 using WreckfestController.Services;
 
 namespace WreckfestController.Controllers;
@@ -211,7 +212,10 @@ public class CatalogueTracksController : ControllerBase
         return await SaveAsync(track);
     }
 
-    /// <summary>Deletes an admin-added track and its variants. Built-in tracks are hidden instead.</summary>
+    /// <summary>
+    /// Deletes an admin-added track and its variants, when no collection uses them.
+    /// Built-in tracks are hidden instead.
+    /// </summary>
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
@@ -226,8 +230,22 @@ public class CatalogueTracksController : ControllerBase
             return this.Refused("Built-in tracks cannot be deleted. Hide it instead.");
         }
 
+        var collections = await _db.CollectionsUsingAsync(_db.TrackVariants.Where(v => v.TrackId == id).Select(v => v.Id));
+        if (collections.Count > 0)
+        {
+            return this.RefusedInUse($"Track '{track.Key}'", collections);
+        }
+
         _db.Tracks.Remove(track);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (CatalogueHttp.IsForeignKeyViolation(ex))
+        {
+            return this.Refused("A collection started using it. Reload and try again.");
+        }
+
         _logger.LogInformation("{Caller} deleted track {Key}", this.Caller(), track.Key);
         return NoContent();
     }
