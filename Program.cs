@@ -188,6 +188,7 @@ public class Program
                 services.AddSingleton<IInjectedHookOutputReader, InjectedHookOutputReader>();
                 services.AddSingleton<ServerManager>();
                 services.AddSingleton<SettingsService>();
+                services.AddSingleton<IVotableTracks, CatalogueVotableTracks>();
                 services.AddSingleton<VotingService>();
 
                 // The controller's own database. The path is read once; changing it needs a restart.

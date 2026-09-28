@@ -18,6 +18,7 @@ public class VotingService
     private readonly ConfigService _configService;
     private readonly ILogger<VotingService> _logger;
     private readonly IConfiguration _configuration;
+    private readonly IVotableTracks _votableTracks;
 
     private enum VoteState { Idle, Active }
     private VoteState _state = VoteState.Idle;
@@ -88,13 +89,15 @@ public class VotingService
         PlayerTracker playerTracker,
         ConfigService configService,
         ILogger<VotingService> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IVotableTracks votableTracks)
     {
         _serverManager = serverManager;
         _playerTracker = playerTracker;
         _configService = configService;
         _logger = logger;
         _configuration = configuration;
+        _votableTracks = votableTracks;
 
         // A settings reload (including a save from the UI) restores the saved mode.
         ChangeToken.OnChange(_configuration.GetReloadToken, () => _chatModeOverride = null);
@@ -425,10 +428,8 @@ public class VotingService
             : new VoteTrackResolution(VoteTrackResolutionKind.None, null, []);
     }
 
-    private List<AllowedVoteTrack> GetAllowedTracks()
-    {
-        return AllowedTrackConfiguration.Read(_configuration);
-    }
+    /// <summary>The catalogue's votable tracks. See <see cref="CatalogueVotableTracks"/>.</summary>
+    private List<AllowedVoteTrack> GetAllowedTracks() => _votableTracks.Get();
 
     private void StartLuckyVote(string playerName)
     {

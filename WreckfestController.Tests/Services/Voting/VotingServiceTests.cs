@@ -63,7 +63,7 @@ public class VotingServiceTests
             _playerTracker,
             _mockConfigService.Object,
             _mockLogger.Object,
-            _config);
+            _config, new ConfiguredVotableTracks(_config));
     }
 
     private void SendChat(string playerName, string message, bool isBot = false)
@@ -928,7 +928,7 @@ public class VotingServiceTests
 
         var service = new VotingService(
             serverMock.Object, tracker, configMock.Object,
-            Mock.Of<ILogger<VotingService>>(), config);
+            Mock.Of<ILogger<VotingService>>(), config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -998,7 +998,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1043,7 +1043,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1094,7 +1094,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1137,7 +1137,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1183,7 +1183,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1229,7 +1229,7 @@ public class VotingServiceTests
             tracker,
             new Mock<ConfigService>(Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConfigService>>()).Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, serverMock, config);
     }
