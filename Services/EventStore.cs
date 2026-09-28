@@ -133,10 +133,13 @@ public sealed class EventStore
         {
             var next = FirstOccurrence(evt);
 
-            // Removing the repeat during the lead-in, say, gives back the occurrence the
-            // scheduler has already run. Treat that one as done rather than run it twice.
-            // Only that exact one: a new time before it is a genuine reschedule.
-            if (next is { } first && evt.LastOccurrence is { } last && first == last)
+            // A recomputed occurrence at or before the last one dealt with has been dealt
+            // with: removing a repeat can give back a start the scheduler already ran or
+            // cancelled. Except a start time the admin has just set, which is a genuine
+            // reschedule even if it is earlier: a cancelled 12:05 moved to 12:04 runs.
+            var chosenByAdmin = evt.StartTime != schedule.StartTime;
+            if (next is { } first && evt.LastOccurrence is { } last && first <= last
+                && !(chosenByAdmin && first == evt.StartTime))
             {
                 next = EventRecurrence.After(last, evt.Repeat, ZoneOf(evt.TimeZone), UtcNow);
             }

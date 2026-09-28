@@ -107,6 +107,23 @@ public sealed class EventStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task RemovingTheRepeat_DoesNotBringBackAnEarlierOccurrenceAlreadyDealtWith()
+    {
+        // Starts 12:04, repeats daily at 12:10. Both of today's occurrences were
+        // cancelled; the admin then removes the repeat, leaving the start as it was.
+        var start = _db.Clock.UtcNow.AddMinutes(4);
+        var repeatAt = _db.Clock.UtcNow.AddMinutes(10);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Daily", start, Daily("12:10")));
+        await _db.Store.AdvanceAsync(evt.Id, start, OccurrenceOutcome.Cancelled, Ct);
+        Assert.Equal(repeatAt, (await _db.ReloadAsync(evt.Id)).NextOccurrence);
+        await _db.Store.AdvanceAsync(evt.Id, repeatAt, OccurrenceOutcome.Cancelled, Ct);
+
+        var (_, saved) = await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Daily", start), 1, Ct);
+
+        Assert.Null(saved!.NextOccurrence);
+    }
+
+    [Fact]
     public async Task Advance_AfterAnAdminRescheduled_LeavesTheNewTime()
     {
         var start = _db.Clock.UtcNow.AddMinutes(2);
