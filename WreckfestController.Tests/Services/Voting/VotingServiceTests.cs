@@ -63,7 +63,7 @@ public class VotingServiceTests
             _playerTracker,
             _mockConfigService.Object,
             _mockLogger.Object,
-            _config);
+            _config, new ConfiguredVotableTracks(_config));
     }
 
     private void SendChat(string playerName, string message, bool isBot = false)
@@ -928,7 +928,7 @@ public class VotingServiceTests
 
         var service = new VotingService(
             serverMock.Object, tracker, configMock.Object,
-            Mock.Of<ILogger<VotingService>>(), config);
+            Mock.Of<ILogger<VotingService>>(), config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -998,7 +998,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1043,7 +1043,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1094,7 +1094,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1137,7 +1137,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1183,7 +1183,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1229,7 +1229,7 @@ public class VotingServiceTests
             tracker,
             new Mock<ConfigService>(Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConfigService>>()).Object,
             Mock.Of<ILogger<VotingService>>(),
-            config);
+            config, new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, serverMock, config);
     }
@@ -1469,6 +1469,42 @@ public class VotingServiceTests
 
         serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Once);
         serverMock.Verify(m => m.SendCommandAsync("laps=4"), Times.Once);
+    }
+
+    [Fact]
+    public async Task Confirm_RefusesATrackDisallowedSinceItWasOffered()
+    {
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        service.ProcessChatCommand("Alice", false, "!track wreckn 4");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        // An admin takes both offered variants out of voting.
+        config["Vote:AllowedTracks:0:Id"] = "retired_one";
+        config["Vote:AllowedTracks:1:Id"] = "retired_two";
+        service.ProcessChatCommand("Alice", false, "!confirm 1");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+        Assert.Contains(messages, m => m.Contains("no longer available", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task APassedVote_IsNotAppliedWhenItsTrackWasDisallowedMeanwhile()
+    {
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        service.ProcessChatCommand("Alice", false, "!vote wrecknado_02");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        config["Vote:AllowedTracks:0:Id"] = "retired_one";
+        service.ProcessChatCommand("Bob", false, "!yes");
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+        Assert.Contains(messages, m => m.Contains("wrecknado_02 is no longer available", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -190,6 +190,7 @@ public class Program
                 services.AddSingleton<IInjectedHookOutputReader, InjectedHookOutputReader>();
                 services.AddSingleton<ServerManager>();
                 services.AddSingleton<SettingsService>();
+                services.AddSingleton<IVotableTracks, CatalogueVotableTracks>();
 
                 // Settings a person edits live in the database (Phase 3b). First-run values
                 // come from the shipped appsettings.json alone, never user-settings.json.
@@ -203,6 +204,7 @@ public class Program
                 AddSettingsSection<WreckfestServerSettings>(services);
                 AddSettingsSection<SteamCmdSettings>(services);
                 AddSettingsSection<VoteSettings>(services);
+
                 services.AddSingleton<VotingService>();
 
                 // The controller's own database. The path is read once; changing it needs a restart.
