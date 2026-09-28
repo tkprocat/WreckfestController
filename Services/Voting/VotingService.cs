@@ -431,6 +431,22 @@ public class VotingService
     /// <summary>The catalogue's votable tracks. See <see cref="CatalogueVotableTracks"/>.</summary>
     private List<AllowedVoteTrack> GetAllowedTracks() => _votableTracks.Get();
 
+    /// <summary>
+    /// Refuses, telling the players, when <paramref name="trackId"/> is no longer votable:
+    /// an admin disallowed or hid it after it was offered or voted on.
+    /// </summary>
+    private bool RefuseIfNoLongerVotable(string trackId)
+    {
+        if (GetAllowedTracks().Any(t => string.Equals(t.Id, trackId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        _logger.LogInformation("Refused track change to {TrackId}: no longer votable", trackId);
+        _ = BroadcastMessage($"{trackId} is no longer available. Next race unchanged.");
+        return true;
+    }
+
     private void StartLuckyVote(string playerName)
     {
         if (RefuseWhileVoteInProgress(playerName))
@@ -992,6 +1008,13 @@ public class VotingService
     /// </summary>
     private void StartTrackChange(string playerName, string trackId, int? laps)
     {
+        // A !confirm option was picked from an earlier list; the catalogue may have
+        // changed since.
+        if (RefuseIfNoLongerVotable(trackId))
+        {
+            return;
+        }
+
         // The event loop owns track selection when it is running - Wreckfest rotates
         // and runs its own end-of-race track vote - so a track set here would just be
         // overwritten, or fight it. Refuse rather than race the rotation.
@@ -1687,6 +1710,12 @@ public class VotingService
     /// </summary>
     private async Task<bool> ApplyTrackChange(string trackId, int? laps, TrackChangeMessages messages)
     {
+        // A vote can outlast its track's place in the catalogue.
+        if (RefuseIfNoLongerVotable(trackId))
+        {
+            return false;
+        }
+
         try
         {
             var trackResult = await _serverManager.SendCommandAsync($"track={trackId}");

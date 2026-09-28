@@ -1472,6 +1472,42 @@ public class VotingServiceTests
     }
 
     [Fact]
+    public async Task Confirm_RefusesATrackDisallowedSinceItWasOffered()
+    {
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        service.ProcessChatCommand("Alice", false, "!track wreckn 4");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        // An admin takes both offered variants out of voting.
+        config["Vote:AllowedTracks:0:Id"] = "retired_one";
+        config["Vote:AllowedTracks:1:Id"] = "retired_two";
+        service.ProcessChatCommand("Alice", false, "!confirm 1");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+        Assert.Contains(messages, m => m.Contains("no longer available", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task APassedVote_IsNotAppliedWhenItsTrackWasDisallowedMeanwhile()
+    {
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        service.ProcessChatCommand("Alice", false, "!vote wrecknado_02");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        config["Vote:AllowedTracks:0:Id"] = "retired_one";
+        service.ProcessChatCommand("Bob", false, "!yes");
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+        Assert.Contains(messages, m => m.Contains("wrecknado_02 is no longer available", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task DirectMode_LuckyCommand_AppliesImmediately()
     {
         var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
