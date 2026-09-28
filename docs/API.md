@@ -203,8 +203,11 @@ request is rejected with 400, and nothing is written, when it names an unknown f
 gives a value of the wrong type or `null`, or puts a line break in a string.
 
 `PUT tracks` replaces the whole event loop. It is rejected with 400 unless
-`collectionName` is non-empty, `tracks` is present, every entry has a non-empty
-`track`, and no value contains a line break. An empty `tracks` list is allowed.
+`collectionName` is non-empty (at most 128 characters), `tracks` is present, every
+entry's `track` is a game id (`^[A-Za-z0-9_]{1,64}$`), `laps`, `bots` and `numTeams`
+are not negative, `carResetDisabled` and `wrongWayLimiterDisabled` are `0` or `1`,
+text values are at most 128 characters, and no value contains a line break. An empty
+`tracks` list is allowed. Collections are checked by the same rules.
 
 ### Events — `api/events`
 
@@ -235,7 +238,7 @@ readable by id.
 | GET | `tracks/{id}` | One track with all its variants. Sends an `ETag`. |
 | POST | `tracks` | `{ key, name, origin, dlcName, modId }`. 201. Supports every weather until `weather` is set. `dlcName` only for `Dlc`, `modId` only for `Workshop`. |
 | PUT | `tracks/{id}` | Same body. Needs `If-Match`. |
-| DELETE | `tracks/{id}` | 204, with its variants. **409** for a built-in track. |
+| DELETE | `tracks/{id}` | 204, with its variants. **409** for a built-in track, or while a collection uses one of its variants. |
 | POST | `tracks/{id}/hide`, `tracks/{id}/unhide` | Retire or restore without deleting. |
 | POST | `tracks/{id}/reset` | Built-in only: restores name, origin and weather. Not the hidden flag or the variants. |
 | PUT | `tracks/{id}/weather` | `{ weather: ["clear", ...] }`. Replaces the supported weather. |
@@ -243,7 +246,7 @@ readable by id.
 | GET | `variants/{id}` | One variant. Sends an `ETag`. |
 | POST | `variants` | `{ trackId, variantId, name, gameMode, allowedForVoting }`. 201. `variantId` is `^[A-Za-z0-9_]{1,64}$` and unique ignoring case. |
 | PUT | `variants/{id}` | `{ variantId, name, gameMode }`. Needs `If-Match`. |
-| DELETE | `variants/{id}` | 204. **409** for a built-in variant. |
+| DELETE | `variants/{id}` | 204. **409** for a built-in variant, or while a collection uses it. |
 | POST | `variants/{id}/hide`, `variants/{id}/unhide` | As for tracks. |
 | POST | `variants/{id}/reset` | Built-in only: restores name, mode, voting flag and tags, recreating a shipped tag that was deleted. |
 | PUT | `variants/{id}/voting` | `{ allowed }`. |
@@ -258,6 +261,36 @@ readable by id.
 `ETag: "3"`. `PUT {id}` must send it back as `If-Match: "3"`: without the header the answer is
 **428**, and when someone saved in between it is **409** with the row as it is now
 (and its new `ETag`), so the editor can offer to reload or overwrite.
+
+A **409** for a row in use names the collections in its title and lists them in
+`collections`, so the Track Browser can say what to change first.
+
+### Collections — `api/collections`
+
+Named track rotations. A collection is saved whole: `{ name, tracks }`, where `tracks`
+is in rotation order and each entry has the shape `GET /api/config/tracks` returns
+(`track`, `gamemode`, `laps`, `bots`, `numTeams`, `carResetDisabled`,
+`wrongWayLimiterDisabled`, `carClassRestriction`, `carRestriction`, `weather`), so a
+deployed rotation can be saved as a collection as is. Names are unique, ignoring case.
+
+An entry whose `track` the catalogue knows is linked to that variant, and its response
+carries `variant: { id, name, trackId, trackName, gameMode, isHidden }`. An unknown id,
+such as a workshop track the catalogue does not have yet, is kept with `variant: null`,
+and is linked when that variant is added. A linked entry deploys the variant's current
+id, so renaming an admin-added variant carries its collections along. Hiding a variant
+leaves it in collections, with `isHidden: true`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | | `{ id, name, version, trackCount, createdAt, updatedAt }` per collection, by name. |
+| GET | `{id}` | One collection with its tracks. Sends an `ETag`. |
+| POST | | `{ name, tracks }`. 201. |
+| PUT | `{id}` | Same body; replaces the name and every track, which is also how to reorder. Needs `If-Match`. |
+| DELETE | `{id}` | 204. |
+| POST | `{id}/duplicate` | Optional `{ name }`, else "*name* (copy)", then "(copy 2)" and on. 201. |
+| POST | `{id}/deploy` | Writes the tracks to the server config's event loop, with the name on `#CollectionName`. `{ message, collectionName, count }`. **409** for an empty collection, or when the config cannot be written; then `reason` is `accessDenied` (no write permission, or the file is read-only), `fileInUse` (another program has it open), `notFound`, `notConfigured` or `ioError`, and `title` says what to fix. |
+
+Concurrency works as for the catalogue: `version`, `ETag`, `If-Match`, 428 and 409.
 
 ## Live updates — `/hubs/server`
 

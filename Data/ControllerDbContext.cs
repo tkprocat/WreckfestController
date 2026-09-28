@@ -2,12 +2,13 @@ using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data.Catalogue;
+using WreckfestController.Data.Collections;
 
 namespace WreckfestController.Data;
 
 /// <summary>
-/// The controller's own SQLite database: web UI users and the track catalogue today,
-/// and collections, events and settings as later phases move them in.
+/// The controller's own SQLite database: web UI users, the track catalogue and track
+/// collections today, and events and settings as later phases move them in.
 /// </summary>
 public class ControllerDbContext : IdentityDbContext<AppUser>
 {
@@ -25,6 +26,10 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
     public DbSet<WeatherCondition> WeatherConditions => Set<WeatherCondition>();
 
     public DbSet<Mod> Mods => Set<Mod>();
+
+    public DbSet<TrackCollection> TrackCollections => Set<TrackCollection>();
+
+    public DbSet<TrackCollectionEntry> TrackCollectionEntries => Set<TrackCollectionEntry>();
 
     /// <summary>
     /// Points <paramref name="options"/> at the SQLite file at <paramref name="databasePath"/>.
@@ -68,6 +73,7 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
         });
 
         ConfigureCatalogue(builder);
+        ConfigureCollections(builder);
     }
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
@@ -174,6 +180,40 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
             mod.Property(m => m.FolderName).HasMaxLength(Mod.FolderNameMaxLength).UseCollation(NoCase);
             mod.HasIndex(m => m.FolderName).IsUnique();
             mod.Property(m => m.WorkshopId).HasMaxLength(Mod.WorkshopIdMaxLength);
+        });
+    }
+
+    private static void ConfigureCollections(ModelBuilder builder)
+    {
+        builder.Entity<TrackCollection>(collection =>
+        {
+            collection.Property(c => c.Name).HasMaxLength(TrackCollection.NameMaxLength).UseCollation("NOCASE");
+            collection.HasIndex(c => c.Name).IsUnique();
+            collection.Property(c => c.Version).IsConcurrencyToken();
+
+            collection.HasMany(c => c.Entries)
+                .WithOne(e => e.Collection)
+                .HasForeignKey(e => e.CollectionId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<TrackCollectionEntry>(entry =>
+        {
+            entry.HasIndex(e => new { e.CollectionId, e.Position }).IsUnique();
+
+            // Matched against TrackVariant.VariantId when linking, which ignores case.
+            entry.Property(e => e.TrackId).HasMaxLength(TrackVariant.VariantIdMaxLength).UseCollation("NOCASE");
+            entry.Property(e => e.Gamemode).HasMaxLength(CollectionLimits.TextMaxLength);
+            entry.Property(e => e.CarClassRestriction).HasMaxLength(CollectionLimits.TextMaxLength);
+            entry.Property(e => e.CarRestriction).HasMaxLength(CollectionLimits.TextMaxLength);
+            entry.Property(e => e.Weather).HasMaxLength(CollectionLimits.TextMaxLength);
+            entry.Ignore(e => e.EffectiveTrackId);
+
+            // A variant a collection uses cannot be deleted; hide it instead.
+            entry.HasOne(e => e.TrackVariant)
+                .WithMany()
+                .HasForeignKey(e => e.TrackVariantId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

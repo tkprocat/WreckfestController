@@ -213,6 +213,20 @@ internal static class CatalogueHttp
     public static ObjectResult Refused(this ControllerBase controller, string title) =>
         controller.Problem(statusCode: StatusCodes.Status409Conflict, title: title);
 
+    /// <summary>409 with an extra member a client can switch on, such as <c>reason</c>.</summary>
+    public static ObjectResult Refused(this ControllerBase controller, string title, (string Name, object Value) extension)
+    {
+        var problem = new ProblemDetails { Status = StatusCodes.Status409Conflict, Title = title };
+        problem.Extensions[extension.Name] = extension.Value;
+        return new ObjectResult(problem) { StatusCode = StatusCodes.Status409Conflict };
+    }
+
+    /// <summary>409 for a row collections still use, naming them in the title and in <c>collections</c>.</summary>
+    public static ObjectResult RefusedInUse(this ControllerBase controller, string what, IReadOnlyList<string> collections) =>
+        controller.Refused(
+            $"{what} is used by {string.Join(", ", collections)}. Remove it from them, or hide it instead.",
+            ("collections", collections));
+
     public static ActionResult Invalid(this ControllerBase controller, string field, string message)
     {
         controller.ModelState.AddModelError(field, message);
@@ -222,6 +236,10 @@ internal static class CatalogueHttp
     /// <summary>A UNIQUE constraint failed: someone created the same id between our check and our insert.</summary>
     public static bool IsUniqueViolation(DbUpdateException exception) =>
         exception.InnerException is SqliteException { SqliteErrorCode: 19, SqliteExtendedErrorCode: 2067 };
+
+    /// <summary>A FOREIGN KEY constraint failed: a collection started using the row after we checked.</summary>
+    public static bool IsForeignKeyViolation(DbUpdateException exception) =>
+        exception.InnerException is SqliteException { SqliteErrorCode: 19, SqliteExtendedErrorCode: 787 };
 
     /// <summary>For the log: the signed-in user's name, or "ApiKey" for a script.</summary>
     public static string Caller(this ControllerBase controller) =>

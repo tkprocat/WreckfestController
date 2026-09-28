@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
 using WreckfestController.Data.Catalogue;
+using WreckfestController.Data.Collections;
 using WreckfestController.Services;
 
 namespace WreckfestController.Controllers;
@@ -18,11 +19,16 @@ namespace WreckfestController.Controllers;
 public class CatalogueVariantsController : ControllerBase
 {
     private readonly ControllerDbContext _db;
+    private readonly TimeProvider _time;
     private readonly ILogger<CatalogueVariantsController> _logger;
 
-    public CatalogueVariantsController(ControllerDbContext db, ILogger<CatalogueVariantsController> logger)
+    public CatalogueVariantsController(
+        ControllerDbContext db,
+        TimeProvider time,
+        ILogger<CatalogueVariantsController> logger)
     {
         _db = db;
+        _time = time;
         _logger = logger;
     }
 
@@ -124,6 +130,7 @@ public class CatalogueVariantsController : ControllerBase
             AllowedForVoting = request.AllowedForVoting,
         };
         _db.TrackVariants.Add(variant);
+        await _db.LinkEntriesAsync(variant);
 
         try
         {
@@ -172,7 +179,11 @@ public class CatalogueVariantsController : ControllerBase
                 return DuplicateId(request.VariantId);
             }
 
+            // Entries already linked follow the variant; ones naming the new id join them.
+            // Both change what those collections deploy, so they get new versions too.
+            await _db.TouchCollectionsForRenameAsync(variant, request.VariantId, _time.GetUtcNow());
             variant.VariantId = request.VariantId;
+            await _db.LinkEntriesAsync(variant);
         }
 
         variant.Name = request.Name.Trim();
@@ -180,7 +191,10 @@ public class CatalogueVariantsController : ControllerBase
         return await SaveAsync(variant);
     }
 
-    /// <summary>Deletes an admin-added variant. Built-in variants are hidden instead.</summary>
+    /// <summary>
+    /// Deletes an admin-added variant that no collection uses. Built-in variants are
+    /// hidden instead.
+    /// </summary>
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
@@ -195,8 +209,22 @@ public class CatalogueVariantsController : ControllerBase
             return this.Refused("Built-in variants cannot be deleted. Hide it instead.");
         }
 
+        var collections = await _db.CollectionsUsingAsync(_db.TrackVariants.Where(v => v.Id == id).Select(v => v.Id));
+        if (collections.Count > 0)
+        {
+            return this.RefusedInUse($"Variant '{variant.VariantId}'", collections);
+        }
+
         _db.TrackVariants.Remove(variant);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (CatalogueHttp.IsForeignKeyViolation(ex))
+        {
+            return this.Refused("A collection started using it. Reload and try again.");
+        }
+
         _logger.LogInformation("{Caller} deleted track variant {VariantId}", this.Caller(), variant.VariantId);
         return NoContent();
     }
@@ -289,6 +317,11 @@ public class CatalogueVariantsController : ControllerBase
         try
         {
             await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException ex) when (ex.Entries.All(e => e.Entity is not TrackVariant))
+        {
+            // Not this variant: a collection a rename touches was saved in between.
+            return this.Refused("A collection using this variant changed meanwhile. Try again.");
         }
         catch (DbUpdateConcurrencyException)
         {

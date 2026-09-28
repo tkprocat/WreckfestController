@@ -115,9 +115,9 @@ public class ConfigController : ControllerBase
         try
         {
             _logger.LogInformation("Received request to update event loop tracks");
-            if (ValidateEventLoopTracks(request) is { } error)
+            if (EventLoopTrackRules.Validate(request.CollectionName, request.Tracks) is { } error)
             {
-                return BadRequest(new { message = error });
+                return BadRequest(new { message = error.Message });
             }
 
             _configService.WriteEventLoopTracks(request.CollectionName, request.Tracks);
@@ -129,48 +129,6 @@ public class ConfigController : ControllerBase
             return BadRequest(new { message = $"Failed to update event loop tracks: {ex.Message}" });
         }
     }
-
-    /// <summary>
-    /// Rejects a request that would write an event loop the server cannot load. Every
-    /// value becomes a line of server_config.cfg, so line breaks are refused too.
-    /// </summary>
-    private static string? ValidateEventLoopTracks(UpdateEventLoopTracksRequest request)
-    {
-        if (string.IsNullOrWhiteSpace(request.CollectionName))
-        {
-            return "collectionName is required.";
-        }
-
-        if (HasLineBreak(request.CollectionName))
-        {
-            return "collectionName must not contain line breaks.";
-        }
-
-        if (request.Tracks is null)
-        {
-            return "tracks is required.";
-        }
-
-        for (var i = 0; i < request.Tracks.Count; i++)
-        {
-            var track = request.Tracks[i];
-            if (track is null || string.IsNullOrWhiteSpace(track.Track))
-            {
-                return $"tracks[{i}].track is required.";
-            }
-
-            string?[] values = [track.Track, track.Gamemode, track.CarClassRestriction, track.CarRestriction, track.Weather];
-            if (values.Any(HasLineBreak))
-            {
-                return $"tracks[{i}] must not contain line breaks.";
-            }
-        }
-
-        return null;
-    }
-
-    private static bool HasLineBreak(string? value) =>
-        value is not null && value.AsSpan().IndexOfAny('\r', '\n') >= 0;
 
     /// <summary>
     /// Get live server info by sending ? command to the running server
