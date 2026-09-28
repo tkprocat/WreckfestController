@@ -260,10 +260,9 @@ public sealed class CupActivationTests : IDisposable
     [Fact]
     public async Task Activation_WritesTheCupsScoring_AndKeepsTheServersOwnWhenUnset()
     {
-        var written = new List<ServerConfig>();
-        _config.Setup(c => c.ReadBasicConfig())
-            .Returns(() => new ServerConfig { ServerName = "Old name", SessionMode = "normal", GridOrder = "perf_normal" });
-        _config.Setup(c => c.WriteBasicConfig(It.IsAny<ServerConfig>())).Callback<ServerConfig>(written.Add);
+        var written = new List<IReadOnlyDictionary<string, string>>();
+        _config.Setup(c => c.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Callback<IReadOnlyDictionary<string, string>>(s => written.Add(new Dictionary<string, string>(s)));
         var scored = await _db.CreateAsync(CupTestDatabase.Definition("Cup night", Now.AddDays(1), sessionMode: "30p-aggr", gridOrder: "cup_reverse"));
         var gridOnly = await _db.CreateAsync(CupTestDatabase.Definition("Grid night", Now.AddDays(2), gridOrder: "random"));
 
@@ -273,11 +272,12 @@ public sealed class CupActivationTests : IDisposable
         Assert.Equal(ActivationResult.Started, await _activator.ActivateAsync(gridOnly.Id));
         await EventuallyAsync(gridOnly.Id, e => e.IsActive);
 
-        // Scoring alone is enough to write the config; nothing else on it changes.
+        // Only what the cup sets is written; the rest of the server's settings are untouched.
         Assert.Collection(
             written,
-            c => Assert.Equal(("Old name", "30p-aggr", "cup_reverse"), (c.ServerName, c.SessionMode, c.GridOrder)),
-            c => Assert.Equal(("Old name", "normal", "random"), (c.ServerName, c.SessionMode, c.GridOrder)));
+            s => Assert.Equal(new Dictionary<string, string> { ["session_mode"] = "30p-aggr", ["grid_order"] = "cup_reverse" }, s),
+            s => Assert.Equal(new Dictionary<string, string> { ["grid_order"] = "random" }, s));
+        Assert.Empty(_writes);
     }
 
     [Fact]

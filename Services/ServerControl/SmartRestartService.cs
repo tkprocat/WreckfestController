@@ -307,7 +307,7 @@ public class SmartRestartService
     }
 
     /// <summary>
-    /// Executes the actual server restart and applies event configuration
+    /// Executes the actual server restart and applies cup configuration
     /// </summary>
     private async Task ExecuteRestartAsync(long restartId)
     {
@@ -334,7 +334,7 @@ public class SmartRestartService
 
         if (eventToActivate == null)
         {
-            _logger.LogError("No event to activate - this should not happen");
+            _logger.LogError("No cup to activate - this should not happen");
             FinishRestart(restartId, RestartOutcome.Failed);
             return;
         }
@@ -450,18 +450,26 @@ public class SmartRestartService
                     currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value;
             }
 
-            // The cup's scoring. The restart below starts a new server process, which
-            // reads these and begins with no cup points.
-            if (@event.SessionMode != null)
-                currentConfig.SessionMode = @event.SessionMode;
-
-            if (@event.GridOrder != null)
-                currentConfig.GridOrder = @event.GridOrder;
-
-            if (@event.ServerConfig != null || @event.SessionMode != null || @event.GridOrder != null)
+            if (@event.ServerConfig != null)
             {
                 _configService.WriteBasicConfig(currentConfig);
                 _logger.LogInformation("Server configuration updated");
+            }
+
+            // The cup's scoring. Written separately, because a config whose session_mode is
+            // commented out or missing must still get it. The restart below starts a new
+            // server process, which reads these and begins with no cup points.
+            var scoring = new Dictionary<string, string>();
+            if (@event.SessionMode != null)
+                scoring["session_mode"] = @event.SessionMode;
+
+            if (@event.GridOrder != null)
+                scoring["grid_order"] = @event.GridOrder;
+
+            if (scoring.Count > 0)
+            {
+                _configService.WriteSettings(scoring);
+                _logger.LogInformation("Cup scoring applied: {Scoring}", string.Join(", ", scoring.Select(s => $"{s.Key}={s.Value}")));
             }
 
             // Apply track rotation if present
@@ -479,7 +487,7 @@ public class SmartRestartService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error applying event configuration");
+            _logger.LogError(ex, "Error applying cup configuration");
             throw;
         }
     }

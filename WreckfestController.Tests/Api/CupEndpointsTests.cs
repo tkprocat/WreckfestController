@@ -261,7 +261,7 @@ public class CupEndpointsTests
         await using var host = await ApiTestHost.StartAsync();
         using var client = host.CreateAuthenticatedClient();
 
-        using var response = await client.PostAsJsonAsync("/api/cups/schedule", new { cups = Array.Empty<object>() }, Ct);
+        using var response = await client.PostAsJsonAsync("/api/events/schedule", new { events = Array.Empty<object>() }, Ct);
 
         Assert.True(
             response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed,

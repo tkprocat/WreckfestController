@@ -222,6 +222,57 @@ public class ConfigService
         _logger.LogInformation("Basic config updated successfully");
     }
 
+    /// <summary>
+    /// Sets each of <paramref name="settings"/> (key to value) in the server settings, above
+    /// the event loop. An active <c>key=</c> line is replaced; a key that is missing, or only
+    /// present commented out, is added just above the event loop, so the setting is never
+    /// silently dropped. Commented lines are left as they are. Callers validate the values:
+    /// each becomes a line of the file.
+    /// </summary>
+    public virtual void WriteSettings(IReadOnlyDictionary<string, string> settings)
+    {
+        var configPath = GetConfigFilePath();
+        var lines = File.ReadAllLines(configPath);
+        var newLines = new List<string>();
+        var written = new HashSet<string>();
+        int? eventLoopStart = null;
+
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (eventLoopStart is null && trimmed.StartsWith("# Event Loop"))
+            {
+                eventLoopStart = newLines.Count;
+            }
+
+            var parts = trimmed.Split('=', 2);
+            if (eventLoopStart is null
+                && !trimmed.StartsWith("#")
+                && parts.Length == 2
+                && settings.TryGetValue(parts[0].Trim(), out var value))
+            {
+                var key = parts[0].Trim();
+                newLines.Add($"{key}={value}");
+                written.Add(key);
+                continue;
+            }
+
+            newLines.Add(line);
+        }
+
+        var missing = settings.Where(s => !written.Contains(s.Key)).Select(s => $"{s.Key}={s.Value}").ToList();
+        if (missing.Count > 0)
+        {
+            // Above the event loop's heading, with a blank line after, as the file lays out
+            // its own settings. With no heading, at the end.
+            var at = eventLoopStart ?? newLines.Count;
+            newLines.InsertRange(at, eventLoopStart is null ? missing : [.. missing, string.Empty]);
+            _logger.LogInformation("Added missing settings to server config: {Keys}", string.Join(", ", missing));
+        }
+
+        File.WriteAllLines(configPath, newLines);
+    }
+
     public virtual void WriteEventLoopTracks(String collectionName, List<EventLoopTrack> tracks)
     {
         var configPath = GetConfigFilePath();
