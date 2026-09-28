@@ -4,7 +4,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using WreckfestController.Data;
+using WreckfestController.Models;
 using WreckfestController.Services.Cups;
 using WreckfestController.Services.Auth;
 using WreckfestController.Services.Config;
@@ -188,6 +190,19 @@ public class Program
                 services.AddSingleton<IInjectedHookOutputReader, InjectedHookOutputReader>();
                 services.AddSingleton<ServerManager>();
                 services.AddSingleton<SettingsService>();
+
+                // Settings a person edits live in the database (Phase 3b). First-run values
+                // come from the shipped appsettings.json alone, never user-settings.json.
+                services.AddSingleton(new ShippedSettings(new ConfigurationBuilder()
+                    .SetBasePath(ExeDirectory)
+                    .AddJsonFile("appsettings.json", optional: true)
+                    .AddJsonFile($"appsettings.{context.HostingEnvironment.EnvironmentName}.json", optional: true)
+                    .Build()));
+                services.AddSingleton<SettingsStore>();
+                services.AddSingleton<ISettingsStore>(sp => sp.GetRequiredService<SettingsStore>());
+                AddSettingsSection<WreckfestServerSettings>(services);
+                AddSettingsSection<SteamCmdSettings>(services);
+                AddSettingsSection<VoteSettings>(services);
                 services.AddSingleton<VotingService>();
 
                 // The controller's own database. The path is read once; changing it needs a restart.
@@ -209,6 +224,11 @@ public class Program
                 services.AddSingleton<CupSchedulerService>();
                 services.AddHostedService<DatabaseGatedHostedService<CupSchedulerService>>();
             });
+
+    /// <summary>Exposes a settings section as <see cref="IOptionsMonitor{TOptions}"/>, backed by the store.</summary>
+    private static void AddSettingsSection<T>(IServiceCollection services)
+        where T : class =>
+        services.AddSingleton<IOptionsMonitor<T>>(sp => new SettingsStoreOptionsMonitor<T>(sp.GetRequiredService<ISettingsStore>()));
 
     /// <summary>
     /// Resolves the user settings file path based on configuration

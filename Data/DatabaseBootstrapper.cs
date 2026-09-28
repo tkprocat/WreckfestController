@@ -9,8 +9,8 @@ namespace WreckfestController.Data;
 /// </summary>
 /// <remarks>
 /// The steps, in order: create the folder, back up the existing file when a migration
-/// is about to run, apply migrations, and switch the file to WAL. Phase 3b adds seeding
-/// the first-run settings and warming the settings store's cache here.
+/// is about to run, apply migrations, and switch the file to WAL. The settings store
+/// creates its first-run rows itself, when it sees <see cref="DatabaseState"/> become ready.
 /// A failure never escapes: it is recorded in <see cref="DatabaseState"/>, which puts
 /// the app into recovery mode, and <see cref="Run"/> can be called again to retry.
 /// </remarks>
