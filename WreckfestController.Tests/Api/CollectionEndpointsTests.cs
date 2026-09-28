@@ -300,6 +300,41 @@ public class CollectionEndpointsTests
     }
 
     [Fact]
+    public async Task RenamingAVariant_BumpsTheCollectionsItChanges_SoAStaleEditorCannotUndoIt()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+        var (_, variantId) = await AddTrackAsync(client, "custom_oval", "custom_oval_1");
+        var linked = await CreateAsync(client, "Linked", "custom_oval_1");
+        var waiting = await CreateAsync(client, "Waiting", "custom_oval_2");
+        var untouched = await CreateAsync(client, "Untouched", "bigstadium_figure_8");
+
+        using var rename = await PutAsync(
+            client,
+            $"/api/catalogue/variants/{variantId}",
+            new { variantId = "custom_oval_2", name = "Custom Oval", gameMode = "Racing" },
+            "\"1\"");
+        rename.EnsureSuccessStatusCode();
+
+        // The editor loaded "Linked" at version 1, before the rename, and saves the old id back.
+        using var stale = await PutAsync(
+            client,
+            $"/api/collections/{linked}",
+            new { name = "Linked", tracks = new[] { new { track = "custom_oval_1" } } },
+            "\"1\"");
+
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        var current = await GetAsync(client, linked);
+        Assert.Equal(2, current.GetProperty("version").GetInt32());
+        Assert.Equal("custom_oval_2", Entry(current).GetProperty("track").GetString());
+        Assert.Equal(variantId, Entry(current).GetProperty("variant").GetProperty("id").GetInt32());
+
+        // Linking an entry that named the new id changes that collection too.
+        Assert.Equal(2, (await GetAsync(client, waiting)).GetProperty("version").GetInt32());
+        Assert.Equal(1, (await GetAsync(client, untouched)).GetProperty("version").GetInt32());
+    }
+
+    [Fact]
     public async Task HiddenVariant_StaysInTheCollection_Flagged()
     {
         await using var host = await ApiTestHost.StartAsync();

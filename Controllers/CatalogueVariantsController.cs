@@ -19,11 +19,16 @@ namespace WreckfestController.Controllers;
 public class CatalogueVariantsController : ControllerBase
 {
     private readonly ControllerDbContext _db;
+    private readonly TimeProvider _time;
     private readonly ILogger<CatalogueVariantsController> _logger;
 
-    public CatalogueVariantsController(ControllerDbContext db, ILogger<CatalogueVariantsController> logger)
+    public CatalogueVariantsController(
+        ControllerDbContext db,
+        TimeProvider time,
+        ILogger<CatalogueVariantsController> logger)
     {
         _db = db;
+        _time = time;
         _logger = logger;
     }
 
@@ -175,6 +180,8 @@ public class CatalogueVariantsController : ControllerBase
             }
 
             // Entries already linked follow the variant; ones naming the new id join them.
+            // Both change what those collections deploy, so they get new versions too.
+            await _db.TouchCollectionsForRenameAsync(variant, request.VariantId, _time.GetUtcNow());
             variant.VariantId = request.VariantId;
             await _db.LinkEntriesAsync(variant);
         }
@@ -310,6 +317,11 @@ public class CatalogueVariantsController : ControllerBase
         try
         {
             await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException ex) when (ex.Entries.All(e => e.Entity is not TrackVariant))
+        {
+            // Not this variant: a collection a rename touches was saved in between.
+            return this.Refused("A collection using this variant changed meanwhile. Try again.");
         }
         catch (DbUpdateConcurrencyException)
         {

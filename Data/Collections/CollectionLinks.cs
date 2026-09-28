@@ -15,6 +15,30 @@ public static class CollectionLinks
             .ToListAsync();
 
     /// <summary>
+    /// Marks the collections a rename of <paramref name="variant"/> to <paramref name="newVariantId"/>
+    /// changes as updated: those linked to it, whose deployed id changes, and those naming
+    /// the new id, which it will link. Saving then bumps their versions, so an editor
+    /// still holding the old id gets a conflict instead of undoing the rename.
+    /// </summary>
+    public static async Task TouchCollectionsForRenameAsync(
+        this ControllerDbContext db,
+        TrackVariant variant,
+        string newVariantId,
+        DateTimeOffset now)
+    {
+        var collections = await db.TrackCollections
+            .Where(c => c.Entries.Any(e =>
+                e.TrackVariantId == variant.Id
+                || (e.TrackVariantId == null && e.TrackId == newVariantId)))
+            .ToListAsync();
+
+        foreach (var collection in collections)
+        {
+            collection.UpdatedAt = now;
+        }
+    }
+
+    /// <summary>
     /// Links the collection entries that name <paramref name="variant"/>'s id but are not
     /// linked yet: workshop tracks saved before the catalogue knew them. Saved with the
     /// caller's next SaveChanges.
