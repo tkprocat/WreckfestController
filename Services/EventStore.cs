@@ -133,13 +133,13 @@ public sealed class EventStore
         {
             var next = FirstOccurrence(evt);
 
-            // A recomputed occurrence at or before the last one dealt with has been dealt
-            // with: removing a repeat can give back a start the scheduler already ran or
-            // cancelled. Except a start time the admin has just set, which is a genuine
-            // reschedule even if it is earlier: a cancelled 12:05 moved to 12:04 runs.
-            var chosenByAdmin = evt.StartTime != schedule.StartTime;
-            if (next is { } first && evt.LastOccurrence is { } last && first <= last
-                && !(chosenByAdmin && first == evt.StartTime))
+            // Removing or changing a repeat can give back a start that has already been
+            // dealt with. That is the last one dealt with, or an earlier one that is now in
+            // the past: occurrences are only dealt with from their lead-in on, so a later
+            // one being done means every earlier past one had its turn. A future start that
+            // is not the last one is new and runs - a cancelled 12:05 moved to 12:04, say.
+            if (next is { } first && evt.LastOccurrence is { } last
+                && (first == last || (first < last && first < UtcNow)))
             {
                 next = EventRecurrence.After(last, evt.Repeat, ZoneOf(evt.TimeZone), UtcNow);
             }

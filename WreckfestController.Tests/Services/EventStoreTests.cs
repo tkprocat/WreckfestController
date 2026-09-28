@@ -117,10 +117,43 @@ public sealed class EventStoreTests : IDisposable
         await _db.Store.AdvanceAsync(evt.Id, start, OccurrenceOutcome.Cancelled, Ct);
         Assert.Equal(repeatAt, (await _db.ReloadAsync(evt.Id)).NextOccurrence);
         await _db.Store.AdvanceAsync(evt.Id, repeatAt, OccurrenceOutcome.Cancelled, Ct);
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(6); // 12:10 was dealt with in its lead-in.
 
         var (_, saved) = await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Daily", start), 1, Ct);
 
         Assert.Null(saved!.NextOccurrence);
+    }
+
+    [Fact]
+    public async Task ChangingTheRepeatToAnEarlierFutureTime_RunsIt()
+    {
+        // Daily 12:05 since yesterday; today's was cancelled at 12:01 in its lead-in.
+        // Moving the repeat to 12:04 gives a new occurrence, still ahead.
+        var yesterday = _db.Clock.UtcNow.AddDays(-1);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Daily", yesterday, Daily("12:05")));
+        var cancelled = _db.Clock.UtcNow.AddMinutes(5);
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(1);
+        await _db.Store.AdvanceAsync(evt.Id, cancelled, OccurrenceOutcome.Cancelled, Ct);
+
+        var (_, saved) = await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Daily", yesterday, Daily("12:04")), 1, Ct);
+
+        Assert.Equal(_db.Clock.UtcNow.Date.AddHours(12).AddMinutes(4), saved!.NextOccurrence);
+    }
+
+    [Fact]
+    public async Task ALaterEdit_KeepsAnAcceptedEarlierReschedule()
+    {
+        var cancelled = _db.Clock.UtcNow.AddMinutes(5);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Race night", cancelled));
+        await _db.Store.AdvanceAsync(evt.Id, cancelled, OccurrenceOutcome.Cancelled, Ct);
+        var earlier = _db.Clock.UtcNow.AddMinutes(4);
+        await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Race night", earlier), 1, Ct);
+
+        // Same UTC start, different zone: the schedule changed, the occurrence did not.
+        var (_, saved) = await _db.Store.UpdateAsync(
+            evt.Id, EventTestDatabase.Definition("Race night", earlier, timeZone: "Europe/Copenhagen"), 2, Ct);
+
+        Assert.Equal(earlier, saved!.NextOccurrence);
     }
 
     [Fact]
