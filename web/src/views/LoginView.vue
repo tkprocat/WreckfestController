@@ -25,7 +25,7 @@ const messages: Record<LoginFailure, string> = {
 /** Only paths inside the app, so a crafted link cannot send the user elsewhere. */
 function redirectTarget(): string {
   const redirect = route.query.redirect
-  return typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/'
+  return typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/admin'
 }
 
 async function submit() {

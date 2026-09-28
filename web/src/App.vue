@@ -27,6 +27,7 @@ async function signOut() {
           <RouterLink to="/" class="app-title">Wreckfest Controller</RouterLink>
           <nav class="app-user">
             <template v-if="auth.authenticated">
+              <RouterLink :to="{ name: 'admin-dashboard' }">Admin</RouterLink>
               <span>{{ auth.user?.displayName ?? auth.user?.userName }}</span>
               <NButton size="small" quaternary @click="signOut">Sign out</NButton>
             </template>
