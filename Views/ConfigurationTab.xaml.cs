@@ -18,6 +18,9 @@ public partial class ConfigurationTab : UserControl
     private readonly ILogger<ConfigurationTab> _logger;
     private UserSettings _currentSettings;
 
+    /// <summary>The versions <see cref="_currentSettings"/> was loaded at, to save back against.</summary>
+    private SettingsVersions _loadedVersions = new(0, 0, 0);
+
     public ConfigurationTab(
         SettingsService settingsService,
         AccountService accountService,
@@ -30,8 +33,10 @@ public partial class ConfigurationTab : UserControl
         _logger = logger;
         _currentSettings = new UserSettings();
 
-        // Display settings file path
-        SettingsPathText.Text = _settingsService.GetUserSettingsPath();
+        // Settings live in the database; the file only holds startup settings.
+        SettingsPathText.Text =
+            $"Saved in the controller database: {_settingsService.GetDatabasePath()}\n" +
+            $"Startup settings (API, database path), edited by hand: {_settingsService.GetUserSettingsPath()}";
 
         // Load current settings
         LoadSettings();
@@ -86,7 +91,7 @@ public partial class ConfigurationTab : UserControl
     {
         try
         {
-            _currentSettings = _settingsService.LoadSettings();
+            (_currentSettings, _loadedVersions) = _settingsService.LoadForEdit();
             PopulateForm(_currentSettings);
         }
         catch (Exception ex)
@@ -155,12 +160,13 @@ public partial class ConfigurationTab : UserControl
                 Mode = GetSelectedVoteMode(),
                 // Legacy flag mirrors Mode so older readers stay consistent.
                 Enabled = GetSelectedVoteMode() != VoteModes.Off,
-                // Carried over: these have no UI control, and SaveSettings rewrites the
-                // whole file, so anything not set here would be dropped.
+                // Carried over: these have no control here (the web Settings page has them),
+                // and the section is saved whole, so anything not set here would be reset.
                 DirectCooldownSeconds = _currentSettings.Vote?.DirectCooldownSeconds ?? 30,
                 VoteTimeoutSeconds = _currentSettings.Vote?.VoteTimeoutSeconds ?? 30,
                 MaxLapsAllowed = _currentSettings.Vote?.MaxLapsAllowed ?? 10,
-                AllowedTracks = _currentSettings.Vote?.AllowedTracks ?? new()
+                MessageDelayMs = _currentSettings.Vote?.MessageDelayMs ?? 250,
+                SuppressCommandsDuringRace = _currentSettings.Vote?.SuppressCommandsDuringRace ?? false,
             }
         };
     }
@@ -227,8 +233,8 @@ public partial class ConfigurationTab : UserControl
 
             // Gather and save settings
             var settings = GatherFormData();
-            _settingsService.SaveSettings(settings);
-            _currentSettings = settings;
+            _loadedVersions = _settingsService.SaveSettings(settings, _loadedVersions);
+            (_currentSettings, _loadedVersions) = _settingsService.LoadForEdit();
 
             ShowStatusMessage("Settings saved successfully!", isError: false);
 

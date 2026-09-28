@@ -1,28 +1,183 @@
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using WreckfestController.Data;
 using WreckfestController.Models;
-using WreckfestController.Services.Hook;
-using WreckfestController.Services.Voting;
 
 namespace WreckfestController.Services.Config;
 
+/// <summary>The version of each settings section an editor loaded, to save it back against.</summary>
+public sealed record SettingsVersions(int WreckfestServer, int SteamCmd, int Vote);
+
 /// <summary>
-/// Service for managing user settings stored in user-settings.json
+/// The WPF Configuration tab's view of the settings: the database sections as one
+/// <see cref="UserSettings"/>, and where things are kept.
 /// </summary>
+/// <remarks>
+/// user-settings.json is 2.0's startup file (the API binding and key, the database path).
+/// It is read by the host's configuration and <b>never written</b>, so rolling back to 1.x
+/// finds it as it was. 1.x keys still in it are no longer read; each is logged once.
+/// </remarks>
 public class SettingsService
 {
-    private readonly string _userSettingsPath;
-    private readonly ILogger<SettingsService> _logger;
-    private readonly IConfiguration _configuration;
+    /// <summary>1.x sections whose keys now live in the database, or nowhere.</summary>
+    private static readonly string[] RetiredSections = ["WreckfestServer", "SteamCmd", "Vote", "Webhooks", "WreckfestWeb"];
 
-    public SettingsService(IConfiguration configuration, ILogger<SettingsService> logger)
+    /// <summary>Keys under a retired section that are still read from the file.</summary>
+    private static readonly string[] StillReadKeys = ["WreckfestServer:SupportedBuild"];
+
+    private readonly string _userSettingsPath;
+    private readonly ISettingsStore _store;
+    private readonly DatabaseState _database;
+    private readonly ILogger<SettingsService> _logger;
+
+    public SettingsService(
+        IConfiguration configuration,
+        ISettingsStore store,
+        DatabaseState database,
+        ILogger<SettingsService> logger)
     {
         _logger = logger;
-        _configuration = configuration;
+        _store = store;
+        _database = database;
         _userSettingsPath = ResolveUserSettingsPath(configuration);
 
-        _logger.LogInformation("User settings path: {Path}", _userSettingsPath);
+        _logger.LogInformation("Startup settings file: {Path}", _userSettingsPath);
+        ReportRetiredKeys();
+    }
+
+    /// <summary>The startup settings file, read-only for 2.0.</summary>
+    public string GetUserSettingsPath() => _userSettingsPath;
+
+    /// <summary>The database file the settings are kept in.</summary>
+    public string GetDatabasePath() => _database.DatabasePath;
+
+    /// <summary>The current settings, for reading. Use <see cref="LoadForEdit"/> to save them back.</summary>
+    public UserSettings LoadSettings() => LoadForEdit().Settings;
+
+    /// <summary>The current settings and their versions, for an editor that will save them.</summary>
+    public (UserSettings Settings, SettingsVersions Versions) LoadForEdit()
+    {
+        var server = _store.GetEntry<WreckfestServerSettings>();
+        var steamCmd = _store.GetEntry<SteamCmdSettings>();
+        var vote = _store.GetEntry<VoteSettings>();
+
+        return (
+            new UserSettings { WreckfestServer = server.Value, SteamCmd = steamCmd.Value, Vote = vote.Value },
+            new SettingsVersions(server.Version, steamCmd.Version, vote.Version));
+    }
+
+    /// <summary>
+    /// Saves each section of <paramref name="settings"/> that differs from what is stored,
+    /// against the version <paramref name="loaded"/> says the editor started from. Returns
+    /// the versions to save against next time.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// A section was changed elsewhere (the web app, say) since it was loaded, or the
+    /// database is unavailable. Every section is checked before any is saved, so a
+    /// stale edit saves nothing.
+    /// </exception>
+    public SettingsVersions SaveSettings(UserSettings settings, SettingsVersions loaded)
+    {
+        if (!_database.IsReady)
+        {
+            throw new InvalidOperationException("Settings cannot be saved while the database is unavailable.");
+        }
+
+        Check(loaded.WreckfestServer, _store.GetEntry<WreckfestServerSettings>().Version, "server");
+        Check(loaded.SteamCmd, _store.GetEntry<SteamCmdSettings>().Version, "SteamCMD");
+        Check(loaded.Vote, _store.GetEntry<VoteSettings>().Version, "voting");
+
+        return new SettingsVersions(
+            Save(settings.WreckfestServer, loaded.WreckfestServer, "server"),
+            Save(settings.SteamCmd, loaded.SteamCmd, "SteamCMD"),
+            Save(settings.Vote, loaded.Vote, "voting"));
+    }
+
+    private static void Check(int loadedVersion, int currentVersion, string label)
+    {
+        if (loadedVersion != currentVersion)
+        {
+            Conflict(label);
+        }
+    }
+
+    private int Save<T>(T? value, int loadedVersion, string label)
+        where T : class
+    {
+        var current = _store.GetEntry<T>();
+        if (value is null || SameJson(value, current.Value))
+        {
+            // Unchanged: saving would only bump the version under someone else's editor.
+            return current.Version == loadedVersion ? loadedVersion : Conflict(label);
+        }
+
+        SettingsSaveResult<T> result;
+        try
+        {
+            // The store never resumes on this thread, so blocking the UI thread is safe.
+            result = _store.SaveAsync(value, loadedVersion).GetAwaiter().GetResult();
+        }
+        catch (SettingsUnavailableException ex)
+        {
+            throw new InvalidOperationException("Settings cannot be saved while the database is unavailable.", ex);
+        }
+
+        if (result.Status == SettingsSaveStatus.Conflict)
+        {
+            return Conflict(label);
+        }
+
+        _logger.LogInformation("Saved the {Section} settings", label);
+        return result.Current.Version;
+    }
+
+    private static int Conflict(string label) =>
+        throw new InvalidOperationException(
+            $"The {label} settings were changed elsewhere since this tab loaded them. Reload them and try again.");
+
+    private static bool SameJson<T>(T a, T b) => JsonSerializer.Serialize(a) == JsonSerializer.Serialize(b);
+
+    /// <summary>
+    /// Logs, once, each 1.x key in user-settings.json that 2.0 no longer reads, so an
+    /// operator who edits the file sees why a change there does nothing.
+    /// </summary>
+    private void ReportRetiredKeys()
+    {
+        if (!File.Exists(_userSettingsPath))
+        {
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(
+                File.ReadAllText(_userSettingsPath),
+                new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+
+            foreach (var section in document.RootElement.EnumerateObject())
+            {
+                if (!RetiredSections.Contains(section.Name, StringComparer.OrdinalIgnoreCase)
+                    || section.Value.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                foreach (var key in section.Value.EnumerateObject())
+                {
+                    var path = $"{section.Name}:{key.Name}";
+                    if (!StillReadKeys.Contains(path, StringComparer.OrdinalIgnoreCase))
+                    {
+                        _logger.LogWarning("user-settings.json: '{Key}' is no longer read; set it in Settings", path);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // The host already read this file; a failure here only loses the hint.
+            _logger.LogDebug(ex, "Could not scan {Path} for keys that are no longer read", _userSettingsPath);
+        }
     }
 
     /// <summary>
@@ -35,149 +190,12 @@ public class SettingsService
         if (string.IsNullOrWhiteSpace(configuredPath))
         {
             // Default to %LocalAppData%\WreckfestController\user-settings.json
-            var appDataPath = Path.Combine(
+            return Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WreckfestController"
-            );
-            Directory.CreateDirectory(appDataPath);
-            return Path.Combine(appDataPath, "user-settings.json");
-        }
-        else
-        {
-            // Use configured path (expand environment variables)
-            var expandedPath = Environment.ExpandEnvironmentVariables(configuredPath);
-
-            // Ensure directory exists
-            var directory = Path.GetDirectoryName(expandedPath);
-            if (!string.IsNullOrEmpty(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            return expandedPath;
-        }
-    }
-
-    /// <summary>
-    /// Gets the resolved user settings file path
-    /// </summary>
-    public string GetUserSettingsPath() => _userSettingsPath;
-
-    /// <summary>
-    /// Loads user settings from file, or returns defaults if file doesn't exist
-    /// </summary>
-    public UserSettings LoadSettings()
-    {
-        if (!File.Exists(_userSettingsPath))
-        {
-            _logger.LogInformation("No user settings file found at {Path}, using defaults", _userSettingsPath);
-            return CreateDefaultSettings();
+                "WreckfestController",
+                "user-settings.json");
         }
 
-        try
-        {
-            var json = File.ReadAllText(_userSettingsPath);
-            var settings = JsonSerializer.Deserialize<UserSettings>(json, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true,
-                ReadCommentHandling = JsonCommentHandling.Skip
-            });
-
-            return NormalizeSettings(settings ?? CreateDefaultSettings());
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error loading user settings from {Path}", _userSettingsPath);
-            return CreateDefaultSettings();
-        }
-    }
-
-    /// <summary>
-    /// Saves user settings to file
-    /// </summary>
-    public void SaveSettings(UserSettings settings)
-    {
-        try
-        {
-            settings = NormalizeSettings(settings);
-            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions
-            {
-                WriteIndented = true
-            });
-
-            File.WriteAllText(_userSettingsPath, json);
-            _logger.LogInformation("Settings saved to {Path}", _userSettingsPath);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error saving settings to {Path}", _userSettingsPath);
-            throw new InvalidOperationException($"Failed to save settings: {ex.Message}", ex);
-        }
-    }
-
-    /// <summary>
-    /// Creates default settings with sensible defaults
-    /// </summary>
-    private UserSettings CreateDefaultSettings()
-    {
-        return new UserSettings
-        {
-            WreckfestServer = new WreckfestServerSettings
-            {
-                ServerPath = _configuration["WreckfestServer:ServerPath"] ?? "",
-                ServerArguments = _configuration["WreckfestServer:ServerArguments"] ?? "-s server_config=server_config.cfg",
-                WorkingDirectory = _configuration["WreckfestServer:WorkingDirectory"] ?? "",
-                LogFilePath = _configuration["WreckfestServer:LogFilePath"] ?? "",
-                OutputMode = ServerOutputModes.InjectedHook
-            },
-            SteamCmd = new SteamCmdSettings
-            {
-                SteamCmdPath = _configuration["SteamCmd:SteamCmdPath"] ?? "",
-                WreckfestAppId = _configuration["SteamCmd:WreckfestAppId"] ?? "361580"
-            },
-            Vote = new VoteSettings
-            {
-                Enabled = _configuration.GetValue("Vote:Enabled", true),
-                Mode = VoteModes.Normalize(
-                    _configuration["Vote:Mode"],
-                    _configuration.GetValue<bool?>("Vote:Enabled")),
-                DirectCooldownSeconds = _configuration.GetValue<int?>("Vote:DirectCooldownSeconds") ?? 30,
-                VoteTimeoutSeconds = _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30,
-                MaxLapsAllowed = _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10
-            }
-        };
-    }
-
-    private UserSettings NormalizeSettings(UserSettings settings)
-    {
-        settings.Vote ??= new VoteSettings
-        {
-            Enabled = _configuration.GetValue("Vote:Enabled", true),
-            Mode = VoteModes.Normalize(
-                _configuration["Vote:Mode"],
-                _configuration.GetValue<bool?>("Vote:Enabled")),
-            DirectCooldownSeconds = _configuration.GetValue<int?>("Vote:DirectCooldownSeconds") ?? 30,
-            VoteTimeoutSeconds = _configuration.GetValue<int?>("Vote:VoteTimeoutSeconds") ?? 30,
-            MaxLapsAllowed = _configuration.GetValue<int?>("Vote:MaxLapsAllowed") ?? 10
-        };
-
-        // Canonicalise the non-null path too, and keep the legacy Enabled flag mirroring
-        // Mode. SaveSettings rewrites the whole file, so leaving a stale Enabled behind
-        // would let the two disagree.
-        settings.Vote.Mode = VoteModes.Normalize(settings.Vote.Mode, settings.Vote.Enabled);
-        settings.Vote.Enabled = settings.Vote.Mode != VoteModes.Off;
-
-        settings.WreckfestServer ??= new WreckfestServerSettings();
-        settings.WreckfestServer.OutputMode = ServerOutputModes.InjectedHook;
-
-        return settings;
-    }
-
-    /// <summary>
-    /// Gets a specific setting value with fallback to appsettings.json
-    /// </summary>
-    public string? GetSetting(string key)
-    {
-        return _configuration[key];
+        return Environment.ExpandEnvironmentVariables(configuredPath);
     }
 }

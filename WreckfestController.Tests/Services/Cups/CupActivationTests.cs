@@ -34,11 +34,11 @@ public sealed class CupActivationTests : IDisposable
         var cups = Mock.Of<IServerEventPublisher>();
         _players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), cups);
         var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), cups);
-        _server = new Mock<ServerManager>(settings, Mock.Of<ILogger<ServerManager>>(), _players, tracks,
+        _server = new Mock<ServerManager>(settings, TestSettings.Server(), TestSettings.SteamCmd(), Mock.Of<ILogger<ServerManager>>(), _players, tracks,
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), cups);
         _server.Setup(s => s.RestartServerViaCommandAsync()).ReturnsAsync((true, "Restarted"));
 
-        _config = new Mock<ConfigService>(settings, Mock.Of<ILogger<ConfigService>>());
+        _config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>());
         _config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig { ServerName = "Old name" });
         _config.Setup(c => c.WriteBasicConfig(It.IsAny<ServerConfig>()))
             .Callback<ServerConfig>(c => _writes.Add($"settings:{c.ServerName}"));

@@ -84,9 +84,6 @@ public sealed class SettingsStoreTests : IDisposable
         Assert.Equal(
             [SettingsSections.SteamCmd, SettingsSections.Vote, SettingsSections.WreckfestServer],
             Rows().Select(r => r.Section));
-
-        // Votable tracks move to the catalogue; they are not copied into the section.
-        Assert.Empty(vote.Value.AllowedTracks);
     }
 
     [Fact]
@@ -247,12 +244,10 @@ public sealed class SettingsStoreTests : IDisposable
         edit.MessageDelayMs = 99_999;
         edit.VoteTimeoutSeconds = 0;
         edit.Mode = "direct";
-        edit.AllowedTracks = [new AllowedVoteTrack { Id = "urban09_1" }];
 
         var saved = (await store.SaveAsync(edit, read.Version)).Current.Value;
 
         Assert.Equal((5000, 1, VoteModes.Direct, true), (saved.MessageDelayMs, saved.VoteTimeoutSeconds, saved.Mode, saved.Enabled));
-        Assert.Empty(saved.AllowedTracks);
         Assert.Equal(99_999, edit.MessageDelayMs);
     }
 

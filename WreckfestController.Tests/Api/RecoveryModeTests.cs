@@ -5,12 +5,15 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using WreckfestController.Data;
+using WreckfestController.Models;
 using WreckfestController.Services.Cups;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Hosting;
 using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Tracking;
+using WreckfestController.Services.Voting;
 
 namespace WreckfestController.Tests.Api;
 
@@ -50,6 +53,12 @@ public sealed class RecoveryModeTests : IDisposable
         host.Services.GetRequiredService<CupActivator>();
         host.Services.GetRequiredService<SmartRestartService>();
         host.Services.GetRequiredService<IApiServer>();
+        host.Services.GetRequiredService<ConfigService>();
+        host.Services.GetRequiredService<VotingService>();
+
+        // Settings read as the shipped defaults while the database is unavailable.
+        var vote = host.Services.GetRequiredService<IOptionsMonitor<VoteSettings>>().CurrentValue;
+        Assert.Equal(VoteModes.Voting, vote.Mode);
 
         await host.StartAsync(TestContext.Current.CancellationToken);
         try

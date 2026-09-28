@@ -36,7 +36,7 @@ public class VotingServiceTests
             mockEvents.Object);
 
         _mockServerManager = new Mock<ServerManager>(
-            Mock.Of<IConfiguration>(),
+            Mock.Of<IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
             _playerTracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
@@ -49,7 +49,7 @@ public class VotingServiceTests
             .ReturnsAsync((true, "ok"));
 
         _mockConfigService = new Mock<ConfigService>(
-            Mock.Of<IConfiguration>(),
+           TestSettings.Server(),
             Mock.Of<ILogger<ConfigService>>());
 
         _mockConfigService.Setup(c => c.GetCurrentCollectionName()).Returns("TestCollection");
@@ -63,7 +63,7 @@ public class VotingServiceTests
             _playerTracker,
             _mockConfigService.Object,
             _mockLogger.Object,
-            _config, new ConfiguredVotableTracks(_config));
+            new ConfiguredVoteSettings(_config), new ConfiguredVotableTracks(_config));
     }
 
     private void SendChat(string playerName, string message, bool isBot = false)
@@ -905,7 +905,7 @@ public class VotingServiceTests
         var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
 
         var serverMock = new Mock<ServerManager>(
-            Mock.Of<IConfiguration>(),
+            Mock.Of<IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
@@ -918,7 +918,7 @@ public class VotingServiceTests
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
-            Mock.Of<IConfiguration>(),
+           TestSettings.Server(),
             Mock.Of<ILogger<ConfigService>>());
         configMock.Setup(c => c.GetCurrentCollectionName()).Returns("TestCollection");
         configMock.Setup(c => c.ReadEventLoopTracks()).Returns(new List<EventLoopTrack>
@@ -928,7 +928,7 @@ public class VotingServiceTests
 
         var service = new VotingService(
             serverMock.Object, tracker, configMock.Object,
-            Mock.Of<ILogger<VotingService>>(), config, new ConfiguredVotableTracks(config));
+            Mock.Of<ILogger<VotingService>>(), new ConfiguredVoteSettings(config), new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -977,7 +977,7 @@ public class VotingServiceTests
 
         var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
-            Mock.Of<IConfiguration>(),
+            Mock.Of<IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
@@ -990,7 +990,7 @@ public class VotingServiceTests
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
-            Mock.Of<IConfiguration>(),
+           TestSettings.Server(),
             Mock.Of<ILogger<ConfigService>>());
 
         var service = new VotingService(
@@ -998,7 +998,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config, new ConfiguredVotableTracks(config));
+            new ConfiguredVoteSettings(config), new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1022,7 +1022,7 @@ public class VotingServiceTests
 
         var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
-            Mock.Of<IConfiguration>(),
+            Mock.Of<IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
@@ -1035,7 +1035,7 @@ public class VotingServiceTests
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
-            Mock.Of<IConfiguration>(),
+           TestSettings.Server(),
             Mock.Of<ILogger<ConfigService>>());
 
         var service = new VotingService(
@@ -1043,7 +1043,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config, new ConfiguredVotableTracks(config));
+            new ConfiguredVoteSettings(config), new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1073,7 +1073,7 @@ public class VotingServiceTests
 
         var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
-            Mock.Of<IConfiguration>(),
+            Mock.Of<IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
@@ -1086,7 +1086,7 @@ public class VotingServiceTests
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
-            Mock.Of<IConfiguration>(),
+           TestSettings.Server(),
             Mock.Of<ILogger<ConfigService>>());
 
         var service = new VotingService(
@@ -1094,7 +1094,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config, new ConfiguredVotableTracks(config));
+            new ConfiguredVoteSettings(config), new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1116,7 +1116,7 @@ public class VotingServiceTests
 
         var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
-            Mock.Of<IConfiguration>(),
+            Mock.Of<IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
@@ -1129,7 +1129,7 @@ public class VotingServiceTests
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
-            Mock.Of<IConfiguration>(),
+           TestSettings.Server(),
             Mock.Of<ILogger<ConfigService>>());
 
         var service = new VotingService(
@@ -1137,7 +1137,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config, new ConfiguredVotableTracks(config));
+            new ConfiguredVoteSettings(config), new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1162,7 +1162,7 @@ public class VotingServiceTests
 
         var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
-            Mock.Of<IConfiguration>(),
+            Mock.Of<IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
@@ -1175,7 +1175,7 @@ public class VotingServiceTests
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
-            Mock.Of<IConfiguration>(),
+           TestSettings.Server(),
             Mock.Of<ILogger<ConfigService>>());
 
         var service = new VotingService(
@@ -1183,7 +1183,7 @@ public class VotingServiceTests
             tracker,
             configMock.Object,
             Mock.Of<ILogger<VotingService>>(),
-            config, new ConfiguredVotableTracks(config));
+            new ConfiguredVoteSettings(config), new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, configMock);
     }
@@ -1212,7 +1212,7 @@ public class VotingServiceTests
 
         var tracker = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), mockEvents.Object);
         var serverMock = new Mock<ServerManager>(
-            Mock.Of<IConfiguration>(),
+            Mock.Of<IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
             tracker,
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), mockEvents.Object),
@@ -1227,9 +1227,9 @@ public class VotingServiceTests
         var service = new VotingService(
             serverMock.Object,
             tracker,
-            new Mock<ConfigService>(Mock.Of<IConfiguration>(), Mock.Of<ILogger<ConfigService>>()).Object,
+            new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>()).Object,
             Mock.Of<ILogger<VotingService>>(),
-            config, new ConfiguredVotableTracks(config));
+            new ConfiguredVoteSettings(config), new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, serverMock, config);
     }

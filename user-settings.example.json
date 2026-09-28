@@ -1,24 +1,13 @@
 {
-  "WreckfestServer": {
-    "ServerPath": "<path-to-wreckfest-server>\\Wreckfest_x64.exe",
-    "ServerArguments": "-s server_config=server_config.cfg",
-    "WorkingDirectory": "<path-to-wreckfest-server>",
-    "LogFilePath": "<path-to-wreckfest-server>\\log.txt",
-    "UseConsoleMonitoring": true,
-    "OutputMode": "ConsoleReader",
-    "InputMode": "ConsoleWriter"
-  },
-  "SteamCmd": {
-    "SteamCmdPath": "<path-to-steamcmd>\\steamcmd.exe",
-    "WreckfestAppId": "361580"
-  },
-  "Webhooks": {
-    "WebhookBaseUrl": "https://your-webhook-endpoint.example/api/webhooks",
-    "WebhookApiKey": "your-64-character-hex-key-here"
-  },
-  "Vote": {
+  "_comment": "WreckfestController 2.0 startup settings, edited by hand; the app never writes this file. Server paths, SteamCMD and voting are set in the app (the Configuration tab, or the web Settings page) and kept in the database.",
+  "Api": {
     "Enabled": true,
-    "VoteTimeoutSeconds": 30,
-    "MaxLapsAllowed": 10
+    "Key": "<a long random key, for scripts; browsers sign in instead>",
+    "AllowRemote": false,
+    "TrustedProxies": [],
+    "HttpPort": 5100
+  },
+  "Database": {
+    "Path": "%LocalAppData%\\WreckfestController\\controller.db"
   }
 }

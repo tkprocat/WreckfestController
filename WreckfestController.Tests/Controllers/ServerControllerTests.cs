@@ -36,7 +36,7 @@ public class ServerControllerTests
         var serverInfoTracker = new ServerInfoTracker(mockServerInfoTrackerLogger.Object);
 
         _mockServerManager = new Mock<ServerManager>(
-            mockConfiguration.Object,
+            mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             mockServerManagerLogger.Object,
             playerTracker,
             trackChangeTracker,

@@ -46,7 +46,7 @@ public class ServerManagerTests
 
 
         _serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -82,7 +82,7 @@ public class ServerManagerTests
 
 
         var serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -106,7 +106,7 @@ public class ServerManagerTests
 
 
         var serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -160,7 +160,7 @@ public class ServerManagerTests
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
         var serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -225,7 +225,7 @@ public class ServerManagerTests
         outputReader.Setup(r => r.StopAsync()).Returns(Task.CompletedTask);
 
         var serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -379,7 +379,7 @@ public class ServerManagerTests
     {
 
         return new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -614,7 +614,7 @@ public class ServerManagerTests
 
 
         var serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -650,7 +650,7 @@ public class ServerManagerTests
 
 
         var serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -682,7 +682,7 @@ public class ServerManagerTests
 
 
         var serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -724,7 +724,7 @@ public class ServerManagerTests
 
 
         var serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -764,7 +764,7 @@ public class ServerManagerTests
 
 
         var serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -809,7 +809,7 @@ public class ServerManagerTests
 
 
         var serverManager = new ServerManager(
-            _mockConfiguration.Object,
+            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -1428,6 +1428,8 @@ public class ServerManagerTests
             string? build)
             : base(
                 configuration,
+                TestSettings.Server(),
+                TestSettings.SteamCmd(),
                 logger,
                 playerTracker,
                 trackChangeTracker,
