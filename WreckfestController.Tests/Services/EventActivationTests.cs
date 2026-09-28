@@ -272,6 +272,33 @@ public sealed class EventActivationTests : IDisposable
     }
 
     [Fact]
+    public async Task ARunningManualActivation_IsNotCountedMissed_NorStartedAgainOnceCancelled()
+    {
+        // Activated by hand 14 minutes late, with players online, so it counts down.
+        _players.ProcessHookPlayerSnapshot([new Player { PlayerId = 1, Name = "Player", IsBot = false }]);
+        var start = Now.AddMinutes(-14);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Race night", start, serverConfig: NewName));
+        Assert.Equal(ActivationResult.Started, await _activator.ActivateAsync(evt.Id));
+
+        // Past the grace while the countdown runs: the scheduler leaves it alone.
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(2);
+        await _scheduler.CheckAsync();
+        Assert.Null((await _db.ReloadAsync(evt.Id)).LastOutcome);
+
+        Assert.True(_restart.CancelRestart());
+        var cancelled = await EventuallyAsync(evt.Id, e => e.LastOutcome is not null);
+        await _scheduler.CheckAsync();
+
+        Assert.Equal(OccurrenceOutcome.Cancelled, cancelled.LastOutcome);
+        Assert.Equal(start, cancelled.LastOccurrence);
+        Assert.Equal(SmartRestartState.Idle, _restart.GetState());
+        Assert.False(_activator.IsInFlight(evt.Id));
+        // Applied once, by the manual activation; nothing started it a second time.
+        Assert.Equal(["settings:New name"], _writes);
+        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+    }
+
+    [Fact]
     public async Task ManualActivation_DuringAnotherRestart_WritesNothing()
     {
         _players.ProcessHookPlayerSnapshot([new Player { PlayerId = 1, Name = "Player", IsBot = false }]);

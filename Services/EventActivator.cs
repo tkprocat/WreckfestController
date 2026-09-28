@@ -38,6 +38,13 @@ public sealed class EventActivator
     private readonly TimeProvider _time;
     private readonly ILogger<EventActivator> _logger;
 
+    /// <summary>
+    /// Events whose restart is running, from before it starts until its occurrence has
+    /// been recorded. SmartRestartService reports Idle before its finish callback runs,
+    /// so its state alone would let the scheduler start or skip the occurrence again.
+    /// </summary>
+    private readonly HashSet<int> _inFlight = new();
+
     public EventActivator(
         EventStore store,
         SmartRestartService restart,
@@ -83,16 +90,44 @@ public sealed class EventActivator
     public ActivationResult StartOccurrence(ScheduledEvent evt, DateTime occurrence, Action<RestartOutcome> onFinished) =>
         Start(evt, occurrence, onActivated: null, onFinished);
 
+    /// <summary>True while an activation of <paramref name="eventId"/>, manual or scheduled, is running.</summary>
+    public bool IsInFlight(int eventId)
+    {
+        lock (_inFlight)
+        {
+            return _inFlight.Contains(eventId);
+        }
+    }
+
     private ActivationResult Start(
         ScheduledEvent evt,
         DateTime? occurrence,
         Action<ScheduledEvent>? onActivated,
         Action<RestartOutcome>? onFinished)
     {
-        var started = _restart.InitiateRestart(
-            EventStore.ToRestartEvent(evt),
-            _ => MarkActive(evt, onActivated),
-            (_, outcome) => Finish(evt, occurrence, outcome, onFinished));
+        lock (_inFlight)
+        {
+            _inFlight.Add(evt.Id);
+        }
+
+        bool started;
+        try
+        {
+            started = _restart.InitiateRestart(
+                EventStore.ToRestartEvent(evt),
+                _ => MarkActive(evt, onActivated),
+                (_, outcome) => Finish(evt, occurrence, outcome, onFinished));
+        }
+        catch
+        {
+            Release(evt.Id);
+            throw;
+        }
+
+        if (!started)
+        {
+            Release(evt.Id);
+        }
 
         if (started)
         {
@@ -182,7 +217,16 @@ public sealed class EventActivator
         }
         finally
         {
+            Release(evt.Id);
             onFinished?.Invoke(outcome);
+        }
+    }
+
+    private void Release(int eventId)
+    {
+        lock (_inFlight)
+        {
+            _inFlight.Remove(eventId);
         }
     }
 }

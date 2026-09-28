@@ -35,10 +35,11 @@ public enum EventWriteStatus
 /// can all write at once without one silently undoing another.
 /// </summary>
 /// <remarks>
-/// Admin edits are checked against <see cref="ScheduledEvent.Version"/>. The scheduler's
-/// writes are compare-and-set on the columns they own: advancing past an occurrence
-/// only happens while the event still waits for that occurrence, so an admin who
-/// rescheduled in the meantime keeps their new time.
+/// Admin edits are checked against <see cref="ScheduledEvent.Version"/>. An edit and the
+/// scheduler's advance each read and write inside one transaction, which SQLite opens
+/// with <c>BEGIN IMMEDIATE</c> (Microsoft.Data.Sqlite's default), so they run one after
+/// the other and each sees the other's result: an advance never uses a repeat an admin
+/// has just removed, and an edit never keeps an occurrence the scheduler has just moved.
 /// </remarks>
 public sealed class EventStore
 {
@@ -99,7 +100,8 @@ public sealed class EventStore
     /// <summary>
     /// Replaces what an admin sets, if the event is still at <paramref name="expectedVersion"/>.
     /// The next occurrence is recomputed only when the start, zone or repeat changed; any
-    /// other edit leaves the scheduler's columns as they are.
+    /// other edit leaves the scheduler's columns as they are. A recomputed occurrence that
+    /// has already been dealt with is not run again.
     /// </summary>
     public async Task<(EventWriteStatus Status, ScheduledEvent? Event)> UpdateAsync(
         int id,
@@ -108,6 +110,7 @@ public sealed class EventStore
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var evt = await db.ScheduledEvents.SingleOrDefaultAsync(e => e.Id == id, cancellationToken);
         if (evt is null)
         {
@@ -116,6 +119,7 @@ public sealed class EventStore
 
         if (evt.Version != expectedVersion)
         {
+            await transaction.RollbackAsync(cancellationToken);
             return (EventWriteStatus.Conflict, await GetAsync(id, cancellationToken));
         }
 
@@ -127,7 +131,19 @@ public sealed class EventStore
 
         if (schedule != (evt.StartTime, evt.TimeZone, Serialize(evt.Repeat)))
         {
-            evt.NextOccurrence = FirstOccurrence(evt);
+            var next = FirstOccurrence(evt);
+
+            // Removing the repeat during the lead-in, say, gives back the occurrence the
+            // scheduler has already run. Treat it as done rather than run it twice.
+            if (next is { } first && evt.LastOccurrence is { } last && first <= last)
+            {
+                next = EventRecurrence.After(last, evt.Repeat, ZoneOf(evt.TimeZone), UtcNow);
+            }
+
+            evt.NextOccurrence = next;
+
+            // Written even when unchanged from what was loaded: it is this edit's answer.
+            db.Entry(evt).Property(e => e.NextOccurrence).IsModified = true;
         }
 
         evt.UpdatedAt = _time.GetUtcNow();
@@ -137,9 +153,11 @@ public sealed class EventStore
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
         {
+            await transaction.RollbackAsync(cancellationToken);
             var current = await GetAsync(id, cancellationToken);
             return (current is null ? EventWriteStatus.NotFound : EventWriteStatus.Conflict, current);
         }
@@ -221,6 +239,9 @@ public sealed class EventStore
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
+
+        // Read and write under one lock, so the repeat used is the one in force.
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var schedule = await db.ScheduledEvents
             .AsNoTracking()
             .Where(e => e.Id == id)
@@ -233,7 +254,7 @@ public sealed class EventStore
 
         var next = EventRecurrence.After(occurrence, schedule.Repeat, ZoneOf(schedule.TimeZone), UtcNow);
 
-        // Compare-and-set, so an edit between the read above and here wins.
+        // Still compare-and-set, as a second line of defence.
         var updated = await db.ScheduledEvents
             .Where(e => e.Id == id && e.NextOccurrence == occurrence)
             .ExecuteUpdateAsync(
@@ -242,6 +263,7 @@ public sealed class EventStore
                     .SetProperty(e => e.LastOccurrence, occurrence)
                     .SetProperty(e => e.LastOutcome, outcome),
                 cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return updated > 0;
     }
 

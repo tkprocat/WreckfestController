@@ -107,6 +107,13 @@ public class EventSchedulerService : IHostedService, IDisposable
             return false;
         }
 
+        // A manual activation owns this occurrence until its restart has been recorded;
+        // counting it missed, or starting it again, would be wrong either way.
+        if (_activator.IsInFlight(evt.Id))
+        {
+            return false;
+        }
+
         if (occurrence < now - MissedGrace)
         {
             await _activator.EndOccurrenceAsync(evt, occurrence, OccurrenceOutcome.Missed);

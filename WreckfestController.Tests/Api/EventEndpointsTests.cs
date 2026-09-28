@@ -88,6 +88,7 @@ public class EventEndpointsTests
     public static TheoryData<object, string> InvalidEvents => new()
     {
         { Event(name: " "), "name" },
+        { Event(name: "Race\nel_add=invalid_track"), "name" },
         { Event(startTime: "2026-10-02T20:00:00"), "startTime" },
         { Event(extra: new { timeZone = "Mars/Olympus_Mons" }), "timeZone" },
         { Event(extra: new { repeat = new { frequency = "monthly", time = "20:00" } }), "repeat.frequency" },

@@ -114,6 +114,13 @@ public static class EventRules
         }
 
         var name = request.Name.Trim();
+
+        // Becomes "#CollectionName Event: <name>" when no collection name is given.
+        if (name.AsSpan().IndexOfAny('\r', '\n') >= 0)
+        {
+            return new("name", "name must not contain line breaks.");
+        }
+
         if (name.Length > ScheduledEvent.NameMaxLength)
         {
             return new("name", $"name must be at most {ScheduledEvent.NameMaxLength} characters.");

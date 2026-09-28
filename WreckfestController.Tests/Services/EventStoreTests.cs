@@ -66,6 +66,33 @@ public sealed class EventStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task RemovingTheRepeat_AfterItsOccurrenceRan_DoesNotRunItAgain()
+    {
+        // The scheduler ran today's occurrence during the lead-in and moved on to
+        // tomorrow; the admin, holding version 1, then makes it a one-off.
+        var start = _db.Clock.UtcNow.AddMinutes(2);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Daily", start, Daily("12:02")));
+        await _db.Store.AdvanceAsync(evt.Id, start, OccurrenceOutcome.Activated, Ct);
+
+        var (status, saved) = await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Daily", start), 1, Ct);
+
+        Assert.Equal(EventWriteStatus.Saved, status);
+        Assert.Null(saved!.NextOccurrence);
+    }
+
+    [Fact]
+    public async Task ChangingTheRepeat_AfterItsOccurrenceRan_MovesToTheNewRulesNextOccurrence()
+    {
+        var start = _db.Clock.UtcNow.AddMinutes(2);
+        var evt = await _db.CreateAsync(EventTestDatabase.Definition("Daily", start, Daily("12:02")));
+        await _db.Store.AdvanceAsync(evt.Id, start, OccurrenceOutcome.Activated, Ct);
+
+        var (_, saved) = await _db.Store.UpdateAsync(evt.Id, EventTestDatabase.Definition("Daily", start, Daily("18:00")), 1, Ct);
+
+        Assert.Equal(_db.Clock.UtcNow.Date.AddHours(18), saved!.NextOccurrence);
+    }
+
+    [Fact]
     public async Task Advance_AfterAnAdminRescheduled_LeavesTheNewTime()
     {
         var start = _db.Clock.UtcNow.AddMinutes(2);
