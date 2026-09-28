@@ -50,6 +50,7 @@
   <ItemGroup>
     <!-- Windows Services support -->
     <PackageReference Include="MaterialDesignThemes" Version="5.3.2" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.11" />
 
     <!-- System packages -->
@@ -149,18 +150,14 @@
     Inputs/Outputs make this a no-op once the DLL is newer than its sources, so
     the common case costs nothing.
   -->
-  <Target Name="BuildWreckfestConsoleHook" BeforeTargets="BeforeBuild"
-          Inputs="@(NativeHookSource)" Outputs="$(NativeHookDll)">
-    <Error Condition="!Exists('$(VsWherePath)')"
-           Text="Cannot build the native console hook: vswhere.exe not found at $(VsWherePath). Visual Studio with the Desktop development with C++ workload is required." />
+  <Target Name="BuildWreckfestConsoleHook" BeforeTargets="BeforeBuild" Inputs="@(NativeHookSource)" Outputs="$(NativeHookDll)">
+    <Error Condition="!Exists('$(VsWherePath)')" Text="Cannot build the native console hook: vswhere.exe not found at $(VsWherePath). Visual Studio with the Desktop development with C++ workload is required." />
 
-    <Exec Command="&quot;$(VsWherePath)&quot; -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe"
-          ConsoleToMSBuild="true" StandardOutputImportance="low">
+    <Exec Command="&quot;$(VsWherePath)&quot; -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe" ConsoleToMSBuild="true" StandardOutputImportance="low">
       <Output TaskParameter="ConsoleOutput" PropertyName="FullMSBuildPath" />
     </Exec>
 
-    <Error Condition="'$(FullMSBuildPath)' == '' Or !Exists('$(FullMSBuildPath)')"
-           Text="Cannot build the native console hook: MSBuild.exe was not found. Install the Desktop development with C++ workload in Visual Studio." />
+    <Error Condition="'$(FullMSBuildPath)' == '' Or !Exists('$(FullMSBuildPath)')" Text="Cannot build the native console hook: MSBuild.exe was not found. Install the Desktop development with C++ workload in Visual Studio." />
 
     <Message Importance="high" Text="Building native console hook ($(Configuration)|x64)..." />
     <Exec Command="&quot;$(FullMSBuildPath)&quot; &quot;$(NativeHookProject)&quot; -p:Configuration=$(Configuration) -p:Platform=x64 -v:minimal -nologo" />
@@ -169,14 +166,12 @@
   <Target Name="CopyWreckfestConsoleHook" AfterTargets="Build">
     <!-- Fail loudly. Silently skipping produced an app that launched fine and
          could never inject, with no error anywhere. -->
-    <Error Condition="!Exists('$(NativeHookDll)')"
-           Text="The native console hook DLL was not produced at $(NativeHookDll). The application cannot inject without it." />
+    <Error Condition="!Exists('$(NativeHookDll)')" Text="The native console hook DLL was not produced at $(NativeHookDll). The application cannot inject without it." />
     <Copy SourceFiles="$(NativeHookDll)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="CopyWreckfestConsoleHookToPublish" AfterTargets="Publish">
-    <Error Condition="!Exists('$(NativeHookDll)')"
-           Text="The native console hook DLL was not produced at $(NativeHookDll). Refusing to publish an application that cannot inject." />
+    <Error Condition="!Exists('$(NativeHookDll)')" Text="The native console hook DLL was not produced at $(NativeHookDll). Refusing to publish an application that cannot inject." />
     <Copy SourceFiles="$(NativeHookDll)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
   </Target>
 
@@ -207,20 +202,17 @@
     <Exec Command="node --version" ContinueOnError="true" IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low">
       <Output TaskParameter="ExitCode" PropertyName="NodeExitCode" />
     </Exec>
-    <Error Condition="'$(NodeExitCode)' != '0'"
-           Text="Cannot build the web app: Node.js was not found on PATH. Install Node.js LTS, or build with -p:SkipWebBuild=true for C#-only work." />
+    <Error Condition="'$(NodeExitCode)' != '0'" Text="Cannot build the web app: Node.js was not found on PATH. Install Node.js LTS, or build with -p:SkipWebBuild=true for C#-only work." />
   </Target>
 
-  <Target Name="InstallWebAppPackages" DependsOnTargets="CheckNodeForWebApp" Condition="'$(SkipWebBuild)' != 'true'"
-          Inputs="$(WebAppLock)" Outputs="$(WebAppInstalled)">
+  <Target Name="InstallWebAppPackages" DependsOnTargets="CheckNodeForWebApp" Condition="'$(SkipWebBuild)' != 'true'" Inputs="$(WebAppLock)" Outputs="$(WebAppInstalled)">
     <Message Importance="high" Text="Installing web app packages (npm ci)..." />
     <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(WebAppDir)" />
     <!-- npm's own marker files keep old timestamps, so this target keeps its own. -->
     <Touch Files="$(WebAppInstalled)" AlwaysCreate="true" />
   </Target>
 
-  <Target Name="BuildWebApp" BeforeTargets="BeforeBuild" DependsOnTargets="InstallWebAppPackages" Condition="'$(SkipWebBuild)' != 'true'"
-          Inputs="@(WebAppSource)" Outputs="$(WebAppDist)\index.html">
+  <Target Name="BuildWebApp" BeforeTargets="BeforeBuild" DependsOnTargets="InstallWebAppPackages" Condition="'$(SkipWebBuild)' != 'true'" Inputs="@(WebAppSource)" Outputs="$(WebAppDist)\index.html">
     <Message Importance="high" Text="Building web app (npm run build)..." />
     <Exec Command="npm run build" WorkingDirectory="$(WebAppDir)" />
   </Target>
@@ -235,8 +227,7 @@
   </Target>
 
   <Target Name="CopyWebAppToPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != ''">
-    <Error Condition="'$(SkipWebBuild)' != 'true' And !Exists('$(WebAppDist)\index.html')"
-           Text="The web app was not built at $(WebAppDist). Refusing to publish a controller without its web page." />
+    <Error Condition="'$(SkipWebBuild)' != 'true' And !Exists('$(WebAppDist)\index.html')" Text="The web app was not built at $(WebAppDist). Refusing to publish a controller without its web page." />
     <ItemGroup>
       <WebAppPublishFile Include="$(WebAppDist)\**\*" />
     </ItemGroup>

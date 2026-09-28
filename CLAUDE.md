@@ -33,6 +33,15 @@ lockfile changes, `npm run build` when a source changes, then `web/dist` is copi
 `-p:SkipWebBuild=true` skips it for C#-only work. `web/` uses Naive UI, not PrimeVue
 (PrimeVue 5 left MIT): check a package's license before adding it.
 
+The web app is typed against `web/src/api/openapi.json`. `OpenApiContractTests` fails when
+it drifts from the API; `WFC_UPDATE_OPENAPI=1 dotnet test --filter-class
+WreckfestController.Tests.Api.OpenApiContractTests` rewrites it, then `npm run gen:api` in
+`web/` regenerates `schema.d.ts`. Commit both with any endpoint change.
+
+**`npm test` (Vitest) cannot run from a path containing `#`**, such as this repository
+under `F:\Projects\C#\`: Vitest drops everything after the `#`. `npm test` says so and
+stops; the tests pass from a copy elsewhere. The web build and the C# tests are fine.
+
 ### Never pass `--nologo` to `dotnet test`
 
 The test project is **xunit.v3 on Microsoft.Testing.Platform** (`global.json` selects the

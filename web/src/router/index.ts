@@ -1,4 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+
+declare module 'vue-router' {
+  interface RouteMeta {
+    /** Only for a signed-in admin; anyone else is sent to sign in first. */
+    requiresAuth?: boolean
+  }
+}
 
 // The controller answers every path outside /api and /hubs with index.html, so these
 // routes work as deep links and on reload.
@@ -9,4 +17,17 @@ export const router = createRouter({
     { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue') },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@/views/NotFoundView.vue') },
   ],
+})
+
+router.beforeEach(async (to) => {
+  const auth = useAuthStore()
+  if (!auth.loaded) {
+    await auth.load()
+  }
+
+  if (to.meta.requiresAuth && !auth.authenticated) {
+    return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  return true
 })
