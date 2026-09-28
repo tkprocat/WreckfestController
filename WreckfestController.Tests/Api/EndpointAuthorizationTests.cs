@@ -1,7 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using WreckfestController.Services;
+using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Tests.Api;
 

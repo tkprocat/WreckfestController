@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
-using WreckfestController.Services;
+using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Tests.Api;
 

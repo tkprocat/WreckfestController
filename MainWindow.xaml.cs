@@ -7,6 +7,11 @@ using Microsoft.Extensions.Logging;
 using WreckfestController.Data;
 using WreckfestController.Services;
 using WreckfestController.Views;
+using WreckfestController.Services.Auth;
+using WreckfestController.Services.Config;
+using WreckfestController.Services.Desktop;
+using WreckfestController.Services.ServerControl;
+using WreckfestController.Services.Tracking;
 using Timer = System.Timers.Timer;
 using materialDesign = MaterialDesignThemes.Wpf;
 

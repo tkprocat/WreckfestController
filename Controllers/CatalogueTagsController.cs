@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
 using WreckfestController.Data.Catalogue;
-using WreckfestController.Services;
+using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Controllers;
 

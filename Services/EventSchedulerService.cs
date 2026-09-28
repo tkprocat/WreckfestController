@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Hosting;
 using WreckfestController.Data.Events;
+using WreckfestController.Services.ServerControl;
 
 namespace WreckfestController.Services;
 

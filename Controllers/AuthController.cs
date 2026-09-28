@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
-using WreckfestController.Services;
+using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Controllers;
 

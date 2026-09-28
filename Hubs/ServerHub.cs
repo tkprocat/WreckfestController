@@ -1,6 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
-using WreckfestController.Services;
+using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Hubs;
 

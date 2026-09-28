@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using WreckfestController.Data.Events;
 using WreckfestController.Hubs;
-using WreckfestController.Services;
+using WreckfestController.Services.Publishing;
 
 namespace WreckfestController.Tests.Api;
 

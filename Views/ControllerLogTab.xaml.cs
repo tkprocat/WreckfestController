@@ -1,7 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Threading;
-using WreckfestController.Services;
+using WreckfestController.Services.Desktop;
 
 namespace WreckfestController.Views;
 

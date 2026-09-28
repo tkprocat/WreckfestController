@@ -1,7 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using MaterialDesignThemes.Wpf;
-using WreckfestController.Services;
+using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Views;
 
