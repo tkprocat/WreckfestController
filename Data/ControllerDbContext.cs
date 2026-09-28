@@ -1,12 +1,13 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using WreckfestController.Data.Catalogue;
 
 namespace WreckfestController.Data;
 
 /// <summary>
-/// The controller's own SQLite database: web UI users today, and the track catalogue,
-/// collections, events and settings as later phases move them in.
+/// The controller's own SQLite database: web UI users and the track catalogue today,
+/// and collections, events and settings as later phases move them in.
 /// </summary>
 public class ControllerDbContext : IdentityDbContext<AppUser>
 {
@@ -14,6 +15,16 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
         : base(options)
     {
     }
+
+    public DbSet<Track> Tracks => Set<Track>();
+
+    public DbSet<TrackVariant> TrackVariants => Set<TrackVariant>();
+
+    public DbSet<Tag> Tags => Set<Tag>();
+
+    public DbSet<WeatherCondition> WeatherConditions => Set<WeatherCondition>();
+
+    public DbSet<Mod> Mods => Set<Mod>();
 
     /// <summary>
     /// Points <paramref name="options"/> at the SQLite file at <paramref name="databasePath"/>.
@@ -54,6 +65,115 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
         {
             user.Property(u => u.DisplayName).HasMaxLength(AppUser.DisplayNameMaxLength);
             user.Property(u => u.TimeZone).HasMaxLength(AppUser.TimeZoneMaxLength);
+        });
+
+        ConfigureCatalogue(builder);
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        BumpVersions();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        BumpVersions();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    /// <summary>
+    /// Moves every changed <see cref="IVersioned"/> row to the version after the one it
+    /// was read at. The UPDATE still checks the original version, so a caller that sets
+    /// the original to the client's If-Match version gets a concurrency failure when
+    /// someone saved in between.
+    /// </summary>
+    private void BumpVersions()
+    {
+        ChangeTracker.DetectChanges();
+        foreach (var entry in ChangeTracker.Entries<IVersioned>())
+        {
+            if (entry.State == EntityState.Modified)
+            {
+                var version = entry.Property(e => e.Version);
+                version.CurrentValue = version.OriginalValue + 1;
+            }
+        }
+    }
+
+    private static void ConfigureCatalogue(ModelBuilder builder)
+    {
+        // Ids are compared the way the game and VotingService compare them: ignoring case.
+        const string NoCase = "NOCASE";
+
+        builder.Entity<Track>(track =>
+        {
+            track.Property(t => t.Key).HasMaxLength(Track.KeyMaxLength).UseCollation(NoCase);
+            track.HasIndex(t => t.Key).IsUnique();
+            track.Property(t => t.Name).HasMaxLength(Track.NameMaxLength);
+            track.Property(t => t.Origin).HasConversion<string>().HasMaxLength(16);
+            track.Property(t => t.DlcName).HasMaxLength(Track.NameMaxLength);
+            track.Property(t => t.Version).IsConcurrencyToken();
+
+            // A mod cannot go while tracks still come from it.
+            track.HasOne(t => t.Mod)
+                .WithMany(m => m.Tracks)
+                .HasForeignKey(t => t.ModId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            track.HasMany(t => t.WeatherConditions)
+                .WithMany()
+                .UsingEntity(
+                    "TrackWeatherConditions",
+                    r => r.HasOne(typeof(WeatherCondition)).WithMany().HasForeignKey("WeatherConditionId"),
+                    l => l.HasOne(typeof(Track)).WithMany().HasForeignKey("TrackId"),
+                    j => j.HasKey("TrackId", "WeatherConditionId"));
+        });
+
+        builder.Entity<TrackVariant>(variant =>
+        {
+            variant.Property(v => v.VariantId).HasMaxLength(TrackVariant.VariantIdMaxLength).UseCollation(NoCase);
+            variant.HasIndex(v => v.VariantId).IsUnique();
+            variant.Property(v => v.Name).HasMaxLength(TrackVariant.NameMaxLength);
+            variant.Property(v => v.GameMode).HasConversion<string>().HasMaxLength(16);
+            variant.Property(v => v.Version).IsConcurrencyToken();
+
+            variant.HasOne(v => v.Track)
+                .WithMany(t => t.Variants)
+                .HasForeignKey(v => v.TrackId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            variant.HasMany(v => v.Tags)
+                .WithMany()
+                .UsingEntity(
+                    "TrackVariantTags",
+                    r => r.HasOne(typeof(Tag)).WithMany().HasForeignKey("TagId"),
+                    l => l.HasOne(typeof(TrackVariant)).WithMany().HasForeignKey("TrackVariantId"),
+                    j => j.HasKey("TrackVariantId", "TagId"));
+        });
+
+        builder.Entity<Tag>(tag =>
+        {
+            tag.Property(t => t.Name).HasMaxLength(Tag.NameMaxLength);
+            tag.Property(t => t.Slug).HasMaxLength(Tag.SlugMaxLength).UseCollation(NoCase);
+            tag.HasIndex(t => t.Slug).IsUnique();
+            tag.Property(t => t.Color).HasMaxLength(7);
+        });
+
+        builder.Entity<WeatherCondition>(weather =>
+        {
+            weather.Property(w => w.Name).HasMaxLength(WeatherCondition.NameMaxLength).UseCollation(NoCase);
+            weather.HasIndex(w => w.Name).IsUnique();
+        });
+
+        builder.Entity<Mod>(mod =>
+        {
+            mod.Property(m => m.Name).HasMaxLength(Mod.NameMaxLength);
+            mod.Property(m => m.FolderName).HasMaxLength(Mod.FolderNameMaxLength).UseCollation(NoCase);
+            mod.HasIndex(m => m.FolderName).IsUnique();
+            mod.Property(m => m.WorkshopId).HasMaxLength(Mod.WorkshopIdMaxLength);
         });
     }
 }
