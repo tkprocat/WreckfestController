@@ -20,6 +20,15 @@ public enum SettingsSaveStatus
 /// <summary>The outcome of a save, and the section as it now stands.</summary>
 public sealed record SettingsSaveResult<T>(SettingsSaveStatus Status, SettingsEntry<T> Current);
 
+/// <summary>One section to save with <see cref="ISettingsStore.SaveAllAsync"/>: its type, value and the version it was read at.</summary>
+public sealed record SettingsChange(Type Section, object Value, int ExpectedVersion);
+
+/// <summary>
+/// The outcome of saving several sections together: saved, or the first section that
+/// conflicted (nothing saved). <see cref="Versions"/> is every changed section's version now.
+/// </summary>
+public sealed record SettingsBatchResult(SettingsSaveStatus Status, Type? ConflictingSection, IReadOnlyDictionary<Type, int> Versions);
+
 public sealed class SettingsChangedEventArgs(Type section) : EventArgs
 {
     /// <summary>The section type, such as <see cref="Models.VoteSettings"/>.</summary>
@@ -48,6 +57,12 @@ public interface ISettingsStore
     /// </summary>
     Task<SettingsSaveResult<T>> SaveAsync<T>(T value, int expectedVersion, CancellationToken cancellationToken = default)
         where T : class;
+
+    /// <summary>
+    /// Saves several sections in one transaction, each at its expected version, or none of
+    /// them. Throws <see cref="SettingsUnavailableException"/> when the database is not available.
+    /// </summary>
+    Task<SettingsBatchResult> SaveAllAsync(IReadOnlyList<SettingsChange> changes, CancellationToken cancellationToken = default);
 
     /// <summary>Raised after a section changes: a save, or its values arriving from the database.</summary>
     event EventHandler<SettingsChangedEventArgs>? Changed;
@@ -162,13 +177,43 @@ public sealed class SettingsStore : ISettingsStore
     public async Task<SettingsSaveResult<T>> SaveAsync<T>(T value, int expectedVersion, CancellationToken cancellationToken = default)
         where T : class
     {
-        var name = SettingsSections.NameOf(typeof(T));
+        var (status, _, rows) = await SaveCoreAsync([new SettingsChange(typeof(T), value, expectedVersion)], cancellationToken)
+            .ConfigureAwait(false);
+        var current = rows[typeof(T)];
+        return new(status, new SettingsEntry<T>(Deserialize<T>(current.Json), current.Version));
+    }
 
-        // Normalize a copy: the caller's object stays as they passed it.
-        var json = JsonSerializer.Serialize(SettingsSections.Normalize(typeof(T), Deserialize<T>(JsonSerializer.Serialize(value))));
+    public async Task<SettingsBatchResult> SaveAllAsync(IReadOnlyList<SettingsChange> changes, CancellationToken cancellationToken = default)
+    {
+        var (status, conflict, rows) = await SaveCoreAsync(changes, cancellationToken).ConfigureAwait(false);
+        return new(status, conflict, rows.ToDictionary(r => r.Key, r => r.Value.Version));
+    }
 
-        int updated;
-        SettingsSection current;
+    /// <summary>
+    /// Saves every change in one transaction, each at its expected version, or none: the
+    /// first section found at another version rolls the lot back. Reads every changed
+    /// section back afterwards, so a conflict brings another instance's saves into the cache.
+    /// </summary>
+    private async Task<(SettingsSaveStatus Status, Type? Conflict, Dictionary<Type, SettingsSection> Rows)> SaveCoreAsync(
+        IReadOnlyList<SettingsChange> changes,
+        CancellationToken cancellationToken)
+    {
+        if (changes.Count == 0 || changes.Select(c => c.Section).Distinct().Count() != changes.Count)
+        {
+            throw new ArgumentException("Give each section to save once.", nameof(changes));
+        }
+
+        // Normalize copies: the callers' objects stay as they passed them.
+        var writes = changes
+            .Select(c => (
+                c.Section,
+                Name: SettingsSections.NameOf(c.Section),
+                Json: JsonSerializer.Serialize(SettingsSections.Normalize(c.Section, Copy(c.Value, c.Section)), c.Section),
+                c.ExpectedVersion))
+            .ToList();
+
+        Type? conflict = null;
+        var rows = new Dictionary<Type, SettingsSection>();
         try
         {
             // ConfigureAwait(false) throughout: see the class remarks on deadlocks.
@@ -187,26 +232,52 @@ public sealed class SettingsStore : ISettingsStore
                     generation = _generation;
                 }
 
-                // From here the write may commit, so the rest runs to the end: a cancellation
-                // between the write and the cache update would leave readers on the old value.
+                // From here the writes may commit, so the rest runs to the end: a cancellation
+                // between the commit and the cache update would leave readers on the old values.
                 var db = await _contexts.CreateDbContextAsync(CancellationToken.None).ConfigureAwait(false);
                 await using (db.ConfigureAwait(false))
                 {
-                    updated = await db.SettingsSections
-                        .Where(s => s.Section == name && s.Version == expectedVersion)
-                        .ExecuteUpdateAsync(
-                            s => s.SetProperty(r => r.Json, json).SetProperty(r => r.Version, r => r.Version + 1),
-                            CancellationToken.None)
-                        .ConfigureAwait(false);
+                    var transaction = await db.Database.BeginTransactionAsync(CancellationToken.None).ConfigureAwait(false);
+                    await using (transaction.ConfigureAwait(false))
+                    {
+                        foreach (var write in writes)
+                        {
+                            var updated = await db.SettingsSections
+                                .Where(s => s.Section == write.Name && s.Version == write.ExpectedVersion)
+                                .ExecuteUpdateAsync(
+                                    s => s.SetProperty(r => r.Json, write.Json).SetProperty(r => r.Version, r => r.Version + 1),
+                                    CancellationToken.None)
+                                .ConfigureAwait(false);
+                            if (updated == 0)
+                            {
+                                conflict = write.Section;
+                                break;
+                            }
+                        }
 
-                    // A conflict reads the row too: another instance's save lands in this cache.
-                    current = await db.SettingsSections
-                        .AsNoTracking()
-                        .SingleAsync(s => s.Section == name, CancellationToken.None)
-                        .ConfigureAwait(false);
+                        if (conflict is null)
+                        {
+                            await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            await transaction.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                        }
+                    }
+
+                    foreach (var write in writes)
+                    {
+                        rows[write.Section] = await db.SettingsSections
+                            .AsNoTracking()
+                            .SingleAsync(s => s.Section == write.Name, CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
                 }
 
-                Publish(name, current, generation);
+                foreach (var write in writes)
+                {
+                    Publish(write.Name, rows[write.Section], generation);
+                }
             }
             finally
             {
@@ -227,14 +298,20 @@ public sealed class SettingsStore : ISettingsStore
             Announce(changed);
         }
 
-        if (updated > 0)
+        if (conflict is null)
         {
-            _logger.LogInformation("Saved the {Section} settings (version {Version})", name, current.Version);
+            foreach (var write in writes)
+            {
+                _logger.LogInformation("Saved the {Section} settings (version {Version})", write.Name, rows[write.Section].Version);
+            }
         }
 
-        var entry = new SettingsEntry<T>(Deserialize<T>(current.Json), current.Version);
-        return new(updated > 0 ? SettingsSaveStatus.Saved : SettingsSaveStatus.Conflict, entry);
+        return (conflict is null ? SettingsSaveStatus.Saved : SettingsSaveStatus.Conflict, conflict, rows);
     }
+
+    private static object Copy(object value, Type type) =>
+        JsonSerializer.Deserialize(JsonSerializer.Serialize(value, type), type, JsonOptions)
+        ?? throw new ArgumentException($"The {type.Name} settings are empty.", nameof(value));
 
     /// <summary>
     /// Puts <paramref name="row"/> in the cache if it is newer than what is there. A

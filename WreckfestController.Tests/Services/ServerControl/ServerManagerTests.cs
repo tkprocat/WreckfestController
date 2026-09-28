@@ -34,19 +34,13 @@ public class ServerManagerTests
         _mockServerInfoTrackerLogger = new Mock<ILogger<ServerInfoTracker>>();
         _mockEvents = new Mock<IServerEventPublisher>();
 
-        // Setup mock configuration with test values
-        _mockConfiguration.Setup(c => c["WreckfestServer:ServerPath"])
-            .Returns("C:\\test\\server.bat");
-        _mockConfiguration.Setup(c => c["WreckfestServer:WorkingDirectory"])
-            .Returns("C:\\test");
-
         _playerTracker = new PlayerTracker(_mockPlayerTrackerLogger.Object, _mockEvents.Object);
         _trackChangeTracker = new TrackChangeTracker(_mockTrackChangeTrackerLogger.Object, _mockEvents.Object);
         _serverInfoTracker = new ServerInfoTracker(_mockServerInfoTrackerLogger.Object);
 
 
         _serverManager = new ServerManager(
-            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
+            _mockConfiguration.Object, TestSettings.Server(serverPath: @"C:\test\server.bat", workingDirectory: @"C:\test"), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -77,12 +71,8 @@ public class ServerManagerTests
     public async Task StartServerAsync_WhenServerPathDoesNotExist_ReturnsFailure()
     {
         // Arrange
-        _mockConfiguration.Setup(c => c["WreckfestServer:ServerPath"])
-            .Returns("C:\\nonexistent\\server.bat");
-
-
         var serverManager = new ServerManager(
-            _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
+            _mockConfiguration.Object, TestSettings.Server(serverPath: @"C:\nonexistent\server.bat"), TestSettings.SteamCmd(),
             _mockLogger.Object,
             _playerTracker,
             _trackChangeTracker,
@@ -101,10 +91,6 @@ public class ServerManagerTests
     public async Task StartServerAsync_WhenServerPathIsEmpty_ReturnsFailure()
     {
         // Arrange
-        _mockConfiguration.Setup(c => c["WreckfestServer:ServerPath"])
-            .Returns(string.Empty);
-
-
         var serverManager = new ServerManager(
             _mockConfiguration.Object, TestSettings.Server(), TestSettings.SteamCmd(),
             _mockLogger.Object,
