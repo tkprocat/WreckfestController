@@ -7,11 +7,14 @@ import ConflictDialog from '@/crud/ConflictDialog.vue'
 import FormField from '@/crud/FormField.vue'
 import { NO_ANSWER, hasId, send, type Outcome } from '@/crud/outcome'
 import { useResourceEditor } from '@/crud/useResourceEditor'
+import { vSelectFocus } from '@/crud/selectFocus'
 
 /**
  * Adds or edits a track: its key, name, origin and the weather it supports. Weather has its
  * own endpoint, so a save that changes it is two requests; if only the first lands, the
- * track is saved and the page says the weather was not.
+ * track is saved and the page says the weather was not. The weather is sent only when this
+ * form changed it, with the version the first request answered with, so it never replaces
+ * weather someone else set meanwhile.
  */
 type Track = components['schemas']['TrackResponse']
 type Origin = components['schemas']['TrackOrigin']
@@ -52,7 +55,6 @@ async function loadPickers() {
 }
 
 const isTrack = (body: unknown): body is Track => hasId(body) && 'variants' in body
-const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x))
 
 const editor = useResourceEditor<Track, TrackDraft>({
   what: 'track',
@@ -65,7 +67,7 @@ const editor = useResourceEditor<Track, TrackDraft>({
     // A new track supports every weather until told otherwise; the form shows that.
     weather: t ? [...t.weather] : [...allWeather.value],
   }),
-  save: async (draft, version, t) => {
+  save: async (draft, version, t): Promise<Outcome<Track>> => {
     const body = {
       key: draft.key.trim(),
       name: draft.name.trim(),
@@ -81,25 +83,32 @@ const editor = useResourceEditor<Track, TrackDraft>({
       isTrack,
       'The track was not saved.',
     )
-    return outcome.kind === 'ok' && isTrack(outcome.row) ? saveWeather(outcome.row, draft.weather) : outcome
+    const weatherChanged: boolean = editor.changes.value.includes('weather')
+    return outcome.kind === 'ok' && isTrack(outcome.row) && weatherChanged ? saveWeather(outcome.row, draft.weather) : outcome
   },
   saved: (t) => emit('saved', t),
 })
 const { draft, errors, saving, conflict } = editor
 
-/** The second request, when the weather changed. The track is saved either way. */
+/** The second request, when the form changed the weather. The track is saved either way. */
 async function saveWeather(track: Track, weather: string[]): Promise<Outcome<Track>> {
-  if (sameSet(track.weather, weather)) {
-    return { kind: 'ok', row: track }
-  }
-
   const outcome = await send(
-    () => api.PUT('/api/catalogue/tracks/{id}/weather', { params: { path: { id: track.id } }, body: { weather } }),
+    () =>
+      api.PUT('/api/catalogue/tracks/{id}/weather', {
+        params: { path: { id: track.id } },
+        body: { weather },
+        headers: { 'If-Match': `"${track.version}"` },
+      }),
     isTrack,
     'The weather was not saved.',
   )
   if (outcome.kind === 'ok' && isTrack(outcome.row)) {
     return outcome
+  }
+
+  if (outcome.kind === 'conflict') {
+    message.error('The track was saved, but not its weather: someone else changed the track meanwhile. Open it again to see theirs.')
+    return { kind: 'ok', row: outcome.current }
   }
 
   const reason = outcome.kind === 'no-answer' ? NO_ANSWER : 'message' in outcome ? outcome.message : 'The server refused it.'
@@ -113,9 +122,14 @@ const weatherOptions = computed(() =>
 )
 const modOptions = computed(() => mods.value.map((m) => ({ value: m.id, label: `${m.name} (${m.folderName})` })))
 
+// Opening waits for the pickers: only the latest click opens, and never over an open form.
+let opening = 0
 async function start(track: Track | null) {
+  const ticket = ++opening
   await loadPickers()
-  editor.start(track)
+  if (ticket === opening && !editor.open.value) {
+    editor.start(track)
+  }
 }
 
 defineExpose({ start })
@@ -133,9 +147,9 @@ defineExpose({ start })
   >
     <ConflictDialog
       v-if="conflict"
-      :mine="{ key: conflict.mine.key, name: conflict.mine.name, origin: conflict.mine.origin, dlcName: conflict.mine.dlcName, modId: conflict.mine.modId }"
-      :theirs="{ key: conflict.theirs.key, name: conflict.theirs.name, origin: conflict.theirs.origin, dlcName: conflict.theirs.dlcName ?? '', modId: conflict.theirs.mod?.id ?? null }"
-      :labels="{ key: 'Key', name: 'Name', origin: 'Origin', dlcName: 'DLC', modId: 'Mod' }"
+      :mine="{ key: conflict.mine.key, name: conflict.mine.name, origin: conflict.mine.origin, dlcName: conflict.mine.dlcName, modId: conflict.mine.modId, weather: [...conflict.mine.weather].sort() }"
+      :theirs="{ key: conflict.theirs.key, name: conflict.theirs.name, origin: conflict.theirs.origin, dlcName: conflict.theirs.dlcName ?? '', modId: conflict.theirs.mod?.id ?? null, weather: [...conflict.theirs.weather].sort() }"
+      :labels="{ key: 'Key', name: 'Name', origin: 'Origin', dlcName: 'DLC', modId: 'Mod', weather: 'Weather' }"
       @theirs="editor.useTheirs()"
       @mine="editor.keepMine()"
     />
@@ -153,16 +167,16 @@ defineExpose({ start })
         />
       </FormField>
       <FormField v-slot="{ inputProps }" label="Origin" field="origin" :errors="errors">
-        <NSelect v-model:value="draft.origin" :options="ORIGINS" filterable :input-props="inputProps" />
+        <NSelect v-model:value="draft.origin" :options="ORIGINS" filterable v-select-focus="inputProps" :input-props="inputProps" />
       </FormField>
       <FormField v-if="draft.origin === 'Dlc'" v-slot="{ inputProps }" label="DLC name" field="dlcName" :errors="errors">
         <NInput v-model:value="draft.dlcName" :maxlength="128" :input-props="inputProps" />
       </FormField>
       <FormField v-if="draft.origin === 'Workshop'" v-slot="{ inputProps }" label="Mod (optional)" field="modId" :errors="errors">
-        <NSelect v-model:value="draft.modId" :options="modOptions" filterable clearable :input-props="inputProps" />
+        <NSelect v-model:value="draft.modId" :options="modOptions" filterable clearable v-select-focus="inputProps" :input-props="inputProps" />
       </FormField>
       <FormField v-slot="{ inputProps }" label="Weather it supports" field="weather" :errors="errors">
-        <NSelect v-model:value="draft.weather" :options="weatherOptions" multiple filterable :input-props="inputProps" />
+        <NSelect v-model:value="draft.weather" :options="weatherOptions" multiple filterable v-select-focus="inputProps" :input-props="inputProps" />
       </FormField>
       <NSpace justify="end">
         <NButton :disabled="saving" @click="editor.close()">Cancel</NButton>

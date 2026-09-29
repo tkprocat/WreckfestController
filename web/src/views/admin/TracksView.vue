@@ -20,6 +20,7 @@ import { useResourceList } from '@/crud/useResourceList'
 import { textOn } from '@/utils/color'
 import TrackEditor from './tracks/TrackEditor.vue'
 import VariantEditor from './tracks/VariantEditor.vue'
+import { vSelectFocus } from '@/crud/selectFocus'
 
 type Track = components['schemas']['TrackResponse']
 type Variant = components['schemas']['VariantResponse']
@@ -327,6 +328,7 @@ onMounted(() => void list.reload())
           filterable
           placeholder="Any origin"
           style="width: 150px"
+          v-select-focus="{ 'aria-label': 'Origin' }"
           :input-props="{ 'aria-label': 'Origin' }"
         />
         <NSelect
@@ -336,6 +338,7 @@ onMounted(() => void list.reload())
           filterable
           placeholder="Any mode"
           style="width: 130px"
+          v-select-focus="{ 'aria-label': 'Game mode' }"
           :input-props="{ 'aria-label': 'Game mode' }"
         />
         <NSelect
@@ -345,6 +348,7 @@ onMounted(() => void list.reload())
           filterable
           placeholder="Any tag"
           style="width: 170px"
+          v-select-focus="{ 'aria-label': 'Tag' }"
           :input-props="{ 'aria-label': 'Tag' }"
         />
         <NSelect
@@ -354,6 +358,7 @@ onMounted(() => void list.reload())
           filterable
           placeholder="Any weather"
           style="width: 150px"
+          v-select-focus="{ 'aria-label': 'Weather' }"
           :input-props="{ 'aria-label': 'Weather' }"
         />
         <NCheckbox v-model:checked="showHidden">Show hidden</NCheckbox>

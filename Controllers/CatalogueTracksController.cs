@@ -289,14 +289,27 @@ public class CatalogueTracksController : ControllerBase
         return await SaveAsync(track);
     }
 
-    /// <summary>Replaces the weather the track supports.</summary>
+    /// <summary>
+    /// Replaces the weather the track supports. Takes If-Match optionally: with it, a track
+    /// saved since answers 409. Changing the weather moves the track's version.
+    /// </summary>
     [HttpPut("{id:int}/weather")]
     public async Task<ActionResult<TrackResponse>> SetWeather(int id, WeatherNamesRequest request)
     {
+        if (this.ReadOptionalIfMatch(out var expected) is { } badPrecondition)
+        {
+            return badPrecondition;
+        }
+
         var track = await LoadAsync(id);
         if (track is null)
         {
             return NotFound();
+        }
+
+        if (expected is not null && track.Version != expected)
+        {
+            return this.VersionConflict(TrackResponse.From(track), track.Version);
         }
 
         var names = request.Weather.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -308,6 +321,8 @@ public class CatalogueTracksController : ControllerBase
         }
 
         track.WeatherConditions = weather;
+        // A join-table change leaves the track row unchanged: mark it, so its version moves.
+        _db.Entry(track).Property(t => t.Version).IsModified = true;
         return await SaveAsync(track);
     }
 

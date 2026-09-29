@@ -288,7 +288,11 @@ describe('TracksView', () => {
         body: { key: 't1', name: 'Green Fields', origin: 'BaseGame', dlcName: null, modId: null },
         headers: { 'If-Match': '"1"' },
       })
-      expect(api.PUT).toHaveBeenNthCalledWith(2, '/api/catalogue/tracks/{id}/weather', { params: { path: { id: 1 } }, body: { weather: ['clear', 'rain'] } })
+      expect(api.PUT).toHaveBeenNthCalledWith(2, '/api/catalogue/tracks/{id}/weather', {
+        params: { path: { id: 1 } },
+        body: { weather: ['clear', 'rain'] },
+        headers: { 'If-Match': '"2"' },
+      })
       expect(wrapper!.text()).toContain('Green Fields')
       expect(wrapper!.text()).toContain('clear, rain')
     })
@@ -315,6 +319,91 @@ describe('TracksView', () => {
       expect(wrapper!.text()).toContain('Green Fields')
     })
 
+    const trackEditor = () => wrapper!.findComponent({ name: 'TrackEditor' }).vm as unknown as { draft: { weather: string[] } }
+
+    // Someone else set the weather meanwhile; this form only renamed the track.
+    it('does not send weather the form did not change', async () => {
+      api.PUT.mockResolvedValue(answer({ ...fields(), name: 'Green Fields', weather: ['fog'], version: 2 }))
+      await mountPage()
+
+      await labelled('Edit Fields').trigger('click')
+      await flushPromises()
+      await input('Name').setValue('Green Fields')
+      await submit('Save')
+
+      expect(api.PUT).toHaveBeenCalledTimes(1)
+      expect(wrapper!.text()).toContain('fog')
+    })
+
+    // Without the weather list the form cannot show a new track's default: it sends none.
+    it('keeps a new track\'s default weather when the weather list failed to load', async () => {
+      const tracksOnly = api.GET.getMockImplementation()!
+      api.GET.mockImplementation((path: string) => (path === '/api/catalogue/weather' ? Promise.reject(new Error('offline')) : tracksOnly(path)))
+      api.POST.mockResolvedValue(answer(track(4, 'Test Loop', [], { key: 'test_loop', origin: 'Custom', isBuiltIn: false, weather: ['clear', 'rain', 'fog'] }), 201))
+      await mountPage()
+
+      await wrapper!.findAll('button').find((b) => b.text() === 'Add track')!.trigger('click')
+      await flushPromises()
+      await input('Name').setValue('Test Loop')
+      await input('Key').setValue('test_loop')
+      await submit('Add')
+
+      expect(api.POST).toHaveBeenCalledTimes(1)
+      expect(api.PUT).not.toHaveBeenCalled()
+    })
+
+    it('says when the weather lost a race, and shows the saved track', async () => {
+      api.PUT.mockImplementation((path: string) =>
+        Promise.resolve(
+          path === '/api/catalogue/tracks/{id}'
+            ? answer({ ...fields(), version: 2 })
+            : refused({ ...fields(), name: 'Fields (theirs)', version: 3 }, 409),
+        ),
+      )
+      await mountPage()
+
+      await labelled('Edit Fields').trigger('click')
+      await flushPromises()
+      trackEditor().draft.weather = ['rain']
+      await submit('Save')
+
+      expect(body().text()).toContain('The track was saved, but not its weather')
+      expect(wrapper!.text()).toContain('Fields (theirs)')
+    })
+
+    it('shows a weather difference in the conflict', async () => {
+      api.PUT.mockResolvedValue(refused({ ...fields(), weather: ['fog'], version: 5 }, 409))
+      await mountPage()
+
+      await labelled('Edit Fields').trigger('click')
+      await flushPromises()
+      trackEditor().draft.weather = ['rain']
+      await submit('Save')
+
+      expect(body().text()).toContain('Changed elsewhere')
+      expect(body().find('.n-table').text()).toContain('Weather')
+      expect(body().text()).not.toContain('Your values and the saved ones are the same.')
+    })
+
+    // The pickers load before the form opens; the later click wins, whatever answers first.
+    it('opens the editor for the latest click when the pickers answer out of order', async () => {
+      const pending: ((value: unknown) => void)[] = []
+      const tracksOnly = api.GET.getMockImplementation()!
+      api.GET.mockImplementation((path: string) =>
+        path === '/api/catalogue/weather' ? new Promise((resolve) => pending.push(resolve)) : tracksOnly(path),
+      )
+      await mountPage()
+
+      await labelled('Edit Fields').trigger('click')
+      await labelled('Edit Crash Arena').trigger('click')
+      pending[1]!(answer(['clear']))
+      await flushPromises()
+      pending[0]!(answer(['clear']))
+      await flushPromises()
+
+      expect((input('Name').element as HTMLInputElement).value).toBe('Crash Arena')
+    })
+
     it('adds a variant under a track, with its tags', async () => {
       const added = variant(13, 1, 'loop_short', 'Loop Short', { isBuiltIn: false })
       api.POST.mockResolvedValue(answer(added, 201))
@@ -332,7 +421,11 @@ describe('TracksView', () => {
       expect(api.POST).toHaveBeenCalledWith('/api/catalogue/variants', {
         body: { variantId: 'loop_short', name: 'Loop Short', gameMode: 'Racing', trackId: 1, allowedForVoting: true },
       })
-      expect(api.PUT).toHaveBeenCalledWith('/api/catalogue/variants/{id}/tags', { params: { path: { id: 13 } }, body: { tags: ['night'] } })
+      expect(api.PUT).toHaveBeenCalledWith('/api/catalogue/variants/{id}/tags', {
+        params: { path: { id: 13 } },
+        body: { tags: ['night'] },
+        headers: { 'If-Match': '"1"' },
+      })
       await expand('Fields')
       expect(wrapper!.text()).toContain('Loop Short')
       expect(wrapper!.text()).toContain('Night')

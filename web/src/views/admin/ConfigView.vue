@@ -19,6 +19,7 @@ import { api } from '@/api/client'
 import { fieldErrors, problemMessage } from '@/api/problems'
 import type { components } from '@/api/schema'
 import { FIELDS, SECTIONS, previewText, type ConfigField, type FieldDef, type ServerConfig } from './configFields'
+import { vSelectFocus } from '@/crud/selectFocus'
 
 type FieldInfo = components['schemas']['ConfigFieldResponse']
 type Track = components['schemas']['EventLoopTrack']
@@ -202,6 +203,7 @@ onMounted(() => void load())
                 :options="[...def.options]"
                 :disabled="locked(def.field)"
                 filterable
+                v-select-focus="{ 'aria-label': def.label }"
                 :input-props="{ 'aria-label': def.label }"
               />
               <NSpace v-else align="center">

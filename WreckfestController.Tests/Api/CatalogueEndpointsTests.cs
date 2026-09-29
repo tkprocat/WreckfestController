@@ -257,6 +257,37 @@ public class CatalogueEndpointsTests
         await AuthEndpointsTests.AssertFieldErrorAsync(unknown, "tags");
     }
 
+    // Weather and tags are the track's and variant's own data: changing them moves the
+    // version, and a writer that sends If-Match loses to a save made since it read.
+    [Fact]
+    public async Task WeatherAndTags_MoveTheVersion_AndHonourIfMatch()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+        var trackId = await TrackIdAsync(client, "madman_stadium");
+        var track = await client.GetFromJsonAsync<JsonElement>($"/api/catalogue/tracks/{trackId}", Ct);
+        var trackVersion = track.GetProperty("version").GetInt32();
+
+        using var weather = await PutAsync(client, $"/api/catalogue/tracks/{trackId}/weather", new { weather = new[] { "storm" } }, $"\"{trackVersion}\"");
+        var changed = await weather.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(trackVersion + 1, changed.GetProperty("version").GetInt32());
+
+        using var staleWeather = await PutAsync(client, $"/api/catalogue/tracks/{trackId}/weather", new { weather = new[] { "fog" } }, $"\"{trackVersion}\"");
+        Assert.Equal(HttpStatusCode.Conflict, staleWeather.StatusCode);
+        var current = await staleWeather.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(new[] { "storm" }, current.GetProperty("weather").EnumerateArray().Select(w => w.GetString()).ToArray());
+
+        var variant = await VariantAsync(client, "bigstadium_figure_8");
+        var variantId = variant.GetProperty("id").GetInt32();
+        var variantVersion = variant.GetProperty("version").GetInt32();
+
+        using var tags = await PutAsync(client, $"/api/catalogue/variants/{variantId}/tags", new { tags = new[] { "jump" } }, $"\"{variantVersion}\"");
+        Assert.Equal(variantVersion + 1, (await tags.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("version").GetInt32());
+
+        using var staleTags = await PutAsync(client, $"/api/catalogue/variants/{variantId}/tags", new { tags = new[] { "oval" } }, $"\"{variantVersion}\"");
+        Assert.Equal(HttpStatusCode.Conflict, staleTags.StatusCode);
+    }
+
     [Fact]
     public async Task Tags_RejectADuplicateSlug()
     {
