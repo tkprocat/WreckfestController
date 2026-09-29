@@ -26,6 +26,7 @@ export const router = createRouter({
         { path: 'config', name: 'admin-config', component: () => import('@/views/admin/ConfigView.vue') },
         { path: 'settings', name: 'admin-settings', component: () => import('@/views/admin/SettingsView.vue') },
         { path: 'tags', name: 'admin-tags', component: () => import('@/views/admin/TagsView.vue') },
+        { path: 'collections', name: 'admin-collections', component: () => import('@/views/admin/CollectionsView.vue') },
         { path: 'users', name: 'admin-users', component: () => import('@/views/admin/UsersView.vue') },
         { path: 'profile', name: 'admin-profile', component: () => import('@/views/admin/ProfileView.vue') },
       ],

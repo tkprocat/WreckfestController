@@ -11,6 +11,7 @@ const pages = [
   { name: 'admin-config', label: 'Server config' },
   { name: 'admin-settings', label: 'Settings' },
   { name: 'admin-tags', label: 'Tags' },
+  { name: 'admin-collections', label: 'Collections' },
   { name: 'admin-users', label: 'Users' },
 ]
 
