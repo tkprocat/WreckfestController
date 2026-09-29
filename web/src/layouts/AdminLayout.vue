@@ -10,6 +10,7 @@ const pages = [
   { name: 'admin-server', label: 'Server control' },
   { name: 'admin-config', label: 'Server config' },
   { name: 'admin-settings', label: 'Settings' },
+  { name: 'admin-users', label: 'Users' },
 ]
 
 const menu: MenuOption[] = pages.map((page) => ({

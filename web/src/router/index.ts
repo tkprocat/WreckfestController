@@ -25,6 +25,8 @@ export const router = createRouter({
         { path: 'server', name: 'admin-server', component: () => import('@/views/admin/ServerControlView.vue') },
         { path: 'config', name: 'admin-config', component: () => import('@/views/admin/ConfigView.vue') },
         { path: 'settings', name: 'admin-settings', component: () => import('@/views/admin/SettingsView.vue') },
+        { path: 'users', name: 'admin-users', component: () => import('@/views/admin/UsersView.vue') },
+        { path: 'profile', name: 'admin-profile', component: () => import('@/views/admin/ProfileView.vue') },
       ],
     },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@/views/NotFoundView.vue') },
