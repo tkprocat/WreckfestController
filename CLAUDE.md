@@ -38,9 +38,10 @@ it drifts from the API; `WFC_UPDATE_OPENAPI=1 dotnet test --filter-class
 WreckfestController.Tests.Api.OpenApiContractTests` rewrites it, then `npm run gen:api` in
 `web/` regenerates `schema.d.ts`. Commit both with any endpoint change.
 
-**`npm test` (Vitest) cannot run from a path containing `#`**, such as this repository
-under `F:\Projects\C#\`: Vitest drops everything after the `#`. `npm test` says so and
-stops; the tests pass from a copy elsewhere. The web build and the C# tests are fine.
+**`npm test` (Vitest) cannot run from a path containing `#`** (such as a checkout under
+`C#\`): Vitest drops everything after the `#`. `npm test` says so and stops. The
+repository lives under `F:\Projects\CSharp\` for this reason; the web build and the C#
+tests are unaffected either way.
 
 ### Never pass `--nologo` to `dotnet test`
 
