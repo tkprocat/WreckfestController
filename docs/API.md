@@ -234,7 +234,8 @@ it names an unknown field, gives a value of the wrong type or `null`, or puts a 
 break in a string (`body` when the body is not an object). `log` is never written: it
 names the file `logfile` returns, so it is set in server_config.cfg by hand.
 Only keys that already have an active `key=value` line can be changed: a field whose line
-is missing or commented out is a **409** naming the key, and nothing is written.
+is missing or commented out, or that is set again below `# Event Loop` (where the later
+value wins), is a **409** naming the key, and nothing is written.
 
 `PUT tracks` replaces the whole event loop. It is rejected with 400, naming the field, unless
 `collectionName` is non-empty (at most 128 characters), `tracks` is present, every
@@ -243,7 +244,8 @@ are not negative, `carResetDisabled` and `wrongWayLimiterDisabled` are `0` or `1
 text values are at most 128 characters, and no value contains a line break. An empty
 `tracks` list is allowed. Collections are checked by the same rules. A server_config.cfg
 without a `# Event Loop` heading has nowhere to put the loop: that is a **409**, and
-nothing is written.
+nothing is written. Activating a cup with a rotation checks this first, so none of the
+cup's other settings are written either.
 
 ### Cups — `api/cups`
 

@@ -10,6 +10,7 @@ public sealed record ConfigWriteFailure(string Reason, string Message)
     public const string FileInUse = "fileInUse";
     public const string NotFound = "notFound";
     public const string NotConfigured = "notConfigured";
+    public const string MissingEventLoop = "missingEventLoop";
     public const string IoError = "ioError";
 
     private const int ErrorSharingViolation = 32;
@@ -38,6 +39,10 @@ public sealed record ConfigWriteFailure(string Reason, string Message)
             "Another program has the server config open, such as an editor. Close it and try again."),
 
         IOException => new(IoError, $"Could not write the server config. {exception.Message}"),
+
+        // Before the InvalidOperationException below, which it derives from: the file is
+        // there, it just has nowhere to put the rotation.
+        EventLoopHeadingMissingException => new(MissingEventLoop, exception.Message),
 
         // Thrown by ConfigService when the settings do not say where the config is.
         InvalidOperationException => new(

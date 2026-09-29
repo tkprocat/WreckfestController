@@ -54,7 +54,8 @@ public class ConfigController : ControllerBase
     /// Changes server settings. Only the fields present in the body change; everything
     /// else keeps its current value. Returns the settings as read back from the file.
     /// A field whose key has no active line in server_config.cfg (missing, or commented
-    /// out) cannot be saved: that is a 409 naming the key, and nothing is written.
+    /// out), or is set again below the event loop, cannot be saved: that is a 409 naming
+    /// the key, and nothing is written.
     /// </summary>
     [HttpPut("basic")]
     public ActionResult<ServerConfig> UpdateBasicConfig([FromBody] JsonElement patch)
@@ -78,12 +79,12 @@ public class ConfigController : ControllerBase
         ServerConfig saved;
         try
         {
-            var missing = _configService.MissingBasicKeys(applied.Select(ServerConfigPatch.KeyOf));
-            if (missing.Count > 0)
+            var unsavable = _configService.BasicKeysThatCannotBeSaved(applied.Select(ServerConfigPatch.KeyOf));
+            if (unsavable.Count > 0)
             {
                 return this.Refused(
-                    $"server_config.cfg has no active line for {string.Join(", ", missing)}, so it cannot be saved. " +
-                    "Add or uncomment it in server_config.cfg, then try again. Nothing was changed.");
+                    $"server_config.cfg cannot take this change: {string.Join("; ", unsavable)}. " +
+                    "Fix server_config.cfg, then try again. Nothing was changed.");
             }
 
             _configService.WriteBasicConfig(config);
