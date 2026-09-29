@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -110,6 +111,31 @@ public sealed class AccountServiceTests : IDisposable
 
         Assert.Null(await accounts.SeedDevAdminAsync(TestContext.Current.CancellationToken));
         Assert.Equal(1, await accounts.CountUsersAsync(TestContext.Current.CancellationToken));
+    }
+
+    // Another writer - say a second instance's first-admin dialog - is adding an account
+    // right now. The seed must wait for it and then see it, not count zero first and
+    // add a second admin after.
+    [Fact]
+    public async Task DevSeed_WaitsForAnotherWriter_AndThenDoesNothing()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var accounts = await CreateAsync(apiEnabled: true, extra: DevSeed("dev@example.com", Password));
+        using var scope = _providers[^1].CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ControllerDbContext>();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        Assert.True((await users.CreateAsync(new AppUser { UserName = "admin", Email = "admin@example.com" }, Password)).Succeeded);
+
+        // Its own thread: SQLite's async calls run synchronously, so a waiting seed would
+        // otherwise block this one before it could commit.
+        var seed = Task.Run(() => accounts.SeedDevAdminAsync(ct), ct);
+        await Task.Delay(500, ct);
+        Assert.False(seed.IsCompleted);
+        await transaction.CommitAsync(ct);
+
+        Assert.Null(await seed);
+        Assert.Equal(1, await accounts.CountUsersAsync(ct));
     }
 
     [Fact]

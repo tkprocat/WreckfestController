@@ -84,23 +84,36 @@ public sealed class AccountService
     {
         var email = _configuration["DevSeed:Email"];
         var password = _configuration["DevSeed:Password"];
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrEmpty(password)
-            || !_database.IsReady
-            || await CountUsersAsync(cancellationToken) != 0)
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrEmpty(password) || !_database.IsReady)
         {
             return null;
         }
 
         var userName = _configuration["DevSeed:UserName"];
-        userName = string.IsNullOrWhiteSpace(userName) ? email : userName;
-        var result = await CreateAccountAsync(userName, email, password);
+        userName = (string.IsNullOrWhiteSpace(userName) ? email : userName).Trim();
+
+        using var scope = _scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ControllerDbContext>();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+
+        // SQLite's BEGIN IMMEDIATE (Microsoft.Data.Sqlite's default) takes the write lock
+        // before the count, so no other writer - another instance's first-admin dialog -
+        // can add an account between "there are none" and the insert.
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        if (await users.Users.AnyAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var result = await users.CreateAsync(new AppUser { UserName = userName, Email = email.Trim() }, password);
         if (!result.Succeeded)
         {
             throw new InvalidOperationException(
                 "DevSeed account rejected: " + string.Join("; ", result.Errors.Select(e => e.Description)));
         }
 
-        return userName.Trim();
+        await transaction.CommitAsync(cancellationToken);
+        return userName;
     }
 #endif
 }
