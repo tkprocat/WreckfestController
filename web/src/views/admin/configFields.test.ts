@@ -1,12 +1,10 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import openapi from '@/api/openapi.json'
 import { FIELDS, previewText } from './configFields'
 
 // The committed contract the web app is typed against (kept in step with the API by
 // OpenApiContractTests): every setting the API serves must be on the page, once.
-// Vitest runs from web/.
-const contract = JSON.parse(readFileSync(resolve(process.cwd(), 'src/api/openapi.json'), 'utf8')) as {
+const contract = openapi as unknown as {
   components: { schemas: { ServerConfig: { properties: Record<string, unknown> } } }
 }
 
