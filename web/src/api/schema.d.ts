@@ -1460,6 +1460,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/basic/fields": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ConfigFieldResponse"][];
+                        "application/json": components["schemas"]["ConfigFieldResponse"][];
+                        "text/json": components["schemas"]["ConfigFieldResponse"][];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config/basic": {
         parameters: {
             query?: never;
@@ -3470,6 +3525,12 @@ export interface components {
             gameMode: components["schemas"]["GameMode"];
             isHidden: boolean;
         };
+        ConfigFieldResponse: {
+            field: string;
+            key: string;
+            savable: boolean;
+            reason: null | string;
+        };
         CreateUserRequest: {
             userName: string;
             password: string;
@@ -3793,7 +3854,6 @@ export interface components {
             weather?: string;
             frequency?: string;
             mods?: string;
-            log?: string;
         };
         ServerProcessResponse: {
             /** Format: int32 */

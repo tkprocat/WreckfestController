@@ -35,6 +35,35 @@ public class ConfigController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// Which settings a PUT basic can change: each field, its server_config.cfg key, and
+    /// whether the file has an active line for it. A missing or commented-out key (say
+    /// admin_steam_ids, commented out by default), or one set again below the event loop,
+    /// cannot be saved; the reason says what to fix in the file.
+    /// </summary>
+    [HttpGet("basic/fields")]
+    public ActionResult<IReadOnlyList<ConfigFieldResponse>> GetBasicConfigFields()
+    {
+        try
+        {
+            var fields = ServerConfigPatch.Fields.Order().ToList();
+            var problems = _configService.BasicKeyProblems(fields.Select(ServerConfigPatch.KeyOf));
+            return fields
+                .Select(field => ServerConfigPatch.KeyOf(field))
+                .Zip(fields, (key, field) => new ConfigFieldResponse(
+                    JsonNamingPolicy.CamelCase.ConvertName(field),
+                    key,
+                    !problems.ContainsKey(key),
+                    problems.GetValueOrDefault(key)))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to read the basic config's keys");
+            return this.Refused("server_config.cfg could not be read. The desktop app's log has the details.");
+        }
+    }
+
     /// <summary>The server settings in server_config.cfg.</summary>
     [HttpGet("basic")]
     public ActionResult<ServerConfig> GetBasicConfig()
@@ -179,3 +208,9 @@ public class ConfigController : ControllerBase
 public sealed record CollectionNameResponse(string CollectionName);
 
 public sealed record EventLoopResponse(int Count, IReadOnlyList<EventLoopTrack> Tracks);
+
+/// <summary>
+/// A server setting as PUT basic sees it: the field, its server_config.cfg key, and whether
+/// a change to it can be saved - with why not, when it cannot.
+/// </summary>
+public sealed record ConfigFieldResponse(string Field, string Key, bool Savable, string? Reason);
