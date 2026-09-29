@@ -308,15 +308,15 @@ or the cup's settings cannot be written to the server config (with a `reason`).
 
 ### Settings — `api/settings`
 
-The settings a person edits, kept in the controller's database one section at a time:
-`wreckfestServer` (`serverPath`, `serverArguments`, `workingDirectory`, `logFilePath`),
-`steamCmd` (`steamCmdPath`, `wreckfestAppId`) and `vote` (`mode`, `directCooldownSeconds`,
-`voteTimeoutSeconds`, `maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`).
-The WPF Configuration tab edits the same sections.
+The settings a person edits over the web, kept in the controller's database one section
+at a time. Today that is `vote` (`mode`, `directCooldownSeconds`, `voteTimeoutSeconds`,
+`maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`); later settings pages
+add sections for what changes game behaviour, never programs or paths. The WPF
+Configuration tab edits the same sections.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | | Every section: `{ wreckfestServer, steamCmd, vote }`, each with its `version` |
+| GET | | Every section: `{ vote }`, each with its `version` |
 | GET | `{section}` | One section, with its `ETag` |
 | PUT | `{section}` | Change the fields in the body; the rest keep their values. Needs `If-Match` |
 
@@ -324,13 +324,20 @@ The WPF Configuration tab edits the same sections.
   A body that repeats `version` is fine: `If-Match` is what counts.
 - Unknown fields, wrong types and out-of-range values are 400 with a field error:
   `mode` is `Off`, `Voting` or `Direct` (any case); `directCooldownSeconds` 0-3600,
-  `voteTimeoutSeconds` 1-3600, `maxLapsAllowed` 1-999, `messageDelayMs` 0-5000; paths and
-  arguments are one line of at most 1024 characters; `wreckfestAppId` is digits only.
+  `voteTimeoutSeconds` 1-3600, `maxLapsAllowed` 1-999, `messageDelayMs` 0-5000.
 - A change takes effect at once: voting reads it on the next command, and a saved `vote`
   change ends a `!voting` override.
 - The startup settings (`Api:*`, `Database:Path`) are not here and have no route. They stay
   in user-settings.json, edited by hand, so a lockout can be fixed without the web UI.
   2.0 never writes that file.
+- The launch settings are not here either, neither read nor written, and have no route:
+  the server's `serverPath`, `serverArguments`, `workingDirectory` and `logFilePath` (no
+  `wreckfestServer` section), and SteamCMD's `steamCmdPath`, which is **hidden** - not
+  even readable - along with the fixed `wreckfestAppId` (no `steamCmd` section). They
+  decide which programs the controller starts and which files it reads and writes, so a
+  web admin who could change them could run any program or read any file on the PC, and
+  reading them would only reveal local paths. They are set in the WPF app only. The web
+  keeps the server actions, Update included (`POST /api/server/update`).
 
 ### Catalogue — `api/catalogue`
 

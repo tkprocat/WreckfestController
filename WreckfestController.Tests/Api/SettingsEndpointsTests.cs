@@ -1,10 +1,21 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using WreckfestController.Data;
+using WreckfestController.Models;
+using WreckfestController.Services.Config;
+using WreckfestController.Services.Voting;
 
 namespace WreckfestController.Tests.Api;
 
-/// <summary>/api/settings: the database sections, partial edits with If-Match, and no startup settings.</summary>
+/// <summary>
+/// /api/settings: the database sections, partial edits with If-Match, and neither startup
+/// nor launch settings.
+/// </summary>
 public class SettingsEndpointsTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -21,20 +32,46 @@ public class SettingsEndpointsTests
     }
 
     [Fact]
-    public async Task List_HasTheThreeSections_WithoutInternalFields()
+    public async Task List_HasOnlyTheVoteSection_WithoutInternalFields()
     {
         await using var host = await ApiTestHost.StartAsync();
         using var client = host.CreateAuthenticatedClient();
 
         var body = await client.GetFromJsonAsync<JsonElement>("/api/settings", Ct);
 
-        Assert.Equal(["steamCmd", "vote", "wreckfestServer"], body.EnumerateObject().Select(p => p.Name).Order());
-        Assert.Equal("-s server_config=server_config.cfg", body.GetProperty("wreckfestServer").GetProperty("serverArguments").GetString());
+        Assert.Equal(["vote"], body.EnumerateObject().Select(p => p.Name));
         Assert.Equal(1, body.GetProperty("vote").GetProperty("version").GetInt32());
 
-        // Hook-only I/O, and a legacy flag that only mirrors mode.
-        Assert.False(body.GetProperty("wreckfestServer").TryGetProperty("outputMode", out _));
+        // A legacy flag that only mirrors mode.
         Assert.False(body.GetProperty("vote").TryGetProperty("enabled", out _));
+    }
+
+    // Which programs run, from where, and which files the controller reads and writes are
+    // set in the desktop app only: a web admin who could change them could run any
+    // program, or read or overwrite any file, as the controller's Windows user.
+    [Theory]
+    [InlineData("serverPath")]
+    [InlineData("serverArguments")]
+    [InlineData("workingDirectory")]
+    [InlineData("logFilePath")]
+    [InlineData("steamCmdPath")]
+    [InlineData("wreckfestAppId")]
+    public async Task LaunchSettings_AreNeitherReadNorWritten(string field)
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+
+        var all = await client.GetStringAsync("/api/settings", Ct);
+        using var put = await SendAsync(
+            client,
+            "/api/settings/vote",
+            new Dictionary<string, string> { [field] = @"C:\Windows\System32\cmd.exe" },
+            "\"1\"");
+
+        Assert.DoesNotContain(field, all, StringComparison.OrdinalIgnoreCase);
+        await AuthEndpointsTests.AssertFieldErrorAsync(put, field);
+        using var after = await client.GetAsync("/api/settings/vote", Ct);
+        Assert.Equal("\"1\"", after.Headers.ETag?.Tag);
     }
 
     [Theory]
@@ -42,7 +79,9 @@ public class SettingsEndpointsTests
     [InlineData("Api")]
     [InlineData("database")]
     [InlineData("userSettingsPath")]
-    public async Task StartupSettings_HaveNoRoute(string section)
+    [InlineData("wreckfestServer")]
+    [InlineData("steamCmd")]
+    public async Task StartupAndLaunchSettings_HaveNoRoute(string section)
     {
         await using var host = await ApiTestHost.StartAsync();
         using var client = host.CreateAuthenticatedClient();
@@ -87,9 +126,9 @@ public class SettingsEndpointsTests
     {
         await using var host = await ApiTestHost.StartAsync();
         using var client = host.CreateAuthenticatedClient();
-        var read = await client.GetFromJsonAsync<JsonElement>("/api/settings/wreckfestServer", Ct);
+        var read = await client.GetFromJsonAsync<JsonElement>("/api/settings/vote", Ct);
 
-        using var saved = await SendAsync(client, "/api/settings/wreckfestServer", read, "\"1\"");
+        using var saved = await SendAsync(client, "/api/settings/vote", read, "\"1\"");
 
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
     }
@@ -103,10 +142,6 @@ public class SettingsEndpointsTests
         { "vote", new { suppressCommandsDuringRace = "yes" }, "suppressCommandsDuringRace" },
         { "vote", new { enabled = false }, "enabled" },
         { "vote", new { allowedTracks = Array.Empty<object>() }, "allowedTracks" },
-        { "wreckfestServer", new { outputMode = "ConsoleReader" }, "outputMode" },
-        { "wreckfestServer", new { serverArguments = "-s server_config=a.cfg\n-other" }, "serverArguments" },
-        { "wreckfestServer", new { serverPath = (string?)null }, "serverPath" },
-        { "steamCmd", new { wreckfestAppId = "361580; rm" }, "wreckfestAppId" },
     };
 
     [Theory]
@@ -122,6 +157,36 @@ public class SettingsEndpointsTests
         using var after = await client.GetAsync($"/api/settings/{section}", Ct);
         Assert.Equal("\"1\"", after.Headers.ETag?.Tag);
     }
+
+    // Two stores on one database: a partial edit must merge into the version the client
+    // named, never into an older cached copy that would put back a field changed since.
+    [Fact]
+    public async Task Put_DoesNotMergeIntoAnOlderCachedCopy()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+        using var first = await client.GetAsync("/api/settings/vote", Ct);
+        Assert.Equal("\"1\"", first.Headers.ETag?.Tag);
+
+        var other = OtherStore(host);
+        var vote = other.GetEntry<VoteSettings>();
+        vote.Value.Mode = VoteModes.Direct;
+        var saved = await other.SaveAsync(vote.Value, vote.Version, Ct);
+        Assert.Equal(2, saved.Current.Version);
+
+        using var put = await SendAsync(client, "/api/settings/vote", new { messageDelayMs = 100 }, "\"2\"");
+
+        Assert.Equal(HttpStatusCode.Conflict, put.StatusCode);
+        var stored = OtherStore(host).GetEntry<VoteSettings>();
+        Assert.Equal(VoteModes.Direct, stored.Value.Mode);
+        Assert.Equal(2, stored.Version);
+    }
+
+    private static SettingsStore OtherStore(ApiTestHost host) => new(
+        host.MainServices.GetRequiredService<IDbContextFactory<ControllerDbContext>>(),
+        host.MainServices.GetRequiredService<DatabaseState>(),
+        new ShippedSettings(new ConfigurationBuilder().Build()),
+        NullLogger<SettingsStore>.Instance);
 
     private static Task<HttpResponseMessage> SendAsync(HttpClient client, string url, object? body, string? ifMatch)
     {
