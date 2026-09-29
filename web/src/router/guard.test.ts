@@ -20,7 +20,9 @@ for (const view of [
 const { router } = await import('./index')
 
 beforeEach(async () => {
+  auth.loaded = true
   auth.authenticated = true
+  auth.load.mockReset()
   await router.push('/')
 })
 
@@ -44,5 +46,27 @@ describe('router guard', () => {
     await router.push('/login?redirect=/admin/server')
 
     expect(router.currentRoute.value.name).toBe('login')
+  })
+
+  // Routes match regardless of case: /LOGIN is the sign-in page too, and must not bounce
+  // a signed-in user back to it.
+  it('sends a signed-in user past the sign-in page in any spelling', async () => {
+    await router.push('/LOGIN?redirect=/Login')
+
+    expect(router.currentRoute.value.fullPath).toBe('/admin')
+  })
+
+  // The controller cannot be reached: nobody counts as signed in, the sign-in page shows,
+  // and the admin area sends there - no loop, and the next navigation asks again.
+  it('shows the sign-in page when the controller cannot be reached', async () => {
+    auth.loaded = false
+    auth.authenticated = false
+    auth.load.mockResolvedValue(false)
+
+    await router.push('/admin/server')
+
+    expect(router.currentRoute.value.name).toBe('login')
+    expect(router.currentRoute.value.query.redirect).toBe('/admin/server')
+    expect(auth.load).toHaveBeenCalled()
   })
 })
