@@ -90,9 +90,9 @@ public sealed class SettingsServiceTests : IDisposable
         var before = File.ReadAllBytes(_userSettingsPath);
 
         var service = CreateService();
-        var (settings, versions) = service.LoadForEdit();
-        settings.Vote!.Mode = VoteModes.Direct;
-        service.SaveSettings(settings, versions);
+        var loaded = service.LoadForEdit();
+        loaded.Settings.Vote!.Mode = VoteModes.Direct;
+        service.SaveSettings(loaded.Settings, loaded);
 
         // Startup keys still come from the file.
         Assert.Equal("from-the-file", _configuration["Api:Key"]);
@@ -118,48 +118,77 @@ public sealed class SettingsServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Save_AfterAnotherEditorsChange_SavesNothing()
+    public async Task Save_WhenASectionItChanges_WasChangedElsewhere_SavesNothing()
     {
         var service = CreateService();
-        var (settings, versions) = service.LoadForEdit();
+        var loaded = service.LoadForEdit();
 
         // The web app changes the Vote settings meanwhile.
-        var web = _store.GetEntry<VoteSettings>();
-        web.Value.MaxLapsAllowed = 7;
-        await _store.SaveAsync(web.Value, web.Version);
+        await SaveElsewhereAsync<VoteSettings>(v => v.MaxLapsAllowed = 7);
 
-        settings.WreckfestServer!.ServerPath = @"C:\New\Wreckfest_x64.exe";
-        settings.Vote!.Mode = VoteModes.Off;
-        var error = Assert.Throws<InvalidOperationException>(() => service.SaveSettings(settings, versions));
+        loaded.Settings.WreckfestServer!.ServerPath = @"C:\New\Wreckfest_x64.exe";
+        loaded.Settings.Vote!.Mode = VoteModes.Off;
+        var error = Assert.Throws<SettingsConflictException>(() => service.SaveSettings(loaded.Settings, loaded));
 
+        // One transaction: the server section, checked and written first, was rolled back.
         Assert.Contains("voting settings were changed elsewhere", error.Message, StringComparison.Ordinal);
         Assert.Equal(string.Empty, _store.Get<WreckfestServerSettings>().ServerPath);
+        Assert.Equal(1, _store.GetEntry<WreckfestServerSettings>().Version);
         Assert.Equal((VoteModes.Voting, 7), (_store.Get<VoteSettings>().Mode, _store.Get<VoteSettings>().MaxLapsAllowed));
     }
 
     [Fact]
-    public void Save_LeavesUnchangedSectionsAtTheirVersion()
+    public async Task Save_LeavesAloneWhatItDidNotChange_EvenWhenChangedElsewhere()
     {
         var service = CreateService();
-        var (settings, versions) = service.LoadForEdit();
+        var loaded = service.LoadForEdit();
+        await SaveElsewhereAsync<VoteSettings>(v => v.MaxLapsAllowed = 7);
 
-        settings.SteamCmd!.SteamCmdPath = @"C:\steamcmd\steamcmd.exe";
-        var saved = service.SaveSettings(settings, versions);
+        loaded.Settings.SteamCmd!.SteamCmdPath = @"C:\steamcmd\steamcmd.exe";
+        var saved = service.SaveSettings(loaded.Settings, loaded);
 
-        Assert.Equal(versions with { SteamCmd = versions.SteamCmd + 1 }, saved);
+        // Only SteamCMD was written; the other editor's Vote change stands.
+        Assert.Equal(loaded.Versions with { SteamCmd = loaded.Versions.SteamCmd + 1 }, saved.Versions);
+        Assert.Equal(@"C:\steamcmd\steamcmd.exe", _store.Get<SteamCmdSettings>().SteamCmdPath);
+        Assert.Equal(7, _store.Get<VoteSettings>().MaxLapsAllowed);
+    }
+
+    [Fact]
+    public void Save_ReturnsWhatTheEditorNowHolds()
+    {
+        var service = CreateService();
+        var loaded = service.LoadForEdit();
+
+        loaded.Settings.Vote!.Mode = "direct";
+        var saved = service.SaveSettings(loaded.Settings, loaded);
+
+        // As stored (the mode spelled the store's way), at the version it was stored at.
+        Assert.Equal(VoteModes.Direct, saved.Settings.Vote!.Mode);
+        Assert.Equal(_store.GetEntry<VoteSettings>().Version, saved.Versions.Vote);
+
+        // Saving the unchanged form again writes nothing.
+        Assert.Equal(saved.Versions, service.SaveSettings(saved.Settings, saved).Versions);
     }
 
     [Fact]
     public void Save_InRecoveryMode_Refuses()
     {
         var service = CreateService();
-        var (settings, versions) = service.LoadForEdit();
+        var loaded = service.LoadForEdit();
         _database.MarkFailed("disk gone", null);
 
-        settings.Vote!.Mode = VoteModes.Off;
-        var error = Assert.Throws<InvalidOperationException>(() => service.SaveSettings(settings, versions));
+        loaded.Settings.Vote!.Mode = VoteModes.Off;
+        var error = Assert.Throws<InvalidOperationException>(() => service.SaveSettings(loaded.Settings, loaded));
 
         Assert.Contains("database is unavailable", error.Message, StringComparison.Ordinal);
+    }
+
+    private async Task SaveElsewhereAsync<T>(Action<T> change)
+        where T : class
+    {
+        var entry = _store.GetEntry<T>();
+        change(entry.Value);
+        Assert.Equal(SettingsSaveStatus.Saved, (await _store.SaveAsync(entry.Value, entry.Version)).Status);
     }
 
     private sealed class Factory(DbContextOptions<ControllerDbContext> options) : IDbContextFactory<ControllerDbContext>

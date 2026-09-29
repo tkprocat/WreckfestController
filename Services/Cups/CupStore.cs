@@ -19,6 +19,14 @@ public sealed record CupDefinition(
     string? SessionMode = null,
     string? GridOrder = null);
 
+/// <summary>What the public page shows of a cup.</summary>
+public sealed record CupSummary(
+    string Name,
+    string Description,
+    DateTime? NextOccurrence,
+    RepeatSchedule? Repeat,
+    DateTime? ActivatedAt);
+
 public enum CupWriteStatus
 {
     Saved,
@@ -55,6 +63,32 @@ public sealed class CupStore
     }
 
     private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
+
+    /// <summary>
+    /// The active cup and the next <paramref name="upcoming"/>, as the public page shows
+    /// them: a few columns each, and no settings, tracks or accounts. Two small queries,
+    /// however many cups have run before.
+    /// </summary>
+    public async Task<(CupSummary? Active, List<CupSummary> Upcoming)> ScheduleAsync(
+        int upcoming,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
+        var active = await db.Cups
+            .AsNoTracking()
+            .Where(c => c.IsActive)
+            .Select(c => new CupSummary(c.Name, c.Description, c.NextOccurrence, c.Repeat, c.ActivatedAt))
+            .FirstOrDefaultAsync(cancellationToken);
+        var next = await db.Cups
+            .AsNoTracking()
+            .Where(c => c.NextOccurrence != null)
+            .OrderBy(c => c.NextOccurrence)
+            .ThenBy(c => c.Id)
+            .Take(upcoming)
+            .Select(c => new CupSummary(c.Name, c.Description, c.NextOccurrence, c.Repeat, c.ActivatedAt))
+            .ToListAsync(cancellationToken);
+        return (active, next);
+    }
 
     /// <summary>Every cup, with its linked collection's tracks loaded, in order of next occurrence.</summary>
     public async Task<List<Cup>> ListAsync(CancellationToken cancellationToken = default)

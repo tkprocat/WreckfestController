@@ -1,6 +1,5 @@
 using System.Reflection;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using WreckfestController.Models;
@@ -17,6 +16,13 @@ namespace WreckfestController.Controllers;
 /// Only the sections in <see cref="All"/> exist here. The startup settings (the API's
 /// binding and key, the database path) stay in the startup file and have no route, so a
 /// web session can never change how it is itself reached.
+/// <para>
+/// Launch settings - which programs start, from where, with which config file, and which
+/// file the log viewer reads - are not exposed here at all, neither read nor written.
+/// They are set in the desktop app or the config files only. A web admin who could
+/// change them could run any program, or read and overwrite any file, as the Windows
+/// user the controller runs as; and reading them would only reveal local paths.
+/// </para>
 /// </remarks>
 internal interface ISettingsApiSection
 {
@@ -32,37 +38,19 @@ internal static class SettingsApi
 {
     public static readonly IReadOnlyList<ISettingsApiSection> All =
     [
-        new SettingsApiSection<WreckfestServerSettings>(
-            "wreckfestServer",
-            hidden: [nameof(WreckfestServerSettings.OutputMode)],
-            ValidateServer),
-        new SettingsApiSection<SteamCmdSettings>("steamCmd", hidden: [], ValidateSteamCmd),
+        // No wreckfestServer section: every field in it is a launch setting (serverPath,
+        // serverArguments - whose server_config= names the file ConfigService writes -
+        // workingDirectory, logFilePath) or internal (outputMode).
+        //
+        // No steamCmd section either. SteamCmdPath is the program Update runs: a launch
+        // setting, hidden from the web entirely, neither read nor written. WreckfestAppId
+        // is Steam's fixed id for the dedicated server, with nothing to edit. Both are
+        // set in the desktop app only; the web keeps the Update action itself.
         new SettingsApiSection<VoteSettings>("vote", hidden: [nameof(VoteSettings.Enabled)], ValidateVote),
     ];
 
     public static ISettingsApiSection? Find(string name) =>
         All.FirstOrDefault(s => string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase));
-
-    private const int PathMaxLength = 1024;
-    private static readonly Regex AppId = new("^[0-9]{1,12}$", RegexOptions.CultureInvariant);
-
-    private static (string Field, string Message)? ValidateServer(WreckfestServerSettings server) =>
-        Text("serverPath", server.ServerPath)
-        ?? Text("serverArguments", server.ServerArguments)
-        ?? Text("workingDirectory", server.WorkingDirectory)
-        ?? Text("logFilePath", server.LogFilePath);
-
-    private static (string Field, string Message)? ValidateSteamCmd(SteamCmdSettings steamCmd)
-    {
-        if (Text("steamCmdPath", steamCmd.SteamCmdPath) is { } error)
-        {
-            return error;
-        }
-
-        return steamCmd.WreckfestAppId is { } id && !AppId.IsMatch(id)
-            ? ("wreckfestAppId", "wreckfestAppId must be a Steam app id: digits only.")
-            : null;
-    }
 
     private static (string Field, string Message)? ValidateVote(VoteSettings vote)
     {
@@ -83,22 +71,6 @@ internal static class SettingsApi
             ?? Range("messageDelayMs", vote.MessageDelayMs, 0, 5000);
     }
 
-    /// <summary>Paths and arguments: one line, and of a sane length.</summary>
-    private static (string Field, string Message)? Text(string field, string? value)
-    {
-        if (value is null)
-        {
-            return null;
-        }
-
-        if (value.AsSpan().IndexOfAny('\r', '\n', '\0') >= 0)
-        {
-            return (field, $"{field} must not contain line breaks.");
-        }
-
-        return value.Length > PathMaxLength ? (field, $"{field} must be at most {PathMaxLength} characters.") : null;
-    }
-
     private static (string Field, string Message)? Range(string field, int value, int min, int max) =>
         value < min || value > max ? (field, $"{field} must be between {min} and {max}.") : null;
 }
@@ -106,7 +78,8 @@ internal static class SettingsApi
 /// <summary>
 /// A section of type <typeparamref name="T"/>. Fields are its public properties in
 /// camelCase, less <c>hidden</c> ones. A PUT changes only the fields in the body; the
-/// rest keep their stored values.
+/// rest keep their stored values. A hidden field is unknown here: a PUT naming one is
+/// rejected like any other unknown field.
 /// </summary>
 internal sealed class SettingsApiSection<T> : ISettingsApiSection
     where T : class
@@ -142,7 +115,16 @@ internal sealed class SettingsApiSection<T> : ISettingsApiSection
             return controller.Invalid(Name, "Body must be a JSON object of the fields to change.");
         }
 
-        var value = store.GetEntry<T>().Value;
+        // The merge base must be the version the client edited. Saving it against that
+        // same version keeps the database's concurrency check: if the store's copy is
+        // behind the database, the save conflicts instead of reverting newer changes.
+        var entry = store.GetEntry<T>();
+        if (entry.Version != expectedVersion)
+        {
+            return controller.VersionConflict(ToBody(entry.Value, entry.Version), entry.Version);
+        }
+
+        var value = entry.Value;
         foreach (var field in body.EnumerateObject())
         {
             // A client may send back what it read, version included; If-Match is what counts.
@@ -182,7 +164,7 @@ internal sealed class SettingsApiSection<T> : ISettingsApiSection
         SettingsSaveResult<T> result;
         try
         {
-            result = await store.SaveAsync(value, expectedVersion);
+            result = await store.SaveAsync(value, entry.Version);
         }
         catch (SettingsUnavailableException ex)
         {

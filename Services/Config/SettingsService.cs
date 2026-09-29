@@ -10,6 +10,39 @@ namespace WreckfestController.Services.Config;
 public sealed record SettingsVersions(int WreckfestServer, int SteamCmd, int Vote);
 
 /// <summary>
+/// What an editor loaded: the settings and their versions, taken at the same moment. It
+/// also keeps each section as loaded, so a save can tell what changed even when the caller
+/// edits <see cref="Settings"/> in place.
+/// </summary>
+public sealed class SettingsSnapshot
+{
+    private readonly Dictionary<Type, string> _loaded;
+
+    public SettingsSnapshot(UserSettings settings, SettingsVersions versions)
+    {
+        Settings = settings;
+        Versions = versions;
+        _loaded = new Dictionary<Type, string>
+        {
+            [typeof(WreckfestServerSettings)] = JsonSerializer.Serialize(settings.WreckfestServer),
+            [typeof(SteamCmdSettings)] = JsonSerializer.Serialize(settings.SteamCmd),
+            [typeof(VoteSettings)] = JsonSerializer.Serialize(settings.Vote),
+        };
+    }
+
+    public UserSettings Settings { get; }
+
+    public SettingsVersions Versions { get; }
+
+    /// <summary>The section exactly as it was loaded, whatever has been done to <see cref="Settings"/> since.</summary>
+    internal T? Loaded<T>() where T : class => JsonSerializer.Deserialize<T>(_loaded[typeof(T)]);
+}
+
+/// <summary>A section the edit changes was changed elsewhere since it was loaded; nothing was saved.</summary>
+public sealed class SettingsConflictException(string section)
+    : InvalidOperationException($"The {section} settings were changed elsewhere since they were loaded. Nothing was saved.");
+
+/// <summary>
 /// The WPF Configuration tab's view of the settings: the database sections as one
 /// <see cref="UserSettings"/>, and where things are kept.
 /// </summary>
@@ -44,6 +77,8 @@ public class SettingsService
 
         _logger.LogInformation("Startup settings file: {Path}", _userSettingsPath);
         ReportRetiredKeys();
+
+        _database.Changed += () => DatabaseChanged?.Invoke();
     }
 
     /// <summary>The startup settings file, read-only for 2.0.</summary>
@@ -55,68 +90,56 @@ public class SettingsService
     /// <summary>The current settings, for reading. Use <see cref="LoadForEdit"/> to save them back.</summary>
     public UserSettings LoadSettings() => LoadForEdit().Settings;
 
-    /// <summary>The current settings and their versions, for an editor that will save them.</summary>
-    public (UserSettings Settings, SettingsVersions Versions) LoadForEdit()
+    /// <summary>
+    /// Raised when the database becomes available or unavailable, so an editor that loaded
+    /// the shipped defaults (recovery mode) can load the stored settings instead.
+    /// </summary>
+    public event Action? DatabaseChanged;
+
+    /// <summary>The current settings and their versions, taken together, for an editor that will save them.</summary>
+    public SettingsSnapshot LoadForEdit()
     {
         var server = _store.GetEntry<WreckfestServerSettings>();
         var steamCmd = _store.GetEntry<SteamCmdSettings>();
         var vote = _store.GetEntry<VoteSettings>();
 
-        return (
+        return new SettingsSnapshot(
             new UserSettings { WreckfestServer = server.Value, SteamCmd = steamCmd.Value, Vote = vote.Value },
             new SettingsVersions(server.Version, steamCmd.Version, vote.Version));
     }
 
     /// <summary>
-    /// Saves each section of <paramref name="settings"/> that differs from what is stored,
-    /// against the version <paramref name="loaded"/> says the editor started from. Returns
-    /// the versions to save against next time.
+    /// Saves the sections of <paramref name="edited"/> that differ from
+    /// <paramref name="loaded"/>, each at the version it was loaded at, in one transaction.
+    /// Returns what the editor now holds: the saved values and their new versions, and the
+    /// untouched sections as they were loaded.
     /// </summary>
-    /// <exception cref="InvalidOperationException">
-    /// A section was changed elsewhere (the web app, say) since it was loaded, or the
-    /// database is unavailable. Every section is checked before any is saved, so a
-    /// stale edit saves nothing.
+    /// <exception cref="SettingsConflictException">
+    /// A section this edit changes was changed elsewhere (the web app, say) since it was
+    /// loaded. Nothing is saved.
     /// </exception>
-    public SettingsVersions SaveSettings(UserSettings settings, SettingsVersions loaded)
+    /// <exception cref="InvalidOperationException">The database is unavailable.</exception>
+    public SettingsSnapshot SaveSettings(UserSettings edited, SettingsSnapshot loaded)
     {
         if (!_database.IsReady)
         {
             throw new InvalidOperationException("Settings cannot be saved while the database is unavailable.");
         }
 
-        Check(loaded.WreckfestServer, _store.GetEntry<WreckfestServerSettings>().Version, "server");
-        Check(loaded.SteamCmd, _store.GetEntry<SteamCmdSettings>().Version, "SteamCMD");
-        Check(loaded.Vote, _store.GetEntry<VoteSettings>().Version, "voting");
-
-        return new SettingsVersions(
-            Save(settings.WreckfestServer, loaded.WreckfestServer, "server"),
-            Save(settings.SteamCmd, loaded.SteamCmd, "SteamCMD"),
-            Save(settings.Vote, loaded.Vote, "voting"));
-    }
-
-    private static void Check(int loadedVersion, int currentVersion, string label)
-    {
-        if (loadedVersion != currentVersion)
+        var changes = new List<SettingsChange>();
+        var server = Changed(edited.WreckfestServer, loaded.Loaded<WreckfestServerSettings>(), loaded.Versions.WreckfestServer, changes);
+        var steamCmd = Changed(edited.SteamCmd, loaded.Loaded<SteamCmdSettings>(), loaded.Versions.SteamCmd, changes);
+        var vote = Changed(edited.Vote, loaded.Loaded<VoteSettings>(), loaded.Versions.Vote, changes);
+        if (changes.Count == 0)
         {
-            Conflict(label);
-        }
-    }
-
-    private int Save<T>(T? value, int loadedVersion, string label)
-        where T : class
-    {
-        var current = _store.GetEntry<T>();
-        if (value is null || SameJson(value, current.Value))
-        {
-            // Unchanged: saving would only bump the version under someone else's editor.
-            return current.Version == loadedVersion ? loadedVersion : Conflict(label);
+            return new SettingsSnapshot(new UserSettings { WreckfestServer = server, SteamCmd = steamCmd, Vote = vote }, loaded.Versions);
         }
 
-        SettingsSaveResult<T> result;
+        SettingsBatchResult result;
         try
         {
             // The store never resumes on this thread, so blocking the UI thread is safe.
-            result = _store.SaveAsync(value, loadedVersion).GetAwaiter().GetResult();
+            result = _store.SaveAllAsync(changes).GetAwaiter().GetResult();
         }
         catch (SettingsUnavailableException ex)
         {
@@ -125,18 +148,54 @@ public class SettingsService
 
         if (result.Status == SettingsSaveStatus.Conflict)
         {
-            return Conflict(label);
+            throw new SettingsConflictException(Label(result.ConflictingSection));
         }
 
-        _logger.LogInformation("Saved the {Section} settings", label);
-        return result.Current.Version;
+        _logger.LogInformation(
+            "Saved the {Sections} settings",
+            string.Join(", ", changes.Select(c => Label(c.Section))));
+
+        int VersionOf(Type type, int loadedVersion) => result.Versions.TryGetValue(type, out var saved) ? saved : loadedVersion;
+        return new SettingsSnapshot(
+            new UserSettings { WreckfestServer = server, SteamCmd = steamCmd, Vote = vote },
+            new SettingsVersions(
+                VersionOf(typeof(WreckfestServerSettings), loaded.Versions.WreckfestServer),
+                VersionOf(typeof(SteamCmdSettings), loaded.Versions.SteamCmd),
+                VersionOf(typeof(VoteSettings), loaded.Versions.Vote)));
     }
 
-    private static int Conflict(string label) =>
-        throw new InvalidOperationException(
-            $"The {label} settings were changed elsewhere since this tab loaded them. Reload them and try again.");
+    /// <summary>
+    /// Adds <paramref name="edited"/> to <paramref name="changes"/> when it differs from what
+    /// was loaded, once brought into range as the store will store it. Returns the value the
+    /// editor holds for the section afterwards.
+    /// </summary>
+    private static T? Changed<T>(T? edited, T? loaded, int loadedVersion, List<SettingsChange> changes)
+        where T : class
+    {
+        if (edited is null)
+        {
+            return loaded;
+        }
 
-    private static bool SameJson<T>(T a, T b) => JsonSerializer.Serialize(a) == JsonSerializer.Serialize(b);
+        var stored = (T)SettingsSections.Normalize(typeof(T), Copy(edited));
+        if (loaded is not null && Json(stored) == Json(loaded))
+        {
+            return loaded;
+        }
+
+        changes.Add(new SettingsChange(typeof(T), stored, loadedVersion));
+        return stored;
+    }
+
+    private static string Label(Type? section) =>
+        section == typeof(WreckfestServerSettings) ? "server"
+        : section == typeof(SteamCmdSettings) ? "SteamCMD"
+        : section == typeof(VoteSettings) ? "voting"
+        : "these";
+
+    private static string Json<T>(T value) => JsonSerializer.Serialize(value);
+
+    private static T Copy<T>(T value) => JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(value))!;
 
     /// <summary>
     /// Logs, once, each 1.x key in user-settings.json that 2.0 no longer reads, so an

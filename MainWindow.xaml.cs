@@ -134,6 +134,26 @@ public partial class MainWindow : Window
     /// </summary>
     private async Task OfferFirstAdminAsync()
     {
+#if DEBUG
+        // Its own try: a rejected seed must not also skip the first-admin dialog.
+        try
+        {
+            var seeded = await _accountService.SeedDevAdminAsync();
+            if (seeded is not null)
+            {
+                _logger.LogWarning("Debug build: seeded web admin {UserName} from DevSeed configuration", seeded);
+                if (_configurationTab is not null)
+                {
+                    await _configurationTab.RefreshAccountsAsync();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not seed the DevSeed web admin");
+        }
+#endif
+
         try
         {
             if (!await _accountService.NeedsFirstAdminAsync())

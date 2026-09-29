@@ -1,8 +1,15 @@
+using System.Data.Common;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using WreckfestController.Services.Auth;
+using WreckfestController.Services.Cups;
+using WreckfestController.Services.Tracking;
+using WreckfestController.Tests.Services.Tracking;
 
 namespace WreckfestController.Tests.Api;
 
@@ -128,21 +135,114 @@ public sealed class PublicEndpointsTests : IDisposable
     }
 
     [Fact]
-    public async Task Overview_IsRateLimitedPerClient()
+    public async Task Overview_ShowsPlayersAndCups()
     {
         await using var host = await ApiTestHost.StartAsync(Settings);
+        using (var admin = host.CreateAuthenticatedClient())
+        {
+            await CreateCupAsync(admin, "Tonight", DateTime.UtcNow.AddHours(3), repeat: null);
+            await CreateCupAsync(admin, "Weekly", DateTime.UtcNow.AddDays(2), repeat: new { frequency = "weekly", days = new[] { 5 }, time = "20:00" });
+        }
+
+        var store = host.MainServices.GetRequiredService<CupStore>();
+        var tonight = (await store.ListAsync(Ct)).Single(c => c.Name == "Tonight");
+        Assert.True(await store.SetActiveAsync(tonight.Id, Ct));
+        host.MainServices.GetRequiredService<PlayerTracker>().Seed("Alice", "Bob");
+
         using var client = host.CreateClient();
+        var body = await client.GetFromJsonAsync<JsonElement>("/api/public/overview", Ct);
+
+        var players = body.GetProperty("players");
+        Assert.Equal(2, players.GetProperty("humans").GetInt32());
+        Assert.Equal(["Alice", "Bob"], players.GetProperty("list").EnumerateArray().Select(p => p.GetProperty("name").GetString()).Order());
+        Assert.Equal(["isBot", "name"], Names(players.GetProperty("list")[0]));
+
+        var active = body.GetProperty("activeCup");
+        Assert.Equal(["activatedAt", "name"], Names(active));
+        Assert.Equal("Tonight", active.GetProperty("name").GetString());
+
+        var upcoming = body.GetProperty("upcomingCups");
+        Assert.Equal(["description", "name", "nextOccurrence", "repeat"], Names(upcoming[0]));
+        Assert.Equal(["Tonight", "Weekly"], upcoming.EnumerateArray().Select(c => c.GetProperty("name").GetString()));
+        Assert.Equal(JsonValueKind.Null, upcoming[0].GetProperty("repeat").ValueKind);
+        Assert.StartsWith("Weekly on Fri at 20:00", upcoming[1].GetProperty("repeat").GetString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ADatabaseFailure_IsA503_WithNothingFromTheException()
+    {
+        var failure = new FailingCupQueryInterceptor();
+        await using var host = await ApiTestHost.StartAsync(Settings, configureDatabase: options => options.AddInterceptors(failure));
+        using var client = host.CreateClient();
+
+        failure.Armed = true;
+        using var response = await client.GetAsync("/api/public/overview", Ct);
+        var text = await response.Content.ReadAsStringAsync(Ct);
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        Assert.Contains("unavailable right now", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(FailingCupQueryInterceptor.Secret, text, StringComparison.Ordinal);
+        Assert.DoesNotContain("Cups", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Overview_IsRateLimitedPerClientIp_WithoutTouchingSignIn()
+    {
+        await using var host = await ApiTestHost.StartAsync(Settings);
+        using var first = Browser(host, "203.0.113.5");
+        using var second = Browser(host, "203.0.113.6");
 
         for (var i = 0; i < RateLimits.PublicPermitsPerWindow; i++)
         {
-            using var ok = await client.GetAsync("/api/public/overview", Ct);
+            using var ok = await first.Http.GetAsync("/api/public/overview", Ct);
             Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
         }
 
-        using var limited = await client.GetAsync("/api/public/overview", Ct);
+        using var limited = await first.Http.GetAsync("/api/public/overview", Ct);
+        using var otherClient = await second.Http.GetAsync("/api/public/overview", Ct);
+        using var signIn = await first.LoginAsync("nobody", "wrong password");
 
         Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
         Assert.Contains("Too many requests", await limited.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.OK, otherClient.StatusCode);
+
+        // Sign-in has its own bucket: a wrong password, not a rate limit.
+        Assert.Equal(HttpStatusCode.Unauthorized, signIn.StatusCode);
+    }
+
+    private static BrowserClient Browser(ApiTestHost host, string peer)
+    {
+        var browser = host.CreateBrowser();
+        browser.Http.DefaultRequestHeaders.Add(ApiTestHost.PeerAddressHeader, peer);
+        return browser;
+    }
+
+    private static async Task CreateCupAsync(HttpClient admin, string name, DateTime start, object? repeat)
+    {
+        using var created = await admin.PostAsJsonAsync("/api/cups", new
+        {
+            name,
+            startTime = start.ToString("yyyy-MM-ddTHH:mm:00Z", CultureInfo.InvariantCulture),
+            repeat,
+        }, Ct);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+    }
+
+    /// <summary>Fails the next query of the Cups table, once armed, with a message that must not leak.</summary>
+    private sealed class FailingCupQueryInterceptor : DbCommandInterceptor
+    {
+        public const string Secret = "C:/secret/controller.db is locked";
+
+        public volatile bool Armed;
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default) =>
+            Armed && command.CommandText.Contains("\"Cups\"", StringComparison.Ordinal)
+                ? throw new InvalidOperationException(Secret)
+                : ValueTask.FromResult(result);
     }
 
     private static List<string> Names(JsonElement element) =>
