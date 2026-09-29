@@ -10,6 +10,7 @@ const pages = [
   { name: 'admin-server', label: 'Server control' },
   { name: 'admin-config', label: 'Server config' },
   { name: 'admin-settings', label: 'Settings' },
+  { name: 'admin-tracks', label: 'Tracks' },
   { name: 'admin-tags', label: 'Tags' },
   { name: 'admin-collections', label: 'Collections' },
   { name: 'admin-users', label: 'Users' },
