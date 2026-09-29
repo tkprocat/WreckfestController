@@ -102,12 +102,13 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * After who is signed in changed. Neither step failing undoes the change: a stale token
-   * is refreshed and retried by the client's middleware, and the hub is optional.
+   * After who is signed in changed. The two steps run side by side: a stalled token
+   * fetch must not keep an ended session's hub in the admin group. Neither failing undoes
+   * the change: a stale token is refreshed and retried by the client's middleware, and
+   * the hub is optional.
    */
   async function settle(): Promise<void> {
-    await refreshAntiforgery().catch(() => undefined)
-    await restartHub().catch(() => undefined)
+    await Promise.all([refreshAntiforgery().catch(() => undefined), restartHub().catch(() => undefined)])
   }
 
   return {

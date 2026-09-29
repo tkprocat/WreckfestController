@@ -130,4 +130,7 @@ export const unauthorized: Middleware = {
 }
 
 export const api = createClient<paths>({ baseUrl: window.location.origin, credentials: 'same-origin' })
-api.use(antiforgery, unauthorized)
+// openapi-fetch runs onResponse hooks last-registered first. antiforgery goes last so its
+// retry runs first, and unauthorized then sees the final response - a retry that ends in
+// 401 must still end the session.
+api.use(unauthorized, antiforgery)

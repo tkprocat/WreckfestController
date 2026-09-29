@@ -64,6 +64,16 @@ describe('sessionEnded', () => {
     expect(refreshAntiforgery).toHaveBeenCalledTimes(1)
   })
 
+  // A token fetch that hangs must not keep the ended session's socket in the admin group.
+  it('regroups the hub without waiting for the token', async () => {
+    const auth = await signedIn()
+    refreshAntiforgery.mockReturnValueOnce(new Promise(() => undefined))
+
+    auth.sessionEnded()
+
+    await vi.waitFor(() => expect(restartHub).toHaveBeenCalledTimes(1))
+  })
+
   it('does nothing when nobody was signed in', () => {
     useAuthStore().sessionEnded()
 

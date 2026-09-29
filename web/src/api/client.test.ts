@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ANTIFORGERY_FAILURE, antiforgery, onUnauthorized, readCookie, unauthorized, XSRF_HEADER } from './client'
+import { ANTIFORGERY_FAILURE, antiforgery, api, onUnauthorized, readCookie, unauthorized, XSRF_HEADER } from './client'
 
 // The middlewares are called as openapi-fetch calls them, with only what they read.
 type RequestHook = NonNullable<typeof antiforgery.onRequest>
@@ -85,6 +85,8 @@ describe('antiforgery', () => {
     const sent = (await callRequest(
       new Request('http://localhost/api/auth/login', { method: 'POST', body: '{"login":"admin"}' }),
     )) as Request
+    // Sending it used up the original's body; the retry must carry its own copy.
+    await sent.text()
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
       if (input === '/api/auth/antiforgery') {
         setCookie('fresh')
@@ -148,6 +150,31 @@ describe('unauthorized', () => {
     callResponse(new Request('http://localhost/api/auth/login', { method: 'POST' }), new Response(null, { status: 401 }))
     callResponse(new Request('http://localhost/api/cups'), new Response(null, { status: 403 }))
 
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Through the real client, in the order openapi-fetch runs the hooks: a retry that ends in
+// 401 must still reach the unauthorized handler, or the page stays signed in.
+describe('api', () => {
+  it('ends the session when the retried request answers 401', async () => {
+    setCookie('stale')
+    const handler = vi.fn()
+    onUnauthorized(handler)
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (input === '/api/auth/antiforgery') {
+        setCookie('fresh')
+        return new Response(null, { status: 204 })
+      }
+
+      const request = input as Request
+      return request.headers.get(XSRF_HEADER) === 'stale' ? antiforgeryFailure() : new Response(null, { status: 401 })
+    })
+    vi.stubGlobal('fetch', fetch)
+
+    const { response } = await api.POST('/api/catalogue/tracks/{id}/hide', { params: { path: { id: 1 } }, fetch })
+
+    expect(response.status).toBe(401)
     expect(handler).toHaveBeenCalledTimes(1)
   })
 })
