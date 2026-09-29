@@ -134,5 +134,53 @@ describe('ConfigView', () => {
     expect(preview.text()).toContain('server_name=Changed name')
     expect(preview.text()).toContain('#CollectionName Evening')
     expect(preview.text()).toContain('el_add=fields14')
+    // Not active in the file: shown commented out, as it is there.
+    expect(preview.text()).toContain('#admin_steam_ids=')
+  })
+
+  // Each control's own disabled overrides the form's, so each must lock itself: the
+  // answer replaces the form, and an edit made while saving would be lost.
+  it('locks every control while saving', async () => {
+    serve()
+    let finish!: (value: unknown) => void
+    api.PUT.mockReturnValue(new Promise((resolve) => (finish = resolve)))
+    mountPage()
+    await flushPromises()
+
+    await input('Server name').setValue('New name')
+    await button('Save').trigger('click')
+    await flushPromises()
+    expect(input('Server name').attributes('disabled')).toBeDefined()
+    expect(input('Max players').attributes('disabled')).toBeDefined()
+
+    finish(answer(config({ serverName: 'New name' })))
+    await flushPromises()
+    expect(input('Server name').attributes('disabled')).toBeUndefined()
+  })
+
+  // Without knowing which settings the file can take, the page does not guess.
+  it('turns editing off when it cannot tell which settings can be saved', async () => {
+    serve()
+    const answers = api.GET.getMockImplementation()!
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/config/basic/fields' ? Promise.resolve(refused({ title: 'Database unavailable.' }, 503)) : answers(path),
+    )
+    mountPage()
+    await flushPromises()
+
+    expect(wrapper!.text()).toContain('Editing is off')
+    expect(input('Server name').attributes('disabled')).toBeDefined()
+    expect(input('Max players').attributes('disabled')).toBeDefined()
+  })
+
+  // Keyboard focus lands on the select's input, so that is what carries the name.
+  it('names each select where focus lands', async () => {
+    serve()
+    mountPage()
+    await flushPromises()
+
+    for (const label of ['Game mode', 'Session mode', 'Grid order', 'AI difficulty']) {
+      expect(input(label).exists(), label).toBe(true)
+    }
   })
 })

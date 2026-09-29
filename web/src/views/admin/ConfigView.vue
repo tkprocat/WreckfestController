@@ -34,8 +34,10 @@ const errors = ref<Record<string, string>>({})
 const loadError = ref<string | null>(null)
 const saving = ref(false)
 
-// Which fields server_config.cfg can take: the rest are greyed out, with why.
+// Which fields server_config.cfg can take: the rest are greyed out, with why. Without
+// this the page cannot tell, so editing stays off rather than guessing.
 const fieldInfo = ref<Record<string, FieldInfo>>({})
+const fieldsError = ref<string | null>(null)
 
 // The rotation, for the preview.
 const rotation = ref<{ collectionName: string; tracks: Track[] } | null>(null)
@@ -53,10 +55,20 @@ const changes = computed<Partial<ServerConfig>>(() => {
 const dirty = computed(() => Object.keys(changes.value).length > 0)
 
 const keys = computed(() => Object.fromEntries(Object.values(fieldInfo.value).map((f) => [f.field, f.key])))
-const preview = computed(() => previewText(form, keys.value, rotation.value))
+const inactive = computed(() => new Set(Object.values(fieldInfo.value).filter((f) => !f.savable).map((f) => f.field)))
+const preview = computed(() => previewText(form, keys.value, rotation.value, inactive.value))
 
 function savable(field: ConfigField): boolean {
-  return fieldInfo.value[field]?.savable ?? true
+  return fieldInfo.value[field]?.savable === true
+}
+
+/**
+ * A control is off while nothing is loaded, while saving (the answer replaces the form, so
+ * an edit made meanwhile would be lost), and for a setting the file cannot take. Each
+ * control needs this itself: its own disabled overrides the form's.
+ */
+function locked(field: ConfigField): boolean {
+  return !loaded.value || saving.value || fieldsError.value !== null || !savable(field)
 }
 
 function show(config: ServerConfig) {
@@ -80,7 +92,14 @@ async function load() {
 
     show(config.data)
     loadError.value = null
-    fieldInfo.value = Object.fromEntries((fields.data ?? []).map((f) => [f.field, f]))
+    if (fields.data) {
+      fieldInfo.value = Object.fromEntries(fields.data.map((f) => [f.field, f]))
+      fieldsError.value = null
+    } else {
+      fieldInfo.value = {}
+      fieldsError.value = problemMessage(fields.error, 'Which settings can be saved could not be checked.')
+    }
+
     rotation.value = tracks.data ? { collectionName: name.data?.collectionName ?? '', tracks: tracks.data.tracks } : null
   } catch {
     loadError.value = 'The server settings could not be loaded: no answer from the controller.'
@@ -143,6 +162,9 @@ onMounted(() => void load())
 
     <NTabs v-else type="line" animated>
       <NTabPane name="settings" tab="Settings">
+        <NAlert v-if="fieldsError" type="warning" class="gap" :title="fieldsError">
+          Editing is off, so nothing is saved that the file cannot take. Reload to try again.
+        </NAlert>
         <NAlert type="info" class="gap" :show-icon="false">
           These are written to server_config.cfg and apply when the server restarts. A greyed-out setting has no
           active line in the file; the note under it says what to change there.
@@ -161,7 +183,7 @@ onMounted(() => void load())
                 v-model:value="(form as Record<string, string>)[def.field]"
                 :maxlength="def.max"
                 :show-count="!!def.max"
-                :disabled="!savable(def.field)"
+                :disabled="locked(def.field)"
                 :input-props="{ 'aria-label': def.label }"
               />
               <NInputNumber
@@ -170,20 +192,22 @@ onMounted(() => void load())
                 :min="def.min"
                 :max="def.max"
                 :precision="0"
-                :disabled="!savable(def.field)"
+                :disabled="locked(def.field)"
                 :input-props="{ 'aria-label': def.label }"
               />
+              <!-- Filterable, so keyboard focus lands on an input, which carries the name. -->
               <NSelect
                 v-else-if="def.kind === 'select'"
                 v-model:value="(form as Record<string, string | number>)[def.field]"
                 :options="[...def.options]"
-                :disabled="!savable(def.field)"
-                :aria-label="def.label"
+                :disabled="locked(def.field)"
+                filterable
+                :input-props="{ 'aria-label': def.label }"
               />
               <NSpace v-else align="center">
                 <NSwitch
                   :value="flag(def.field)"
-                  :disabled="!savable(def.field)"
+                  :disabled="locked(def.field)"
                   :aria-label="def.label"
                   @update:value="(on: boolean) => setFlag(def.field, on)"
                 />
@@ -200,7 +224,8 @@ onMounted(() => void load())
 
       <NTabPane name="preview" tab="Preview">
         <NAlert type="info" class="gap" :show-icon="false">
-          server_config.cfg as these settings and the current rotation would write it, including unsaved changes.
+          A summary of the settings and the rotation in server_config.cfg's format, including unsaved changes. Settings the
+          file has no active line for are shown commented out. It is not the file itself.
         </NAlert>
         <pre class="preview">{{ preview }}</pre>
       </NTabPane>

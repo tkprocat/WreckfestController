@@ -35,4 +35,26 @@ describe('configFields', () => {
     expect(text).toContain('el_add=fields14\nel_laps=3')
     expect(text).not.toContain('el_gamemode')
   })
+
+  // A setting the file has no active line for is not used by the server: the summary must
+  // not show it as if it were.
+  it('shows a setting that is not active in the file commented out', () => {
+    const text = previewText(
+      { adminSteamIds: '123', serverName: 'Race night' },
+      { adminSteamIds: 'admin_steam_ids', serverName: 'server_name' },
+      null,
+      new Set(['adminSteamIds']),
+    )
+
+    expect(text).toContain('#admin_steam_ids=123   (not active in server_config.cfg)')
+    expect(text).toContain('\nserver_name=Race night')
+  })
+
+  // The reference gives the deathmatch time limit a unit but no range: none is invented.
+  it('does not cap the deathmatch time limit', () => {
+    const timeLimit = FIELDS.find((def) => def.field === 'timeLimit')
+
+    expect(timeLimit).toMatchObject({ kind: 'number', min: 1 })
+    expect(timeLimit && 'max' in timeLimit ? timeLimit.max : undefined).toBeUndefined()
+  })
 })

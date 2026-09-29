@@ -12,7 +12,7 @@ export type ConfigField = keyof ServerConfig
  */
 export type FieldDef =
   | { field: ConfigField; label: string; kind: 'text'; max?: number; help?: string }
-  | { field: ConfigField; label: string; kind: 'number'; min: number; max: number; help?: string }
+  | { field: ConfigField; label: string; kind: 'number'; min: number; max?: number; help?: string }
   | { field: ConfigField; label: string; kind: 'select'; options: readonly Option[]; help?: string }
   /** A 0/1 setting, shown as a switch: `on` is what 1 means. */
   | { field: ConfigField; label: string; kind: 'flag'; on: string; help?: string }
@@ -103,7 +103,8 @@ export const SECTIONS: readonly Section[] = [
         options: plain('racing', 'derby', 'derby deathmatch', 'team derby', 'team race', 'elimination race'),
       },
       { field: 'laps', label: 'Laps', kind: 'number', min: 1, max: 60 },
-      { field: 'timeLimit', label: 'Deathmatch time limit (minutes)', kind: 'number', min: 1, max: 60 },
+      // The reference gives the unit but no range.
+      { field: 'timeLimit', label: 'Deathmatch time limit (minutes)', kind: 'number', min: 1 },
       {
         field: 'eliminationInterval',
         label: 'Elimination interval',
@@ -155,19 +156,23 @@ export const SECTIONS: readonly Section[] = [
 export const FIELDS: readonly FieldDef[] = SECTIONS.flatMap((section) => section.fields)
 
 /**
- * server_config.cfg as these settings and this rotation would write it: a preview, not
- * the file itself (the web never reads files). Each field under its key.
+ * A summary of the settings and the rotation in server_config.cfg's own format, as the
+ * controller reads them - not the file byte for byte (the web never reads files). A
+ * setting the file has no active line for is shown commented out, as it is in the file:
+ * the server does not use it, and Save cannot change it.
  */
 export function previewText(
   config: ServerConfig,
   keys: Record<string, string>,
   rotation: { collectionName: string; tracks: components['schemas']['EventLoopTrack'][] } | null,
+  inactive: ReadonlySet<string> = new Set(),
 ): string {
-  const lines: string[] = ['# Wreckfest Server Configuration (preview)', '']
+  const lines: string[] = ['# Wreckfest server settings, as the controller reads them (a summary, not the file)', '']
   for (const section of SECTIONS) {
     lines.push(`# ${section.title}`)
     for (const def of section.fields) {
-      lines.push(`${keys[def.field] ?? def.field}=${config[def.field] ?? ''}`)
+      const line = `${keys[def.field] ?? def.field}=${config[def.field] ?? ''}`
+      lines.push(inactive.has(def.field) ? `#${line}   (not active in server_config.cfg)` : line)
     }
 
     lines.push('')
