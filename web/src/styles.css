@@ -51,3 +51,8 @@ body {
   align-items: center;
   gap: 12px;
 }
+
+.app-error {
+  color: #d03050;
+  font-size: 0.875em;
+}

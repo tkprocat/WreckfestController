@@ -21,18 +21,46 @@ export function readCookie(name: string, cookies: string = document.cookie): str
   return null
 }
 
+/** The title of the server's 400 for a bad token (Services/Auth/CookieAntiforgeryFilter.cs). */
+export const ANTIFORGERY_FAILURE = 'Missing or invalid antiforgery token.'
+
+/** The token fetch in flight, if any: cleared when it settles, so a failure is not kept. */
 let tokenRequest: Promise<void> | null = null
 
 /**
  * Asks the server for a fresh antiforgery token (it arrives as a cookie). The token is
- * tied to who is signed in, so call this after signing in or out.
+ * tied to who is signed in, so call this after signing in or out. Rejects when the
+ * server does not answer with one.
  */
 export function refreshAntiforgery(): Promise<void> {
-  tokenRequest = fetch('/api/auth/antiforgery', { credentials: 'same-origin' }).then(() => undefined)
-  return tokenRequest
+  const request = fetch('/api/auth/antiforgery', { credentials: 'same-origin' }).then((response) => {
+    if (!response.ok) {
+      throw new Error(`Could not get an antiforgery token (HTTP ${response.status}).`)
+    }
+  })
+  tokenRequest = request
+  request.then(
+    () => forget(request),
+    () => forget(request),
+  )
+  return request
 }
 
-/** Copies the antiforgery cookie into the header on every request that changes something. */
+function forget(request: Promise<void>): void {
+  if (tokenRequest === request) {
+    tokenRequest = null
+  }
+}
+
+/** For each request sent with a token, a copy to resend once if the token was stale. */
+const retries = new WeakMap<Request, Request>()
+
+/**
+ * Copies the antiforgery cookie into the header on every request that changes something.
+ * A token can go stale - a session that ended leaves the old user's token behind, and a
+ * cookie that is present is never refetched - so when the server refuses one, this gets
+ * a fresh token and sends the request once more.
+ */
 export const antiforgery: Middleware = {
   async onRequest({ request }) {
     if (!UNSAFE_METHODS.has(request.method)) {
@@ -48,7 +76,34 @@ export const antiforgery: Middleware = {
       request.headers.set(XSRF_HEADER, token)
     }
 
+    retries.set(request, request.clone())
     return request
+  },
+
+  async onResponse({ request, response }) {
+    const retry = retries.get(request)
+    retries.delete(request)
+    if (!retry || response.status !== 400) {
+      return undefined
+    }
+
+    const problem = (await response
+      .clone()
+      .json()
+      .catch(() => null)) as { title?: string } | null
+    if (problem?.title !== ANTIFORGERY_FAILURE) {
+      return undefined
+    }
+
+    await refreshAntiforgery()
+    const token = readCookie(XSRF_COOKIE)
+    if (!token) {
+      return undefined
+    }
+
+    // Straight to fetch, past the middleware: one retry, never a loop.
+    retry.headers.set(XSRF_HEADER, token)
+    return fetch(retry)
   },
 }
 

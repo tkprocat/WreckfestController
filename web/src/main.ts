@@ -9,8 +9,9 @@ import './styles.css'
 
 const app = createApp(App).use(createPinia()).use(router)
 
-// A session that ended elsewhere: forget the user, and ask them to sign in again,
-// coming back to where they were.
+// A session that ended elsewhere: forget the user (which also regroups the hub, so an
+// ended session stops getting admin messages), and ask them to sign in again, coming
+// back to where they were.
 onUnauthorized(() => {
   useAuthStore().sessionEnded()
   const current = router.currentRoute.value

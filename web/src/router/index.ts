@@ -21,6 +21,8 @@ export const router = createRouter({
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
+  // A controller that cannot be reached must not stop public pages rendering: load()
+  // never throws, and until it succeeds nobody counts as signed in.
   if (!auth.loaded) {
     await auth.load()
   }
