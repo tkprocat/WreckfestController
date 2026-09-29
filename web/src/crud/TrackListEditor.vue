@@ -60,6 +60,7 @@ function keyOf(track: Track): number {
 }
 
 const list = ref<HTMLElement | null>(null)
+const picker = ref<HTMLElement | null>(null)
 
 async function move(index: number, by: -1 | 1) {
   const target = index + by
@@ -74,12 +75,30 @@ async function move(index: number, by: -1 | 1) {
   list.value?.querySelector<HTMLButtonElement>(`[data-row="${keyOf(row!)}"] [data-move="${at}"]`)?.focus()
 }
 
-function remove(index: number) {
-  tracks.value = tracks.value.filter((_, i) => i !== index)
+async function remove(index: number) {
+  const next = tracks.value.filter((_, i) => i !== index)
+  tracks.value = next
+
+  // Focus the row that took its place (or the one above), else the picker.
+  await nextTick()
+  const neighbour = next[Math.min(index, next.length - 1)]
+  const target = neighbour
+    ? list.value?.querySelector<HTMLButtonElement>(`[data-row="${keyOf(neighbour)}"] [data-remove]`)
+    : picker.value?.querySelector<HTMLInputElement>('input')
+  target?.focus()
 }
 
+/** A changed field makes a new row object; it keeps the old one's key, so the row (and its focus) stays. */
 function update(index: number, patch: Partial<Track>) {
-  tracks.value = tracks.value.map((t, i) => (i === index ? { ...t, ...patch } : t))
+  tracks.value = tracks.value.map((t, i) => {
+    if (i !== index) {
+      return t
+    }
+
+    const changed = { ...t, ...patch }
+    keys.set(changed, keyOf(t))
+    return changed
+  })
 }
 
 const adding = ref<string | null>(null)
@@ -121,8 +140,7 @@ function errorOf(index: number): string | undefined {
             <NInputNumber
               :value="track.laps ?? null"
               size="small"
-              :min="1"
-              :max="60"
+              :min="0"
               placeholder="Laps"
               style="width: 110px"
               :disabled="disabled"
@@ -133,7 +151,6 @@ function errorOf(index: number): string | undefined {
               :value="track.bots ?? null"
               size="small"
               :min="0"
-              :max="24"
               placeholder="Bots"
               style="width: 110px"
               :disabled="disabled"
@@ -161,23 +178,25 @@ function errorOf(index: number): string | undefined {
           >
             Down
           </NButton>
-          <NButton size="small" type="error" ghost :disabled="disabled" :aria-label="`Remove ${nameOf(track)}`" @click="remove(index)">
+          <NButton size="small" type="error" ghost data-remove :disabled="disabled" :aria-label="`Remove ${nameOf(track)}`" @click="remove(index)">
             Remove
           </NButton>
         </NSpace>
       </li>
     </ol>
     <p v-if="!tracks.length" class="muted">No tracks yet.</p>
-    <NSelect
-      v-model:value="adding"
-      :options="pickOptions"
-      filterable
-      clearable
-      placeholder="Add a track layout..."
-      :disabled="disabled"
-      :input-props="{ 'aria-label': 'Add a track layout' }"
-      @update:value="add"
-    />
+    <div ref="picker">
+      <NSelect
+        v-model:value="adding"
+        :options="pickOptions"
+        filterable
+        clearable
+        placeholder="Add a track layout..."
+        :disabled="disabled"
+        :input-props="{ 'aria-label': 'Add a track layout' }"
+        @update:value="add"
+      />
+    </div>
   </div>
 </template>
 

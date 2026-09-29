@@ -74,12 +74,53 @@ describe('TrackListEditor', () => {
     expect(button('Move Crash Arena - Bowl down').attributes('disabled')).toBeDefined()
   })
 
-  it('removes a row', async () => {
+  it('removes a row, and focus moves to the row that took its place', async () => {
     const tracks = editor([{ track: 'loop' }, { track: 'arena' }])
 
     await button('Remove Fields - Loop').trigger('click')
+    await flushPromises()
 
     expect(tracks.value).toEqual([{ track: 'arena' }])
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Remove Crash Arena - Bowl')
+  })
+
+  it('focuses the picker when the last row is removed', async () => {
+    editor([{ track: 'loop' }])
+
+    await button('Remove Fields - Loop').trigger('click')
+    await flushPromises()
+
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Add a track layout')
+  })
+
+  // A changed field makes a new row object; the row must not remount under the user's cursor.
+  it('keeps the row and its focus while a number is typed', async () => {
+    const tracks = editor([{ track: 'loop', weather: 'rain' }])
+    const laps = () => wrapper!.find<HTMLInputElement>('input[aria-label="Laps for Fields - Loop"]')
+    const before = laps().element
+    before.focus()
+
+    await laps().setValue('1')
+    await laps().setValue('12')
+    await flushPromises()
+
+    expect(laps().element).toBe(before)
+    expect(document.activeElement).toBe(before)
+    expect(tracks.value).toEqual([{ track: 'loop', weather: 'rain', laps: 12 }])
+  })
+
+  // The API allows any non-negative count; the editor must not clamp saved values on blur.
+  it('leaves values the API allows unchanged when tabbing through them', async () => {
+    const tracks = editor([{ track: 'loop', laps: 0, bots: 30 }])
+
+    for (const label of ['Laps for Fields - Loop', 'AI bots for Fields - Loop']) {
+      const input = wrapper!.find(`input[aria-label="${label}"]`)
+      await input.trigger('focus')
+      await input.trigger('blur')
+    }
+    await flushPromises()
+
+    expect(tracks.value).toEqual([{ track: 'loop', laps: 0, bots: 30 }])
   })
 
   it('shows the server message on its row', () => {

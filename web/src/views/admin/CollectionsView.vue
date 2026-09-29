@@ -50,6 +50,22 @@ const summaryOf = (c: Collection): Summary => ({
   updatedAt: c.updatedAt,
 })
 
+/** A track and every setting it saves with, so a conflict shows any setting that differs. */
+function describe(t: Track): string {
+  const settings = [
+    t.gamemode,
+    t.laps != null && `laps ${t.laps}`,
+    t.bots != null && `bots ${t.bots}`,
+    t.numTeams != null && `teams ${t.numTeams}`,
+    t.carResetDisabled != null && `car reset ${t.carResetDisabled ? 'off' : 'on'}`,
+    t.wrongWayLimiterDisabled != null && `wrong-way limiter ${t.wrongWayLimiterDisabled ? 'off' : 'on'}`,
+    t.carClassRestriction && `class ${t.carClassRestriction}`,
+    t.carRestriction && `car ${t.carRestriction}`,
+    t.weather && `weather ${t.weather}`,
+  ].filter(Boolean)
+  return settings.length ? `${t.track} [${settings.join(' · ')}]` : (t.track ?? '')
+}
+
 /** The request's shape: the response's rows without their catalogue link. */
 function toTrack({ variant: _variant, ...track }: Collection['tracks'][number]): Track {
   return track
@@ -225,7 +241,7 @@ onMounted(() => {
         @retry="list.reload()"
       >
         <template #toolbar>
-          <NButton type="primary" :disabled="!loaded" @click="editor.start(null)">Add collection</NButton>
+          <NButton type="primary" :disabled="!loaded || busy !== null" @click="editor.start(null)">Add collection</NButton>
         </template>
       </ResourceTable>
     </NCard>
@@ -241,8 +257,8 @@ onMounted(() => {
     >
       <ConflictDialog
         v-if="conflict"
-        :mine="{ name: conflict.mine.name, tracks: conflict.mine.tracks.map((t) => t.track) }"
-        :theirs="{ name: conflict.theirs.name, tracks: conflict.theirs.tracks.map((t) => t.track) }"
+        :mine="{ name: conflict.mine.name, tracks: conflict.mine.tracks.map(describe) }"
+        :theirs="{ name: conflict.theirs.name, tracks: conflict.theirs.tracks.map(describe) }"
         :labels="{ name: 'Name', tracks: 'Tracks' }"
         @theirs="editor.useTheirs()"
         @mine="editor.keepMine()"

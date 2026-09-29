@@ -117,6 +117,40 @@ describe('CollectionsView', () => {
     expect(body().text()).toContain('Evening (edited)')
   })
 
+  // Same tracks in the same order; only a setting changed elsewhere. "Keep mine" would overwrite it.
+  it('shows a changed track setting in the conflict', async () => {
+    api.PUT.mockResolvedValue(refused(collection(1, 'Evening', [track('loop', { laps: 7, weather: 'rain' }), track('arena')], 5), 409))
+    mountPage()
+    await flushPromises()
+
+    await button('Edit', rowOf('Evening')).trigger('click')
+    await flushPromises()
+    await button('Save').trigger('click')
+    await flushPromises()
+
+    expect(body().text()).toContain('loop [laps 7 · weather rain]')
+    expect(body().text()).not.toContain('Your values and the saved ones are the same.')
+  })
+
+  // A slow Edit must not land on a new collection's draft.
+  it('disables Add while a collection is opening', async () => {
+    let open!: (value: unknown) => void
+    api.GET.mockImplementation((path: string) => {
+      if (path === '/api/collections') return Promise.resolve(answer([summary(1, 'Evening', 2, 4)]))
+      if (path === '/api/catalogue/variants') return Promise.resolve(answer([]))
+      return new Promise((resolve) => (open = resolve))
+    })
+    mountPage()
+    await flushPromises()
+
+    await button('Edit', rowOf('Evening')).trigger('click')
+    expect(button('Add collection').attributes('disabled')).toBeDefined()
+
+    open(answer(collection(1, 'Evening', [track('loop')], 4)))
+    await flushPromises()
+    expect(body().find('input[maxlength="128"]').exists()).toBe(true)
+  })
+
   it('duplicates a collection', async () => {
     api.POST.mockResolvedValue(answer(collection(3, 'Evening (copy)', [track('loop'), track('arena')]), 201))
     mountPage()
