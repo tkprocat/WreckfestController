@@ -7,16 +7,16 @@ export type ServerStatus = components['schemas']['ServerStatusResponse']
 
 /**
  * /api/server/status, for a page that acts on it. Loads can overlap (the page opening, a
- * hub event) and finish out of order, so each is numbered and an older answer is dropped.
- * When a load fails the state is unknown - null - rather than the last one seen: a page
- * must not offer Start or Update to a server it cannot see.
+ * hub event) and finish out of order. Only the latest load's answer counts: an earlier
+ * one was asked before whatever made the page ask again, so even when it arrives first it
+ * may already be out of date. When a load fails the state is unknown - null - rather than
+ * the last one seen: a page must not offer Start or Update to a server it cannot see.
  */
 export function useServerStatus() {
   const status = ref<ServerStatus | null>(null)
   const error = ref<string | null>(null)
 
   let started = 0
-  let settled = 0
 
   async function load(): Promise<void> {
     const id = ++started
@@ -32,11 +32,10 @@ export function useServerStatus() {
       failure = 'The controller cannot be reached.'
     }
 
-    if (id < settled) {
+    if (id !== started) {
       return
     }
 
-    settled = id
     error.value = failure
     status.value = data ?? null
   }
