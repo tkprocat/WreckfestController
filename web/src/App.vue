@@ -31,7 +31,9 @@ async function signOut() {
           <nav class="app-user">
             <template v-if="auth.authenticated">
               <RouterLink :to="{ name: 'admin-dashboard' }">Admin</RouterLink>
-              <span>{{ auth.user?.displayName ?? auth.user?.userName }}</span>
+              <RouterLink :to="{ name: 'admin-profile' }" title="Your profile">
+                {{ auth.user?.displayName ?? auth.user?.userName }}
+              </RouterLink>
               <span v-if="signOutFailed" class="app-error">Sign-out failed. Try again.</span>
               <NButton size="small" quaternary @click="signOut">Sign out</NButton>
             </template>

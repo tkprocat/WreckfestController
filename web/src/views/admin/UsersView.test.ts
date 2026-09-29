@@ -1,0 +1,153 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { defineComponent, h } from 'vue'
+import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { NDialogProvider, NMessageProvider } from 'naive-ui'
+import UsersView from './UsersView.vue'
+
+const api = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() }))
+const auth = vi.hoisted(() => ({ user: null as unknown }))
+vi.mock('@/api/client', () => ({ api }))
+vi.mock('@/stores/auth', async () => {
+  const { reactive } = await import('vue')
+  const store = reactive(auth)
+  return { useAuthStore: () => store }
+})
+
+const user = (id: string, userName: string, overrides: Record<string, unknown> = {}) => ({
+  id,
+  userName,
+  email: `${userName}@example.com`,
+  displayName: null,
+  timeZone: 'Europe/Copenhagen',
+  isLockedOut: false,
+  lockoutEnd: null,
+  ...overrides,
+})
+
+const me = user('1', 'admin')
+const other = user('2', 'bob')
+
+const answer = (data: unknown, status = 200) => ({ data, error: undefined, response: new Response(null, { status }) })
+const refused = (error: unknown, status: number) => ({ data: undefined, error, response: new Response(null, { status }) })
+
+let wrapper: VueWrapper | undefined
+
+function mountPage() {
+  wrapper = mount(
+    defineComponent({ render: () => h(NMessageProvider, () => h(NDialogProvider, () => h(UsersView))) }),
+    { attachTo: document.body },
+  )
+  return wrapper
+}
+
+const body = () => new DOMWrapper(document.body)
+const rowOf = (name: string) => wrapper!.findAll('tr').find((row) => row.text().includes(name))!
+const buttonIn = (row: DOMWrapper<Element>, label: string) => row.findAll('button').find((b) => b.text().trim() === label)!
+const bodyButton = (label: string) => body().findAll('button').find((b) => b.text().trim() === label)!
+
+beforeEach(() => {
+  for (const fn of Object.values(api)) fn.mockReset()
+  auth.user = me
+  api.GET.mockResolvedValue(answer([me, other]))
+})
+
+afterEach(() => {
+  wrapper?.unmount()
+  wrapper = undefined
+  document.body.innerHTML = ''
+})
+
+describe('UsersView', () => {
+  // The server refuses it too; the page does not offer it.
+  it('does not offer to lock or delete your own account', async () => {
+    mountPage()
+    await flushPromises()
+
+    expect(rowOf('admin').text()).toContain('you')
+    expect(buttonIn(rowOf('admin'), 'Lock').attributes('disabled')).toBeDefined()
+    expect(buttonIn(rowOf('admin'), 'Delete').attributes('disabled')).toBeDefined()
+    expect(buttonIn(rowOf('bob'), 'Delete').attributes('disabled')).toBeUndefined()
+  })
+
+  it('adds an account with a temporary password', async () => {
+    api.POST.mockResolvedValue(answer(user('3', 'carol')))
+    mountPage()
+    await flushPromises()
+
+    await bodyButton('Add account').trigger('click')
+    await flushPromises()
+    await body().find('input[aria-label="User name"]').setValue(' carol ')
+    await body().find('input[aria-label="Email"]').setValue('carol@example.com')
+    await body().find('input[aria-label="Temporary password"]').setValue('temporary-1')
+    await bodyButton('Add').trigger('click')
+    await flushPromises()
+
+    expect(api.POST).toHaveBeenCalledWith('/api/users', {
+      body: expect.objectContaining({ userName: 'carol', email: 'carol@example.com', password: 'temporary-1' }),
+    })
+    expect(wrapper!.text()).toContain('carol')
+  })
+
+  it('shows a field error in the form', async () => {
+    api.POST.mockResolvedValue(refused({ title: 'Invalid', errors: { userName: ['That user name is taken.'] } }, 400))
+    mountPage()
+    await flushPromises()
+
+    await bodyButton('Add account').trigger('click')
+    await flushPromises()
+    await body().find('input[aria-label="User name"]').setValue('bob')
+    await bodyButton('Add').trigger('click')
+    await flushPromises()
+
+    expect(body().text()).toContain('That user name is taken.')
+  })
+
+  it('asks before deleting, then deletes', async () => {
+    api.DELETE.mockResolvedValue(answer(undefined, 204))
+    mountPage()
+    await flushPromises()
+
+    await buttonIn(rowOf('bob'), 'Delete').trigger('click')
+    await flushPromises()
+    expect(api.DELETE).not.toHaveBeenCalled()
+    expect(body().text()).toContain('Delete bob?')
+
+    await body().findAll('.n-dialog button').find((b) => b.text().trim() === 'Delete')!.trigger('click')
+    await flushPromises()
+
+    expect(api.DELETE).toHaveBeenCalledWith('/api/users/{id}', { params: { path: { id: '2' } } })
+    expect(wrapper!.text()).not.toContain('bob@example.com')
+  })
+
+  it('locks an account and shows it', async () => {
+    api.POST.mockResolvedValue(answer({ ...other, isLockedOut: true }))
+    mountPage()
+    await flushPromises()
+
+    await buttonIn(rowOf('bob'), 'Lock').trigger('click')
+    await flushPromises()
+
+    expect(api.POST).toHaveBeenCalledWith('/api/users/{id}/lock', { params: { path: { id: '2' } } })
+    expect(rowOf('bob').text()).toContain('Locked')
+    expect(buttonIn(rowOf('bob'), 'Unlock').exists()).toBe(true)
+  })
+
+  it('resets a password', async () => {
+    api.POST.mockResolvedValue(answer(undefined, 204))
+    mountPage()
+    await flushPromises()
+
+    await buttonIn(rowOf('bob'), 'Reset password').trigger('click')
+    await flushPromises()
+    await body().find('input[aria-label="New temporary password"]').setValue('another-temp-1')
+    await body().findAll('.n-modal button').find((b) => b.text().trim() === 'Reset password')!.trigger('click')
+    await flushPromises()
+
+    expect(api.POST).toHaveBeenCalledWith('/api/users/{id}/password', {
+      params: { path: { id: '2' } },
+      body: { newPassword: 'another-temp-1' },
+    })
+    expect(body().text()).toContain('Password reset for bob.')
+  })
+})
+
