@@ -1179,9 +1179,73 @@ public class ServerManager
 
     public (bool Success, string Message) AttachToExistingProcess(int pid)
     {
+        Process process;
         try
         {
-            var process = Process.GetProcessById(pid);
+            process = Process.GetProcessById(pid);
+        }
+        catch (ArgumentException)
+        {
+            return (false, $"Process {pid} does not exist");
+        }
+
+        using (process)
+        {
+            return AttachToExistingProcess(process);
+        }
+    }
+
+    /// <summary>
+    /// Attaches, from the web API, only to the configured dedicated server
+    /// (<see cref="CheckConfiguredServerProcess"/>). The check and the attach hold one open
+    /// native handle to the process: while it is open Windows cannot reuse the PID, so the
+    /// process that passed the check is the one attached - not another that took its PID
+    /// in between.
+    /// </summary>
+    public virtual (bool Success, string Message) AttachToConfiguredServer(int pid)
+    {
+        if (OpenHeld(pid) is not { } process)
+        {
+            return (false, NotAnInspectableServer(pid));
+        }
+
+        using (process)
+        {
+            var check = CheckConfiguredServer(process);
+            return check.Allowed ? AttachToExistingProcess(process) : (false, check.Reason);
+        }
+    }
+
+    /// <summary>
+    /// The process with a native handle opened and held (Process.SafeHandle keeps it until
+    /// the Process is disposed). Process.GetProcessById alone holds nothing: each property
+    /// would open and close its own handle, and the PID could change owner in between.
+    /// Null when the process is gone or cannot be opened - another user's, say.
+    /// </summary>
+    private static Process? OpenHeld(int pid)
+    {
+        Process? process = null;
+        try
+        {
+            process = Process.GetProcessById(pid);
+            _ = process.SafeHandle;
+            return process;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            process?.Dispose();
+            return null;
+        }
+    }
+
+    private static string NotAnInspectableServer(int pid) =>
+        $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.";
+
+    private (bool Success, string Message) AttachToExistingProcess(Process process)
+    {
+        var pid = process.Id;
+        try
+        {
             if (process.HasExited)
             {
                 return (false, $"Process {pid} has already exited");
@@ -1209,14 +1273,10 @@ public class ServerManager
 
             return (true, $"Attached to process {pid} ({process.ProcessName})");
         }
-        catch (ArgumentException)
-        {
-            return (false, $"Process {pid} does not exist");
-        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to attach to process {PID}", pid);
-            return (false, $"Failed to attach to process: {ex.Message}");
+            return (false, $"Process {pid} could not be attached to; see the desktop app's log.");
         }
     }
 
@@ -1839,16 +1899,120 @@ public class ServerManager
     }
 
     /// <summary>
+    /// Whether <paramref name="executable"/> is the server <paramref name="configured"/>
+    /// names: the same file, compared as full paths, ignoring case as Windows does. False
+    /// when either is missing or not a valid path.
+    /// </summary>
+    public static bool IsConfiguredServerPath(string? executable, string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(executable) || string.IsNullOrWhiteSpace(configured))
+        {
+            return false;
+        }
+
+        try
+        {
+            return string.Equals(Path.GetFullPath(executable), Path.GetFullPath(configured), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="pid"/> may be attached to or injected into from the web API:
+    /// only a running Wreckfest dedicated server whose executable is the configured
+    /// ServerPath - not the game client, another install's server, or any other process.
+    /// The reason never includes a path.
+    /// </summary>
+    public virtual (bool Allowed, string Reason) CheckConfiguredServerProcess(int pid)
+    {
+        using var process = OpenHeld(pid);
+        return process is null ? (false, NotAnInspectableServer(pid)) : CheckConfiguredServer(process);
+    }
+
+    /// <summary>
+    /// The check behind <see cref="CheckConfiguredServerProcess"/>, on a process whose handle
+    /// is held (<see cref="OpenHeld"/>): the lookups by PID below - the module, the command
+    /// line - then reach this same process.
+    /// </summary>
+    private (bool Allowed, string Reason) CheckConfiguredServer(Process process)
+    {
+        var pid = process.Id;
+        var notAServer = NotAnInspectableServer(pid);
+        if (string.IsNullOrWhiteSpace(_server.CurrentValue.ServerPath))
+        {
+            return (false, "No server path is set in the desktop app's Configuration, so no process can be confirmed as the server.");
+        }
+
+        string executable;
+        try
+        {
+            if (process.HasExited || !IsWreckfestProcessName(process.ProcessName))
+            {
+                return (false, notAServer);
+            }
+
+            // Read through the open handle: another user's or an elevated process cannot be
+            // inspected, and is refused rather than guessed at.
+            executable = process.MainModule?.FileName ?? string.Empty;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return (false, notAServer);
+        }
+
+        if (!WindowsCommandLine.HasServerFlag(CommandLineOf(pid)))
+        {
+            return (false, notAServer);
+        }
+
+        return IsConfiguredServerPath(executable, _server.CurrentValue.ServerPath)
+            ? (true, string.Empty)
+            : (false, $"Process {pid} is a Wreckfest server from another install, not the one set in the desktop app's Configuration.");
+    }
+
+    private static bool IsWreckfestProcessName(string name) =>
+        name.Equals("Wreckfest_x64", StringComparison.OrdinalIgnoreCase) || name.Equals("Wreckfest", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>A process's command line, from WMI; null when it cannot be read.</summary>
+    private string? CommandLineOf(int pid)
+    {
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {pid}");
+            foreach (System.Management.ManagementObject result in searcher.Get())
+            {
+                using (result)
+                {
+                    return result["CommandLine"]?.ToString();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogTrace(ex, "Could not read the command line of process {PID}", pid);
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Scans for running Wreckfest server processes
     /// </summary>
     public List<Models.ServerProcessInfo> GetRunningWreckfestServers()
     {
         var servers = new List<Models.ServerProcessInfo>();
+        var configuredPath = _server.CurrentValue.ServerPath;
 
         try
         {
             var processes = Process.GetProcesses();
-            var currentPid = _serverProcess?.Id;
+            // The pid attachment sets (attach from the API or the desktop, or a start):
+            // _serverProcess is only the process this controller started.
+            var currentPid = _actualServerPid;
 
             foreach (var process in processes)
             {
@@ -1868,13 +2032,15 @@ public class ServerManager
                                 var commandLine = obj["CommandLine"]?.ToString() ?? string.Empty;
 
                                 // Only include servers started with -s parameter
-                                if (commandLine.Contains(" -s ", StringComparison.OrdinalIgnoreCase))
+                                if (WindowsCommandLine.HasServerFlag(commandLine))
                                 {
+                                    var executable = process.MainModule?.FileName ?? string.Empty;
                                     var serverInfo = new Models.ServerProcessInfo
                                     {
                                         ProcessId = process.Id,
                                         StartTime = process.StartTime,
-                                        ExecutablePath = process.MainModule?.FileName ?? string.Empty,
+                                        ExecutablePath = executable,
+                                        IsConfiguredServer = IsConfiguredServerPath(executable, configuredPath),
                                         MemoryUsageMB = process.WorkingSet64 / 1024 / 1024,
                                         IsAttached = process.Id == currentPid,
                                         ConfigFile = ExtractConfigFileName(commandLine)

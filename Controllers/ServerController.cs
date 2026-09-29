@@ -104,17 +104,32 @@ public class ServerController : ControllerBase
         return Answer(await _serverManager.SendCommandAsync(request.Command));
     }
 
+    /// <summary>
+    /// The running dedicated servers that attach and inject accept: those whose executable
+    /// is the configured ServerPath. A remote admin picks the restarted server from here.
+    /// No paths: the web never sees where things are on the PC.
+    /// </summary>
+    [HttpGet("processes")]
+    public IReadOnlyList<ServerProcessResponse> GetServerProcesses() =>
+        _serverManager.GetRunningWreckfestServers()
+            .Where(p => p.IsConfiguredServer)
+            .Select(p => new ServerProcessResponse(p.ProcessId, p.StartTime.ToUniversalTime(), p.IsAttached))
+            .ToList();
+
     // No :int route constraint: a pid that is not a number is a 400 naming pid, not a 404.
+    // Only the configured server may be targeted: attach decides what Force stop kills and
+    // what inject loads the hook into. AttachToConfiguredServer checks and attaches on one
+    // process handle.
     [HttpPost("attach/{pid}")]
     public ActionResult<ServerActionResponse> AttachToProcess(int pid)
     {
-        if (InvalidPid(pid) is { } invalid)
+        if (InvalidPid(pid) is { } refused)
         {
-            return invalid;
+            return refused;
         }
 
         _logger.LogInformation("Received request to attach to process {PID}", pid);
-        return Answer(_serverManager.AttachToExistingProcess(pid));
+        return Answer(_serverManager.AttachToConfiguredServer(pid));
     }
 
     /// <summary>
@@ -125,9 +140,9 @@ public class ServerController : ControllerBase
     [HttpPost("inject/{pid}")]
     public async Task<ActionResult<InjectResponse>> InjectConsoleHook(int pid)
     {
-        if (InvalidPid(pid) is { } invalid)
+        if ((InvalidPid(pid) ?? NotTheServer(pid)) is { } refused)
         {
-            return invalid;
+            return refused;
         }
 
         _logger.LogInformation("Received request to inject console hook into process {PID}", pid);
@@ -161,11 +176,19 @@ public class ServerController : ControllerBase
         var result = _serverManager.GetLogFileContent(lines);
         if (!result.Success)
         {
-            return this.Refused(result.Message);
+            // Its messages can name the log file's path ("not found at C:\..."); the web
+            // never sees paths, so a failure that involved one is summarised.
+            if (result.LogFilePath is null)
+            {
+                return this.Refused(result.Message);
+            }
+
+            _logger.LogWarning("Log file tail for the web API failed: {Message}", result.Message);
+            return this.Refused("The server's log file could not be read. The desktop app's log has the details.");
         }
 
         var output = result.Lines ?? [];
-        return new LogFileResponse(output.Count, "logfile", result.LogFilePath, output);
+        return new LogFileResponse(output.Count, "logfile", output);
     }
 
     [HttpGet("players")]
@@ -187,6 +210,9 @@ public class ServerController : ControllerBase
 
     private ActionResult? InvalidPid(int pid) =>
         pid > 0 ? null : this.Invalid("pid", "pid must be a process id: a positive number.");
+
+    private ActionResult? NotTheServer(int pid) =>
+        _serverManager.CheckConfiguredServerProcess(pid) is (false, var reason) ? this.Refused(reason) : null;
 }
 
 public class ServerCommandRequest
@@ -203,7 +229,11 @@ public sealed record ServerActionResponse(string Message);
 
 public sealed record InjectResponse(string Message, int ProcessId);
 
-public sealed record LogFileResponse(int Lines, string Source, string? LogFilePath, IReadOnlyList<string> Output);
+// No logFilePath: the web never sees where files are on the PC.
+public sealed record LogFileResponse(int Lines, string Source, IReadOnlyList<string> Output);
+
+/// <summary>A running dedicated server the API may attach to, and whether it already is.</summary>
+public sealed record ServerProcessResponse(int ProcessId, DateTime StartTime, bool IsAttached);
 
 /// <summary>Whether the server runs, and for how long, in whole seconds.</summary>
 public sealed record ServerStatusResponse(bool IsRunning, int? ProcessId, long? UptimeSeconds, string? CurrentTrack)

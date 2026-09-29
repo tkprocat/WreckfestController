@@ -118,6 +118,23 @@ default is used.
 
 ## Endpoints
 
+### What the web can reach
+
+**The web API runs the game server; the desktop app runs the PC.** Over the API an admin
+starts, stops and restarts the server, sends commands, and manages its config, rotation,
+cups, catalogue, users, and the settings that change game behaviour. Anything that names
+or touches programs, paths, files, or processes other than the dedicated server is set
+in the desktop app (or its config files) only:
+
+- launch settings (`serverPath`, `serverArguments`, `workingDirectory`, `logFilePath`,
+  `steamCmdPath`) and `log=` in server_config.cfg: neither read nor written over the API;
+- the API's own binding and key, and the database: no route;
+- database backups: a desktop button, not an endpoint (#74);
+- processes: `attach` and `inject` accept only the configured dedicated server (below);
+- no response carries a local path.
+
+A new endpoint is checked against this before it is added.
+
 Validation failures are **400** `ValidationProblemDetails`:
 `{ "errors": { "<field>": ["message", ...] } }`, with fields named as in the request. A
 request the current state does not allow is **409** `ProblemDetails`, its `title` saying
@@ -187,16 +204,25 @@ Account responses never include password hashes or security stamps:
 | POST | `forcerestart` | Force restart |
 | POST | `update` | Run the server update |
 | POST | `command` | Send a console command. Body: `{ command }` (required) |
-| POST | `attach/{pid}` | Attach to an existing process |
-| POST | `inject/{pid}` | Inject the console hook into a process |
+| GET | `processes` | The running dedicated servers attach and inject accept: `[{ processId, startTime, isAttached }]` |
+| POST | `attach/{pid}` | Attach to a running dedicated server (after a restart, say) |
+| POST | `inject/{pid}` | Inject the console hook into it |
 | POST | `inject` | Inject into the already-tracked process |
-| GET | `logfile?lines=100` | Tail the server's log file from disk — the one deliberate exception to hook-only I/O (see below). `lines` 1-10000. `{ lines, source, logFilePath, output }` |
+| GET | `logfile?lines=100` | Tail the server's log file from disk — the one deliberate exception to hook-only I/O (see below). `lines` 1-10000. `{ lines, source, output }` |
 | GET | `players` | Current roster: `{ totalPlayers, maxPlayers, players, lastUpdated }` |
 
 The actions (`start` through `inject`) answer `{ message }` (`inject` adds `processId`).
 One the server's state does not allow (already running, not running, no process to
 inject into, a failed update) answers **409** with the reason as the problem's `title`.
 A `pid` that is not a positive number is a **400** naming `pid`.
+
+`attach/{pid}` and `inject/{pid}` accept only a running Wreckfest dedicated server (started
+with `-s`) whose executable is the `serverPath` set in the desktop app: never the game
+client, which has the same file name in another folder, a server from another install,
+or any other process. Anything else is a **409**, as is any pid when no `serverPath` is set.
+Attach decides what `forcestop` kills and what `inject` loads the hook into, so this is
+what keeps those to the server. `processes` lists exactly the processes that pass. The
+desktop app's Process Manager may still pick another install's server, after asking.
 
 `logfile` is the only endpoint that reads server output from disk rather than from the
 injected hook. It is kept on purpose: WreckfestWeb's log viewer depends on it, and it is

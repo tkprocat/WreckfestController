@@ -2982,6 +2982,64 @@
         }
       }
     },
+    "/api/server/processes": {
+      "get": {
+        "tags": [
+          "Server"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerProcessResponse"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerProcessResponse"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerProcessResponse"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/server/attach/{pid}": {
       "post": {
         "tags": [
@@ -4526,7 +4584,6 @@
         "required": [
           "lines",
           "source",
-          "logFilePath",
           "output"
         ],
         "type": "object",
@@ -4537,12 +4594,6 @@
           },
           "source": {
             "type": "string"
-          },
-          "logFilePath": {
-            "type": [
-              "null",
-              "string"
-            ]
           },
           "output": {
             "type": "array",
@@ -5178,6 +5229,27 @@
           },
           "log": {
             "type": "string"
+          }
+        }
+      },
+      "ServerProcessResponse": {
+        "required": [
+          "processId",
+          "startTime",
+          "isAttached"
+        ],
+        "type": "object",
+        "properties": {
+          "processId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "startTime": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "isAttached": {
+            "type": "boolean"
           }
         }
       },
