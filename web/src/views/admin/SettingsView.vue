@@ -140,6 +140,14 @@ async function loadVariants() {
   }
 }
 
+function replace(row: Variant) {
+  variants.value = variants.value.map((v) => (v.id === row.id ? row : v))
+}
+
+function isVariant(body: unknown): body is Variant {
+  return typeof body === 'object' && body !== null && 'id' in body && 'allowedForVoting' in body
+}
+
 async function setVoting(variant: Variant, allowed: boolean) {
   if (pending.value.has(variant.id)) {
     return
@@ -152,7 +160,11 @@ async function setVoting(variant: Variant, allowed: boolean) {
       body: { allowed },
     })
     if (data) {
-      variants.value = variants.value.map((v) => (v.id === data.id ? data : v))
+      replace(data)
+    } else if (isVariant(error)) {
+      // Changed elsewhere meanwhile: the 409 carries the row as it is now.
+      replace(error)
+      message.warning(`${variant.trackName} - ${variant.name} was changed elsewhere, so nothing was changed. It is shown as it is now.`)
     } else {
       message.error(problemMessage(error, `Voting for ${variant.trackName} - ${variant.name} was not changed.`))
     }
@@ -194,9 +206,11 @@ onMounted(() => {
 
     <NCard title="Voting" class="gap">
       <NAlert v-if="loadError" type="warning" :title="loadError" />
-      <NForm v-else label-placement="left" label-width="auto" :disabled="!loaded" @submit.prevent="save">
+      <!-- Locked while saving: the answer replaces the form, so an edit made meanwhile
+           would be lost. -->
+      <NForm v-else label-placement="left" label-width="auto" :disabled="!loaded || saving" @submit.prevent="save">
         <NFormItem label="Track changes" :feedback="errors.mode" :validation-status="errors.mode ? 'error' : undefined">
-          <NRadioGroup v-model:value="form.mode" name="mode">
+          <NRadioGroup v-model:value="form.mode" name="mode" aria-label="Track changes">
             <NRadioButton value="Off">Off</NRadioButton>
             <NRadioButton value="Voting">Players vote</NRadioButton>
             <NRadioButton value="Direct">Direct</NRadioButton>
@@ -207,31 +221,56 @@ onMounted(() => {
           :feedback="errors.voteTimeoutSeconds"
           :validation-status="errors.voteTimeoutSeconds ? 'error' : undefined"
         >
-          <NInputNumber v-model:value="form.voteTimeoutSeconds" :min="1" :max="3600" :precision="0" />
+          <NInputNumber
+            v-model:value="form.voteTimeoutSeconds"
+            :min="1"
+            :max="3600"
+            :precision="0"
+            :input-props="{ 'aria-label': 'Vote time (seconds)' }"
+          />
         </NFormItem>
         <NFormItem
           label="Direct change cooldown (seconds)"
           :feedback="errors.directCooldownSeconds"
           :validation-status="errors.directCooldownSeconds ? 'error' : undefined"
         >
-          <NInputNumber v-model:value="form.directCooldownSeconds" :min="0" :max="3600" :precision="0" />
+          <NInputNumber
+            v-model:value="form.directCooldownSeconds"
+            :min="0"
+            :max="3600"
+            :precision="0"
+            :input-props="{ 'aria-label': 'Direct change cooldown (seconds)' }"
+          />
         </NFormItem>
         <NFormItem
           label="Most laps a player may ask for"
           :feedback="errors.maxLapsAllowed"
           :validation-status="errors.maxLapsAllowed ? 'error' : undefined"
         >
-          <NInputNumber v-model:value="form.maxLapsAllowed" :min="1" :max="999" :precision="0" />
+          <NInputNumber
+            v-model:value="form.maxLapsAllowed"
+            :min="1"
+            :max="999"
+            :precision="0"
+            :input-props="{ 'aria-label': 'Most laps a player may ask for' }"
+          />
         </NFormItem>
         <NFormItem
           label="Pause between chat lines (ms)"
           :feedback="errors.messageDelayMs"
           :validation-status="errors.messageDelayMs ? 'error' : undefined"
         >
-          <NInputNumber v-model:value="form.messageDelayMs" :min="0" :max="5000" :step="50" :precision="0" />
+          <NInputNumber
+            v-model:value="form.messageDelayMs"
+            :min="0"
+            :max="5000"
+            :step="50"
+            :precision="0"
+            :input-props="{ 'aria-label': 'Pause between chat lines (ms)' }"
+          />
         </NFormItem>
         <NFormItem label="Ignore chat commands during a race">
-          <NSwitch v-model:value="form.suppressCommandsDuringRace" />
+          <NSwitch v-model:value="form.suppressCommandsDuringRace" aria-label="Ignore chat commands during a race" />
         </NFormItem>
         <NSpace>
           <NButton type="primary" attr-type="submit" :loading="saving" :disabled="!dirty || saving">Save</NButton>

@@ -51,10 +51,17 @@ function mountPage() {
 
 const button = (label: string) => wrapper!.findAll('button').find((b) => b.text().trim() === label)!
 
+const laps = () => wrapper!.find('input[aria-label="Most laps a player may ask for"]')
+
 async function setMaxLaps(value: number) {
-  const input = wrapper!.findAll('input').find((i) => i.element.closest('.n-form-item')?.textContent?.includes('Most laps'))!
-  await input.setValue(String(value))
-  await input.trigger('blur')
+  await laps().setValue(String(value))
+  await laps().trigger('blur')
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => (resolve = res))
+  return { promise, resolve }
 }
 
 beforeEach(() => {
@@ -100,8 +107,7 @@ describe('SettingsView', () => {
     await flushPromises()
 
     expect(document.body.textContent).toContain('changed elsewhere')
-    const laps = wrapper!.findAll('input').find((i) => i.element.closest('.n-form-item')?.textContent?.includes('Most laps'))!
-    expect((laps.element as HTMLInputElement).value).toBe('5')
+    expect((laps().element as HTMLInputElement).value).toBe('5')
     expect(button('Save').attributes('disabled')).toBeDefined()
   })
 
@@ -139,6 +145,59 @@ describe('SettingsView', () => {
 
     expect(wrapper!.text()).toContain('2 of 2 votable')
     expect(document.body.textContent).toContain('This variant was changed elsewhere.')
+  })
+
+  // The answer replaces the form: an edit made while it was on its way would be lost, so
+  // the form is locked until it arrives.
+  it('locks the form while saving', async () => {
+    serve()
+    const saved = deferred<unknown>()
+    api.PUT.mockReturnValue(saved.promise)
+    mountPage()
+    await flushPromises()
+
+    await setMaxLaps(12)
+    await button('Save').trigger('click')
+    await flushPromises()
+    expect(laps().attributes('disabled')).toBeDefined()
+
+    saved.resolve(answer(vote({ maxLapsAllowed: 12, version: 4 })))
+    await flushPromises()
+    expect(laps().attributes('disabled')).toBeUndefined()
+  })
+
+  // A switch that lost a race gets the row as it is now: the page shows that, not its guess.
+  it('shows a track as it is now when its switch lost a race', async () => {
+    serve()
+    api.PUT.mockResolvedValue(refused(variant(2, true), 409))
+    mountPage()
+    await flushPromises()
+    expect(wrapper!.text()).toContain('1 of 2 votable')
+
+    await wrapper!.find('[aria-label="Votable: Track 1 - Layout 1"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper!.text()).toContain('2 of 2 votable')
+    expect(document.body.textContent).toContain('was changed elsewhere')
+  })
+
+  // A form item's visible label is not tied to its control: each control names itself.
+  it('gives every voting control an accessible name', async () => {
+    serve()
+    mountPage()
+    await flushPromises()
+
+    for (const name of [
+      'Vote time (seconds)',
+      'Direct change cooldown (seconds)',
+      'Most laps a player may ask for',
+      'Pause between chat lines (ms)',
+    ]) {
+      expect(wrapper!.find(`input[aria-label="${name}"]`).exists(), name).toBe(true)
+    }
+
+    expect(wrapper!.find('[aria-label="Ignore chat commands during a race"]').exists()).toBe(true)
+    expect(wrapper!.find('[aria-label="Track changes"]').exists()).toBe(true)
   })
 
   it('filters the tracks by search', async () => {
