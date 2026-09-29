@@ -200,6 +200,10 @@ holds for everything that drives state. Treat what it returns as history, not li
 it answers even when no hook is injected, and its content can predate the current
 process.
 
+It reads the file named by `log=` in server_config.cfg, resolved against the server's
+working directory, and only when that path stays inside it; otherwise the desktop app's
+log file path. Neither can be set over the API.
+
 Injection is refused unless the target process is already attached, and refused when
 the detected game build does not match `WreckfestServer:SupportedBuild`. Both return
 a failure result rather than throwing.
@@ -218,7 +222,9 @@ a failure result rather than throwing.
 `PUT basic` is a **partial update**: send only the `ServerConfig` fields to change
 (names are case-insensitive), and every omitted field keeps its current value. The
 request is rejected with 400, and nothing is written, when it names an unknown field,
-gives a value of the wrong type or `null`, or puts a line break in a string.
+gives a value of the wrong type or `null`, or puts a line break in a string. `log` is
+never written: it names the file `logfile` returns, so it is set in server_config.cfg by
+hand.
 
 `PUT tracks` replaces the whole event loop. It is rejected with 400 unless
 `collectionName` is non-empty (at most 128 characters), `tracks` is present, every

@@ -1515,4 +1515,56 @@ public class ServerManagerTests
 
         Assert.False(_serverManager.CanInjectInto(pid + 1));
     }
+
+    // server_config.cfg's log= names the file the log viewer returns. It must stay in the
+    // server folder, or the viewer would return any file on the PC.
+    [Theory]
+    [InlineData("log.txt", true)]
+    [InlineData(@"logs\server.log", true)]
+    [InlineData(@"..\secret.txt", false)]
+    [InlineData("ABSOLUTE", false)]
+    public void GetLogFileContent_OnlyFollowsALogPathInsideTheServerFolder(string log, bool followed)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "wfc-log-tests", Guid.NewGuid().ToString("N"));
+        var server = Path.Combine(root, "server");
+        Directory.CreateDirectory(Path.Combine(server, "logs"));
+        try
+        {
+            var secret = Path.Combine(root, "secret.txt");
+            File.WriteAllText(secret, "the secret");
+            var target = log == "ABSOLUTE" ? secret : Path.Combine(server, log);
+            if (followed)
+            {
+                File.WriteAllText(target, "a server log line");
+            }
+
+            File.WriteAllText(
+                Path.Combine(server, "server_config.cfg"),
+                $"server_name=Test\nlog={(log == "ABSOLUTE" ? secret : log)}\n");
+            var manager = new ServerManager(
+                _mockConfiguration.Object, TestSettings.Server(workingDirectory: server), TestSettings.SteamCmd(),
+                _mockLogger.Object,
+                _playerTracker,
+                _trackChangeTracker,
+                _serverInfoTracker,
+                _mockEvents.Object);
+
+            var result = manager.GetLogFileContent();
+
+            if (followed)
+            {
+                Assert.True(result.Success);
+                Assert.Equal(["a server log line"], result.Lines!);
+            }
+            else
+            {
+                Assert.False(result.Success);
+                Assert.Null(result.Lines);
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 }
