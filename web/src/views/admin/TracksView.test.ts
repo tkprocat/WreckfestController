@@ -63,8 +63,7 @@ const labelled = (label: string) => body().find(`[aria-label="${label}"]`)
 const trackNames = () => wrapper!.findAll('tbody tr').map((r) => r.text())
 
 async function expand(name: string) {
-  const row = wrapper!.findAll('tr').find((r) => r.text().includes(name))!
-  await row.find('.n-data-table-expand-trigger').trigger('click')
+  await labelled(`Variants of ${name}`).trigger('click')
   await flushPromises()
 }
 
@@ -161,6 +160,61 @@ describe('TracksView', () => {
 
     expect(body().text()).toContain('Collection "Evening" uses bowl.')
     expect(wrapper!.text()).toContain('Crash Arena')
+  })
+
+  // The table's own trigger is a click-only div; the button in it is what keyboards reach.
+  it("opens a track's variants from a button that says whether it is open", async () => {
+    await mountPage()
+    const toggle = () => labelled('Variants of Fields')
+    expect(toggle().element.tagName).toBe('BUTTON')
+    expect(toggle().attributes('aria-expanded')).toBe('false')
+
+    await expand('Fields')
+
+    expect(toggle().attributes('aria-expanded')).toBe('true')
+    expect(labelled('Players can vote for Fields - Loop').exists()).toBe(true)
+  })
+
+  it('does not find a track by a variant the filters hide', async () => {
+    await mountPage()
+
+    await labelled('Search tracks').setValue('loop_rev')
+    expect(trackNames().join()).not.toContain('Fields')
+
+    await body().find('.n-checkbox').trigger('click')
+    expect(trackNames().join()).toContain('Fields')
+  })
+
+  // Someone else saved the track at the same moment: show theirs, not what this page assumed.
+  it('shows the saved track when an action lost a race', async () => {
+    api.POST.mockResolvedValue(refused({ ...fields(), name: 'Fields (renamed)', version: 3 }, 409))
+    await mountPage()
+
+    await labelled('Hide Fields').trigger('click')
+    await flushPromises()
+
+    expect(wrapper!.text()).toContain('Fields (renamed)')
+    expect(body().text()).toContain('Someone else changed this at the same moment')
+  })
+
+  it('shows the saved variant when a voting change lost a race', async () => {
+    api.PUT.mockResolvedValue(refused({ ...fields().variants[0], name: 'Loop (renamed)', allowedForVoting: true, version: 3 }, 409))
+    await mountPage()
+    await expand('Fields')
+
+    await labelled('Players can vote for Fields - Loop').trigger('click')
+    await flushPromises()
+
+    expect(labelled('Players can vote for Fields - Loop (renamed)').attributes('aria-checked')).toBe('true')
+    expect(body().text()).toContain('Someone else changed this at the same moment')
+  })
+
+  it('names every filter', async () => {
+    await mountPage()
+
+    for (const label of ['Origin', 'Game mode', 'Tag', 'Weather']) {
+      expect(body().find(`input[aria-label="${label}"]`).exists(), label).toBe(true)
+    }
   })
 
   it('filters by game mode and weather', async () => {

@@ -1,6 +1,6 @@
 <script setup lang="ts" generic="T extends { id: string | number }">
 import { computed, ref } from 'vue'
-import { NAlert, NButton, NDataTable, NInput, NSpace, type DataTableColumns } from 'naive-ui'
+import { NAlert, NButton, NDataTable, NInput, NSpace, type DataTableColumns, type DataTableProps } from 'naive-ui'
 
 /**
  * A resource page's table: search across chosen fields, the list's states (loading, a
@@ -16,6 +16,8 @@ const props = defineProps<{
   what: string
   loading?: boolean
   error?: string | null
+  /** For tables with an expand column: what its trigger shows (a button, for keyboard users). */
+  renderExpandIcon?: DataTableProps['renderExpandIcon']
 }>()
 
 const emit = defineEmits<{ retry: [] }>()
@@ -55,6 +57,7 @@ const empty = computed(() => (search.value.trim() ? `No ${props.what} match "${s
       :columns="columns"
       :data="shown"
       :loading="loading"
+      :render-expand-icon="renderExpandIcon"
       :row-key="(row: T) => row.id"
       :bordered="false"
       size="small"

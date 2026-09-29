@@ -67,7 +67,7 @@ const rows = computed<Row[]>(() =>
         (!weather.value || t.weather.includes(weather.value)) &&
         (!(mode.value || tag.value) || variantsOf(t).length > 0),
     )
-    .map((t) => ({ ...t, find: t.variants.map((v) => `${v.name} ${v.variantId}`).join(' ') })),
+    .map((t) => ({ ...t, find: variantsOf(t).map((v) => `${v.name} ${v.variantId}`).join(' ') })),
 )
 
 /** One action at a time, on a track (`t1`) or a variant (`v1`). */
@@ -90,6 +90,9 @@ function fail(outcome: Outcome<unknown>, fallback: string) {
   message.error(outcome.kind === 'no-answer' ? NO_ANSWER : 'message' in outcome ? outcome.message : fallback)
 }
 
+/** A 409 with the row: someone else saved it at the same moment, and theirs won. */
+const CHANGED_ELSEWHERE = 'Someone else changed this at the same moment, so nothing was changed. It now shows as saved; try again if still needed.'
+
 const isTrack = (body: unknown): body is Track => hasId(body) && 'variants' in body
 const isVariant = (body: unknown): body is Variant => hasId(body) && 'variantId' in body
 
@@ -110,11 +113,13 @@ async function trackAction(track: Track, action: 'hide' | 'unhide' | 'reset', do
         : action === 'unhide'
           ? () => api.POST('/api/catalogue/tracks/{id}/unhide', path)
           : () => api.POST('/api/catalogue/tracks/{id}/reset', path)
-    // These answer with the track, never a version conflict.
-    const outcome = await send(request, (_b): _b is Track => false, `The track was not changed.`)
+    const outcome = await send(request, isTrack, `The track was not changed.`)
     if (outcome.kind === 'ok' && isTrack(outcome.row)) {
       list.replace(outcome.row)
       message.success(done)
+    } else if (outcome.kind === 'conflict') {
+      list.replace(outcome.current)
+      message.warning(CHANGED_ELSEWHERE)
     } else {
       fail(outcome, 'The track was not changed.')
     }
@@ -162,10 +167,13 @@ async function variantAction(variant: Variant, action: 'hide' | 'unhide' | 'rese
           : action === 'reset'
             ? () => api.POST('/api/catalogue/variants/{id}/reset', path)
             : () => api.PUT('/api/catalogue/variants/{id}/voting', { ...path, body: { allowed: action === 'vote' } })
-    const outcome = await send(request, (_b): _b is Variant => false, 'The variant was not changed.')
+    const outcome = await send(request, isVariant, 'The variant was not changed.')
     if (outcome.kind === 'ok' && isVariant(outcome.row)) {
       replaceVariant(outcome.row)
       message.success(done)
+    } else if (outcome.kind === 'conflict') {
+      replaceVariant(outcome.current)
+      message.warning(CHANGED_ELSEWHERE)
     } else {
       fail(outcome, 'The variant was not changed.')
     }
@@ -284,6 +292,13 @@ const columns: DataTableColumns<Row> = [
   },
 ]
 
+/**
+ * The table's expand trigger is a click-only div: a button inside it takes focus and
+ * Enter/Space, and its click reaches the trigger.
+ */
+const expandIcon = ({ expanded, rowData }: { expanded: boolean; rowData: object }) =>
+  h('button', { type: 'button', class: 'expander', 'aria-expanded': String(expanded), 'aria-label': `Variants of ${(rowData as Track).name}` }, '›')
+
 onMounted(() => void list.reload())
 </script>
 
@@ -299,6 +314,7 @@ onMounted(() => void list.reload())
           v-model:value="origin"
           :options="Object.entries(ORIGINS).map(([value, label]) => ({ value, label }))"
           clearable
+          filterable
           placeholder="Any origin"
           style="width: 150px"
           :input-props="{ 'aria-label': 'Origin' }"
@@ -307,6 +323,7 @@ onMounted(() => void list.reload())
           v-model:value="mode"
           :options="[{ value: 'Racing', label: 'Racing' }, { value: 'Derby', label: 'Derby' }]"
           clearable
+          filterable
           placeholder="Any mode"
           style="width: 130px"
           :input-props="{ 'aria-label': 'Game mode' }"
@@ -324,6 +341,7 @@ onMounted(() => void list.reload())
           v-model:value="weather"
           :options="weatherOptions"
           clearable
+          filterable
           placeholder="Any weather"
           style="width: 150px"
           :input-props="{ 'aria-label': 'Weather' }"
@@ -337,6 +355,7 @@ onMounted(() => void list.reload())
         what="tracks"
         :loading="loading"
         :error="error"
+        :render-expand-icon="expandIcon"
         @retry="list.reload()"
       />
     </NCard>
@@ -349,6 +368,18 @@ onMounted(() => void list.reload())
 }
 :deep(.flag) {
   margin-left: 6px;
+}
+:deep(.expander) {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+:deep(.expander:focus-visible) {
+  outline: 2px solid currentColor;
 }
 :deep(.muted) {
   opacity: 0.65;
