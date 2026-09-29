@@ -3,37 +3,45 @@ import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NAlert, NCard, NDataTable, NGi, NGrid, NStatistic, NTag, type DataTableColumns } from 'naive-ui'
 import { api } from '@/api/client'
 import { problemMessage } from '@/api/problems'
-import type { components } from '@/api/schema'
+import { useServerStatus } from '@/composables/useServerStatus'
 import { onHub, type HubEvents, type PlayerSummary } from '@/realtime/hub'
 import { formatUptime } from '@/utils/format'
 
-type Status = components['schemas']['ServerStatusResponse']
-
-const status = ref<Status | null>(null)
+const { status, error: statusError, load: loadStatus } = useServerStatus()
 const players = ref<PlayerSummary[]>([])
-const error = ref<string | null>(null)
+const playersError = ref<string | null>(null)
+const error = computed(() => statusError.value ?? playersError.value)
 
-async function loadStatus() {
-  const { data, error: problem } = await api.GET('/api/server/status')
-  if (data) {
-    status.value = data
-    error.value = null
-  } else {
-    error.value = problemMessage(problem, 'The server status could not be loaded.')
-  }
-}
+// A roster from the hub is newer than a load that was on its way when it arrived: the
+// load's answer must not put the older roster back. A failed load keeps what is shown.
+let hubRosterSeen = false
 
 async function loadPlayers() {
-  const { data } = await api.GET('/api/server/players')
-  players.value = (data?.players ?? []).map((p) => ({
-    name: p.name ?? '',
-    playerId: p.playerId ?? null,
-    score: p.score ?? null,
-    vehicle: p.vehicle ?? null,
-    slot: p.slot ?? null,
-    isBot: p.isBot ?? false,
-    joinedAt: p.joinedAt ?? '',
-  }))
+  hubRosterSeen = false
+  try {
+    const { data, error: problem } = await api.GET('/api/server/players')
+    if (!data) {
+      playersError.value = problemMessage(problem, 'The players could not be loaded.')
+      return
+    }
+
+    playersError.value = null
+    if (hubRosterSeen) {
+      return
+    }
+
+    players.value = (data.players ?? []).map((p) => ({
+      name: p.name ?? '',
+      playerId: p.playerId ?? null,
+      score: p.score ?? null,
+      vehicle: p.vehicle ?? null,
+      slot: p.slot ?? null,
+      isBot: p.isBot ?? false,
+      joinedAt: p.joinedAt ?? '',
+    }))
+  } catch {
+    playersError.value = 'The players could not be loaded: no answer from the controller.'
+  }
 }
 
 // The hub says when something changed; the status endpoint says what it is now.
@@ -46,7 +54,10 @@ onMounted(() => {
   void loadPlayers()
   stops.push(
     ...statusEvents.map((event) => onHub(event, () => void loadStatus())),
-    onHub('PlayersUpdated', ({ players: list }) => (players.value = list)),
+    onHub('PlayersUpdated', ({ players: list }) => {
+      hubRosterSeen = true
+      players.value = list
+    }),
   )
 
   // Uptime moves on between events.
@@ -87,7 +98,7 @@ const columns: DataTableColumns<PlayerSummary> = [
         <NCard>
           <NStatistic label="Server">
             <NTag :type="status?.isRunning ? 'success' : 'default'" round>
-              {{ status?.isRunning ? 'Running' : 'Stopped' }}
+              {{ status === null ? 'Unknown' : status.isRunning ? 'Running' : 'Stopped' }}
             </NTag>
           </NStatistic>
         </NCard>

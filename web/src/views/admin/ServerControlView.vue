@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  NAlert,
   NButton,
   NCard,
   NInput,
@@ -12,10 +13,12 @@ import {
 } from 'naive-ui'
 import { api } from '@/api/client'
 import { problemMessage } from '@/api/problems'
-import type { components } from '@/api/schema'
+import { useServerStatus } from '@/composables/useServerStatus'
 import { onHub, type HubEvents } from '@/realtime/hub'
+import { disruptiveCommand } from '@/utils/commands'
 
-type Status = components['schemas']['ServerStatusResponse']
+/** A request that got no answer: whether it happened is unknown until the status says. */
+const NO_ANSWER = 'No answer from the controller, so it is not known whether this happened. Check the status before trying again.'
 
 /** The server actions, and whether each needs a second thought. */
 const actions = {
@@ -33,7 +36,12 @@ type Action = keyof typeof actions
 const message = useMessage()
 const dialog = useDialog()
 
-const status = ref<Status | null>(null)
+const { status, error: statusError, load: loadStatus } = useServerStatus()
+
+/** Running, stopped, or unknown (null) while the status has not loaded or cannot be. */
+const running = computed(() => status.value?.isRunning ?? null)
+
+/** One thing at a time: an action or a command in flight blocks the rest. */
 const busy = ref<Action | 'command' | null>(null)
 const command = ref('')
 
@@ -42,36 +50,51 @@ const MAX_LINES = 1000
 const lines = ref<string[]>([])
 const consoleBox = ref<HTMLElement | null>(null)
 
-async function loadStatus() {
-  const { data } = await api.GET('/api/server/status')
-  status.value = data ?? null
-}
+// Hub lines that arrive while the tail is loading go after it, not under it.
+let tailLoaded = false
+let pending: string[] = []
 
 async function loadLogTail() {
-  const { data, error } = await api.GET('/api/server/logfile', { params: { query: { lines: 200 } } })
-  if (data) {
-    lines.value = [...data.output]
-    await scrollToEnd()
-  } else {
-    lines.value = [`(${problemMessage(error, 'The log file could not be read.')})`]
+  let head: string[]
+  try {
+    const { data, error } = await api.GET('/api/server/logfile', { params: { query: { lines: 200 } } })
+    head = data ? [...data.output] : [`(${problemMessage(error, 'The log file could not be read.')})`]
+  } catch {
+    head = ['(The log file could not be read: no answer from the controller.)']
   }
+
+  tailLoaded = true
+  lines.value = capped([...head, ...pending])
+  pending = []
+  await scrollToEnd()
+}
+
+function capped(all: string[]): string[] {
+  return all.length > MAX_LINES ? all.slice(all.length - MAX_LINES) : all
 }
 
 async function append(newLines: string[]) {
-  lines.value.push(...newLines)
-  if (lines.value.length > MAX_LINES) {
-    lines.value.splice(0, lines.value.length - MAX_LINES)
+  if (!tailLoaded) {
+    pending.push(...newLines)
+    return
   }
 
+  lines.value = capped([...lines.value, ...newLines])
   await scrollToEnd()
 }
 
 async function scrollToEnd() {
   await nextTick()
-  consoleBox.value?.scrollTo({ top: consoleBox.value.scrollHeight })
+  if (consoleBox.value) {
+    consoleBox.value.scrollTop = consoleBox.value.scrollHeight
+  }
 }
 
 async function run(action: Action) {
+  if (busy.value) {
+    return
+  }
+
   busy.value = action
   try {
     const { data, error } = await api.POST(actions[action].path)
@@ -80,31 +103,33 @@ async function run(action: Action) {
     } else {
       message.error(problemMessage(error, `${actions[action].label} did not work.`))
     }
+  } catch {
+    message.error(`${actions[action].label}: ${NO_ANSWER}`)
   } finally {
     busy.value = null
     void loadStatus()
   }
 }
 
+function confirmThen(title: string, question: string, positive: string, then: () => void) {
+  dialog.warning({ title, content: question, positiveText: positive, negativeText: 'Cancel', onPositiveClick: then })
+}
+
 function ask(action: Action) {
-  const question = actions[action].confirm
-  if (!question) {
-    void run(action)
+  if (busy.value) {
     return
   }
 
-  dialog.warning({
-    title: actions[action].label,
-    content: question,
-    positiveText: actions[action].label,
-    negativeText: 'Cancel',
-    onPositiveClick: () => void run(action),
-  })
+  const question = actions[action].confirm
+  if (question) {
+    confirmThen(actions[action].label, question, actions[action].label, () => void run(action))
+  } else {
+    void run(action)
+  }
 }
 
-async function send() {
-  const text = command.value.trim()
-  if (!text) {
+async function sendNow(text: string) {
+  if (busy.value) {
     return
   }
 
@@ -116,8 +141,24 @@ async function send() {
     } else {
       message.error(problemMessage(error, 'The command was not sent.'))
     }
+  } catch {
+    message.error(`The command: ${NO_ANSWER}`)
   } finally {
     busy.value = null
+  }
+}
+
+/** Sends the command; one that disconnects players asks first, like the buttons. */
+function send() {
+  const text = command.value.trim()
+  if (!text || busy.value || running.value !== true) {
+    return
+  }
+
+  if (disruptiveCommand(text)) {
+    confirmThen('Send command', `"${text}" disconnects players. Send it?`, 'Send', () => void sendNow(text))
+  } else {
+    void sendNow(text)
   }
 }
 
@@ -140,21 +181,27 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
   <section>
     <h1>
       Server control
-      <NTag :type="status?.isRunning ? 'success' : 'default'" round size="small">
-        {{ status?.isRunning ? `Running (PID ${status.processId})` : 'Stopped' }}
+      <NTag :type="running ? 'success' : 'default'" round size="small">
+        {{ running === null ? 'Unknown' : running ? `Running (PID ${status?.processId})` : 'Stopped' }}
       </NTag>
     </h1>
 
+    <NAlert v-if="statusError" type="warning" :title="statusError" class="gap">
+      The server's state is not known, so the actions are unavailable until it is.
+    </NAlert>
+
+    <!-- Every action needs a known state: Start and Update a stopped server (Update stops a
+         running one without asking), the rest a running one. -->
     <NCard title="Actions" class="gap">
       <NSpace>
-        <NButton type="primary" :loading="busy === 'start'" :disabled="!!busy || status?.isRunning" @click="ask('start')">Start</NButton>
-        <NButton :loading="busy === 'stop'" :disabled="!!busy || !status?.isRunning" @click="ask('stop')">Stop</NButton>
-        <NButton :loading="busy === 'restart'" :disabled="!!busy || !status?.isRunning" @click="ask('restart')">Restart</NButton>
-        <NButton :loading="busy === 'inject'" :disabled="!!busy || !status?.isRunning" @click="ask('inject')">Inject hook</NButton>
-        <NButton :loading="busy === 'update'" :disabled="!!busy || status?.isRunning" @click="ask('update')">Update</NButton>
+        <NButton type="primary" :loading="busy === 'start'" :disabled="!!busy || running !== false" @click="ask('start')">Start</NButton>
+        <NButton :loading="busy === 'stop'" :disabled="!!busy || running !== true" @click="ask('stop')">Stop</NButton>
+        <NButton :loading="busy === 'restart'" :disabled="!!busy || running !== true" @click="ask('restart')">Restart</NButton>
+        <NButton :loading="busy === 'inject'" :disabled="!!busy || running !== true" @click="ask('inject')">Inject hook</NButton>
+        <NButton :loading="busy === 'update'" :disabled="!!busy || running !== false" @click="ask('update')">Update</NButton>
       </NSpace>
       <NSpace class="danger">
-        <NButton type="error" ghost :loading="busy === 'forcestop'" :disabled="!!busy || !status?.isRunning" @click="ask('forcestop')">
+        <NButton type="error" ghost :loading="busy === 'forcestop'" :disabled="!!busy || running !== true" @click="ask('forcestop')">
           Force stop
         </NButton>
         <!-- Like Force stop, only for a running server: stopped, it would just start it,
@@ -163,7 +210,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
           type="error"
           ghost
           :loading="busy === 'forcerestart'"
-          :disabled="!!busy || !status?.isRunning"
+          :disabled="!!busy || running !== true"
           @click="ask('forcerestart')"
         >
           Force restart
@@ -177,10 +224,10 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
         <NInput
           v-model:value="command"
           placeholder="A console command, such as /message Hello everyone"
-          :disabled="!status?.isRunning"
+          :disabled="!!busy || running !== true"
           @keyup.enter="send"
         />
-        <NButton type="primary" :loading="busy === 'command'" :disabled="!status?.isRunning || !command.trim()" @click="send">
+        <NButton type="primary" :loading="busy === 'command'" :disabled="!!busy || running !== true || !command.trim()" @click="send">
           Send
         </NButton>
       </NInputGroup>
