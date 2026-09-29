@@ -22,6 +22,7 @@ export const router = createRouter({
       children: [
         { path: '', name: 'admin-dashboard', component: () => import('@/views/admin/DashboardView.vue') },
         { path: 'server', name: 'admin-server', component: () => import('@/views/admin/ServerControlView.vue') },
+        { path: 'config', name: 'admin-config', component: () => import('@/views/admin/ConfigView.vue') },
         { path: 'settings', name: 'admin-settings', component: () => import('@/views/admin/SettingsView.vue') },
       ],
     },

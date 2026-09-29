@@ -39,6 +39,9 @@ public static class ServerConfigPatch
     /// </summary>
     public static string KeyOf(string propertyName) => JsonNamingPolicy.SnakeCaseLower.ConvertName(propertyName);
 
+    /// <summary>The fields a patch may set, by property name (<c>Log</c> is never one).</summary>
+    public static IReadOnlyCollection<string> Fields => Properties.Values.Select(p => p.Name).ToList();
+
     /// <inheritdoc cref="TryApply(ServerConfig, JsonElement, out EventLoopError?, out IReadOnlyList{string})"/>
     public static bool TryApply(ServerConfig target, JsonElement patch, out EventLoopError? error) =>
         TryApply(target, patch, out error, out _);

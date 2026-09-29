@@ -132,7 +132,14 @@ public class ConfigService
     /// rewrites lines that exist), or the key set again below the <c># Event Loop</c>
     /// heading (WriteBasicConfig leaves that part alone, and the later value wins).
     /// </summary>
-    public virtual IReadOnlyList<string> BasicKeysThatCannotBeSaved(IEnumerable<string> keys)
+    public virtual IReadOnlyList<string> BasicKeysThatCannotBeSaved(IEnumerable<string> keys) =>
+        BasicKeyProblems(keys).Select(problem => $"{problem.Key} ({problem.Value})").ToList();
+
+    /// <summary>
+    /// Of <paramref name="keys"/>, those a change could not take effect for, each with the
+    /// reason (see <see cref="BasicKeysThatCannotBeSaved"/>), keyed by the key.
+    /// </summary>
+    public virtual IReadOnlyDictionary<string, string> BasicKeyProblems(IEnumerable<string> keys)
     {
         var above = new HashSet<string>(StringComparer.Ordinal);
         var below = new HashSet<string>(StringComparer.Ordinal);
@@ -153,14 +160,20 @@ public class ConfigService
             }
         }
 
-        return keys
-            .Select(key => !above.Contains(key)
-                ? $"{key} (no active line; add or uncomment it)"
-                : below.Contains(key)
-                    ? $"{key} (set again below '# Event Loop', which wins; remove that line)"
-                    : null)
-            .OfType<string>()
-            .ToList();
+        var problems = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var key in keys)
+        {
+            if (!above.Contains(key))
+            {
+                problems[key] = "no active line; add or uncomment it";
+            }
+            else if (below.Contains(key))
+            {
+                problems[key] = "set again below '# Event Loop', which wins; remove that line";
+            }
+        }
+
+        return problems;
     }
 
     /// <summary>
