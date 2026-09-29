@@ -3331,26 +3331,27 @@
             "content": {
               "text/plain": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "object"
-                  }
+                  "$ref": "#/components/schemas/SettingsResponse"
                 }
               },
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "object"
-                  }
+                  "$ref": "#/components/schemas/SettingsResponse"
                 }
               },
               "text/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "type": "object"
-                  }
+                  "$ref": "#/components/schemas/SettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationProblemDetails"
                 }
               }
             }
@@ -3358,40 +3359,47 @@
         }
       }
     },
-    "/api/settings/{section}": {
+    "/api/settings/vote": {
       "get": {
         "tags": [
           "Settings"
         ],
-        "parameters": [
-          {
-            "name": "section",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoteSettingsResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoteSettingsResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoteSettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationProblemDetails"
+                }
+              }
+            }
           }
         }
       },
       "put": {
         "tags": [
           "Settings"
-        ],
-        "parameters": [
-          {
-            "name": "section",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
         ],
         "requestBody": {
           "content": {
@@ -3415,7 +3423,64 @@
         },
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoteSettingsResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoteSettingsResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoteSettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoteSettingsResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoteSettingsResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoteSettingsResponse"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
           }
         }
       }
@@ -5287,6 +5352,17 @@
           }
         }
       },
+      "SettingsResponse": {
+        "required": [
+          "vote"
+        ],
+        "type": "object",
+        "properties": {
+          "vote": {
+            "$ref": "#/components/schemas/VoteSettingsResponse"
+          }
+        }
+      },
       "TagRequest": {
         "required": [
           "name",
@@ -5753,6 +5829,46 @@
           },
           "product": {
             "type": "string"
+          }
+        }
+      },
+      "VoteSettingsResponse": {
+        "required": [
+          "mode",
+          "directCooldownSeconds",
+          "voteTimeoutSeconds",
+          "maxLapsAllowed",
+          "messageDelayMs",
+          "suppressCommandsDuringRace",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string"
+          },
+          "directCooldownSeconds": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "voteTimeoutSeconds": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxLapsAllowed": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "messageDelayMs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "suppressCommandsDuringRace": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },

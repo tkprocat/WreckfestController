@@ -133,6 +133,32 @@ public class SettingsEndpointsTests
         Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
     }
 
+    // GET answers with the typed VoteSettingsResponse, PUT with SettingsApi's body for the
+    // same section: the web app is typed against the first, so the two must match field
+    // for field, a 409's body included.
+    [Fact]
+    public async Task GetAndPut_AnswerWithTheSameFields()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+        var read = await client.GetFromJsonAsync<JsonElement>("/api/settings/vote", Ct);
+        var list = await client.GetFromJsonAsync<JsonElement>("/api/settings", Ct);
+
+        using var saved = await SendAsync(client, "/api/settings/vote", new { maxLapsAllowed = 12 }, "\"1\"");
+        using var stale = await SendAsync(client, "/api/settings/vote", new { maxLapsAllowed = 13 }, "\"1\"");
+
+        var expected = FieldsOf(read);
+        Assert.Equal(expected, FieldsOf(list.GetProperty("vote")));
+        Assert.Equal(expected, FieldsOf(await saved.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Equal(expected, FieldsOf(await stale.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+        Assert.Equal(
+            ["directCooldownSeconds", "maxLapsAllowed", "messageDelayMs", "mode", "suppressCommandsDuringRace", "version", "voteTimeoutSeconds"],
+            expected);
+    }
+
+    private static List<string> FieldsOf(JsonElement body) => body.EnumerateObject().Select(p => p.Name).Order().ToList();
+
     public static TheoryData<string, object, string> InvalidEdits => new()
     {
         { "vote", new { mode = "sometimes" }, "mode" },
