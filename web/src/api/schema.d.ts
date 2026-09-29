@@ -2642,6 +2642,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/server/processes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ServerProcessResponse"][];
+                        "application/json": components["schemas"]["ServerProcessResponse"][];
+                        "text/json": components["schemas"]["ServerProcessResponse"][];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/server/attach/{pid}": {
         parameters: {
             query?: never;
@@ -3508,7 +3563,6 @@ export interface components {
             /** Format: int32 */
             lines: number;
             source: string;
-            logFilePath: null | string;
             output: string[];
         };
         LoginRequest: {
@@ -3695,6 +3749,13 @@ export interface components {
             frequency?: string;
             mods?: string;
             log?: string;
+        };
+        ServerProcessResponse: {
+            /** Format: int32 */
+            processId: number;
+            /** Format: date-time */
+            startTime: string;
+            isAttached: boolean;
         };
         ServerStatusResponse: {
             isRunning: boolean;

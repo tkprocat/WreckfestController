@@ -81,6 +81,9 @@
                 <DataGridTextColumn Header="Uptime" Binding="{Binding UptimeString}" Width="120"/>
                 <DataGridTextColumn Header="Memory (MB)" Binding="{Binding MemoryUsageMB}" Width="120"/>
                 <DataGridTextColumn Header="Status" Binding="{Binding StatusString}" Width="100"/>
+                <!-- "Other install": not the ServerPath from Configuration. Attach, inject and
+                     kill ask first for those. -->
+                <DataGridTextColumn Header="Server" Binding="{Binding ServerString}" Width="120"/>
             </DataGrid.Columns>
         </DataGrid>
 

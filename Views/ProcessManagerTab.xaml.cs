@@ -116,9 +116,29 @@ public partial class ProcessManagerTab : UserControl
         _serverManager.ProcessConsoleHookOutput = ProcessHookOutputCheckBox.IsChecked == true;
     }
 
+    /// <summary>
+    /// A server from another install is listed, and may be what the user wants - but it is
+    /// easy to pick by mistake, so acting on it asks first. The web API refuses it outright.
+    /// </summary>
+    private static async Task<bool> ConfirmIfNotConfiguredServerAsync(ServerProcessInfo process, string action)
+    {
+        if (process.IsConfiguredServer)
+        {
+            return true;
+        }
+
+        return await DialogService.ShowConfirmationAsync(
+            $"Process {process.ProcessId} is not the server set in Configuration (Server Path):\n" +
+            $"{process.ExecutablePath}\n\n{action} it anyway?",
+            "Not the configured server");
+    }
+
     private async void OnAttachToProcessClicked(object sender, RoutedEventArgs e)
     {
         if (ProcessListGrid.SelectedItem is not ServerProcessInfo selectedProcess)
+            return;
+
+        if (!await ConfirmIfNotConfiguredServerAsync(selectedProcess, "Attach to"))
             return;
 
         try
@@ -148,6 +168,9 @@ public partial class ProcessManagerTab : UserControl
     private async void OnInjectIntoProcessClicked(object sender, RoutedEventArgs e)
     {
         if (ProcessListGrid.SelectedItem is not ServerProcessInfo selectedProcess)
+            return;
+
+        if (!await ConfirmIfNotConfiguredServerAsync(selectedProcess, "Inject into"))
             return;
 
         try
@@ -181,6 +204,9 @@ public partial class ProcessManagerTab : UserControl
     private async void OnKillProcessClicked(object sender, RoutedEventArgs e)
     {
         if (ProcessListGrid.SelectedItem is not ServerProcessInfo selectedProcess)
+            return;
+
+        if (!await ConfirmIfNotConfiguredServerAsync(selectedProcess, "Kill"))
             return;
 
         var result = await DialogService.ShowConfirmationAsync(

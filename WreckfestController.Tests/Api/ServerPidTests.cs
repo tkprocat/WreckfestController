@@ -1,3 +1,5 @@
+using System.Net;
+
 namespace WreckfestController.Tests.Api;
 
 /// <summary>
@@ -22,5 +24,33 @@ public class ServerPidTests
         using var response = await client.PostAsync($"/api/server/{action}/{pid}", content: null, Ct);
 
         await AuthEndpointsTests.AssertFieldErrorAsync(response, "pid");
+    }
+
+    // A real process that is not the configured server - here, this test run itself -
+    // must not be attachable: Force stop would then kill it.
+    [Theory]
+    [InlineData("attach")]
+    [InlineData("inject")]
+    public async Task AProcessThatIsNotTheServer_IsRefused(string action)
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+
+        using var response = await client.PostAsync($"/api/server/{action}/{Environment.ProcessId}", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+    }
+
+    // The list a remote admin picks from: only the configured server, and no paths.
+    [Fact]
+    public async Task Processes_ListsOnlyTheConfiguredServer()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+
+        using var response = await client.GetAsync("/api/server/processes", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("[]", await response.Content.ReadAsStringAsync(Ct));
     }
 }

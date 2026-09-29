@@ -1839,11 +1839,58 @@ public class ServerManager
     }
 
     /// <summary>
+    /// Whether <paramref name="executable"/> is the server <paramref name="configured"/>
+    /// names: the same file, compared as full paths, ignoring case as Windows does. False
+    /// when either is missing or not a valid path.
+    /// </summary>
+    public static bool IsConfiguredServerPath(string? executable, string? configured)
+    {
+        if (string.IsNullOrWhiteSpace(executable) || string.IsNullOrWhiteSpace(configured))
+        {
+            return false;
+        }
+
+        try
+        {
+            return string.Equals(Path.GetFullPath(executable), Path.GetFullPath(configured), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="pid"/> may be attached to or injected into from the web API:
+    /// only a running Wreckfest dedicated server whose executable is the configured
+    /// ServerPath - not the game client, another install's server, or any other process.
+    /// The reason never includes a path.
+    /// </summary>
+    public virtual (bool Allowed, string Reason) CheckConfiguredServerProcess(int pid)
+    {
+        if (string.IsNullOrWhiteSpace(_server.CurrentValue.ServerPath))
+        {
+            return (false, "No server path is set in the desktop app's Configuration, so no process can be confirmed as the server.");
+        }
+
+        var server = GetRunningWreckfestServers().FirstOrDefault(s => s.ProcessId == pid);
+        if (server is null)
+        {
+            return (false, $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.");
+        }
+
+        return server.IsConfiguredServer
+            ? (true, string.Empty)
+            : (false, $"Process {pid} is a Wreckfest server from another install, not the one set in the desktop app's Configuration.");
+    }
+
+    /// <summary>
     /// Scans for running Wreckfest server processes
     /// </summary>
     public List<Models.ServerProcessInfo> GetRunningWreckfestServers()
     {
         var servers = new List<Models.ServerProcessInfo>();
+        var configuredPath = _server.CurrentValue.ServerPath;
 
         try
         {
@@ -1870,11 +1917,13 @@ public class ServerManager
                                 // Only include servers started with -s parameter
                                 if (commandLine.Contains(" -s ", StringComparison.OrdinalIgnoreCase))
                                 {
+                                    var executable = process.MainModule?.FileName ?? string.Empty;
                                     var serverInfo = new Models.ServerProcessInfo
                                     {
                                         ProcessId = process.Id,
                                         StartTime = process.StartTime,
-                                        ExecutablePath = process.MainModule?.FileName ?? string.Empty,
+                                        ExecutablePath = executable,
+                                        IsConfiguredServer = IsConfiguredServerPath(executable, configuredPath),
                                         MemoryUsageMB = process.WorkingSet64 / 1024 / 1024,
                                         IsAttached = process.Id == currentPid,
                                         ConfigFile = ExtractConfigFileName(commandLine)
