@@ -51,6 +51,28 @@ public class ServerProcessGuardTests
         Assert.DoesNotContain(@"C:\", reason, StringComparison.OrdinalIgnoreCase);
     }
 
+    // The API's attach checks and attaches on one process handle; a process that is not
+    // the configured server is refused and nothing is attached.
+    [Fact]
+    public void AttachToConfiguredServer_RefusesAnotherProcess_AndAttachesNothing()
+    {
+        var manager = Manager(@"C:\Servers\Wreckfest\Wreckfest_x64.exe");
+
+        var (success, message) = manager.AttachToConfiguredServer(Environment.ProcessId);
+
+        Assert.False(success);
+        Assert.Contains("not a running Wreckfest dedicated server", message, StringComparison.Ordinal);
+        Assert.False(manager.IsRunning);
+    }
+
+    [Fact]
+    public void AttachToConfiguredServer_RefusesAPidThatDoesNotExist()
+    {
+        var (success, _) = Manager(@"C:\Servers\Wreckfest\Wreckfest_x64.exe").AttachToConfiguredServer(int.MaxValue);
+
+        Assert.False(success);
+    }
+
     private static ServerManager Manager(string serverPath)
     {
         var events = Mock.Of<IServerEventPublisher>();

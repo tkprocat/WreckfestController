@@ -118,17 +118,18 @@ public class ServerController : ControllerBase
 
     // No :int route constraint: a pid that is not a number is a 400 naming pid, not a 404.
     // Only the configured server may be targeted: attach decides what Force stop kills and
-    // what inject loads the hook into.
+    // what inject loads the hook into. AttachToConfiguredServer checks and attaches on one
+    // process handle.
     [HttpPost("attach/{pid}")]
     public ActionResult<ServerActionResponse> AttachToProcess(int pid)
     {
-        if ((InvalidPid(pid) ?? NotTheServer(pid)) is { } refused)
+        if (InvalidPid(pid) is { } refused)
         {
             return refused;
         }
 
         _logger.LogInformation("Received request to attach to process {PID}", pid);
-        return Answer(_serverManager.AttachToExistingProcess(pid));
+        return Answer(_serverManager.AttachToConfiguredServer(pid));
     }
 
     /// <summary>
@@ -175,7 +176,15 @@ public class ServerController : ControllerBase
         var result = _serverManager.GetLogFileContent(lines);
         if (!result.Success)
         {
-            return this.Refused(result.Message);
+            // Its messages can name the log file's path ("not found at C:\..."); the web
+            // never sees paths, so a failure that involved one is summarised.
+            if (result.LogFilePath is null)
+            {
+                return this.Refused(result.Message);
+            }
+
+            _logger.LogWarning("Log file tail for the web API failed: {Message}", result.Message);
+            return this.Refused("The server's log file could not be read. The desktop app's log has the details.");
         }
 
         var output = result.Lines ?? [];

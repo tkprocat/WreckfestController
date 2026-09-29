@@ -53,4 +53,32 @@ public class ServerPidTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("[]", await response.Content.ReadAsStringAsync(Ct));
     }
+
+    // "Log file not found at C:\..." named the path; the web never sees paths.
+    [Fact]
+    public async Task ALogFileFailure_DoesNotNameThePath()
+    {
+        var directory = ApiTestHost.NewDataDirectory();
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(Path.Combine(directory, "server_config.cfg"), "server_name=Test\nlog=missing.log\n", Ct);
+        try
+        {
+            await using var host = await ApiTestHost.StartAsync(
+                new Dictionary<string, string?> { ["WreckfestServer:WorkingDirectory"] = directory },
+                dataDirectory: directory);
+            using var client = host.CreateAuthenticatedClient();
+
+            using var response = await client.GetAsync("/api/server/logfile", Ct);
+            var body = await response.Content.ReadAsStringAsync(Ct);
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            Assert.Contains("could not be read", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("missing.log", body, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(Path.GetFileName(directory), body, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            ApiTestHost.DeleteDataDirectory(directory);
+        }
+    }
 }

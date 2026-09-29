@@ -1179,9 +1179,52 @@ public class ServerManager
 
     public (bool Success, string Message) AttachToExistingProcess(int pid)
     {
+        Process process;
         try
         {
-            var process = Process.GetProcessById(pid);
+            process = Process.GetProcessById(pid);
+        }
+        catch (ArgumentException)
+        {
+            return (false, $"Process {pid} does not exist");
+        }
+
+        using (process)
+        {
+            return AttachToExistingProcess(process);
+        }
+    }
+
+    /// <summary>
+    /// Attaches, from the web API, only to the configured dedicated server
+    /// (<see cref="CheckConfiguredServerProcess"/>). The check and the attach use one
+    /// process handle: while it is open Windows cannot reuse the PID, so the process that
+    /// passed the check is the one attached - not another that took its PID in between.
+    /// </summary>
+    public virtual (bool Success, string Message) AttachToConfiguredServer(int pid)
+    {
+        Process process;
+        try
+        {
+            process = Process.GetProcessById(pid);
+        }
+        catch (ArgumentException)
+        {
+            return (false, $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.");
+        }
+
+        using (process)
+        {
+            var check = CheckConfiguredServer(process);
+            return check.Allowed ? AttachToExistingProcess(process) : (false, check.Reason);
+        }
+    }
+
+    private (bool Success, string Message) AttachToExistingProcess(Process process)
+    {
+        var pid = process.Id;
+        try
+        {
             if (process.HasExited)
             {
                 return (false, $"Process {pid} has already exited");
@@ -1209,14 +1252,10 @@ public class ServerManager
 
             return (true, $"Attached to process {pid} ({process.ProcessName})");
         }
-        catch (ArgumentException)
-        {
-            return (false, $"Process {pid} does not exist");
-        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to attach to process {PID}", pid);
-            return (false, $"Failed to attach to process: {ex.Message}");
+            return (false, $"Process {pid} could not be attached to; see the desktop app's log.");
         }
     }
 
@@ -1868,20 +1907,78 @@ public class ServerManager
     /// </summary>
     public virtual (bool Allowed, string Reason) CheckConfiguredServerProcess(int pid)
     {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return CheckConfiguredServer(process);
+        }
+        catch (ArgumentException)
+        {
+            return (false, $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.");
+        }
+    }
+
+    /// <summary>The check behind <see cref="CheckConfiguredServerProcess"/>, on an open handle.</summary>
+    private (bool Allowed, string Reason) CheckConfiguredServer(Process process)
+    {
+        var pid = process.Id;
+        var notAServer = $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.";
         if (string.IsNullOrWhiteSpace(_server.CurrentValue.ServerPath))
         {
             return (false, "No server path is set in the desktop app's Configuration, so no process can be confirmed as the server.");
         }
 
-        var server = GetRunningWreckfestServers().FirstOrDefault(s => s.ProcessId == pid);
-        if (server is null)
+        string executable;
+        try
         {
-            return (false, $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.");
+            if (process.HasExited || !IsWreckfestProcessName(process.ProcessName))
+            {
+                return (false, notAServer);
+            }
+
+            // Read through the open handle: another user's or an elevated process cannot be
+            // inspected, and is refused rather than guessed at.
+            executable = process.MainModule?.FileName ?? string.Empty;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or NotSupportedException)
+        {
+            return (false, notAServer);
         }
 
-        return server.IsConfiguredServer
+        if (!WindowsCommandLine.HasServerFlag(CommandLineOf(pid)))
+        {
+            return (false, notAServer);
+        }
+
+        return IsConfiguredServerPath(executable, _server.CurrentValue.ServerPath)
             ? (true, string.Empty)
             : (false, $"Process {pid} is a Wreckfest server from another install, not the one set in the desktop app's Configuration.");
+    }
+
+    private static bool IsWreckfestProcessName(string name) =>
+        name.Equals("Wreckfest_x64", StringComparison.OrdinalIgnoreCase) || name.Equals("Wreckfest", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>A process's command line, from WMI; null when it cannot be read.</summary>
+    private string? CommandLineOf(int pid)
+    {
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {pid}");
+            foreach (System.Management.ManagementObject result in searcher.Get())
+            {
+                using (result)
+                {
+                    return result["CommandLine"]?.ToString();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogTrace(ex, "Could not read the command line of process {PID}", pid);
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -1895,7 +1992,9 @@ public class ServerManager
         try
         {
             var processes = Process.GetProcesses();
-            var currentPid = _serverProcess?.Id;
+            // The pid attachment sets (attach from the API or the desktop, or a start):
+            // _serverProcess is only the process this controller started.
+            var currentPid = _actualServerPid;
 
             foreach (var process in processes)
             {
@@ -1915,7 +2014,7 @@ public class ServerManager
                                 var commandLine = obj["CommandLine"]?.ToString() ?? string.Empty;
 
                                 // Only include servers started with -s parameter
-                                if (commandLine.Contains(" -s ", StringComparison.OrdinalIgnoreCase))
+                                if (WindowsCommandLine.HasServerFlag(commandLine))
                                 {
                                     var executable = process.MainModule?.FileName ?? string.Empty;
                                     var serverInfo = new Models.ServerProcessInfo
