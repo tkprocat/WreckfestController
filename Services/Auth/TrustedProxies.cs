@@ -71,12 +71,21 @@ public static class TrustedProxies
                     entry);
             }
 
-            // Host is deliberately not forwarded: nothing here builds absolute URLs.
-            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-
             // Replace the loopback defaults, so only the configured proxies are trusted.
             options.KnownProxies.Clear();
             options.KnownIPNetworks.Clear();
+
+            // With both lists empty, ASP.NET Core skips the known-proxy check and trusts
+            // every peer. So when no usable proxy is configured, forwarding is switched off
+            // entirely instead - otherwise any client could name its own IP.
+            if (parsed.Proxies.Count + parsed.Networks.Count == 0)
+            {
+                options.ForwardedHeaders = ForwardedHeaders.None;
+                return;
+            }
+
+            // Host is deliberately not forwarded: nothing here builds absolute URLs.
+            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
             foreach (var proxy in parsed.Proxies)
             {
                 options.KnownProxies.Add(proxy);
@@ -91,13 +100,10 @@ public static class TrustedProxies
             // an X-Forwarded-For entry the client wrote itself is never taken as its IP.
             options.ForwardLimit = null;
 
-            if (parsed.Proxies.Count + parsed.Networks.Count > 0)
-            {
-                logger.LogInformation(
-                    "Trusting forwarded headers from {Proxies}",
-                    string.Join(", ", parsed.Proxies.Select(p => p.ToString())
-                        .Concat(parsed.Networks.Select(n => n.ToString()))));
-            }
+            logger.LogInformation(
+                "Trusting forwarded headers from {Proxies}",
+                string.Join(", ", parsed.Proxies.Select(p => p.ToString())
+                    .Concat(parsed.Networks.Select(n => n.ToString()))));
         });
     }
 }

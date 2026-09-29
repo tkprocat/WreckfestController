@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Primitives;
@@ -19,8 +20,8 @@ internal sealed class ConfiguredVotableTracks(IConfiguration configuration) : IV
 
 /// <summary>
 /// The Vote settings from a test's configuration, read on every call and brought into
-/// range as the store does. A <c>Reload()</c> of the configuration counts as a saved
-/// change, so the tests written against configuration keep their bodies.
+/// range as the store does. Like the store, it announces a change only when the values
+/// differ: a <c>Reload()</c> that changes nothing is not a saved change.
 /// </summary>
 internal sealed class ConfiguredVoteSettings(IConfiguration configuration) : IOptionsMonitor<VoteSettings>
 {
@@ -40,6 +41,18 @@ internal sealed class ConfiguredVoteSettings(IConfiguration configuration) : IOp
 
     public VoteSettings Get(string? name) => CurrentValue;
 
-    public IDisposable OnChange(Action<VoteSettings, string?> listener) =>
-        ChangeToken.OnChange(configuration.GetReloadToken, () => listener(CurrentValue, Options.DefaultName));
+    public IDisposable OnChange(Action<VoteSettings, string?> listener)
+    {
+        var last = JsonSerializer.Serialize(CurrentValue);
+        return ChangeToken.OnChange(configuration.GetReloadToken, () =>
+        {
+            var current = CurrentValue;
+            var json = JsonSerializer.Serialize(current);
+            if (json != last)
+            {
+                last = json;
+                listener(current, Options.DefaultName);
+            }
+        });
+    }
 }

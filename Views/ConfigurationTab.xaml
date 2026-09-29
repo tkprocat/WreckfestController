@@ -197,6 +197,12 @@
                         Orientation="Horizontal"
                         HorizontalAlignment="Right"
                         Margin="0,10,0,0">
+                <Button x:Name="ReloadButton"
+                        Content="RELOAD"
+                        ToolTip="Show the saved settings, discarding changes not yet saved"
+                        Click="OnReloadClicked"
+                        Width="100"
+                        Margin="0,0,10,0"/>
                 <Button x:Name="ResetButton"
                         Content="RESET TO DEFAULTS"
                         Click="OnResetClicked"

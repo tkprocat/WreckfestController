@@ -18,8 +18,11 @@ public partial class ConfigurationTab : UserControl
     private readonly ILogger<ConfigurationTab> _logger;
     private UserSettings _currentSettings;
 
-    /// <summary>The versions <see cref="_currentSettings"/> was loaded at, to save back against.</summary>
-    private SettingsVersions _loadedVersions = new(0, 0, 0);
+    /// <summary>
+    /// What the form was filled from: values and versions taken together. A save sends
+    /// only what differs from it, at its versions.
+    /// </summary>
+    private SettingsSnapshot _loaded = new(new UserSettings(), new SettingsVersions(0, 0, 0));
 
     public ConfigurationTab(
         SettingsService settingsService,
@@ -41,6 +44,17 @@ public partial class ConfigurationTab : UserControl
         // Load current settings
         LoadSettings();
         _ = RefreshAccountsAsync();
+
+        // Loaded in recovery mode, the form holds the shipped defaults (version 0): load the
+        // stored settings once the database is back. A form holding stored settings is left
+        // alone, so an edit in progress is not thrown away.
+        _settingsService.DatabaseChanged += () => Dispatcher.InvokeAsync(() =>
+        {
+            if (_loaded.Versions == new SettingsVersions(0, 0, 0))
+            {
+                LoadSettings();
+            }
+        });
     }
 
     /// <summary>Re-reads the account count. Also called when the database becomes ready.</summary>
@@ -91,7 +105,8 @@ public partial class ConfigurationTab : UserControl
     {
         try
         {
-            (_currentSettings, _loadedVersions) = _settingsService.LoadForEdit();
+            _loaded = _settingsService.LoadForEdit();
+            _currentSettings = _loaded.Settings;
             PopulateForm(_currentSettings);
         }
         catch (Exception ex)
@@ -233,8 +248,10 @@ public partial class ConfigurationTab : UserControl
 
             // Gather and save settings
             var settings = GatherFormData();
-            _loadedVersions = _settingsService.SaveSettings(settings, _loadedVersions);
-            (_currentSettings, _loadedVersions) = _settingsService.LoadForEdit();
+            // The form keeps what it saved, at the new versions. Not a fresh read: another
+            // editor's newer values would come with versions the form's values do not match.
+            _loaded = _settingsService.SaveSettings(settings, _loaded);
+            _currentSettings = _loaded.Settings;
 
             ShowStatusMessage("Settings saved successfully!", isError: false);
 
@@ -242,12 +259,28 @@ public partial class ConfigurationTab : UserControl
                 "Settings saved successfully!\n\nMost changes will take effect immediately.",
                 "Settings Saved");
         }
+        catch (SettingsConflictException ex)
+        {
+            // Someone else saved first. Show their values, and let this user redo the change.
+            _logger.LogWarning("Settings save refused: {Reason}", ex.Message);
+            LoadSettings();
+            ShowStatusMessage("Not saved: the settings were changed elsewhere. The form now shows them.", isError: true);
+            await DialogService.ShowWarningAsync(
+                $"{ex.Message}\n\nThe form now shows the current settings. Make your change again and save.",
+                "Changed Elsewhere");
+        }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error saving settings");
             ShowStatusMessage($"Error saving settings: {ex.Message}", isError: true);
             await DialogService.ShowErrorAsync($"Error saving settings: {ex.Message}");
         }
+    }
+
+    private void OnReloadClicked(object sender, RoutedEventArgs e)
+    {
+        LoadSettings();
+        ShowStatusMessage("Showing the saved settings.", isError: false);
     }
 
     private async void OnResetClicked(object sender, RoutedEventArgs e)
