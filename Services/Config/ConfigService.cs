@@ -126,6 +126,32 @@ public class ConfigService
         return tracks;
     }
 
+    /// <summary>
+    /// Of <paramref name="keys"/>, those with no active <c>key=value</c> line above the
+    /// event loop. WriteBasicConfig only rewrites lines that exist, so a change to one of
+    /// these would silently not be saved.
+    /// </summary>
+    public virtual IReadOnlyList<string> MissingBasicKeys(IEnumerable<string> keys)
+    {
+        var active = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in File.ReadAllLines(GetConfigFilePath()))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("# Event Loop"))
+            {
+                break;
+            }
+
+            var parts = trimmed.Split('=', 2);
+            if (!trimmed.StartsWith("#") && parts.Length == 2)
+            {
+                active.Add(parts[0].Trim());
+            }
+        }
+
+        return keys.Where(key => !active.Contains(key)).ToList();
+    }
+
     public virtual void WriteBasicConfig(ServerConfig config)
     {
         var configPath = GetConfigFilePath();
@@ -274,10 +300,20 @@ public class ConfigService
         File.WriteAllLines(configPath, newLines);
     }
 
+    /// <exception cref="InvalidOperationException">
+    /// server_config.cfg has no <c># Event Loop</c> heading, so there is nowhere to write
+    /// the loop. Nothing is written.
+    /// </exception>
     public virtual void WriteEventLoopTracks(String collectionName, List<EventLoopTrack> tracks)
     {
         var configPath = GetConfigFilePath();
         var lines = File.ReadAllLines(configPath);
+        if (!lines.Any(line => line.Trim().StartsWith("# Event Loop")))
+        {
+            throw new InvalidOperationException(
+                "server_config.cfg has no '# Event Loop' heading, so the track rotation cannot be written. Add the heading, then try again.");
+        }
+
         var newLines = new List<string>();
         bool inEventLoop = false;
 

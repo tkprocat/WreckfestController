@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 using WreckfestController.Models;
 using Xunit;
@@ -8,6 +9,7 @@ using WreckfestController.Services.Hook;
 using WreckfestController.Services.Publishing;
 using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Tracking;
+using WreckfestController.Tests.Services.Config;
 using WreckfestController.Tests.Services.Tracking;
 using WreckfestController.Services.Voting;
 
@@ -1190,7 +1192,7 @@ public class VotingServiceTests
 
     private (VotingService service, PlayerTracker tracker, List<string> messages,
              Mock<ServerManager> serverMock, IConfigurationRoot config)
-        CreateModeSetup(string mode)
+        CreateModeSetup(string mode, IOptionsMonitor<VoteSettings>? vote = null)
     {
         var values = new Dictionary<string, string?>
         {
@@ -1229,7 +1231,7 @@ public class VotingServiceTests
             tracker,
             new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>()).Object,
             Mock.Of<ILogger<VotingService>>(),
-            new ConfiguredVoteSettings(config), new ConfiguredVotableTracks(config));
+            vote ?? new ConfiguredVoteSettings(config), new ConfiguredVotableTracks(config));
 
         return (service, tracker, messages, serverMock, config);
     }
@@ -1896,7 +1898,7 @@ public class VotingServiceTests
     }
 
     [Fact]
-    public void VotingCommand_SettingsReloadRestoresSavedMode()
+    public void VotingCommand_ASavedVoteChangeRestoresSavedMode_ButNothingElseDoes()
     {
         var (service, tracker, messages, _, config) = CreateModeSetup(VoteModes.Voting);
         Join(tracker, "Admin");
@@ -1905,8 +1907,46 @@ public class VotingServiceTests
         service.ProcessChatCommand("Admin", false, "!voting off");
         AssertReportedMode(service, messages, VoteModes.Direct);
 
+        // A reload that changes nothing is not a saved change.
         config.Reload();
+        AssertReportedMode(service, messages, VoteModes.Direct);
 
+        config["Vote:MaxLapsAllowed"] = "12";
+        config.Reload();
+        AssertReportedMode(service, messages, VoteModes.Voting);
+    }
+
+    [Fact]
+    public async Task VotingCommand_OverTheRealStore_OnlyAChangedVoteSaveRestoresSavedMode()
+    {
+        using var database = new SettingsTestDatabase();
+        var store = database.Store;
+
+        // No pause between reply lines, as the other voting tests configure.
+        var initial = store.GetEntry<VoteSettings>();
+        initial.Value.MessageDelayMs = 0;
+        await store.SaveAsync(initial.Value, initial.Version, TestContext.Current.CancellationToken);
+
+        using var monitor = new SettingsStoreOptionsMonitor<VoteSettings>(store);
+        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Voting, monitor);
+        Join(tracker, "Admin");
+        tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
+
+        service.ProcessChatCommand("Admin", false, "!voting off");
+        AssertReportedMode(service, messages, VoteModes.Direct);
+
+        // Saving Vote unchanged, or another section, leaves the chat override in place.
+        var vote = store.GetEntry<VoteSettings>();
+        await store.SaveAsync(vote.Value, vote.Version, TestContext.Current.CancellationToken);
+        var steam = store.GetEntry<SteamCmdSettings>();
+        steam.Value.SteamCmdPath = @"C:\steamcmd\steamcmd.exe";
+        await store.SaveAsync(steam.Value, steam.Version, TestContext.Current.CancellationToken);
+        AssertReportedMode(service, messages, VoteModes.Direct);
+
+        // A saved Vote change ends it.
+        vote = store.GetEntry<VoteSettings>();
+        vote.Value.MaxLapsAllowed = 12;
+        await store.SaveAsync(vote.Value, vote.Version, TestContext.Current.CancellationToken);
         AssertReportedMode(service, messages, VoteModes.Voting);
     }
 

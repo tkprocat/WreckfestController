@@ -196,6 +196,7 @@ Account responses never include password hashes or security stamps:
 The actions (`start` through `inject`) answer `{ message }` (`inject` adds `processId`).
 One the server's state does not allow (already running, not running, no process to
 inject into, a failed update) answers **409** with the reason as the problem's `title`.
+A `pid` that is not a positive number is a **400** naming `pid`.
 
 `logfile` is the only endpoint that reads server output from disk rather than from the
 injected hook. It is kept on purpose: WreckfestWeb's log viewer depends on it, and it is
@@ -205,6 +206,10 @@ holds for everything that drives state. Treat what it returns as history, not li
 it answers even when no hook is injected, and its content can predate the current
 process.
 
+It reads the file named by `log=` in server_config.cfg, resolved against the server's
+working directory, and only when that path stays inside it; otherwise the desktop app's
+log file path. Neither can be set over the API.
+
 Injection is refused (409) unless the target process is already attached, and when
 the detected game build does not match `WreckfestServer:SupportedBuild`.
 
@@ -213,9 +218,9 @@ the detected game build does not match `WreckfestServer:SupportedBuild`.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `basic` | Basic server configuration (`ServerConfig`) |
-| PUT | `basic` | Update it. Body: the `ServerConfig` fields to change. Returns the settings as they now are |
+| PUT | `basic` | Update it. Body: the `ServerConfig` fields to change. Returns the settings read back from the file |
 | GET | `tracks` | Event-loop tracks: `{ count, tracks }` |
-| PUT | `tracks` | Replace them. Body: `{ collectionName, tracks }`. Returns `{ count, tracks }` |
+| PUT | `tracks` | Replace them. Body: `{ collectionName, tracks }`. Returns `{ count, tracks }` read back from the file |
 | GET | `tracks/collection-name` | `{ collectionName }` |
 | GET | `serverinfo` | Live settings asked of the running server (`ServerConfig`) |
 
@@ -226,14 +231,19 @@ gives **409** with the reason as the problem's `title`.
 (names are case-insensitive), and every omitted field keeps its current value. The
 request is rejected with 400, naming the field in `errors`, and nothing is written, when
 it names an unknown field, gives a value of the wrong type or `null`, or puts a line
-break in a string (`body` when the body is not an object).
+break in a string (`body` when the body is not an object). `log` is never written: it
+names the file `logfile` returns, so it is set in server_config.cfg by hand.
+Only keys that already have an active `key=value` line can be changed: a field whose line
+is missing or commented out is a **409** naming the key, and nothing is written.
 
 `PUT tracks` replaces the whole event loop. It is rejected with 400, naming the field, unless
 `collectionName` is non-empty (at most 128 characters), `tracks` is present, every
 entry's `track` is a game id (`^[A-Za-z0-9_]{1,64}$`), `laps`, `bots` and `numTeams`
 are not negative, `carResetDisabled` and `wrongWayLimiterDisabled` are `0` or `1`,
 text values are at most 128 characters, and no value contains a line break. An empty
-`tracks` list is allowed. Collections are checked by the same rules.
+`tracks` list is allowed. Collections are checked by the same rules. A server_config.cfg
+without a `# Event Loop` heading has nowhere to put the loop: that is a **409**, and
+nothing is written.
 
 ### Cups — `api/cups`
 
@@ -316,15 +326,15 @@ or the cup's settings cannot be written to the server config (with a `reason`).
 
 ### Settings — `api/settings`
 
-The settings a person edits, kept in the controller's database one section at a time:
-`wreckfestServer` (`serverPath`, `serverArguments`, `workingDirectory`, `logFilePath`),
-`steamCmd` (`steamCmdPath`, `wreckfestAppId`) and `vote` (`mode`, `directCooldownSeconds`,
-`voteTimeoutSeconds`, `maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`).
-The WPF Configuration tab edits the same sections.
+The settings a person edits over the web, kept in the controller's database one section
+at a time. Today that is `vote` (`mode`, `directCooldownSeconds`, `voteTimeoutSeconds`,
+`maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`); later settings pages
+add sections for what changes game behaviour, never programs or paths. The WPF
+Configuration tab edits the same sections.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | | Every section: `{ wreckfestServer, steamCmd, vote }`, each with its `version` |
+| GET | | Every section: `{ vote }`, each with its `version` |
 | GET | `{section}` | One section, with its `ETag` |
 | PUT | `{section}` | Change the fields in the body; the rest keep their values. Needs `If-Match` |
 
@@ -332,13 +342,20 @@ The WPF Configuration tab edits the same sections.
   A body that repeats `version` is fine: `If-Match` is what counts.
 - Unknown fields, wrong types and out-of-range values are 400 with a field error:
   `mode` is `Off`, `Voting` or `Direct` (any case); `directCooldownSeconds` 0-3600,
-  `voteTimeoutSeconds` 1-3600, `maxLapsAllowed` 1-999, `messageDelayMs` 0-5000; paths and
-  arguments are one line of at most 1024 characters; `wreckfestAppId` is digits only.
+  `voteTimeoutSeconds` 1-3600, `maxLapsAllowed` 1-999, `messageDelayMs` 0-5000.
 - A change takes effect at once: voting reads it on the next command, and a saved `vote`
   change ends a `!voting` override.
 - The startup settings (`Api:*`, `Database:Path`) are not here and have no route. They stay
   in user-settings.json, edited by hand, so a lockout can be fixed without the web UI.
   2.0 never writes that file.
+- The launch settings are not here either, neither read nor written, and have no route:
+  the server's `serverPath`, `serverArguments`, `workingDirectory` and `logFilePath` (no
+  `wreckfestServer` section), and SteamCMD's `steamCmdPath`, which is **hidden** - not
+  even readable - along with the fixed `wreckfestAppId` (no `steamCmd` section). They
+  decide which programs the controller starts and which files it reads and writes, so a
+  web admin who could change them could run any program or read any file on the PC, and
+  reading them would only reveal local paths. They are set in the WPF app only. The web
+  keeps the server actions, Update included (`POST /api/server/update`).
 
 ### Catalogue — `api/catalogue`
 

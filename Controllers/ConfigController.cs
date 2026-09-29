@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using WreckfestController.Models;
 using WreckfestController.Services.Auth;
@@ -16,6 +17,11 @@ namespace WreckfestController.Controllers;
 [ApiController]
 [Authorize(Policy = ApiAuthentication.AdminPolicy)]
 [Route("api/config")]
+// Declaring any response type stops ASP.NET Core inferring the 200 from ActionResult<T>,
+// so it is declared too; with no type given, each action's own return type is used.
+[ProducesResponseType(StatusCodes.Status200OK)]
+[ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest, "application/problem+json")]
+[ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict, "application/problem+json")]
 public class ConfigController : ControllerBase
 {
     private readonly ConfigService _configService;
@@ -46,7 +52,9 @@ public class ConfigController : ControllerBase
 
     /// <summary>
     /// Changes server settings. Only the fields present in the body change; everything
-    /// else keeps its current value. Returns the settings as they now are.
+    /// else keeps its current value. Returns the settings as read back from the file.
+    /// A field whose key has no active line in server_config.cfg (missing, or commented
+    /// out) cannot be saved: that is a 409 naming the key, and nothing is written.
     /// </summary>
     [HttpPut("basic")]
     public ActionResult<ServerConfig> UpdateBasicConfig([FromBody] JsonElement patch)
@@ -62,14 +70,24 @@ public class ConfigController : ControllerBase
             return this.Refused($"Failed to read basic config: {ex.Message}");
         }
 
-        if (!ServerConfigPatch.TryApply(config, patch, out var error))
+        if (!ServerConfigPatch.TryApply(config, patch, out var error, out var applied))
         {
             return this.Invalid(error!.Field, error.Message);
         }
 
+        ServerConfig saved;
         try
         {
+            var missing = _configService.MissingBasicKeys(applied.Select(ServerConfigPatch.KeyOf));
+            if (missing.Count > 0)
+            {
+                return this.Refused(
+                    $"server_config.cfg has no active line for {string.Join(", ", missing)}, so it cannot be saved. " +
+                    "Add or uncomment it in server_config.cfg, then try again. Nothing was changed.");
+            }
+
             _configService.WriteBasicConfig(config);
+            saved = _configService.ReadBasicConfig();
         }
         catch (Exception ex)
         {
@@ -78,7 +96,7 @@ public class ConfigController : ControllerBase
         }
 
         _logger.LogInformation("{Caller} updated the basic config", this.Caller());
-        return config;
+        return saved;
     }
 
     /// <summary>The event loop's <c>#CollectionName</c>.</summary>
@@ -112,7 +130,10 @@ public class ConfigController : ControllerBase
         }
     }
 
-    /// <summary>Replaces the event loop. Returns it as written.</summary>
+    /// <summary>
+    /// Replaces the event loop. Returns it as read back from the file. A file without a
+    /// <c># Event Loop</c> heading has nowhere to put it: that is a 409.
+    /// </summary>
     [HttpPut("tracks")]
     public ActionResult<EventLoopResponse> UpdateEventLoopTracks(UpdateEventLoopTracksRequest request)
     {
@@ -121,9 +142,11 @@ public class ConfigController : ControllerBase
             return this.Invalid(error.Field, error.Message);
         }
 
+        List<EventLoopTrack> saved;
         try
         {
             _configService.WriteEventLoopTracks(request.CollectionName, request.Tracks);
+            saved = _configService.ReadEventLoopTracks();
         }
         catch (Exception ex)
         {
@@ -132,7 +155,7 @@ public class ConfigController : ControllerBase
         }
 
         _logger.LogInformation("{Caller} replaced the event loop ({Count} tracks)", this.Caller(), request.Tracks.Count);
-        return new EventLoopResponse(request.Tracks.Count, request.Tracks);
+        return new EventLoopResponse(saved.Count, saved);
     }
 
     /// <summary>Live server info, asked of the running server with its <c>?</c> command.</summary>

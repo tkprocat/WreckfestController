@@ -69,4 +69,51 @@ public sealed class AccountService
         var user = new AppUser { UserName = userName.Trim(), Email = email.Trim() };
         return await users.CreateAsync(user, password);
     }
+
+#if DEBUG
+    /// <summary>
+    /// Debug builds only: creates the admin named by <c>DevSeed:Email</c> and
+    /// <c>DevSeed:Password</c> (user name <c>DevSeed:UserName</c>, else the email) when
+    /// the database has no accounts, so a fresh development database can be signed in
+    /// to without the first-admin dialog. The values come from configuration (an
+    /// environment variable such as <c>DevSeed__Password</c>, the command line, or
+    /// user-settings.json), never from the repository. Release builds do not contain it.
+    /// </summary>
+    /// <returns>The seeded user name, or null when nothing was seeded.</returns>
+    public async Task<string?> SeedDevAdminAsync(CancellationToken cancellationToken = default)
+    {
+        var email = _configuration["DevSeed:Email"];
+        var password = _configuration["DevSeed:Password"];
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrEmpty(password) || !_database.IsReady)
+        {
+            return null;
+        }
+
+        var userName = _configuration["DevSeed:UserName"];
+        userName = (string.IsNullOrWhiteSpace(userName) ? email : userName).Trim();
+
+        using var scope = _scopes.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<ControllerDbContext>();
+        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+
+        // SQLite's BEGIN IMMEDIATE (Microsoft.Data.Sqlite's default) takes the write lock
+        // before the count, so no other writer - another instance's first-admin dialog -
+        // can add an account between "there are none" and the insert.
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        if (await users.Users.AnyAsync(cancellationToken))
+        {
+            return null;
+        }
+
+        var result = await users.CreateAsync(new AppUser { UserName = userName, Email = email.Trim() }, password);
+        if (!result.Succeeded)
+        {
+            throw new InvalidOperationException(
+                "DevSeed account rejected: " + string.Join("; ", result.Errors.Select(e => e.Description)));
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+        return userName;
+    }
+#endif
 }

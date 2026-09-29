@@ -1,4 +1,8 @@
 using System.Net;
+using System.Data.Common;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.DependencyInjection;
 using WreckfestController.Data;
 using WreckfestController.Services.Hosting;
 
@@ -84,6 +88,45 @@ public sealed class WebAppHostingTests : IDisposable
 
         Assert.Contains(IndexMarker, await page.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, api.StatusCode);
+    }
+
+    [Fact]
+    public async Task InRecoveryMode_ASignedInBrowser_StillGetsThePage()
+    {
+        var database = new FailEverythingInterceptor();
+        await using var host = await ApiTestHost.StartAsync(Settings, configureDatabase: options => options.AddInterceptors(database));
+        await host.CreateUserAsync("admin");
+        using var browser = host.CreateBrowser();
+        await browser.SignInAsync("admin");
+
+        // The database fails after sign-in, so the cookie can no longer be checked against it.
+        database.Failing = true;
+        host.MainServices.GetRequiredService<DatabaseState>().MarkFailed("disk gone", null);
+        using var page = await browser.Http.GetAsync("/settings", Ct);
+        using var api = await browser.Http.GetAsync("/api/cups", Ct);
+
+        Assert.Equal(HttpStatusCode.OK, page.StatusCode);
+        Assert.Contains(IndexMarker, await page.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, api.StatusCode);
+    }
+
+    /// <summary>Once failing, every query throws, as with a database that has gone away.</summary>
+    private sealed class FailEverythingInterceptor : DbCommandInterceptor
+    {
+        public volatile bool Failing;
+
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default) =>
+            Failing ? throw new InvalidOperationException("database gone") : ValueTask.FromResult(result);
+
+        public override InterceptionResult<DbDataReader> ReaderExecuting(
+            DbCommand command,
+            CommandEventData eventData,
+            InterceptionResult<DbDataReader> result) =>
+            Failing ? throw new InvalidOperationException("database gone") : result;
     }
 
     [Fact]

@@ -252,6 +252,33 @@ public sealed class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task ARowFromAnOlderBuild_SavedUnchanged_AnnouncesNothing()
+    {
+        // Written by the store before VoteSettings lost AllowedTracks.
+        using (var db = _contexts.CreateDbContext())
+        {
+            db.SettingsSections.Add(new SettingsSection
+            {
+                Section = SettingsSections.Vote,
+                Json = """{"Enabled":true,"Mode":"Voting","DirectCooldownSeconds":30,"VoteTimeoutSeconds":30,"MaxLapsAllowed":10,"AllowedTracks":[],"MessageDelayMs":250,"SuppressCommandsDuringRace":false}""",
+                Version = 4,
+            });
+            db.SaveChanges();
+        }
+
+        _database.MarkReady(null);
+        var store = CreateStore();
+        var heard = new List<Type>();
+        var read = store.GetEntry<VoteSettings>();
+        store.Changed += (_, e) => heard.Add(e.Section);
+
+        var saved = await store.SaveAsync(read.Value, read.Version);
+
+        Assert.Equal(SettingsSaveStatus.Saved, saved.Status);
+        Assert.Empty(heard);
+    }
+
+    [Fact]
     public void Get_ReturnsACopy()
     {
         _database.MarkReady(null);
