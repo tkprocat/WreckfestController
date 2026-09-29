@@ -243,7 +243,8 @@ the detected game build does not match `WreckfestServer:SupportedBuild`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `basic` | Basic server configuration (`ServerConfig`) |
+| GET | `basic` | Basic server configuration (`ServerConfig`; no `log`, which names a file) |
+| GET | `basic/fields` | Per setting: `{ field, key, savable, reason }` - whether server_config.cfg can take a change to it, and if not, what to fix in the file |
 | PUT | `basic` | Update it. Body: the `ServerConfig` fields to change. Returns the settings read back from the file |
 | GET | `tracks` | Event-loop tracks: `{ count, tracks }` |
 | PUT | `tracks` | Replace them. Body: `{ collectionName, tracks }`. Returns `{ count, tracks }` read back from the file |

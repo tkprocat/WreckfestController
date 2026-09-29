@@ -90,6 +90,45 @@ public sealed class ConfigControllerFileTests : IDisposable
         Assert.Equal(before, File.ReadAllText(_file));
     }
 
+    // The page greys out what cannot be saved, instead of failing on Save: a field whose
+    // key is commented out (admin_steam_ids is by default) or overridden below the loop.
+    [Fact]
+    public void Fields_SayWhichSettingsCanBeSaved_AndWhyNot()
+    {
+        File.WriteAllLines(_file,
+        [
+            "server_name=Old",
+            "max_players=24",
+            "#admin_steam_ids=12345678912345678",
+            "laps=3",
+            "",
+            "# Event Loop",
+            "laps=5",
+            "el_add=urban09_1",
+        ]);
+
+        var fields = _controller.GetBasicConfigFields().Value!.ToDictionary(f => f.Field);
+
+        Assert.True(fields["serverName"].Savable);
+        Assert.Equal("server_name", fields["serverName"].Key);
+        Assert.Null(fields["serverName"].Reason);
+        Assert.False(fields["adminSteamIds"].Savable);
+        Assert.Contains("no active line", fields["adminSteamIds"].Reason, StringComparison.Ordinal);
+        Assert.False(fields["laps"].Savable);
+        Assert.Contains("below '# Event Loop'", fields["laps"].Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("log", fields.Keys);
+    }
+
+    // log= names a file: not in what the web reads.
+    [Fact]
+    public void TheApisServerConfig_HasNoLogField()
+    {
+        var json = JsonSerializer.Serialize(new ServerConfig(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        Assert.DoesNotContain("\"log\"", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"serverName\"", json, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void PutTracks_AnswersWithWhatTheFileNowHolds()
     {

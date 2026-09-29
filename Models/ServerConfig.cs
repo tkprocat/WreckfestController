@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace WreckfestController.Models;
 
 public class ServerConfig
@@ -53,6 +55,9 @@ public class ServerConfig
     public string Weather { get; set; } = string.Empty;
     public string Frequency { get; set; } = "high";
     public string Mods { get; set; } = string.Empty;
+    // A file name: the web never sees paths or file names (docs/API.md), and it is never
+    // written over the API. Read and written in server_config.cfg as before.
+    [JsonIgnore]
     public string Log { get; set; } = "log.txt";
 
     /// <summary>
