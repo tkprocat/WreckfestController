@@ -74,6 +74,22 @@ public sealed class ConfigControllerFileTests : IDisposable
         Assert.Equal(before, File.ReadAllText(_file));
     }
 
+    // The writer leaves everything below the heading alone, and the later value wins, so the
+    // change would not take effect: refused up front rather than "saved" and read back as 12.
+    [Fact]
+    public void PutBasic_AKeySetAgainBelowTheEventLoop_IsRefused_AndNothingIsWritten()
+    {
+        File.WriteAllLines(_file, ["server_name=Old", "max_players=24", "", "# Event Loop", "max_players=12", "el_add=urban09_1"]);
+        var before = File.ReadAllText(_file);
+
+        var result = _controller.UpdateBasicConfig(Json("""{"maxPlayers":20}"""));
+
+        var refusal = ControllerTesting.RefusalOf(result);
+        Assert.Contains("max_players", refusal, StringComparison.Ordinal);
+        Assert.Contains("below '# Event Loop'", refusal, StringComparison.Ordinal);
+        Assert.Equal(before, File.ReadAllText(_file));
+    }
+
     [Fact]
     public void PutTracks_AnswersWithWhatTheFileNowHolds()
     {

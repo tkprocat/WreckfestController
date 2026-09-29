@@ -34,7 +34,7 @@ public class ConfigControllerTests
         _mockConfigService = new Mock<ConfigService>(TestSettings.Server(), mockConfigLogger.Object) { CallBase = false };
         // Every key has an active line unless a test says otherwise (ConfigControllerFileTests
         // covers the real file).
-        _mockConfigService.Setup(s => s.MissingBasicKeys(It.IsAny<IEnumerable<string>>())).Returns([]);
+        _mockConfigService.Setup(s => s.BasicKeysThatCannotBeSaved(It.IsAny<IEnumerable<string>>())).Returns([]);
         _mockServerManager = new Mock<ServerManager>(
             Mock.Of<Microsoft.Extensions.Configuration.IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
