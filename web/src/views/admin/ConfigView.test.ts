@@ -171,6 +171,12 @@ describe('ConfigView', () => {
     expect(wrapper!.text()).toContain('Editing is off')
     expect(input('Server name').attributes('disabled')).toBeDefined()
     expect(input('Max players').attributes('disabled')).toBeDefined()
+
+    // Nor does the preview guess which settings are active.
+    await wrapper!.findAll('.n-tabs-tab').find((tab) => tab.text().trim() === 'Preview')!.trigger('click')
+    await flushPromises()
+    expect(wrapper!.find('pre.preview').exists()).toBe(false)
+    expect(wrapper!.text()).toContain('there is no summary')
   })
 
   // Keyboard focus lands on the select's input, so that is what carries the name.

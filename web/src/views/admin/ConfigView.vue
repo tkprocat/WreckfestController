@@ -227,7 +227,11 @@ onMounted(() => void load())
           A summary of the settings and the rotation in server_config.cfg's format, including unsaved changes. Settings the
           file has no active line for are shown commented out. It is not the file itself.
         </NAlert>
-        <pre class="preview">{{ preview }}</pre>
+        <!-- Without the field list, what is active in the file is unknown: no guessing. -->
+        <NAlert v-if="fieldsError" type="warning" :title="fieldsError">
+          Which settings are active in server_config.cfg is not known, so there is no summary. Reload to try again.
+        </NAlert>
+        <pre v-else class="preview">{{ preview }}</pre>
       </NTabPane>
     </NTabs>
   </section>
