@@ -126,6 +126,51 @@ public class ConfigService
         return tracks;
     }
 
+    /// <summary>
+    /// Of <paramref name="keys"/>, those a change could not take effect for, each with the
+    /// reason: no active <c>key=value</c> line above the event loop (WriteBasicConfig only
+    /// rewrites lines that exist), or the key set again below the <c># Event Loop</c>
+    /// heading (WriteBasicConfig leaves that part alone, and the later value wins).
+    /// </summary>
+    public virtual IReadOnlyList<string> BasicKeysThatCannotBeSaved(IEnumerable<string> keys)
+    {
+        var above = new HashSet<string>(StringComparer.Ordinal);
+        var below = new HashSet<string>(StringComparer.Ordinal);
+        var inEventLoop = false;
+        foreach (var line in File.ReadAllLines(GetConfigFilePath()))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("# Event Loop"))
+            {
+                inEventLoop = true;
+                continue;
+            }
+
+            var parts = trimmed.Split('=', 2);
+            if (!trimmed.StartsWith("#") && parts.Length == 2)
+            {
+                (inEventLoop ? below : above).Add(parts[0].Trim());
+            }
+        }
+
+        return keys
+            .Select(key => !above.Contains(key)
+                ? $"{key} (no active line; add or uncomment it)"
+                : below.Contains(key)
+                    ? $"{key} (set again below '# Event Loop', which wins; remove that line)"
+                    : null)
+            .OfType<string>()
+            .ToList();
+    }
+
+    /// <summary>
+    /// server_config.cfg has no <c># Event Loop</c> heading, so the rotation cannot be
+    /// written. Asked before a change that writes the rotation along with other settings,
+    /// so none of them is written when the rotation cannot be.
+    /// </summary>
+    public virtual bool LacksEventLoopHeading() =>
+        !File.ReadAllLines(GetConfigFilePath()).Any(line => line.Trim().StartsWith("# Event Loop"));
+
     public virtual void WriteBasicConfig(ServerConfig config)
     {
         var configPath = GetConfigFilePath();
@@ -274,10 +319,19 @@ public class ConfigService
         File.WriteAllLines(configPath, newLines);
     }
 
+    /// <exception cref="EventLoopHeadingMissingException">
+    /// server_config.cfg has no <c># Event Loop</c> heading, so there is nowhere to write
+    /// the loop. Nothing is written.
+    /// </exception>
     public virtual void WriteEventLoopTracks(String collectionName, List<EventLoopTrack> tracks)
     {
         var configPath = GetConfigFilePath();
         var lines = File.ReadAllLines(configPath);
+        if (!lines.Any(line => line.Trim().StartsWith("# Event Loop")))
+        {
+            throw new EventLoopHeadingMissingException();
+        }
+
         var newLines = new List<string>();
         bool inEventLoop = false;
 

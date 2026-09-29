@@ -1460,7 +1460,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Config/basic": {
+    "/api/config/basic": {
         parameters: {
             query?: never;
             header?: never;
@@ -1481,7 +1481,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerConfig"];
+                        "application/json": components["schemas"]["ServerConfig"];
+                        "text/json": components["schemas"]["ServerConfig"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -1505,7 +1527,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerConfig"];
+                        "application/json": components["schemas"]["ServerConfig"];
+                        "text/json": components["schemas"]["ServerConfig"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -1516,7 +1560,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Config/tracks/collection-name": {
+    "/api/config/tracks/collection-name": {
         parameters: {
             query?: never;
             header?: never;
@@ -1537,7 +1581,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["CollectionNameResponse"];
+                        "application/json": components["schemas"]["CollectionNameResponse"];
+                        "text/json": components["schemas"]["CollectionNameResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -1549,7 +1615,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Config/tracks": {
+    "/api/config/tracks": {
         parameters: {
             query?: never;
             header?: never;
@@ -1570,7 +1636,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["EventLoopResponse"];
+                        "application/json": components["schemas"]["EventLoopResponse"];
+                        "text/json": components["schemas"]["EventLoopResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -1594,7 +1682,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["EventLoopResponse"];
+                        "application/json": components["schemas"]["EventLoopResponse"];
+                        "text/json": components["schemas"]["EventLoopResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -1605,7 +1715,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Config/serverinfo": {
+    "/api/config/serverinfo": {
         parameters: {
             query?: never;
             header?: never;
@@ -1626,7 +1736,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerConfig"];
+                        "application/json": components["schemas"]["ServerConfig"];
+                        "text/json": components["schemas"]["ServerConfig"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2009,7 +2141,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/version": {
+    "/api/server/version": {
         parameters: {
             query?: never;
             header?: never;
@@ -2030,7 +2162,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["VersionResponse"];
+                        "application/json": components["schemas"]["VersionResponse"];
+                        "text/json": components["schemas"]["VersionResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2042,7 +2196,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/status": {
+    "/api/server/status": {
         parameters: {
             query?: never;
             header?: never;
@@ -2063,7 +2217,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerStatusResponse"];
+                        "application/json": components["schemas"]["ServerStatusResponse"];
+                        "text/json": components["schemas"]["ServerStatusResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2075,7 +2251,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/start": {
+    "/api/server/start": {
         parameters: {
             query?: never;
             header?: never;
@@ -2098,7 +2274,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerActionResponse"];
+                        "application/json": components["schemas"]["ServerActionResponse"];
+                        "text/json": components["schemas"]["ServerActionResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2108,7 +2306,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/stop": {
+    "/api/server/stop": {
         parameters: {
             query?: never;
             header?: never;
@@ -2131,7 +2329,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerActionResponse"];
+                        "application/json": components["schemas"]["ServerActionResponse"];
+                        "text/json": components["schemas"]["ServerActionResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2141,7 +2361,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/forcestop": {
+    "/api/server/forcestop": {
         parameters: {
             query?: never;
             header?: never;
@@ -2164,7 +2384,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerActionResponse"];
+                        "application/json": components["schemas"]["ServerActionResponse"];
+                        "text/json": components["schemas"]["ServerActionResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2174,7 +2416,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/restart": {
+    "/api/server/restart": {
         parameters: {
             query?: never;
             header?: never;
@@ -2197,7 +2439,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerActionResponse"];
+                        "application/json": components["schemas"]["ServerActionResponse"];
+                        "text/json": components["schemas"]["ServerActionResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2207,7 +2471,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/forcerestart": {
+    "/api/server/forcerestart": {
         parameters: {
             query?: never;
             header?: never;
@@ -2230,7 +2494,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerActionResponse"];
+                        "application/json": components["schemas"]["ServerActionResponse"];
+                        "text/json": components["schemas"]["ServerActionResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2240,7 +2526,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/update": {
+    "/api/server/update": {
         parameters: {
             query?: never;
             header?: never;
@@ -2263,7 +2549,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerActionResponse"];
+                        "application/json": components["schemas"]["ServerActionResponse"];
+                        "text/json": components["schemas"]["ServerActionResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2273,7 +2581,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/command": {
+    "/api/server/command": {
         parameters: {
             query?: never;
             header?: never;
@@ -2302,7 +2610,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerActionResponse"];
+                        "application/json": components["schemas"]["ServerActionResponse"];
+                        "text/json": components["schemas"]["ServerActionResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2312,7 +2642,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/attach/{pid}": {
+    "/api/server/attach/{pid}": {
         parameters: {
             query?: never;
             header?: never;
@@ -2337,7 +2667,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["ServerActionResponse"];
+                        "application/json": components["schemas"]["ServerActionResponse"];
+                        "text/json": components["schemas"]["ServerActionResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2347,7 +2699,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/inject/{pid}": {
+    "/api/server/inject/{pid}": {
         parameters: {
             query?: never;
             header?: never;
@@ -2372,7 +2724,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["InjectResponse"];
+                        "application/json": components["schemas"]["InjectResponse"];
+                        "text/json": components["schemas"]["InjectResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2382,7 +2756,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/inject": {
+    "/api/server/inject": {
         parameters: {
             query?: never;
             header?: never;
@@ -2405,7 +2779,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["InjectResponse"];
+                        "application/json": components["schemas"]["InjectResponse"];
+                        "text/json": components["schemas"]["InjectResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2415,7 +2811,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/logfile": {
+    "/api/server/logfile": {
         parameters: {
             query?: never;
             header?: never;
@@ -2438,7 +2834,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["LogFileResponse"];
+                        "application/json": components["schemas"]["LogFileResponse"];
+                        "text/json": components["schemas"]["LogFileResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2450,7 +2868,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/Server/players": {
+    "/api/server/players": {
         parameters: {
             query?: never;
             header?: never;
@@ -2471,7 +2889,29 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["PlayerListResponse"];
+                        "application/json": components["schemas"]["PlayerListResponse"];
+                        "text/json": components["schemas"]["PlayerListResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -2870,6 +3310,9 @@ export interface components {
             currentPassword: string;
             newPassword: string;
         };
+        CollectionNameResponse: {
+            collectionName: string;
+        };
         CollectionRequest: {
             name: string;
             tracks: components["schemas"]["EventLoopTrack"][];
@@ -3016,6 +3459,11 @@ export interface components {
         DuplicateCollectionRequest: {
             name?: null | string;
         };
+        EventLoopResponse: {
+            /** Format: int32 */
+            count: number;
+            tracks: components["schemas"]["EventLoopTrack"][];
+        };
         EventLoopTrack: {
             track?: string;
             gamemode?: null | string;
@@ -3050,7 +3498,19 @@ export interface components {
         };
         /** @enum {unknown} */
         GameMode: "Racing" | "Derby";
+        InjectResponse: {
+            message: string;
+            /** Format: int32 */
+            processId: number;
+        };
         JsonElement: unknown;
+        LogFileResponse: {
+            /** Format: int32 */
+            lines: number;
+            source: string;
+            logFilePath: null | string;
+            output: string[];
+        };
         LoginRequest: {
             login: string;
             password: string;
@@ -3070,6 +3530,39 @@ export interface components {
         };
         /** @enum {unknown} */
         OccurrenceOutcome: "Activated" | "Failed" | "Cancelled" | "Missed" | null;
+        Player: {
+            name?: string;
+            /** Format: int32 */
+            playerId?: null | number;
+            /** Format: int32 */
+            score?: null | number;
+            vehicle?: null | string;
+            /** Format: date-time */
+            joinedAt?: string;
+            isBot?: boolean;
+            isAdmin?: boolean;
+            isModerator?: boolean;
+            isPrivileged?: boolean;
+            /** Format: int32 */
+            slot?: null | number;
+        };
+        PlayerListResponse: {
+            /** Format: int32 */
+            totalPlayers?: number;
+            /** Format: int32 */
+            maxPlayers?: number;
+            players?: components["schemas"]["Player"][];
+            /** Format: date-time */
+            lastUpdated?: string;
+        };
+        ProblemDetails: {
+            type?: null | string;
+            title?: null | string;
+            /** Format: int32 */
+            status?: null | number;
+            detail?: null | string;
+            instance?: null | string;
+        };
         PublicActiveCup: {
             name: string;
             /** Format: date-time */
@@ -3134,8 +3627,82 @@ export interface components {
         ResetPasswordRequest: {
             newPassword: string;
         };
+        ServerActionResponse: {
+            message: string;
+        };
         ServerCommandRequest: {
-            command?: string;
+            command: string;
+        };
+        ServerConfig: {
+            serverName?: string;
+            welcomeMessage?: string;
+            password?: string;
+            /** Format: int32 */
+            maxPlayers?: number;
+            /** Format: int32 */
+            lan?: number;
+            /** Format: int32 */
+            steamPort?: number;
+            /** Format: int32 */
+            gamePort?: number;
+            /** Format: int32 */
+            queryPort?: number;
+            /** Format: int32 */
+            excludeFromQuickplay?: number;
+            /** Format: int32 */
+            clearUsers?: number;
+            /** Format: int32 */
+            ownerDisabled?: number;
+            /** Format: int32 */
+            adminControl?: number;
+            /** Format: int32 */
+            lobbyCountdown?: number;
+            /** Format: int32 */
+            readyPlayersRequired?: number;
+            adminSteamIds?: string;
+            opSteamIds?: string;
+            sessionMode?: string;
+            gridOrder?: string;
+            /** Format: int32 */
+            enableTrackVote?: number;
+            /** Format: int32 */
+            disableIdleKick?: number;
+            track?: string;
+            gamemode?: string;
+            /** Format: int32 */
+            bots?: number;
+            aiDifficulty?: string;
+            /** Format: int32 */
+            numTeams?: number;
+            /** Format: int32 */
+            laps?: number;
+            /** Format: int32 */
+            timeLimit?: number;
+            /** Format: int32 */
+            eliminationInterval?: number;
+            vehicleDamage?: string;
+            carClassRestriction?: string;
+            carRestriction?: string;
+            /** Format: int32 */
+            specialVehiclesDisabled?: number;
+            /** Format: int32 */
+            carResetDisabled?: number;
+            /** Format: int32 */
+            carResetDelay?: number;
+            /** Format: int32 */
+            wrongWayLimiterDisabled?: number;
+            weather?: string;
+            frequency?: string;
+            mods?: string;
+            log?: string;
+        };
+        ServerStatusResponse: {
+            isRunning: boolean;
+            /** Format: int32 */
+            processId: null | number;
+            /** Format: int64 */
+            uptimeSeconds: null | number;
+            currentTrack: null | string;
         };
         TagRequest: {
             name: string;
@@ -3207,6 +3774,17 @@ export interface components {
             /** Format: date-time */
             lockoutEnd: null | string;
         };
+        ValidationProblemDetails: {
+            type?: null | string;
+            title?: null | string;
+            /** Format: int32 */
+            status?: null | number;
+            detail?: null | string;
+            instance?: null | string;
+            errors?: {
+                [key: string]: string[];
+            };
+        };
         VariantResponse: {
             /** Format: int32 */
             id: number;
@@ -3223,6 +3801,11 @@ export interface components {
             /** Format: int32 */
             version: number;
             tags: components["schemas"]["TagResponse"][];
+        };
+        VersionResponse: {
+            version: string;
+            assemblyVersion: string;
+            product: string;
         };
         VotingRequest: {
             allowed: boolean;

@@ -386,6 +386,27 @@ public sealed class CupActivationTests : IDisposable
         _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
     }
 
+    // All or nothing: the settings and scoring are written before the rotation, so a file
+    // with nowhere to put the rotation must stop the activation before any of them.
+    [Fact]
+    public async Task ManualActivation_WithNoEventLoopHeading_WritesNothing_AndRestartsNothing()
+    {
+        _config.Setup(c => c.LacksEventLoopHeading()).Returns(true);
+        var cup = await _db.CreateAsync(CupTestDatabase.Definition(
+            "Race night",
+            Now.AddDays(1),
+            tracks: OneTrack,
+            serverConfig: new EventServerConfig { ServerName = "Cup server" },
+            sessionMode: "30p-aggr"));
+
+        await Assert.ThrowsAsync<EventLoopHeadingMissingException>(() => _activator.ActivateAsync(cup.Id));
+
+        Assert.Empty(_writes);
+        _config.Verify(c => c.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()), Times.Never);
+        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+        Assert.False((await _db.ReloadAsync(cup.Id)).IsActive);
+    }
+
     [Fact]
     public async Task ManualActivation_OfTheActiveOrAMissingCup_IsRefused()
     {

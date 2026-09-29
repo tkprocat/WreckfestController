@@ -118,9 +118,10 @@ default is used.
 
 ## Endpoints
 
-The auth and users endpoints return validation failures as **400**
-`ValidationProblemDetails`: `{ "errors": { "<field>": ["message", ...] } }`, with fields
-named as in the request. The older controllers below still answer `{ message }`.
+Validation failures are **400** `ValidationProblemDetails`:
+`{ "errors": { "<field>": ["message", ...] } }`, with fields named as in the request. A
+request the current state does not allow is **409** `ProblemDetails`, its `title` saying
+why. Numbers must be JSON numbers: `"5"` for an integer is a 400.
 
 ### Auth — `api/auth`
 
@@ -177,20 +178,25 @@ Account responses never include password hashes or security stamps:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `version` | Controller version |
-| GET | `status` | Running state and tracked process |
+| GET | `version` | `{ version, assemblyVersion, product }` |
+| GET | `status` | `{ isRunning, processId, uptimeSeconds, currentTrack }` |
 | POST | `start` | Start the server |
 | POST | `stop` | Graceful stop |
 | POST | `forcestop` | Force stop |
 | POST | `restart` | Graceful restart |
 | POST | `forcerestart` | Force restart |
 | POST | `update` | Run the server update |
-| POST | `command` | Send a console command. Body: `ServerCommandRequest` |
+| POST | `command` | Send a console command. Body: `{ command }` (required) |
 | POST | `attach/{pid}` | Attach to an existing process |
 | POST | `inject/{pid}` | Inject the console hook into a process |
 | POST | `inject` | Inject into the already-tracked process |
-| GET | `logfile?lines=100` | Tail the server's log file from disk — the one deliberate exception to hook-only I/O (see below) |
-| GET | `players` | Current roster |
+| GET | `logfile?lines=100` | Tail the server's log file from disk — the one deliberate exception to hook-only I/O (see below). `lines` 1-10000. `{ lines, source, logFilePath, output }` |
+| GET | `players` | Current roster: `{ totalPlayers, maxPlayers, players, lastUpdated }` |
+
+The actions (`start` through `inject`) answer `{ message }` (`inject` adds `processId`).
+One the server's state does not allow (already running, not running, no process to
+inject into, a failed update) answers **409** with the reason as the problem's `title`.
+A `pid` that is not a positive number is a **400** naming `pid`.
 
 `logfile` is the only endpoint that reads server output from disk rather than from the
 injected hook. It is kept on purpose: WreckfestWeb's log viewer depends on it, and it is
@@ -204,34 +210,42 @@ It reads the file named by `log=` in server_config.cfg, resolved against the ser
 working directory, and only when that path stays inside it; otherwise the desktop app's
 log file path. Neither can be set over the API.
 
-Injection is refused unless the target process is already attached, and refused when
-the detected game build does not match `WreckfestServer:SupportedBuild`. Both return
-a failure result rather than throwing.
+Injection is refused (409) unless the target process is already attached, and when
+the detected game build does not match `WreckfestServer:SupportedBuild`.
 
 ### Configuration — `api/config`
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `basic` | Basic server configuration |
-| PUT | `basic` | Update it. Body: `ServerConfig` |
-| GET | `tracks` | Event-loop tracks |
-| PUT | `tracks` | Update them. Body: `UpdateEventLoopTracksRequest` |
-| GET | `tracks/collection-name` | Current track collection name |
-| GET | `serverinfo` | Server info snapshot |
+| GET | `basic` | Basic server configuration (`ServerConfig`) |
+| PUT | `basic` | Update it. Body: the `ServerConfig` fields to change. Returns the settings read back from the file |
+| GET | `tracks` | Event-loop tracks: `{ count, tracks }` |
+| PUT | `tracks` | Replace them. Body: `{ collectionName, tracks }`. Returns `{ count, tracks }` read back from the file |
+| GET | `tracks/collection-name` | `{ collectionName }` |
+| GET | `serverinfo` | Live settings asked of the running server (`ServerConfig`) |
+
+A file that cannot be read or written, or a server that cannot answer `serverinfo`,
+gives **409** with the reason as the problem's `title`.
 
 `PUT basic` is a **partial update**: send only the `ServerConfig` fields to change
 (names are case-insensitive), and every omitted field keeps its current value. The
-request is rejected with 400, and nothing is written, when it names an unknown field,
-gives a value of the wrong type or `null`, or puts a line break in a string. `log` is
-never written: it names the file `logfile` returns, so it is set in server_config.cfg by
-hand.
+request is rejected with 400, naming the field in `errors`, and nothing is written, when
+it names an unknown field, gives a value of the wrong type or `null`, or puts a line
+break in a string (`body` when the body is not an object). `log` is never written: it
+names the file `logfile` returns, so it is set in server_config.cfg by hand.
+Only keys that already have an active `key=value` line can be changed: a field whose line
+is missing or commented out, or that is set again below `# Event Loop` (where the later
+value wins), is a **409** naming the key, and nothing is written.
 
-`PUT tracks` replaces the whole event loop. It is rejected with 400 unless
+`PUT tracks` replaces the whole event loop. It is rejected with 400, naming the field, unless
 `collectionName` is non-empty (at most 128 characters), `tracks` is present, every
 entry's `track` is a game id (`^[A-Za-z0-9_]{1,64}$`), `laps`, `bots` and `numTeams`
 are not negative, `carResetDisabled` and `wrongWayLimiterDisabled` are `0` or `1`,
 text values are at most 128 characters, and no value contains a line break. An empty
-`tracks` list is allowed. Collections are checked by the same rules.
+`tracks` list is allowed. Collections are checked by the same rules. A server_config.cfg
+without a `# Event Loop` heading has nowhere to put the loop: that is a **409**, and
+nothing is written. Activating a cup with a rotation checks this first, so none of the
+cup's other settings are written either.
 
 ### Cups — `api/cups`
 

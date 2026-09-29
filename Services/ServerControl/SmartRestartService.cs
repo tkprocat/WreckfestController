@@ -414,6 +414,13 @@ public class SmartRestartService
         {
             _logger.LogInformation("Applying configuration for cup: {CupName}", @event.Name);
 
+            // All or nothing: the settings and scoring below are written first, so a
+            // rotation that cannot be written must be found out before any of them is.
+            if (@event.Tracks is { Count: > 0 } && _configService.LacksEventLoopHeading())
+            {
+                throw new EventLoopHeadingMissingException();
+            }
+
             // Read current config
             var currentConfig = _configService.ReadBasicConfig();
 

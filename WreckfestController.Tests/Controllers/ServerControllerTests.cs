@@ -43,7 +43,7 @@ public class ServerControllerTests
             serverInfoTracker,
             mockEvents.Object);
         _mockLogger = new Mock<ILogger<ServerController>>();
-        _controller = new ServerController(_mockServerManager.Object, _mockLogger.Object);
+        _controller = new ServerController(_mockServerManager.Object, _mockLogger.Object).Hosted();
     }
 
     [Fact]
@@ -64,11 +64,7 @@ public class ServerControllerTests
         var result = _controller.GetStatus();
 
         // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        var status = Assert.IsType<ServerStatus>(okResult.Value);
-        Assert.Equal(expectedStatus.IsRunning, status.IsRunning);
-        Assert.Equal(expectedStatus.ProcessId, status.ProcessId);
-        Assert.Equal(expectedStatus.Uptime, status.Uptime);
+        Assert.Equal(new ServerStatusResponse(true, 1234, 1800, null), result);
     }
 
     [Fact]
@@ -82,13 +78,12 @@ public class ServerControllerTests
         var result = await _controller.StartServer();
 
         // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
+        Assert.Equal("Server started successfully", result.Value!.Message);
         _mockServerManager.Verify(m => m.StartServerAsync(), Times.Once);
     }
 
     [Fact]
-    public async Task StartServer_WhenFailed_ReturnsBadRequest()
+    public async Task StartServer_WhenFailed_IsRefused()
     {
         // Arrange
         _mockServerManager.Setup(m => m.StartServerAsync())
@@ -98,8 +93,7 @@ public class ServerControllerTests
         var result = await _controller.StartServer();
 
         // Assert
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
+        Assert.Equal("Server is already running", ControllerTesting.RefusalOf(result));
         _mockServerManager.Verify(m => m.StartServerAsync(), Times.Once);
     }
 
@@ -114,13 +108,12 @@ public class ServerControllerTests
         var result = await _controller.StopServer();
 
         // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
+        Assert.Equal("Server stopped successfully", result.Value!.Message);
         _mockServerManager.Verify(m => m.StopServerViaCommandAsync(), Times.Once);
     }
 
     [Fact]
-    public async Task StopServer_WhenFailed_ReturnsBadRequest()
+    public async Task StopServer_WhenFailed_IsRefused()
     {
         // Arrange
         _mockServerManager.Setup(m => m.StopServerViaCommandAsync())
@@ -130,8 +123,7 @@ public class ServerControllerTests
         var result = await _controller.StopServer();
 
         // Assert
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
+        Assert.Equal("Server is not running", ControllerTesting.RefusalOf(result));
         _mockServerManager.Verify(m => m.StopServerViaCommandAsync(), Times.Once);
     }
 
@@ -146,13 +138,12 @@ public class ServerControllerTests
         var result = await _controller.RestartServer();
 
         // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        Assert.NotNull(okResult.Value);
+        Assert.Equal("Server restarted successfully", result.Value!.Message);
         _mockServerManager.Verify(m => m.RestartServerViaCommandAsync(), Times.Once);
     }
 
     [Fact]
-    public async Task RestartServer_WhenFailed_ReturnsBadRequest()
+    public async Task RestartServer_WhenFailed_IsRefused()
     {
         // Arrange
         _mockServerManager.Setup(m => m.RestartServerViaCommandAsync())
@@ -162,8 +153,7 @@ public class ServerControllerTests
         var result = await _controller.RestartServer();
 
         // Assert
-        var badRequestResult = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.NotNull(badRequestResult.Value);
+        Assert.Equal("Failed to restart", ControllerTesting.RefusalOf(result));
         _mockServerManager.Verify(m => m.RestartServerViaCommandAsync(), Times.Once);
     }
 
@@ -193,8 +183,7 @@ public class ServerControllerTests
         var result = await _controller.GetPlayers();
 
         // Assert
-        var okResult = Assert.IsType<OkObjectResult>(result);
-        var playerList = Assert.IsType<Models.PlayerListResponse>(okResult.Value);
+        var playerList = result;
         Assert.Equal(3, playerList.TotalPlayers);
         Assert.Equal(24, playerList.MaxPlayers);
         Assert.Equal(3, playerList.Players.Count);
