@@ -13,6 +13,7 @@ const pages = [
   { name: 'admin-tracks', label: 'Tracks' },
   { name: 'admin-tags', label: 'Tags' },
   { name: 'admin-collections', label: 'Collections' },
+  { name: 'admin-cups', label: 'Cups' },
   { name: 'admin-users', label: 'Users' },
 ]
 

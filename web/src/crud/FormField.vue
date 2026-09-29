@@ -5,8 +5,9 @@ import { NFormItem } from 'naive-ui'
 /**
  * One form field: its label, the server's message for it (or a hint), and the error state.
  * The control gets its accessible name through the slot: a form item's visible label is
- * not tied to its control, so bind `input-props` (inputs, and filterable selects, whose
- * focus lands on an input) or `control-props` (switches) from it. Both also tie the
+ * not tied to its control, so bind `input-props` (inputs) or `control-props` (switches,
+ * radio groups) from it. A select takes both `v-select-focus` and `input-props`: its tab
+ * stop is a div, not its input (see selectFocus.ts). Both also tie the
  * message to the control, and mark the control invalid while the server refuses it.
  *
  *   <FormField label="Name" field="name" :errors="errors" v-slot="{ inputProps }">
