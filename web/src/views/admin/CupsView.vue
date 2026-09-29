@@ -136,19 +136,20 @@ const columns: DataTableColumns<Cup> = [
   },
 ]
 
-// Activation takes minutes (warnings, then a restart). The hub says when a cup became
-// active or a run ended; polling covers a hub that is not connected.
+// Activation takes minutes: with players on, a five-minute warning, then up to ten more
+// for the lobby, then the restart. The hub says when a cup became active or a run ended;
+// polling covers a hub that is not connected, for twenty minutes.
 const stops: (() => void)[] = []
 let poll: ReturnType<typeof setInterval> | undefined
 
 function watchActivation(id: number) {
   clearInterval(poll)
-  let left = 36
+  let left = 120
   poll = setInterval(() => {
     void list.reload().then(() => {
       if (--left <= 0 || cups.value.some((c) => c.id === id && c.isActive)) clearInterval(poll)
     })
-  }, 5000)
+  }, 10_000)
 }
 
 onMounted(() => {

@@ -58,6 +58,11 @@ interface CupDraft {
   description: string
   /** The start as a datetime-local value, in the browser's time: "2026-10-02T20:00". */
   start: string
+  /**
+   * The exact instant the start came from. The field shows it to the minute, in local
+   * time; while the field still shows this instant, this is what is saved.
+   */
+  startInstant: string | null
   timeZone: string
   repeat: 'none' | 'daily' | 'weekly'
   days: number[]
@@ -126,6 +131,7 @@ function toDraft(cup: Cup | null): CupDraft {
     name: cup?.name ?? '',
     description: cup?.description ?? '',
     start: cup ? toLocalInput(cup.startTime) : '',
+    startInstant: cup?.startTime ?? null,
     timeZone: cup?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
     repeat: cup?.repeat ? (cup.repeat.frequency === 'daily' ? 'daily' : 'weekly') : 'none',
     days: [...(cup?.repeat?.days ?? [])],
@@ -180,13 +186,13 @@ const editor = useResourceEditor<Cup, CupDraft>({
     }
 
     // The start shows to the minute in local time: unless it was edited, send the instant
-    // as it was, so a save never moves it (seconds, or a daylight-saving hour).
-    const startEdited: boolean = editor.changes.value.includes('start')
+    // it came from, so a save (or a retry after a conflict) never moves it.
+    const startEdited = draft.startInstant === null || draft.start !== toLocalInput(draft.startInstant)
     const body = {
       name: draft.name.trim(),
       description: draft.description.trim(),
       // Missing or invalid: sent as null, so the server names the field.
-      startTime: !startEdited && cup ? cup.startTime : toInstant(draft.start),
+      startTime: startEdited ? toInstant(draft.start) : draft.startInstant,
       timeZone: draft.timeZone,
       repeat: draft.repeat === 'none' ? null : { frequency: draft.repeat, days: draft.repeat === 'weekly' ? draft.days : null, time: draft.time },
       serverConfig: toServerConfig(draft.config),

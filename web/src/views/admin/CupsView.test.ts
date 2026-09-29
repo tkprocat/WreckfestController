@@ -323,4 +323,126 @@ describe('CupsView', () => {
       expect(group.findAll('input[type="radio"]').every((r) => r.attributes('name') === name)).toBe(true)
     }
   })
+
+  // "Keep mine" rebases onto their version; my start, which I did not edit, stays mine.
+  it('keeps the start instant through a conflict retry', async () => {
+    const odd = { ...friday(), startTime: '2026-10-25T01:30:45Z' }
+    api.GET.mockImplementation((path: string) =>
+      Promise.resolve(answer(path === '/api/cups' ? { count: 1, cups: [odd] } : [])),
+    )
+    api.PUT.mockResolvedValueOnce(refused({ ...odd, startTime: '2026-10-25T03:10:50Z', version: 5 }, 409))
+    api.PUT.mockResolvedValueOnce(answer({ ...odd, version: 6 }))
+    await mountPage()
+
+    await labelled('Edit Friday Derby').trigger('click')
+    await flushPromises()
+    await dialog().find('input[aria-label="Name"]').setValue('Renamed')
+    await click('Save', dialog())
+    await click('Keep mine', dialog())
+    await click('Save', dialog())
+
+    expect(api.PUT.mock.calls[1]![1].headers).toEqual({ 'If-Match': '"5"' })
+    expect(api.PUT.mock.calls[1]![1].body.startTime).toBe('2026-10-25T01:30:45Z')
+  })
+
+  it('sends a start that was edited', async () => {
+    api.PUT.mockResolvedValue(answer({ ...friday(), version: 4 }))
+    await mountPage()
+
+    await labelled('Edit Friday Derby').trigger('click')
+    await flushPromises()
+    await dialog().find('input[aria-label="Starts (your local time)"]').setValue('2026-11-06T21:15')
+    await click('Save', dialog())
+
+    expect(api.PUT.mock.calls[0]![1].body.startTime).toBe(new Date('2026-11-06T21:15').toISOString())
+  })
+
+  it('sends each password choice as the API means it', async () => {
+    api.PUT.mockResolvedValue(answer({ ...friday(), version: 4 }))
+    await mountPage()
+    const choose = async (label: string) => {
+      if (!dialog().find('[aria-label="Password"]').exists()) {
+        await dialog().find('.n-collapse-item__header-main').trigger('click')
+        await flushPromises()
+      }
+      await dialog().find('[aria-label="Password"]').findAll('.n-radio-button').find((b) => b.text() === label)!.trigger('click')
+      await flushPromises()
+    }
+    const sent = () => api.PUT.mock.calls.at(-1)![1].body.serverConfig
+
+    await labelled('Edit Friday Derby').trigger('click')
+    await flushPromises()
+    await choose('Set one')
+    expect(dialog().find('[aria-label="Password"]').attributes('role')).toBe('radiogroup')
+    // Set, but empty: stopped here.
+    await click('Save', dialog())
+    expect(api.PUT).not.toHaveBeenCalled()
+    await dialog().find('input[aria-label="Cup password"]').setValue(' s3cret ')
+    await click('Save', dialog())
+    expect(sent().password).toBe(' s3cret ')
+
+    await labelled('Edit Friday Derby').trigger('click')
+    await flushPromises()
+    await choose('No password')
+    await click('Save', dialog())
+    expect(sent().password).toBe('')
+
+    await labelled('Edit Friday Derby').trigger('click')
+    await flushPromises()
+    await choose("Keep the server's")
+    await click('Save', dialog())
+    expect(sent().password).toBeNull()
+  })
+
+  it('shows changed weather and a changed rotation name in the conflict', async () => {
+    api.PUT.mockResolvedValue(refused({ ...sunday(), collectionName: 'Renamed set', tracks: [{ track: 'arena', gamemode: 'derby', weather: 'fog' }], version: 5 }, 409))
+    await mountPage()
+
+    await labelled('Edit Sunday Race').trigger('click')
+    await flushPromises()
+    await click('Save', dialog())
+
+    const table = dialog().find('.n-table').text()
+    expect(table).toContain('weather fog')
+    expect(table).toContain('Renamed set')
+  })
+
+  it('refreshes when the hub says a cup run ended', async () => {
+    await mountPage()
+    api.GET.mockImplementation((path: string) =>
+      Promise.resolve(answer(path === '/api/cups' ? { count: 2, cups: [{ ...friday(), lastOccurrence: when, lastOutcome: 'Failed' }, sunday()] } : [])),
+    )
+
+    hub.get('CupOccurrenceEnded')!({ cupId: 1, cupName: 'Friday Derby', occurrence: when, outcome: 'Failed', timestamp: when })
+    await flushPromises()
+
+    expect(wrapper!.text()).toContain('(Failed)')
+  })
+
+  // No hub: polling sees the activation through a full warning and lobby wait.
+  it('keeps checking until an activation completes, without the hub', async () => {
+    vi.useFakeTimers()
+    try {
+      api.POST.mockResolvedValue(answer({ message: 'Activation started.', cupId: 1 }, 202))
+      await mountPage()
+      await labelled('Activate Friday Derby').trigger('click')
+      await flushPromises()
+      await click('Activate', confirmDialog())
+
+      await vi.advanceTimersByTimeAsync(14 * 60_000)
+      api.GET.mockImplementation((path: string) =>
+        Promise.resolve(answer(path === '/api/cups' ? { count: 2, cups: [{ ...friday(), isActive: true }, { ...sunday(), isActive: false }] } : [])),
+      )
+      await vi.advanceTimersByTimeAsync(10_000)
+      await flushPromises()
+
+      expect(labelled('Activate Friday Derby').attributes('disabled')).toBeDefined()
+      const calls = api.GET.mock.calls.length
+      await vi.advanceTimersByTimeAsync(60_000)
+      // Stopped once it saw the cup active.
+      expect(api.GET.mock.calls.length).toBe(calls)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
