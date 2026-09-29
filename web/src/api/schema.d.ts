@@ -3000,15 +3000,18 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "text/plain": {
-                            [key: string]: Record<string, never>;
-                        };
-                        "application/json": {
-                            [key: string]: Record<string, never>;
-                        };
-                        "text/json": {
-                            [key: string]: Record<string, never>;
-                        };
+                        "text/plain": components["schemas"]["SettingsResponse"];
+                        "application/json": components["schemas"]["SettingsResponse"];
+                        "text/json": components["schemas"]["SettingsResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
                     };
                 };
             };
@@ -3021,7 +3024,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/settings/{section}": {
+    "/api/settings/vote": {
         parameters: {
             query?: never;
             header?: never;
@@ -3032,9 +3035,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header?: never;
-                path: {
-                    section: string;
-                };
+                path?: never;
                 cookie?: never;
             };
             requestBody?: never;
@@ -3044,7 +3045,20 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["VoteSettingsResponse"];
+                        "application/json": components["schemas"]["VoteSettingsResponse"];
+                        "text/json": components["schemas"]["VoteSettingsResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
                 };
             };
         };
@@ -3052,9 +3066,7 @@ export interface paths {
             parameters: {
                 query?: never;
                 header?: never;
-                path: {
-                    section: string;
-                };
+                path?: never;
                 cookie?: never;
             };
             requestBody: {
@@ -3070,7 +3082,40 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "text/plain": components["schemas"]["VoteSettingsResponse"];
+                        "application/json": components["schemas"]["VoteSettingsResponse"];
+                        "text/json": components["schemas"]["VoteSettingsResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["VoteSettingsResponse"];
+                        "application/json": components["schemas"]["VoteSettingsResponse"];
+                        "text/json": components["schemas"]["VoteSettingsResponse"];
+                    };
+                };
+                /** @description Precondition Required */
+                428: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
                 };
             };
         };
@@ -3765,6 +3810,9 @@ export interface components {
             uptimeSeconds: null | number;
             currentTrack: null | string;
         };
+        SettingsResponse: {
+            vote: components["schemas"]["VoteSettingsResponse"];
+        };
         TagRequest: {
             name: string;
             slug: string;
@@ -3867,6 +3915,20 @@ export interface components {
             version: string;
             assemblyVersion: string;
             product: string;
+        };
+        VoteSettingsResponse: {
+            mode: string;
+            /** Format: int32 */
+            directCooldownSeconds: number;
+            /** Format: int32 */
+            voteTimeoutSeconds: number;
+            /** Format: int32 */
+            maxLapsAllowed: number;
+            /** Format: int32 */
+            messageDelayMs: number;
+            suppressCommandsDuringRace: boolean;
+            /** Format: int32 */
+            version: number;
         };
         VotingRequest: {
             allowed: boolean;
