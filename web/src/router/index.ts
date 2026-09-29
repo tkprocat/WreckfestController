@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { redirectTarget } from './redirect'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -38,6 +39,11 @@ router.beforeEach(async (to) => {
 
   if (to.meta.requiresAuth && !auth.authenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
+  }
+
+  // Already signed in: the sign-in page has nothing to do, so go where it would have.
+  if (to.name === 'login' && auth.authenticated) {
+    return redirectTarget(to.query.redirect)
   }
 
   return true
