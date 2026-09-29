@@ -47,7 +47,7 @@ public sealed class SettingsStoreTests : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.ReleaseFolder(_directory);
         Directory.Delete(_directory, recursive: true);
     }
 

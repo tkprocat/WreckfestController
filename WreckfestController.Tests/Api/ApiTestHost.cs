@@ -129,7 +129,7 @@ public sealed class ApiTestHost : IAsyncDisposable
     /// <summary>Deletes a folder passed as <c>dataDirectory</c>, once every host using it is disposed.</summary>
     public static void DeleteDataDirectory(string directory)
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.ReleaseFolder(directory);
         if (Directory.Exists(directory))
         {
             Directory.Delete(directory, recursive: true);

@@ -54,15 +54,15 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
     /// mode. SQLite does not create the folder, so <see cref="EnsureFolder"/> does, from
     /// inside the bootstrapper.
     /// </remarks>
-    public static void Configure(DbContextOptionsBuilder options, string databasePath)
-    {
-        var connectionString = new SqliteConnectionStringBuilder
-        {
-            DataSource = databasePath,
-        }.ToString();
+    public static void Configure(DbContextOptionsBuilder options, string databasePath) =>
+        options.UseSqlite(ConnectionString(databasePath));
 
-        options.UseSqlite(connectionString);
-    }
+    /// <summary>
+    /// The connection string the app opens <paramref name="databasePath"/> with. SQLite's
+    /// connection pool is keyed by it, so clearing one database's pool rebuilds it here.
+    /// </summary>
+    public static string ConnectionString(string databasePath) =>
+        new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString();
 
     /// <summary>Creates the folder that will hold the database file. SQLite creates only the file.</summary>
     public static void EnsureFolder(string databasePath)

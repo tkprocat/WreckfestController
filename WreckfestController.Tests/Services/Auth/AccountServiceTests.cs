@@ -216,7 +216,7 @@ public sealed class AccountServiceTests : IDisposable
             provider.Dispose();
         }
 
-        SqliteConnection.ClearAllPools();
+        SqlitePools.ReleaseFolder(_directory);
         if (Directory.Exists(_directory))
         {
             Directory.Delete(_directory, recursive: true);

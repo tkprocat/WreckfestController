@@ -94,8 +94,11 @@ public sealed class DatabaseBootstrapper
             finally
             {
                 // Pooled connections would keep the file open, which blocks the user from
-                // moving or replacing it while the app sits in recovery mode.
-                SqliteConnection.ClearAllPools();
+                // moving or replacing it while the app sits in recovery mode. Only this
+                // database's pool: clearing every pool in the process (ClearAllPools) can
+                // dispose a connection someone else is just taking from theirs (#128).
+                using var connection = new SqliteConnection(ControllerDbContext.ConnectionString(_state.DatabasePath));
+                SqliteConnection.ClearPool(connection);
             }
         }
     }
