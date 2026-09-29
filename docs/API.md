@@ -196,6 +196,7 @@ Account responses never include password hashes or security stamps:
 The actions (`start` through `inject`) answer `{ message }` (`inject` adds `processId`).
 One the server's state does not allow (already running, not running, no process to
 inject into, a failed update) answers **409** with the reason as the problem's `title`.
+A `pid` that is not a positive number is a **400** naming `pid`.
 
 `logfile` is the only endpoint that reads server output from disk rather than from the
 injected hook. It is kept on purpose: WreckfestWeb's log viewer depends on it, and it is
@@ -217,9 +218,9 @@ the detected game build does not match `WreckfestServer:SupportedBuild`.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `basic` | Basic server configuration (`ServerConfig`) |
-| PUT | `basic` | Update it. Body: the `ServerConfig` fields to change. Returns the settings as they now are |
+| PUT | `basic` | Update it. Body: the `ServerConfig` fields to change. Returns the settings read back from the file |
 | GET | `tracks` | Event-loop tracks: `{ count, tracks }` |
-| PUT | `tracks` | Replace them. Body: `{ collectionName, tracks }`. Returns `{ count, tracks }` |
+| PUT | `tracks` | Replace them. Body: `{ collectionName, tracks }`. Returns `{ count, tracks }` read back from the file |
 | GET | `tracks/collection-name` | `{ collectionName }` |
 | GET | `serverinfo` | Live settings asked of the running server (`ServerConfig`) |
 
@@ -232,13 +233,17 @@ request is rejected with 400, naming the field in `errors`, and nothing is writt
 it names an unknown field, gives a value of the wrong type or `null`, or puts a line
 break in a string (`body` when the body is not an object). `log` is never written: it
 names the file `logfile` returns, so it is set in server_config.cfg by hand.
+Only keys that already have an active `key=value` line can be changed: a field whose line
+is missing or commented out is a **409** naming the key, and nothing is written.
 
 `PUT tracks` replaces the whole event loop. It is rejected with 400, naming the field, unless
 `collectionName` is non-empty (at most 128 characters), `tracks` is present, every
 entry's `track` is a game id (`^[A-Za-z0-9_]{1,64}$`), `laps`, `bots` and `numTeams`
 are not negative, `carResetDisabled` and `wrongWayLimiterDisabled` are `0` or `1`,
 text values are at most 128 characters, and no value contains a line break. An empty
-`tracks` list is allowed. Collections are checked by the same rules.
+`tracks` list is allowed. Collections are checked by the same rules. A server_config.cfg
+without a `# Event Loop` heading has nowhere to put the loop: that is a **409**, and
+nothing is written.
 
 ### Cups — `api/cups`
 

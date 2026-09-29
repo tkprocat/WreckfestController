@@ -32,6 +32,9 @@ public class ConfigControllerTests
         var serverInfoTracker = new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>());
 
         _mockConfigService = new Mock<ConfigService>(TestSettings.Server(), mockConfigLogger.Object) { CallBase = false };
+        // Every key has an active line unless a test says otherwise (ConfigControllerFileTests
+        // covers the real file).
+        _mockConfigService.Setup(s => s.MissingBasicKeys(It.IsAny<IEnumerable<string>>())).Returns([]);
         _mockServerManager = new Mock<ServerManager>(
             Mock.Of<Microsoft.Extensions.Configuration.IConfiguration>(), TestSettings.Server(), TestSettings.SteamCmd(),
             Mock.Of<ILogger<ServerManager>>(),
@@ -131,6 +134,8 @@ public class ConfigControllerTests
     [Theory]
     [InlineData("""{"serverNmae":"typo"}""", "serverNmae")]
     [InlineData("""{"maxPlayers":"lots"}""", "maxPlayers")]
+    // Strict numbers, like the rest of the API.
+    [InlineData("""{"maxPlayers":"5"}""", "maxPlayers")]
     [InlineData("""{"maxPlayers":null}""", "maxPlayers")]
     [InlineData("""{"serverName":null}""", "serverName")]
     [InlineData("""{"serverName":"a\nlaps=99"}""", "serverName")]
@@ -204,6 +209,8 @@ public class ConfigControllerTests
         {
             new EventLoopTrack { Track = "track1", Gamemode = "race" }
         };
+
+        _mockConfigService.Setup(s => s.ReadEventLoopTracks()).Returns(tracks);
 
         // Act
         var result = _controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest(collectionName, tracks));

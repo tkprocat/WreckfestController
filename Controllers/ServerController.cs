@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Reflection;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using WreckfestController.Models;
 using WreckfestController.Services.Auth;
@@ -16,6 +17,11 @@ namespace WreckfestController.Controllers;
 [ApiController]
 [Authorize(Policy = ApiAuthentication.AdminPolicy)]
 [Route("api/server")]
+// Declaring any response type stops ASP.NET Core inferring the 200 from ActionResult<T>,
+// so it is declared too; with no type given, each action's own return type is used.
+[ProducesResponseType(StatusCodes.Status200OK)]
+[ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest, "application/problem+json")]
+[ProducesResponseType<ProblemDetails>(StatusCodes.Status409Conflict, "application/problem+json")]
 public class ServerController : ControllerBase
 {
     private readonly ServerManager _serverManager;
@@ -98,9 +104,15 @@ public class ServerController : ControllerBase
         return Answer(await _serverManager.SendCommandAsync(request.Command));
     }
 
-    [HttpPost("attach/{pid:int}")]
+    // No :int route constraint: a pid that is not a number is a 400 naming pid, not a 404.
+    [HttpPost("attach/{pid}")]
     public ActionResult<ServerActionResponse> AttachToProcess(int pid)
     {
+        if (InvalidPid(pid) is { } invalid)
+        {
+            return invalid;
+        }
+
         _logger.LogInformation("Received request to attach to process {PID}", pid);
         return Answer(_serverManager.AttachToExistingProcess(pid));
     }
@@ -110,9 +122,14 @@ public class ServerController : ControllerBase
     /// output into the controller. Mirrors the Process Manager INJECT button so
     /// the full start -> inject cycle can be driven without the GUI.
     /// </summary>
-    [HttpPost("inject/{pid:int}")]
+    [HttpPost("inject/{pid}")]
     public async Task<ActionResult<InjectResponse>> InjectConsoleHook(int pid)
     {
+        if (InvalidPid(pid) is { } invalid)
+        {
+            return invalid;
+        }
+
         _logger.LogInformation("Received request to inject console hook into process {PID}", pid);
         var result = await _serverManager.InjectConsoleHookAsync(pid);
         if (!result.Success)
@@ -167,6 +184,9 @@ public class ServerController : ControllerBase
 
     private ActionResult<ServerActionResponse> Answer((bool Success, string Message) result) =>
         result.Success ? new ServerActionResponse(result.Message) : this.Refused(result.Message);
+
+    private ActionResult? InvalidPid(int pid) =>
+        pid > 0 ? null : this.Invalid("pid", "pid must be a process id: a positive number.");
 }
 
 public class ServerCommandRequest
