@@ -157,7 +157,15 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
         <NButton type="error" ghost :loading="busy === 'forcestop'" :disabled="!!busy || !status?.isRunning" @click="ask('forcestop')">
           Force stop
         </NButton>
-        <NButton type="error" ghost :loading="busy === 'forcerestart'" :disabled="!!busy" @click="ask('forcerestart')">
+        <!-- Like Force stop, only for a running server: stopped, it would just start it,
+             under a confirmation that talks about killing a process. -->
+        <NButton
+          type="error"
+          ghost
+          :loading="busy === 'forcerestart'"
+          :disabled="!!busy || !status?.isRunning"
+          @click="ask('forcerestart')"
+        >
           Force restart
         </NButton>
       </NSpace>

@@ -21,7 +21,15 @@ const active = computed(() => String(route.name ?? ''))
 
 <template>
   <NLayout has-sider class="admin">
-    <NLayoutSider bordered collapse-mode="width" :collapsed-width="0" :width="200" show-trigger="bar" :native-scrollbar="false">
+    <!-- An arrow button collapses the menu: the "bar" trigger read as a stray scrollbar. -->
+    <NLayoutSider
+      bordered
+      collapse-mode="width"
+      :collapsed-width="0"
+      :width="200"
+      show-trigger="arrow-circle"
+      :native-scrollbar="false"
+    >
       <NMenu :options="menu" :value="active" />
     </NLayoutSider>
     <NLayoutContent class="admin-content">
