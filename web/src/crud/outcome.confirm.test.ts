@@ -37,6 +37,24 @@ describe('useConfirm', () => {
     expect(document.getElementById(dialog.getAttribute('aria-describedby')!)!.textContent).toBe('This cannot be undone.')
   })
 
+  // A screen reader announces the dialog when focus enters it: the name must be there first.
+  // (The focus trap's own aria-hidden sentinel, outside the dialog, may take focus before.)
+  it('is named before focus enters it, and focuses Cancel', async () => {
+    const entered: { label: string; named: boolean }[] = []
+    const record = (event: FocusEvent) => {
+      const dialog = (event.target as Element).closest('[role="dialog"]')
+      if (dialog) {
+        entered.push({ label: (event.target as Element).textContent!.trim(), named: dialog.hasAttribute('aria-labelledby') })
+      }
+    }
+    document.addEventListener('focusin', record)
+    void confirmer()(options)
+    await flushPromises()
+    document.removeEventListener('focusin', record)
+
+    expect(entered).toEqual([{ label: 'Cancel', named: true }])
+  })
+
   it('resolves true when confirmed', async () => {
     const answer = confirmer()(options)
     await flushPromises()

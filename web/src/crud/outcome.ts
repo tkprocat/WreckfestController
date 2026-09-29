@@ -70,7 +70,7 @@ export function hasId(body: unknown): body is { id: unknown } {
  *
  * Naive UI's dialog passes only its own props on, so it cannot take an aria-label: the
  * title and content are rendered with ids, and tied to the dialog element once it is in
- * the page.
+ * the page. Naive UI's own autofocus is off: it would focus a button before the name exists.
  */
 export function useConfirm() {
   const dialog = useDialog()
@@ -80,10 +80,17 @@ export function useConfirm() {
     new Promise<boolean>((resolve) => {
       const titleId = `${prefix}-confirm-${++count}-title`
       const contentId = `${prefix}-confirm-${count}-content`
-      const name = () => {
+      // Named before anything in it takes focus, so a screen reader announces the title
+      // and warning on entry; focus then goes to Cancel, the safe answer.
+      const nameAndFocus = () => {
         const box = document.getElementById(titleId)?.closest('[role="dialog"]')
-        box?.setAttribute('aria-labelledby', titleId)
-        box?.setAttribute('aria-describedby', contentId)
+        if (!box) {
+          return
+        }
+
+        box.setAttribute('aria-labelledby', titleId)
+        box.setAttribute('aria-describedby', contentId)
+        ;[...box.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Cancel')?.focus()
       }
       dialog.warning({
         title: () => h('span', { id: titleId }, options.title),
@@ -97,9 +104,9 @@ export function useConfirm() {
         onEsc: () => resolve(false),
         // Whatever else closed it: a promise settles only once, so this is a no-op after the others.
         onAfterLeave: () => resolve(false),
-        onAfterEnter: name,
+        autoFocus: false,
       })
       // The modal inserts its content after rendering it: name it once it is in the page.
-      void nextTick(name)
+      void nextTick(nameAndFocus)
     })
 }
