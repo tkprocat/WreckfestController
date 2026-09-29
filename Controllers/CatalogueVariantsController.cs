@@ -271,6 +271,8 @@ public class CatalogueVariantsController : ControllerBase
         variant.GameMode = shipped.GameMode;
         variant.AllowedForVoting = shipped.AllowedForVoting;
         variant.Tags = tags;
+        // The tags are a join table: mark the variant, so its version moves even when only they changed.
+        _db.Entry(variant).Property(v => v.Version).IsModified = true;
 
         _logger.LogInformation(
             "{Caller} reset track variant {VariantId} to its shipped values", this.Caller(), variant.VariantId);

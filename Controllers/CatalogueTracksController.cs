@@ -285,6 +285,8 @@ public class CatalogueTracksController : ControllerBase
             .Where(w => shipped.Weather.Contains(w.Name))
             .ToListAsync();
 
+        // The weather is a join table: mark the track, so its version moves even when only that changed.
+        _db.Entry(track).Property(t => t.Version).IsModified = true;
         _logger.LogInformation("{Caller} reset track {Key} to its shipped values", this.Caller(), track.Key);
         return await SaveAsync(track);
     }

@@ -288,6 +288,32 @@ public class CatalogueEndpointsTests
         Assert.Equal(HttpStatusCode.Conflict, staleTags.StatusCode);
     }
 
+    // A reset that changes only weather or tags still moves the version, so an editor opened
+    // before it cannot overwrite it unseen.
+    [Fact]
+    public async Task Reset_OfOnlyWeatherOrTags_MovesTheVersion()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+        var trackId = await TrackIdAsync(client, "madman_stadium");
+        using var weather = await client.PutAsJsonAsync($"/api/catalogue/tracks/{trackId}/weather", new { weather = new[] { "storm" } }, Ct);
+        var before = (await weather.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("version").GetInt32();
+
+        using var reset = await client.PostAsync($"/api/catalogue/tracks/{trackId}/reset", null, Ct);
+        Assert.Equal(before + 1, (await reset.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("version").GetInt32());
+        using var stale = await PutAsync(client, $"/api/catalogue/tracks/{trackId}/weather", new { weather = new[] { "fog" } }, $"\"{before}\"");
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+
+        var variantId = (await VariantAsync(client, "bigstadium_figure_8")).GetProperty("id").GetInt32();
+        using var tags = await client.PutAsJsonAsync($"/api/catalogue/variants/{variantId}/tags", new { tags = new[] { "jump" } }, Ct);
+        var tagged = (await tags.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("version").GetInt32();
+
+        using var resetVariant = await client.PostAsync($"/api/catalogue/variants/{variantId}/reset", null, Ct);
+        Assert.Equal(tagged + 1, (await resetVariant.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("version").GetInt32());
+        using var staleTags = await PutAsync(client, $"/api/catalogue/variants/{variantId}/tags", new { tags = new[] { "oval" } }, $"\"{tagged}\"");
+        Assert.Equal(HttpStatusCode.Conflict, staleTags.StatusCode);
+    }
+
     [Fact]
     public async Task Tags_RejectADuplicateSlug()
     {

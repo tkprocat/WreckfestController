@@ -404,6 +404,75 @@ describe('TracksView', () => {
       expect((input('Name').element as HTMLInputElement).value).toBe('Crash Arena')
     })
 
+    const variantEditor = () => wrapper!.findComponent({ name: 'VariantEditor' }).vm as unknown as { draft: { tags: string[] } }
+
+    it('does not send tags the form did not change', async () => {
+      api.PUT.mockResolvedValue(answer({ ...fields().variants[0], name: 'Loop 2', tags: [tag('night', 'Night')], version: 2 }))
+      await mountPage()
+      await expand('Fields')
+
+      await labelled('Edit Loop').trigger('click')
+      await flushPromises()
+      await input('Name').setValue('Loop 2')
+      await submit('Save')
+
+      expect(api.PUT).toHaveBeenCalledTimes(1)
+    })
+
+    it('says when the tags lost a race, and shows the saved variant', async () => {
+      api.PUT.mockImplementation((path: string) =>
+        Promise.resolve(
+          path === '/api/catalogue/variants/{id}'
+            ? answer({ ...fields().variants[0], version: 2 })
+            : refused({ ...fields().variants[0], name: 'Loop (theirs)', version: 3 }, 409),
+        ),
+      )
+      await mountPage()
+      await expand('Fields')
+
+      await labelled('Edit Loop').trigger('click')
+      await flushPromises()
+      variantEditor().draft.tags = ['night']
+      await submit('Save')
+
+      expect(body().text()).toContain('The variant was saved, but not its tags')
+      expect(wrapper!.text()).toContain('Loop (theirs)')
+    })
+
+    it('shows a tag difference in the conflict', async () => {
+      api.PUT.mockResolvedValue(refused({ ...fields().variants[0], tags: [], version: 5 }, 409))
+      await mountPage()
+      await expand('Fields')
+
+      await labelled('Edit Loop').trigger('click')
+      await flushPromises()
+      variantEditor().draft.tags = ['night']
+      await submit('Save')
+
+      expect(body().find('.n-table').text()).toContain('Tags')
+    })
+
+    it('opens the variant editor for the latest click when the tags answer out of order', async () => {
+      const pending: ((value: unknown) => void)[] = []
+      const others = api.GET.getMockImplementation()!
+      api.GET.mockImplementation((path: string) =>
+        path === '/api/catalogue/tags' ? new Promise((resolve) => pending.push(resolve)) : others(path),
+      )
+      await mountPage()
+
+      await labelled('Add a variant to Fields').trigger('click')
+      await labelled('Add a variant to Crash Arena').trigger('click')
+      pending[1]!(answer([]))
+      await flushPromises()
+      await input('Name').setValue('Half Bowl')
+      // The earlier click's answer arrives late: it must not reopen the form over this one.
+      pending[0]!(answer([]))
+      await flushPromises()
+
+      expect(dialog().text()).toContain('Add a variant to Crash Arena')
+      expect((input('Name').element as HTMLInputElement).value).toBe('Half Bowl')
+    })
+
     it('adds a variant under a track, with its tags', async () => {
       const added = variant(13, 1, 'loop_short', 'Loop Short', { isBuiltIn: false })
       api.POST.mockResolvedValue(answer(added, 201))
