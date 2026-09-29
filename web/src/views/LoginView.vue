@@ -2,7 +2,6 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NCheckbox, NForm, NFormItem, NInput } from 'naive-ui'
-import { restartHub } from '@/realtime/hub'
 import { useAuthStore, type LoginFailure } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -22,19 +21,23 @@ const messages: Record<LoginFailure, string> = {
   unavailable: 'Signing in is not possible right now.',
 }
 
-/** Only paths inside the app, so a crafted link cannot send the user elsewhere. */
+/**
+ * Only paths inside the app, so a crafted link cannot send the user elsewhere. A
+ * backslash is refused too: browsers read "/\host" like "//host".
+ */
 function redirectTarget(): string {
   const redirect = route.query.redirect
-  return typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/'
+  return typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') && !redirect.includes('\\')
+    ? redirect
+    : '/'
 }
 
 async function submit() {
   busy.value = true
   failure.value = null
   try {
-    failure.value = await auth.login(login.value, password.value, remember.value)
+    failure.value = await auth.login(login.value, password.value, remember.value).catch(() => 'unavailable' as const)
     if (failure.value === null) {
-      await restartHub().catch(() => undefined)
       await router.replace(redirectTarget())
     }
   } finally {
@@ -45,7 +48,11 @@ async function submit() {
 
 <template>
   <NCard title="Sign in" class="login-card">
-    <NAlert v-if="auth.degraded" type="error" title="The controller's database is unavailable">
+    <NAlert v-if="auth.unreachable && !auth.loaded" type="error" title="The controller cannot be reached">
+      <p>Check that it is running, then try again.</p>
+      <NButton size="small" @click="auth.load()">Try again</NButton>
+    </NAlert>
+    <NAlert v-else-if="auth.degraded" type="error" title="The controller's database is unavailable">
       Sign-in is not possible until it is fixed. See the controller window for details.
     </NAlert>
     <NAlert v-else-if="auth.setupRequired" type="info" title="No accounts yet">

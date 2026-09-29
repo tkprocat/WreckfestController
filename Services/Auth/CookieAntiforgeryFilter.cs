@@ -20,6 +20,13 @@ namespace WreckfestController.Services.Auth;
 /// </remarks>
 public sealed class CookieAntiforgeryFilter : IAsyncAuthorizationFilter
 {
+    /// <summary>
+    /// The title of the 400 for a missing or stale token. The web app matches it to fetch a
+    /// fresh token and retry (web/src/api/client.ts, ANTIFORGERY_FAILURE); a test keeps the
+    /// two in step.
+    /// </summary>
+    public const string FailureTitle = "Missing or invalid antiforgery token.";
+
     private readonly IAntiforgery _antiforgery;
 
     public CookieAntiforgeryFilter(IAntiforgery antiforgery)
@@ -48,7 +55,7 @@ public sealed class CookieAntiforgeryFilter : IAsyncAuthorizationFilter
             context.Result = new ObjectResult(new ProblemDetails
             {
                 Status = StatusCodes.Status400BadRequest,
-                Title = "Missing or invalid antiforgery token.",
+                Title = FailureTitle,
                 Detail = $"Fetch GET /api/auth/antiforgery and send its {ApiAuthentication.XsrfCookieName} cookie back in the {ApiAuthentication.XsrfHeaderName} header.",
             })
             {

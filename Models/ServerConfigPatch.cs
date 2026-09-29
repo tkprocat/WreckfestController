@@ -13,9 +13,17 @@ public static class ServerConfigPatch
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    /// <summary>
+    /// Fields the API never writes. <c>log</c> names the file GET /api/server/logfile
+    /// returns: a path, so like the other launch settings it is set by hand in
+    /// server_config.cfg, never over the web - or any file could be read through it.
+    /// </summary>
+    private static readonly HashSet<string> NotPatchable =
+        new([nameof(ServerConfig.Log)], StringComparer.OrdinalIgnoreCase);
+
     private static readonly Dictionary<string, PropertyInfo> Properties = typeof(ServerConfig)
         .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-        .Where(p => p.CanRead && p.CanWrite)
+        .Where(p => p.CanRead && p.CanWrite && !NotPatchable.Contains(p.Name))
         .ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
@@ -33,6 +41,12 @@ public static class ServerConfigPatch
         var updates = new List<(PropertyInfo Property, object Value)>();
         foreach (var field in patch.EnumerateObject())
         {
+            if (NotPatchable.Contains(field.Name))
+            {
+                error = $"Field '{field.Name}' names a file and is set in server_config.cfg, not over the API.";
+                return false;
+            }
+
             if (!Properties.TryGetValue(field.Name, out var property))
             {
                 error = $"Unknown field '{field.Name}'.";

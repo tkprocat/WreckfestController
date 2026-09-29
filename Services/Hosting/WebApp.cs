@@ -70,6 +70,30 @@ public sealed class WebApp
             .AllowAnonymous();
     }
 
+    /// <summary>
+    /// Writes index.html, for a page route in recovery mode. False, writing nothing, when
+    /// there is no web app or the request is not a page load.
+    /// </summary>
+    public async Task<bool> TryServeIndexAsync(HttpContext context)
+    {
+        if (Files is null
+            || !(HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
+            || Path.HasExtension(context.Request.Path.Value))
+        {
+            return false;
+        }
+
+        var index = Files.GetFileInfo("index.html");
+        if (!index.Exists)
+        {
+            return false;
+        }
+
+        context.Response.ContentType = "text/html; charset=utf-8";
+        await context.Response.SendFileAsync(index);
+        return true;
+    }
+
     /// <summary>True for a request the web app's routes may answer: anything outside the API and the hub.</summary>
     public static bool IsAppPath(PathString path) =>
         !path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)

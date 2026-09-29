@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -53,10 +54,10 @@ public class PublicController : ControllerBase
     }
 
     [HttpGet("overview")]
-    public async Task<PublicOverview> Overview()
+    public async Task<ActionResult<PublicOverview>> Overview(CancellationToken cancellationToken)
     {
         var status = _serverManager.GetStatus();
-        var names = await TrackNamesAsync();
+        var players = _serverManager.GetPlayerList().Players;
 
         // The server config may be missing or unreadable (not set up yet, or another
         // program has it open); the overview still answers.
@@ -77,9 +78,20 @@ public class PublicController : ControllerBase
             _logger.LogDebug(ex, "Public overview without the server config");
         }
 
-        var players = _serverManager.GetPlayerList().Players;
-        var cups = await _cups.ListAsync();
-        var active = cups.FirstOrDefault(c => c.IsActive);
+        Dictionary<string, string> names;
+        (CupSummary? Active, List<CupSummary> Upcoming) cups;
+        try
+        {
+            var ids = rotation.Select(t => t.Track).Append(status.CurrentTrack).Where(id => !string.IsNullOrEmpty(id)).ToList();
+            names = await TrackNamesAsync(ids, cancellationToken);
+            cups = await _cups.ScheduleAsync(UpcomingCupLimit, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Anonymous callers get no detail: an exception can name files, tables or queries.
+            _logger.LogError(ex, "The public overview could not read the database");
+            return Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "The server overview is unavailable right now.");
+        }
 
         return new PublicOverview(
             serverName,
@@ -93,10 +105,8 @@ public class PublicController : ControllerBase
             new PublicRotation(
                 string.IsNullOrWhiteSpace(rotationName) ? null : rotationName,
                 rotation.Select(t => new PublicRotationTrack(t.Track, Name(t.Track, names), t.Gamemode, t.Laps)).ToList()),
-            active is null ? null : new PublicActiveCup(active.Name, active.ActivatedAt),
-            cups
-                .Where(c => c.NextOccurrence is not null)
-                .Take(UpcomingCupLimit)
+            cups.Active is { } active ? new PublicActiveCup(active.Name, active.ActivatedAt) : null,
+            cups.Upcoming
                 .Select(c => new PublicUpcomingCup(
                     c.Name,
                     c.Description,
@@ -106,13 +116,22 @@ public class PublicController : ControllerBase
             _time.GetUtcNow());
     }
 
-    /// <summary>Catalogue names by variant id, hidden ones too: this is display, not a picker.</summary>
-    private async Task<Dictionary<string, string>> TrackNamesAsync()
+    /// <summary>
+    /// Catalogue names for just these variant ids, hidden ones too: this is display, not a
+    /// picker. Ids match ignoring case, as the catalogue stores them.
+    /// </summary>
+    private async Task<Dictionary<string, string>> TrackNamesAsync(List<string> ids, CancellationToken cancellationToken)
     {
+        if (ids.Count == 0)
+        {
+            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+
         var variants = await _db.TrackVariants
             .AsNoTracking()
+            .Where(v => ids.Contains(v.VariantId))
             .Select(v => new { v.VariantId, Name = v.Track.Name + " - " + v.Name })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
         return variants.ToDictionary(v => v.VariantId, v => v.Name, StringComparer.OrdinalIgnoreCase);
     }
 
