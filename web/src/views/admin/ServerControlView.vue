@@ -36,10 +36,14 @@ type Action = keyof typeof actions
 const message = useMessage()
 const dialog = useDialog()
 
-const { status, error: statusError, load: loadStatus } = useServerStatus()
+const { status, error: statusError, refreshing, load: loadStatus } = useServerStatus()
 
-/** Running, stopped, or unknown (null) while the status has not loaded or cannot be. */
-const running = computed(() => status.value?.isRunning ?? null)
+/**
+ * Running, stopped, or unknown (null): not loaded, not loadable, or being refreshed. An
+ * answer that arrives while a later load is on its way predates whatever made the page ask
+ * again, so the actions wait for the latest one.
+ */
+const running = computed(() => (refreshing.value ? null : (status.value?.isRunning ?? null)))
 
 /** One thing at a time: an action or a command in flight blocks the rest. */
 const busy = ref<Action | 'command' | null>(null)
@@ -181,8 +185,9 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
   <section>
     <h1>
       Server control
-      <NTag :type="running ? 'success' : 'default'" round size="small">
-        {{ running === null ? 'Unknown' : running ? `Running (PID ${status?.processId})` : 'Stopped' }}
+      <!-- The last known state; the buttons wait for a current one (running). -->
+      <NTag :type="status?.isRunning ? 'success' : 'default'" round size="small">
+        {{ status === null ? 'Unknown' : status.isRunning ? `Running (PID ${status.processId})` : 'Stopped' }}
       </NTag>
     </h1>
 

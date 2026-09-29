@@ -36,24 +36,55 @@ describe('useServerStatus', () => {
   })
 
   // The page opens (Stopped captured), a hub event says the server started and asks again;
-  // the first answer arrives while the second is still on its way. It predates the event,
-  // so it must not be shown - Update would be offered for a running server.
-  it('ignores an earlier answer while a later load is still on its way', async () => {
+  // the first answer arrives while the second is still on its way. It may be shown, but it
+  // predates the event, so the page is still refreshing and must not act on it yet.
+  it('is still refreshing while a later load is on its way', async () => {
     const first = deferred<ReturnType<typeof ok>>()
     const second = deferred<ReturnType<typeof ok>>()
     api.GET.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
-    const { status: current, load } = useServerStatus()
+    const { status: current, refreshing, load } = useServerStatus()
 
     const opening = load()
     const afterEvent = load()
     first.resolve(ok(status(false)))
     await opening
 
-    expect(current.value).toBeNull()
+    expect(refreshing.value).toBe(true)
 
     second.resolve(ok(status(true)))
     await afterEvent
+    expect(refreshing.value).toBe(false)
     expect(current.value?.isRunning).toBe(true)
+  })
+
+  // Loads that keep starting before the last one answers must not starve the page: each
+  // answer newer than the last applied one is shown.
+  it('keeps moving forward when loads keep overlapping', async () => {
+    const answers = [deferred<ReturnType<typeof ok>>(), deferred<ReturnType<typeof ok>>(), deferred<ReturnType<typeof ok>>()]
+    answers.forEach((a) => api.GET.mockReturnValueOnce(a.promise))
+    const { status: current, load } = useServerStatus()
+
+    const one = load()
+    const two = load()
+    answers[0].resolve(ok(status(false)))
+    await one
+    expect(current.value?.isRunning).toBe(false)
+
+    const three = load()
+    answers[1].resolve(ok(status(true)))
+    await two
+    expect(current.value?.isRunning).toBe(true)
+
+    answers[2].resolve(ok(status(true)))
+    await three
+  })
+
+  // A load that never answers would leave the page refreshing for good: each has a timeout.
+  it('asks with a timeout', async () => {
+    api.GET.mockResolvedValueOnce(ok(status(false)))
+    await useServerStatus().load()
+
+    expect(api.GET).toHaveBeenCalledWith('/api/server/status', { signal: expect.any(AbortSignal) })
   })
 
   // Unknown, not the last state seen: nothing may be offered for a server it cannot see.

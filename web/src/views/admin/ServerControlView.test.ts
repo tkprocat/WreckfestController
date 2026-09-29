@@ -75,6 +75,29 @@ describe('ServerControlView', () => {
     expect(button(wrapper, 'Update').attributes('disabled')).toBeUndefined()
   })
 
+  // A hub event says something changed: until the new status is in, the old Stopped must
+  // not offer Update to a server that may have just started.
+  it('offers no action while a refresh is on its way', async () => {
+    const refresh = deferred<unknown>()
+    api.GET.mockImplementation((path: string) =>
+      Promise.resolve(path === '/api/server/logfile' ? tail() : stopped),
+    )
+    wrapper = mountPage()
+    await flushPromises()
+    expect(button(wrapper, 'Update').attributes('disabled')).toBeUndefined()
+
+    api.GET.mockImplementation((path: string) => (path === '/api/server/logfile' ? Promise.resolve(tail()) : refresh.promise))
+    hub.get('ServerStarted')!({})
+    await flushPromises()
+    expect(button(wrapper, 'Update').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('Stopped')
+
+    refresh.resolve(running)
+    await flushPromises()
+    expect(button(wrapper, 'Update').attributes('disabled')).toBeDefined()
+    expect(button(wrapper, 'Stop').attributes('disabled')).toBeUndefined()
+  })
+
   it('sends a command once, however often Enter is pressed', async () => {
     serve({ '/api/server/status': running, '/api/server/logfile': tail() })
     const sent = deferred<unknown>()
