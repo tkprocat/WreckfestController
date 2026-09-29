@@ -8,6 +8,7 @@ import { NLayout, NLayoutContent, NLayoutSider, NMenu, type MenuOption } from 'n
 const pages = [
   { name: 'admin-dashboard', label: 'Dashboard' },
   { name: 'admin-server', label: 'Server control' },
+  { name: 'admin-settings', label: 'Settings' },
 ]
 
 const menu: MenuOption[] = pages.map((page) => ({

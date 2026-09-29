@@ -362,9 +362,12 @@ Configuration tab edits the same sections.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | | Every section: `{ vote }`, each with its `version` |
-| GET | `{section}` | One section, with its `ETag` |
-| PUT | `{section}` | Change the fields in the body; the rest keep their values. Needs `If-Match` |
+| GET | | Every section: `{ vote }` (`SettingsResponse`), each with its `version` |
+| GET | `vote` | The voting settings (`VoteSettingsResponse`), with its `ETag` |
+| PUT | `vote` | Change the fields in the body; the rest keep their values. Needs `If-Match`. Answers `VoteSettingsResponse` |
+
+Each section has its own typed route, so the web app gets types for it; a section that
+does not exist has no route (404).
 
 - A PUT with a stale `If-Match` gets 409 with the section as it is now; without one, 428.
   A body that repeats `version` is fine: `If-Match` is what counts.
