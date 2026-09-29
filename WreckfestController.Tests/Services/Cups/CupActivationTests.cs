@@ -82,7 +82,8 @@ public sealed class CupActivationTests : IDisposable
         Assert.Equal(start, current.LastOccurrence);
         Assert.Equal(OccurrenceOutcome.Activated, current.LastOutcome);
         _publisher.Verify(p => p.CupActivatedAsync(cup.Id, "Race night"), Times.Once);
-        _publisher.Verify(p => p.CupOccurrenceEndedAsync(cup.Id, "Race night", start, OccurrenceOutcome.Activated), Times.Once);
+        await EventuallyVerifiedAsync(() =>
+            _publisher.Verify(p => p.CupOccurrenceEndedAsync(cup.Id, "Race night", start, OccurrenceOutcome.Activated), Times.Once));
     }
 
     [Fact]
@@ -125,7 +126,8 @@ public sealed class CupActivationTests : IDisposable
         var failed = await EventuallyAsync(first.Id, e => e.NextOccurrence is null);
         Assert.False(failed.IsActive);
         Assert.Equal(OccurrenceOutcome.Failed, failed.LastOutcome);
-        _publisher.Verify(p => p.CupOccurrenceEndedAsync(first.Id, "First", It.IsAny<DateTime>(), OccurrenceOutcome.Failed), Times.Once);
+        await EventuallyVerifiedAsync(() =>
+            _publisher.Verify(p => p.CupOccurrenceEndedAsync(first.Id, "First", It.IsAny<DateTime>(), OccurrenceOutcome.Failed), Times.Once));
         await EventuallyIdleAsync();
 
         var second = await _db.CreateAsync(CupTestDatabase.Definition("Second", Now.AddMinutes(2)));
@@ -432,6 +434,31 @@ public sealed class CupActivationTests : IDisposable
 
             await Task.Delay(25, timeout.Token);
         }
+    }
+
+    /// <summary>
+    /// A mock call made by the activation running in the background: CupOccurrenceEnded is
+    /// sent after the database write that EventuallyAsync waits for, so it can still be on
+    /// its way. Retried until it holds, then once more for the real failure message.
+    /// </summary>
+    private async Task EventuallyVerifiedAsync(Action verify)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(Ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(15));
+        while (!timeout.IsCancellationRequested)
+        {
+            try
+            {
+                verify();
+                return;
+            }
+            catch (MockException)
+            {
+                await Task.Delay(25, CancellationToken.None);
+            }
+        }
+
+        verify();
     }
 
     private async Task EventuallyIdleAsync()

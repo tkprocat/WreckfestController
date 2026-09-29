@@ -74,7 +74,7 @@ public sealed class CupTestDatabase : IDisposable
     {
         for (var attempt = 0; ; attempt++)
         {
-            SqliteConnection.ClearAllPools();
+            SqlitePools.ReleaseFolder(_directory);
             try
             {
                 Directory.Delete(_directory, recursive: true);

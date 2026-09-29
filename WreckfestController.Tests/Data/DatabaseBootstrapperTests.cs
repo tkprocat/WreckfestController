@@ -186,7 +186,7 @@ public sealed class DatabaseBootstrapperTests : IDisposable
     public void Dispose()
     {
         // Pooled connections keep the file open, which would block the delete.
-        SqliteConnection.ClearAllPools();
+        SqlitePools.ReleaseFolder(_directory);
         if (Directory.Exists(_directory))
         {
             Directory.Delete(_directory, recursive: true);

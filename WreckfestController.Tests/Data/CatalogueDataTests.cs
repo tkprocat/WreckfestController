@@ -23,7 +23,7 @@ public sealed class CatalogueDataTests : IAsyncLifetime
 
     public ValueTask DisposeAsync()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.ReleaseFolder(_directory);
         if (Directory.Exists(_directory))
         {
             Directory.Delete(_directory, recursive: true);

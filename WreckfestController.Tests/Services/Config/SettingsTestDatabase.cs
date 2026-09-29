@@ -38,7 +38,7 @@ public sealed class SettingsTestDatabase : IDisposable
 
     public void Dispose()
     {
-        SqliteConnection.ClearAllPools();
+        SqlitePools.ReleaseFolder(_directory);
         Directory.Delete(_directory, recursive: true);
     }
 
