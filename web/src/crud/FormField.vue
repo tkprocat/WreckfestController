@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import { NFormItem } from 'naive-ui'
 
 /**
  * One form field: its label, the server's message for it (or a hint), and the error state.
  * The control gets its accessible name through the slot: a form item's visible label is
  * not tied to its control, so bind `input-props` (inputs, and filterable selects, whose
- * focus lands on an input) or `aria-label` (switches) from it.
+ * focus lands on an input) or `control-props` (switches) from it. Both also tie the
+ * message to the control, and mark the control invalid while the server refuses it.
  *
  *   <FormField label="Name" field="name" :errors="errors" v-slot="{ inputProps }">
  *     <NInput v-model:value="draft.name" :input-props="inputProps" />
@@ -22,13 +23,22 @@ const props = defineProps<{
   unavailable?: string | null
 }>()
 
+const messageId = useId()
+const invalid = computed(() => Boolean(props.errors[props.field]))
 const message = computed(() => props.errors[props.field] ?? props.unavailable ?? props.help)
-const status = computed(() => (props.errors[props.field] ? 'error' : props.unavailable ? 'warning' : undefined))
-const inputProps = computed(() => ({ 'aria-label': props.label }))
+const status = computed(() => (invalid.value ? 'error' : props.unavailable ? 'warning' : undefined))
+const inputProps = computed(() => ({
+  'aria-label': props.label,
+  'aria-describedby': message.value ? messageId : undefined,
+  'aria-invalid': invalid.value ? ('true' as const) : undefined,
+}))
 </script>
 
 <template>
-  <NFormItem :label="label" :feedback="message" :validation-status="status">
-    <slot :input-props="inputProps" :aria-label="label" />
+  <NFormItem :label="label" :validation-status="status">
+    <slot :input-props="inputProps" :control-props="inputProps" />
+    <template v-if="message" #feedback>
+      <span :id="messageId">{{ message }}</span>
+    </template>
   </NFormItem>
 </template>

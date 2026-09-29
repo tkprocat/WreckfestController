@@ -79,6 +79,12 @@ describe('TagsView', () => {
 
     expect(body().text()).toContain("A tag with slug 'dirt' already exists.")
     expect(body().find('[role="dialog"][aria-label="Add tag"]').exists()).toBe(true)
+
+    // Tied to the field, not only shown under it.
+    const slug = body().find('input[aria-label="Slug"]')
+    expect(slug.attributes('aria-invalid')).toBe('true')
+    expect(document.getElementById(slug.attributes('aria-describedby')!)!.textContent).toBe("A tag with slug 'dirt' already exists.")
+    expect(body().find('input[aria-label="Name"]').attributes('aria-invalid')).toBeUndefined()
   })
 
   it('edits a tag', async () => {
@@ -107,7 +113,11 @@ describe('TagsView', () => {
     await button('Delete', rowOf('Night')).trigger('click')
     await flushPromises()
     expect(api.DELETE).not.toHaveBeenCalled()
-    expect(body().text()).toContain('It is removed from every track layout')
+    const dialog = body().find('.n-dialog[role="dialog"]')
+    expect(document.getElementById(dialog.attributes('aria-labelledby')!)!.textContent).toBe('Delete tag')
+    expect(document.getElementById(dialog.attributes('aria-describedby')!)!.textContent).toContain(
+      'It is removed from every track layout',
+    )
 
     await button('Delete', body().find('.n-dialog')).trigger('click')
     await flushPromises()

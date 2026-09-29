@@ -42,7 +42,12 @@ export function useResourceEditor<Row extends object, Draft extends object>(opti
     ),
   )
 
+  /** Ignored while saving: the answer belongs to the row being saved, not to a new one. */
   function start(row: Row | null) {
+    if (saving.value) {
+      return
+    }
+
     editing.value = row
     const values = options.toDraft(row)
     base.value = options.toDraft(row)
@@ -67,12 +72,13 @@ export function useResourceEditor<Row extends object, Draft extends object>(opti
 
     saving.value = true
     errors.value = {}
+    const wasNew = isNew.value
     try {
       const outcome = await options.save({ ...(draft as Draft) }, version.value, editing.value)
       switch (outcome.kind) {
         case 'ok':
           if (outcome.row) {
-            options.saved(outcome.row, isNew.value)
+            options.saved(outcome.row, wasNew)
           }
 
           message.success(`${capitalise(options.what)} saved.`)

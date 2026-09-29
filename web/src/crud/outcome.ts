@@ -1,3 +1,4 @@
+import { h, nextTick, useId } from 'vue'
 import { useDialog } from 'naive-ui'
 import { fieldErrors, problemMessage } from '@/api/problems'
 
@@ -64,22 +65,41 @@ export function hasId(body: unknown): body is { id: unknown } {
 }
 
 /**
- * Asks before something that cannot be undone. Resolves true when confirmed; the dialog
- * the button raises is named by its title.
+ * Asks before something that cannot be undone. Resolves true when confirmed, false on
+ * Cancel, the close button, a mask click or Escape.
+ *
+ * Naive UI's dialog passes only its own props on, so it cannot take an aria-label: the
+ * title and content are rendered with ids, and tied to the dialog element once it is in
+ * the page.
  */
 export function useConfirm() {
   const dialog = useDialog()
+  const prefix = useId()
+  let count = 0
   return (options: { title: string; content: string; positive: string }) =>
     new Promise<boolean>((resolve) => {
+      const titleId = `${prefix}-confirm-${++count}-title`
+      const contentId = `${prefix}-confirm-${count}-content`
+      const name = () => {
+        const box = document.getElementById(titleId)?.closest('[role="dialog"]')
+        box?.setAttribute('aria-labelledby', titleId)
+        box?.setAttribute('aria-describedby', contentId)
+      }
       dialog.warning({
-        title: options.title,
-        content: options.content,
+        title: () => h('span', { id: titleId }, options.title),
+        content: () => h('div', { id: contentId }, options.content),
         positiveText: options.positive,
         negativeText: 'Cancel',
         onPositiveClick: () => resolve(true),
         onNegativeClick: () => resolve(false),
         onClose: () => resolve(false),
         onMaskClick: () => resolve(false),
+        onEsc: () => resolve(false),
+        // Whatever else closed it: a promise settles only once, so this is a no-op after the others.
+        onAfterLeave: () => resolve(false),
+        onAfterEnter: name,
       })
+      // The modal inserts its content after rendering it: name it once it is in the page.
+      void nextTick(name)
     })
 }

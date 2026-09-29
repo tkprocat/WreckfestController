@@ -9,6 +9,7 @@ import ResourceTable from '@/crud/ResourceTable.vue'
 import { NO_ANSWER, hasId, send, useConfirm } from '@/crud/outcome'
 import { useResourceEditor } from '@/crud/useResourceEditor'
 import { useResourceList } from '@/crud/useResourceList'
+import { textOn } from '@/utils/color'
 
 type Tag = components['schemas']['TagResponse']
 interface TagDraft {
@@ -107,7 +108,7 @@ const columns: DataTableColumns<Tag> = [
     key: 'name',
     sorter: (a, b) => a.name.localeCompare(b.name),
     render: (tag) =>
-      h(NTag, { size: 'small', color: tag.color ? { color: tag.color, textColor: contrast(tag.color) } : undefined }, () => tag.name),
+      h(NTag, { size: 'small', color: tag.color ? { color: tag.color, textColor: textOn(tag.color) } : undefined }, () => tag.name),
   },
   { title: 'Slug', key: 'slug' },
   {
@@ -125,12 +126,6 @@ const columns: DataTableColumns<Tag> = [
       ]),
   },
 ]
-
-/** Black or white text, whichever reads better on the tag's colour. */
-function contrast(hex: string): string {
-  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
-  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b! > 0.55 ? '#000000' : '#ffffff'
-}
 
 onMounted(() => void list.reload())
 </script>

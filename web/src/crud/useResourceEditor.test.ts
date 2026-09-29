@@ -71,6 +71,22 @@ describe('useResourceEditor', () => {
     expect(e.saving.value).toBe(false)
   })
 
+  // The answer belongs to the row being saved: it must not close or file a different one.
+  it('ignores a start while saving', async () => {
+    let finish!: (outcome: Outcome<Row>) => void
+    const save = vi.fn(() => new Promise<Outcome<Row>>((resolve) => (finish = resolve)))
+    const { editor: e, saved } = editor(save)
+    e.start(row('A', 1))
+
+    const saving = e.save()
+    e.start(null)
+    expect(e.editing.value).toEqual(row('A', 1))
+    finish({ kind: 'ok', row: row('A', 2) })
+    await saving
+
+    expect(saved).toHaveBeenCalledWith(row('A', 2), false)
+  })
+
   it('keeps the form open with the field messages', async () => {
     const { editor: e } = editor(async () => ({ kind: 'invalid', errors: { name: 'Required.' }, message: 'Required.' }))
     e.start(null)
