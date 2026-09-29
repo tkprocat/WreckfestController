@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NCheckbox, NForm, NFormItem, NInput } from 'naive-ui'
+import { redirectTarget } from '@/router/redirect'
 import { useAuthStore, type LoginFailure } from '@/stores/auth'
 
 const auth = useAuthStore()
@@ -21,16 +22,6 @@ const messages: Record<LoginFailure, string> = {
   unavailable: 'Signing in is not possible right now.',
 }
 
-/**
- * Only paths inside the app, so a crafted link cannot send the user elsewhere. A
- * backslash is refused too: browsers read "/\host" like "//host".
- */
-function redirectTarget(): string {
-  const redirect = route.query.redirect
-  return typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') && !redirect.includes('\\')
-    ? redirect
-    : '/admin'
-}
 
 async function submit() {
   busy.value = true
@@ -38,7 +29,7 @@ async function submit() {
   try {
     failure.value = await auth.login(login.value, password.value, remember.value).catch(() => 'unavailable' as const)
     if (failure.value === null) {
-      await router.replace(redirectTarget())
+      await router.replace(redirectTarget(route.query.redirect))
     }
   } finally {
     busy.value = false
