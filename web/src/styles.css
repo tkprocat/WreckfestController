@@ -45,3 +45,14 @@ body {
   margin: 0 auto;
   padding: 24px 16px;
 }
+
+.app-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-error {
+  color: #d03050;
+  font-size: 0.875em;
+}

@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Metadata;
@@ -175,9 +176,25 @@ public class ApiServer : IApiServer, IDisposable
             })
             // AddControllers discovers controllers from the entry assembly, which is
             // the test runner rather than this app when a test builds the host.
-            .AddApplicationPart(typeof(ApiServer).Assembly);
+            .AddApplicationPart(typeof(ApiServer).Assembly)
+            // Numbers are numbers. The web default also accepts "5", which makes every
+            // integer in the OpenAPI contract, and so in the web app's types, number | string.
+            .AddJsonOptions(options => options.JsonSerializerOptions.NumberHandling = JsonNumberHandling.Strict);
+
+        // The OpenAPI generator reads these options, not MVC's, when it describes numbers.
+        builder.Services.ConfigureHttpJsonOptions(options => options.SerializerOptions.NumberHandling = JsonNumberHandling.Strict);
         builder.Services.AddEndpointsApiExplorer();
-        // Swagger disabled - causes build issues with MAUI
+
+        // /openapi/v1.json: the contract the web app's TypeScript types are generated
+        // from. Signed-in only, like the rest of the API; the committed copy in
+        // web/src/api/openapi.json is what the build uses.
+        builder.Services.AddOpenApi(options => options.AddDocumentTransformer((document, _, _) =>
+        {
+            // Otherwise named after the entry assembly, which is the test runner in tests.
+            document.Info.Title = "WreckfestController API";
+            document.Info.Version = "2.0";
+            return Task.CompletedTask;
+        }));
 
         // Register services from main service provider
         // Note: We're creating a new service collection, but we'll use the existing singletons
@@ -227,6 +244,7 @@ public class ApiServer : IApiServer, IDisposable
         // Anonymous so the public page gets live updates. What a connection receives
         // is decided by its group, and only ServerHub puts a signed-in caller in admin.
         app.MapHub<ServerHub>(ServerHub.Route).AllowAnonymous();
+        app.MapOpenApi().RequireAuthorization(ApiAuthentication.AdminPolicy);
 
         // After the API and the hub: only what neither of them answers.
         web.MapFallback(app);
