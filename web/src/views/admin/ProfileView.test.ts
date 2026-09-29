@@ -5,8 +5,10 @@ import { NMessageProvider } from 'naive-ui'
 import ProfileView from './ProfileView.vue'
 
 const api = vi.hoisted(() => ({ PUT: vi.fn(), POST: vi.fn() }))
-const auth = vi.hoisted(() => ({ user: null as unknown }))
+const auth = vi.hoisted(() => ({ user: null as unknown, sessionEnded: vi.fn() }))
+const router = vi.hoisted(() => ({ push: vi.fn() }))
 vi.mock('@/api/client', () => ({ api }))
+vi.mock('vue-router', () => ({ useRoute: () => ({ fullPath: '/admin/profile' }), useRouter: () => router }))
 vi.mock('@/stores/auth', async () => {
   const { reactive } = await import('vue')
   const store = reactive(auth)
@@ -39,6 +41,8 @@ const button = (label: string) => wrapper!.findAll('button').find((b) => b.text(
 beforeEach(async () => {
   api.PUT.mockReset()
   api.POST.mockReset()
+  router.push.mockReset()
+  auth.sessionEnded.mockReset()
   const { useAuthStore } = await import('@/stores/auth')
   ;(useAuthStore() as { user: unknown }).user = { ...me }
 })
@@ -109,6 +113,35 @@ describe('ProfileView', () => {
     await flushPromises()
 
     expect(wrapper!.text()).toContain('The current password is not right.')
+  })
+
+  // The client leaves /api/auth/* 401s to the page: an ended session must not leave the
+  // page looking signed in.
+  it.each([
+    ['saving the profile', 'Save'],
+    ['changing the password', 'Change password'],
+  ])('signs in again when the session ended while %s', async (_, action) => {
+    api.PUT.mockResolvedValue(refused(undefined, 401))
+    api.POST.mockResolvedValue(refused(undefined, 401))
+    mountPage()
+    await flushPromises()
+
+    await input('Display name').setValue('Changed')
+    await input('Current password').setValue('old-password')
+    await input('New password').setValue('new-password-1')
+    await input('New password again').setValue('new-password-1')
+    await button(action).trigger('click')
+    await flushPromises()
+
+    expect(auth.sessionEnded).toHaveBeenCalled()
+    expect(router.push).toHaveBeenCalledWith({ name: 'login', query: { redirect: '/admin/profile' } })
+  })
+
+  it('names the time zone input', async () => {
+    mountPage()
+    await flushPromises()
+
+    expect(input('Time zone').exists()).toBe(true)
   })
 
   // An API key is signed in but is not an account.

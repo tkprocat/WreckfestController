@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watchEffect } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSelect, NSpace, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import { fieldErrors, problemMessage } from '@/api/problems'
@@ -9,6 +10,22 @@ import { timeZoneOptions } from '@/utils/timeZones'
 const NO_ANSWER = 'No answer from the controller, so it is not known whether this was saved. Reload before trying again.'
 
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
+
+/**
+ * The client's own 401 handling leaves /api/auth/* to the page (sign-in answers 401 for a
+ * wrong password), so an ended session is caught here: forget the user and sign in again.
+ */
+function sessionEnded(status: number): boolean {
+  if (status !== 401) {
+    return false
+  }
+
+  auth.sessionEnded()
+  void router.push({ name: 'login', query: { redirect: route.fullPath } })
+  return true
+}
 const message = useMessage()
 const zones = timeZoneOptions()
 
@@ -45,9 +62,13 @@ async function saveProfile() {
   savingProfile.value = true
   profileErrors.value = {}
   try {
-    const { data, error } = await api.PUT('/api/auth/me', {
+    const { data, error, response } = await api.PUT('/api/auth/me', {
       body: { email: profile.email, displayName: profile.displayName || null, timeZone: profile.timeZone },
     })
+    if (sessionEnded(response.status)) {
+      return
+    }
+
     if (data) {
       auth.user = data
       message.success('Profile saved.')
@@ -81,6 +102,10 @@ async function changePassword() {
     const { error, response } = await api.POST('/api/auth/me/password', {
       body: { currentPassword: password.current, newPassword: password.next },
     })
+    if (sessionEnded(response.status)) {
+      return
+    }
+
     if (response.ok) {
       Object.assign(password, { current: '', next: '', again: '' })
       message.success('Password changed. Your other sessions are signed out.')
@@ -125,7 +150,13 @@ function status(errors: Record<string, string>, field: string) {
             :feedback="profileErrors.timeZone ?? 'Times on the site are shown in this zone.'"
             :validation-status="status(profileErrors, 'timeZone')"
           >
-            <NSelect v-model:value="profile.timeZone" :options="zones" filterable clearable aria-label="Time zone" />
+            <NSelect
+              v-model:value="profile.timeZone"
+              :options="zones"
+              filterable
+              clearable
+              :input-props="{ 'aria-label': 'Time zone' }"
+            />
           </NFormItem>
           <NButton type="primary" attr-type="submit" :loading="savingProfile" :disabled="!profileChanged || savingProfile">
             Save

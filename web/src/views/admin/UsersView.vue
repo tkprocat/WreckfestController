@@ -33,6 +33,8 @@ const zones = timeZoneOptions()
 
 const users = ref<User[]>([])
 const loadError = ref<string | null>(null)
+/** Until the first load answers, adding waits: that answer would replace the new row. */
+const loaded = ref(false)
 /** The account an action is running for, so its buttons wait. */
 const busy = ref<string | null>(null)
 
@@ -44,6 +46,7 @@ async function load() {
     if (data) {
       users.value = data
       loadError.value = null
+      loaded.value = true
     } else {
       loadError.value = problemMessage(error, 'The accounts could not be loaded.')
     }
@@ -263,7 +266,7 @@ onMounted(() => void load())
     <!-- A card renders its header, and so the Add button, only with a title. -->
     <NCard v-else title="Accounts">
       <template #header-extra>
-        <NButton type="primary" @click="openNew">Add account</NButton>
+        <NButton type="primary" :disabled="!loaded" @click="openNew">Add account</NButton>
       </template>
       <p class="muted">Every account is an admin. Nobody can lock or delete their own account.</p>
       <NDataTable :columns="columns" :data="users" :row-key="(u: User) => u.id" :bordered="false" size="small" />
@@ -273,6 +276,7 @@ onMounted(() => void load())
       :show="editing !== null"
       preset="card"
       :title="isNew ? 'Add account' : 'Edit account'"
+      :aria-label="isNew ? 'Add account' : 'Edit account'"
       style="max-width: 520px"
       :mask-closable="!saving"
       @update:show="(show: boolean) => !show && !saving && (editing = null)"
@@ -288,7 +292,13 @@ onMounted(() => void load())
           <NInput v-model:value="form.displayName" :input-props="{ 'aria-label': 'Display name' }" />
         </NFormItem>
         <NFormItem label="Time zone" :feedback="formErrors.timeZone" :validation-status="status('timeZone')">
-          <NSelect v-model:value="form.timeZone" :options="zones" filterable clearable aria-label="Time zone" />
+          <NSelect
+            v-model:value="form.timeZone"
+            :options="zones"
+            filterable
+            clearable
+            :input-props="{ 'aria-label': 'Time zone' }"
+          />
         </NFormItem>
         <NFormItem
           v-if="isNew"
@@ -315,6 +325,7 @@ onMounted(() => void load())
       :show="resetting !== null"
       preset="card"
       :title="`Reset password: ${resetting?.userName ?? ''}`"
+      :aria-label="`Reset password: ${resetting?.userName ?? ''}`"
       style="max-width: 480px"
       :mask-closable="!saving"
       @update:show="(show: boolean) => !show && !saving && (resetting = null)"

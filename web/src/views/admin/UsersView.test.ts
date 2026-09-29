@@ -132,6 +132,32 @@ describe('UsersView', () => {
     expect(buttonIn(rowOf('bob'), 'Unlock').exists()).toBe(true)
   })
 
+  // Until the first load answers, a new row would be replaced by that older answer.
+  it('offers Add account only once the list has loaded', async () => {
+    let finish!: (value: unknown) => void
+    api.GET.mockReturnValue(new Promise((resolve) => (finish = resolve)))
+    mountPage()
+    await flushPromises()
+
+    expect(bodyButton('Add account').attributes('disabled')).toBeDefined()
+
+    finish(answer([me, other]))
+    await flushPromises()
+    expect(bodyButton('Add account').attributes('disabled')).toBeUndefined()
+  })
+
+  // A dialog is named for screen readers, and its time zone input where focus lands.
+  it('names the account dialog and its time zone input', async () => {
+    mountPage()
+    await flushPromises()
+
+    await bodyButton('Add account').trigger('click')
+    await flushPromises()
+
+    expect(body().find('[role="dialog"][aria-label="Add account"]').exists()).toBe(true)
+    expect(body().find('input[aria-label="Time zone"]').exists()).toBe(true)
+  })
+
   it('resets a password', async () => {
     api.POST.mockResolvedValue(answer(undefined, 204))
     mountPage()
