@@ -143,6 +143,35 @@ public class ProxyAndRateLimitTests
         Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
     }
 
+    // With no usable proxy listed, nothing is trusted. ASP.NET Core reads EMPTY known-proxy
+    // lists as "trust every peer", so clearing its loopback defaults and adding nothing
+    // let any client pick its own IP - and a fresh login limit - per request.
+    [Theory]
+    [InlineData(null, ClientA)]
+    [InlineData("", ClientA)]
+    [InlineData("proxy.lan, 10.0.0.0/33", ClientA)]
+    [InlineData(null, "127.0.0.1")]
+    public async Task WithNoTrustedProxy_ForwardedForIsIgnored(string? trusted, string peer)
+    {
+        await using var host = await ApiTestHost.StartAsync(new Dictionary<string, string?>
+        {
+            ["Api:TrustedProxies"] = trusted,
+        });
+        using var browser = Browser(host, peer);
+
+        for (var attempt = 0; attempt < RateLimits.LoginPermitsPerWindow; attempt++)
+        {
+            SetForwardedFor(browser, $"198.51.100.{attempt}");
+            using var allowed = await browser.LoginAsync("nobody", ApiTestHost.Password);
+            Assert.Equal(HttpStatusCode.Unauthorized, allowed.StatusCode);
+        }
+
+        SetForwardedFor(browser, "198.51.100.200");
+        using var response = await browser.LoginAsync("nobody", ApiTestHost.Password);
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+    }
+
     // The proxy terminates TLS, so cookies are marked Secure only when a trusted proxy
     // says the browser used HTTPS. Cookies are passed by hand: a CookieContainer would
     // withhold the Secure ones from the TestServer's http:// address.
