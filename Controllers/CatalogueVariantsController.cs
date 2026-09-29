@@ -271,20 +271,35 @@ public class CatalogueVariantsController : ControllerBase
         variant.GameMode = shipped.GameMode;
         variant.AllowedForVoting = shipped.AllowedForVoting;
         variant.Tags = tags;
+        // The tags are a join table: mark the variant, so its version moves even when only they changed.
+        _db.Entry(variant).Property(v => v.Version).IsModified = true;
 
         _logger.LogInformation(
             "{Caller} reset track variant {VariantId} to its shipped values", this.Caller(), variant.VariantId);
         return await SaveAsync(variant);
     }
 
-    /// <summary>Replaces the variant's tags, by slug.</summary>
+    /// <summary>
+    /// Replaces the variant's tags, by slug. Takes If-Match optionally: with it, a variant
+    /// saved since answers 409. Changing the tags moves the variant's version.
+    /// </summary>
     [HttpPut("{id:int}/tags")]
     public async Task<ActionResult<VariantResponse>> SetTags(int id, TagSlugsRequest request)
     {
+        if (this.ReadOptionalIfMatch(out var expected) is { } badPrecondition)
+        {
+            return badPrecondition;
+        }
+
         var variant = await LoadAsync(id);
         if (variant is null)
         {
             return NotFound();
+        }
+
+        if (expected is not null && variant.Version != expected)
+        {
+            return this.VersionConflict(VariantResponse.From(variant), variant.Version);
         }
 
         var slugs = request.Tags.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -296,6 +311,8 @@ public class CatalogueVariantsController : ControllerBase
         }
 
         variant.Tags = tags;
+        // A join-table change leaves the variant row unchanged: mark it, so its version moves.
+        _db.Entry(variant).Property(v => v.Version).IsModified = true;
         return await SaveAsync(variant);
     }
 

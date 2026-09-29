@@ -18,6 +18,9 @@ import ResourceTable from '@/crud/ResourceTable.vue'
 import { NO_ANSWER, hasId, send, useConfirm, type Outcome } from '@/crud/outcome'
 import { useResourceList } from '@/crud/useResourceList'
 import { textOn } from '@/utils/color'
+import TrackEditor from './tracks/TrackEditor.vue'
+import VariantEditor from './tracks/VariantEditor.vue'
+import { vSelectFocus } from '@/crud/selectFocus'
 
 type Track = components['schemas']['TrackResponse']
 type Variant = components['schemas']['VariantResponse']
@@ -31,7 +34,10 @@ const confirm = useConfirm()
 
 // Hidden ones too: the page is where they are unhidden.
 const list = useResourceList<Track>(() => api.GET('/api/catalogue/tracks', { params: { query: { includeHidden: true } } }), 'tracks')
-const { items: tracks, loading, error } = list
+const { items: tracks, loading, loaded, error } = list
+
+const trackEditor = ref<InstanceType<typeof TrackEditor> | null>(null)
+const variantEditor = ref<InstanceType<typeof VariantEditor> | null>(null)
 
 const ORIGINS: Record<Origin, string> = { BaseGame: 'Base game', Dlc: 'DLC', Workshop: 'Workshop', Custom: 'Custom' }
 
@@ -96,11 +102,13 @@ const CHANGED_ELSEWHERE = 'Someone else changed this at the same moment, so noth
 const isTrack = (body: unknown): body is Track => hasId(body) && 'variants' in body
 const isVariant = (body: unknown): body is Variant => hasId(body) && 'variantId' in body
 
-/** A variant the server answered with, put back into its track. */
+/** A variant the server answered with, put into its track: changed in place, or added. */
 function replaceVariant(variant: Variant) {
   const track = tracks.value.find((t) => t.id === variant.trackId)
   if (track) {
-    list.replace({ ...track, variants: track.variants.map((v) => (v.id === variant.id ? variant : v)) })
+    const known = track.variants.some((v) => v.id === variant.id)
+    const variants = known ? track.variants.map((v) => (v.id === variant.id ? variant : v)) : [...track.variants, variant]
+    list.replace({ ...track, variants: variants.sort((a, b) => a.name.localeCompare(b.name)) })
   }
 }
 
@@ -248,9 +256,10 @@ const variantColumns = (track: Track): DataTableColumns<Variant> => [
   {
     title: 'Actions',
     key: 'actions',
-    width: 200,
+    width: 260,
     render: (v) =>
       h(NSpace, { size: 'small' }, () => [
+        h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Edit ${v.name}`, onClick: () => void variantEditor.value?.start(track, v) }, () => 'Edit'),
         v.isHidden
           ? h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Unhide ${v.name}`, onClick: () => void variantAction(v, 'unhide', `"${v.name}" is shown again.`) }, () => 'Unhide')
           : h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Hide ${v.name}`, onClick: () => void variantAction(v, 'hide', `"${v.name}" hidden.`) }, () => 'Hide'),
@@ -279,9 +288,11 @@ const columns: DataTableColumns<Row> = [
   {
     title: 'Actions',
     key: 'actions',
-    width: 200,
+    width: 360,
     render: (t) =>
       h(NSpace, { size: 'small' }, () => [
+        h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Edit ${t.name}`, onClick: () => void trackEditor.value?.start(t) }, () => 'Edit'),
+        h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Add a variant to ${t.name}`, onClick: () => void variantEditor.value?.start(t, null) }, () => 'Add variant'),
         t.isHidden
           ? h(NButton, { size: 'small', loading: busy.value === `t${t.id}`, disabled: disabled(), 'aria-label': `Unhide ${t.name}`, onClick: () => void trackAction(t, 'unhide', `"${t.name}" is shown again.`) }, () => 'Unhide')
           : h(NButton, { size: 'small', loading: busy.value === `t${t.id}`, disabled: disabled(), 'aria-label': `Hide ${t.name}`, onClick: () => void trackAction(t, 'hide', `"${t.name}" hidden.`) }, () => 'Hide'),
@@ -317,6 +328,7 @@ onMounted(() => void list.reload())
           filterable
           placeholder="Any origin"
           style="width: 150px"
+          v-select-focus="{ 'aria-label': 'Origin' }"
           :input-props="{ 'aria-label': 'Origin' }"
         />
         <NSelect
@@ -326,6 +338,7 @@ onMounted(() => void list.reload())
           filterable
           placeholder="Any mode"
           style="width: 130px"
+          v-select-focus="{ 'aria-label': 'Game mode' }"
           :input-props="{ 'aria-label': 'Game mode' }"
         />
         <NSelect
@@ -335,6 +348,7 @@ onMounted(() => void list.reload())
           filterable
           placeholder="Any tag"
           style="width: 170px"
+          v-select-focus="{ 'aria-label': 'Tag' }"
           :input-props="{ 'aria-label': 'Tag' }"
         />
         <NSelect
@@ -344,6 +358,7 @@ onMounted(() => void list.reload())
           filterable
           placeholder="Any weather"
           style="width: 150px"
+          v-select-focus="{ 'aria-label': 'Weather' }"
           :input-props="{ 'aria-label': 'Weather' }"
         />
         <NCheckbox v-model:checked="showHidden">Show hidden</NCheckbox>
@@ -357,8 +372,14 @@ onMounted(() => void list.reload())
         :error="error"
         :render-expand-icon="expandIcon"
         @retry="list.reload()"
-      />
+      >
+        <template #toolbar>
+          <NButton type="primary" :disabled="!loaded" @click="trackEditor?.start(null)">Add track</NButton>
+        </template>
+      </ResourceTable>
     </NCard>
+    <TrackEditor ref="trackEditor" @saved="list.replace" />
+    <VariantEditor ref="variantEditor" @saved="replaceVariant" />
   </section>
 </template>
 

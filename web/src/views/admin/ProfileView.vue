@@ -6,6 +6,7 @@ import { api } from '@/api/client'
 import { fieldErrors, problemMessage } from '@/api/problems'
 import { useAuthStore } from '@/stores/auth'
 import { timeZoneOptions } from '@/utils/timeZones'
+import { vSelectFocus } from '@/crud/selectFocus'
 
 const NO_ANSWER = 'No answer from the controller, so it is not known whether this was saved. Reload before trying again.'
 
@@ -155,6 +156,7 @@ function status(errors: Record<string, string>, field: string) {
               :options="zones"
               filterable
               clearable
+              v-select-focus="{ 'aria-label': 'Time zone' }"
               :input-props="{ 'aria-label': 'Time zone' }"
             />
           </NFormItem>

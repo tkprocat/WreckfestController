@@ -203,6 +203,23 @@ internal static class CatalogueHttp
         return null;
     }
 
+    /// <summary>
+    /// For writes where If-Match is optional (the relationship endpoints): null when the
+    /// header is absent, else the version it names, or a 400 when it is malformed.
+    /// </summary>
+    public static ActionResult? ReadOptionalIfMatch(this ControllerBase controller, out int? version)
+    {
+        version = null;
+        if (controller.Request.Headers.IfMatch.ToString().Trim().Length == 0)
+        {
+            return null;
+        }
+
+        var bad = controller.ReadIfMatch(out var read);
+        version = read;
+        return bad;
+    }
+
     /// <summary>409 with the row as it is now, and its ETag.</summary>
     public static ActionResult VersionConflict(this ControllerBase controller, object current, int version)
     {

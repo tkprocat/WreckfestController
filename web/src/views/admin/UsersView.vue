@@ -21,6 +21,7 @@ import { fieldErrors, problemMessage } from '@/api/problems'
 import type { components } from '@/api/schema'
 import { useAuthStore } from '@/stores/auth'
 import { browserTimeZone, timeZoneOptions } from '@/utils/timeZones'
+import { vSelectFocus } from '@/crud/selectFocus'
 
 type User = components['schemas']['UserResponse']
 
@@ -297,6 +298,7 @@ onMounted(() => void load())
             :options="zones"
             filterable
             clearable
+            v-select-focus="{ 'aria-label': 'Time zone' }"
             :input-props="{ 'aria-label': 'Time zone' }"
           />
         </NFormItem>

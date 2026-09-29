@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, toRaw } from 'vue'
 import { NButton, NInputNumber, NSelect, NSpace } from 'naive-ui'
 import type { components } from '@/api/schema'
+import { vSelectFocus } from './selectFocus'
 
 /**
  * A rotation: tracks in order, each with its game mode, laps and bots. Used by collections
@@ -134,6 +135,7 @@ function errorOf(index: number): string | undefined {
               filterable
               style="width: 170px"
               :disabled="disabled"
+              v-select-focus="{ 'aria-label': `Game mode for ${nameOf(track)}` }"
               :input-props="{ 'aria-label': `Game mode for ${nameOf(track)}` }"
               @update:value="(value: string) => update(index, { gamemode: value || null })"
             />
@@ -193,6 +195,7 @@ function errorOf(index: number): string | undefined {
         clearable
         placeholder="Add a track layout..."
         :disabled="disabled"
+        v-select-focus="{ 'aria-label': 'Add a track layout' }"
         :input-props="{ 'aria-label': 'Add a track layout' }"
         @update:value="add"
       />

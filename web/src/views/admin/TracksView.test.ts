@@ -69,7 +69,13 @@ async function expand(name: string) {
 
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset()
-  api.GET.mockResolvedValue(answer([arena(), fields(), hiddenTrack()]))
+  api.GET.mockImplementation((path: string) => {
+    if (path === '/api/catalogue/tracks') return Promise.resolve(answer([arena(), fields(), hiddenTrack()]))
+    if (path === '/api/catalogue/weather') return Promise.resolve(answer(['clear', 'rain', 'fog']))
+    if (path === '/api/catalogue/mods') return Promise.resolve(answer([]))
+    if (path === '/api/catalogue/tags') return Promise.resolve(answer([tag('short', 'Short'), tag('night', 'Night')]))
+    throw new Error(`unexpected GET ${path}`)
+  })
 })
 
 afterEach(() => {
@@ -230,5 +236,287 @@ describe('TracksView', () => {
     await flushPromises()
     expect(trackNames().join()).toContain('Crash Arena')
     expect(trackNames().join()).not.toContain('Fields')
+  })
+
+  describe('editing', () => {
+    const dialog = () => body().find('.n-card[role="dialog"], .n-modal .n-card')
+    const input = (label: string) => dialog().find(`input[aria-label="${label}"]`)
+    const submit = async (label: string) => {
+      await dialog().findAll('button').find((b) => b.text() === label)!.trigger('click')
+      await flushPromises()
+    }
+
+    // A new track supports every weather, as the API adds it: no second request.
+    it('adds a track', async () => {
+      api.POST.mockResolvedValue(answer(track(4, 'Test Loop', [], { key: 'test_loop', origin: 'Custom', isBuiltIn: false, weather: ['clear', 'rain', 'fog'] }), 201))
+      await mountPage()
+
+      await wrapper!.findAll('button').find((b) => b.text() === 'Add track')!.trigger('click')
+      await flushPromises()
+      await input('Name').setValue('Test Loop')
+      await input('Key').setValue('test_loop')
+      await submit('Add')
+
+      expect(api.POST).toHaveBeenCalledWith('/api/catalogue/tracks', {
+        body: { key: 'test_loop', name: 'Test Loop', origin: 'Custom', dlcName: null, modId: null },
+      })
+      expect(api.PUT).not.toHaveBeenCalled()
+      expect(wrapper!.text()).toContain('Test Loop')
+    })
+
+    it('edits a track with its version, then saves the weather it changed', async () => {
+      api.PUT.mockImplementation((path: string) =>
+        Promise.resolve(
+          path === '/api/catalogue/tracks/{id}'
+            ? answer({ ...fields(), name: 'Green Fields', version: 2 })
+            : answer({ ...fields(), name: 'Green Fields', weather: ['clear', 'rain'], version: 3 }),
+        ),
+      )
+      await mountPage()
+
+      await labelled('Edit Fields').trigger('click')
+      await flushPromises()
+      // A built-in's key is fixed.
+      expect(input('Key').attributes('disabled')).toBeDefined()
+      await input('Name').setValue('Green Fields')
+      const vm = wrapper!.findComponent({ name: 'TrackEditor' }).vm as unknown as { draft: { weather: string[] } }
+      vm.draft.weather = ['clear', 'rain']
+      await submit('Save')
+
+      expect(api.PUT).toHaveBeenNthCalledWith(1, '/api/catalogue/tracks/{id}', {
+        params: { path: { id: 1 } },
+        body: { key: 't1', name: 'Green Fields', origin: 'BaseGame', dlcName: null, modId: null },
+        headers: { 'If-Match': '"1"' },
+      })
+      expect(api.PUT).toHaveBeenNthCalledWith(2, '/api/catalogue/tracks/{id}/weather', {
+        params: { path: { id: 1 } },
+        body: { weather: ['clear', 'rain'] },
+        headers: { 'If-Match': '"2"' },
+      })
+      expect(wrapper!.text()).toContain('Green Fields')
+      expect(wrapper!.text()).toContain('clear, rain')
+    })
+
+    // The track is saved; only the weather is not, and the page says so.
+    it('says when the track saved but its weather did not', async () => {
+      api.PUT.mockImplementation((path: string) =>
+        Promise.resolve(
+          path === '/api/catalogue/tracks/{id}'
+            ? answer({ ...fields(), name: 'Green Fields', version: 2 })
+            : refused({ title: 'Unknown weather: snow.', status: 400, errors: { weather: ['Unknown weather: snow.'] } }, 400),
+        ),
+      )
+      await mountPage()
+
+      await labelled('Edit Fields').trigger('click')
+      await flushPromises()
+      await input('Name').setValue('Green Fields')
+      const vm = wrapper!.findComponent({ name: 'TrackEditor' }).vm as unknown as { draft: { weather: string[] } }
+      vm.draft.weather = ['snow']
+      await submit('Save')
+
+      expect(body().text()).toContain('The track was saved, but its weather was not')
+      expect(wrapper!.text()).toContain('Green Fields')
+    })
+
+    const trackEditor = () => wrapper!.findComponent({ name: 'TrackEditor' }).vm as unknown as { draft: { weather: string[] } }
+
+    // Someone else set the weather meanwhile; this form only renamed the track.
+    it('does not send weather the form did not change', async () => {
+      api.PUT.mockResolvedValue(answer({ ...fields(), name: 'Green Fields', weather: ['fog'], version: 2 }))
+      await mountPage()
+
+      await labelled('Edit Fields').trigger('click')
+      await flushPromises()
+      await input('Name').setValue('Green Fields')
+      await submit('Save')
+
+      expect(api.PUT).toHaveBeenCalledTimes(1)
+      expect(wrapper!.text()).toContain('fog')
+    })
+
+    // Without the weather list the form cannot show a new track's default: it sends none.
+    it('keeps a new track\'s default weather when the weather list failed to load', async () => {
+      const tracksOnly = api.GET.getMockImplementation()!
+      api.GET.mockImplementation((path: string) => (path === '/api/catalogue/weather' ? Promise.reject(new Error('offline')) : tracksOnly(path)))
+      api.POST.mockResolvedValue(answer(track(4, 'Test Loop', [], { key: 'test_loop', origin: 'Custom', isBuiltIn: false, weather: ['clear', 'rain', 'fog'] }), 201))
+      await mountPage()
+
+      await wrapper!.findAll('button').find((b) => b.text() === 'Add track')!.trigger('click')
+      await flushPromises()
+      await input('Name').setValue('Test Loop')
+      await input('Key').setValue('test_loop')
+      await submit('Add')
+
+      expect(api.POST).toHaveBeenCalledTimes(1)
+      expect(api.PUT).not.toHaveBeenCalled()
+    })
+
+    it('says when the weather lost a race, and shows the saved track', async () => {
+      api.PUT.mockImplementation((path: string) =>
+        Promise.resolve(
+          path === '/api/catalogue/tracks/{id}'
+            ? answer({ ...fields(), version: 2 })
+            : refused({ ...fields(), name: 'Fields (theirs)', version: 3 }, 409),
+        ),
+      )
+      await mountPage()
+
+      await labelled('Edit Fields').trigger('click')
+      await flushPromises()
+      trackEditor().draft.weather = ['rain']
+      await submit('Save')
+
+      expect(body().text()).toContain('The track was saved, but not its weather')
+      expect(wrapper!.text()).toContain('Fields (theirs)')
+    })
+
+    it('shows a weather difference in the conflict', async () => {
+      api.PUT.mockResolvedValue(refused({ ...fields(), weather: ['fog'], version: 5 }, 409))
+      await mountPage()
+
+      await labelled('Edit Fields').trigger('click')
+      await flushPromises()
+      trackEditor().draft.weather = ['rain']
+      await submit('Save')
+
+      expect(body().text()).toContain('Changed elsewhere')
+      expect(body().find('.n-table').text()).toContain('Weather')
+      expect(body().text()).not.toContain('Your values and the saved ones are the same.')
+    })
+
+    // The pickers load before the form opens; the later click wins, whatever answers first.
+    it('opens the editor for the latest click when the pickers answer out of order', async () => {
+      const pending: ((value: unknown) => void)[] = []
+      const tracksOnly = api.GET.getMockImplementation()!
+      api.GET.mockImplementation((path: string) =>
+        path === '/api/catalogue/weather' ? new Promise((resolve) => pending.push(resolve)) : tracksOnly(path),
+      )
+      await mountPage()
+
+      await labelled('Edit Fields').trigger('click')
+      await labelled('Edit Crash Arena').trigger('click')
+      pending[1]!(answer(['clear']))
+      await flushPromises()
+      pending[0]!(answer(['clear']))
+      await flushPromises()
+
+      expect((input('Name').element as HTMLInputElement).value).toBe('Crash Arena')
+    })
+
+    const variantEditor = () => wrapper!.findComponent({ name: 'VariantEditor' }).vm as unknown as { draft: { tags: string[] } }
+
+    it('does not send tags the form did not change', async () => {
+      api.PUT.mockResolvedValue(answer({ ...fields().variants[0], name: 'Loop 2', tags: [tag('night', 'Night')], version: 2 }))
+      await mountPage()
+      await expand('Fields')
+
+      await labelled('Edit Loop').trigger('click')
+      await flushPromises()
+      await input('Name').setValue('Loop 2')
+      await submit('Save')
+
+      expect(api.PUT).toHaveBeenCalledTimes(1)
+    })
+
+    it('says when the tags lost a race, and shows the saved variant', async () => {
+      api.PUT.mockImplementation((path: string) =>
+        Promise.resolve(
+          path === '/api/catalogue/variants/{id}'
+            ? answer({ ...fields().variants[0], version: 2 })
+            : refused({ ...fields().variants[0], name: 'Loop (theirs)', version: 3 }, 409),
+        ),
+      )
+      await mountPage()
+      await expand('Fields')
+
+      await labelled('Edit Loop').trigger('click')
+      await flushPromises()
+      variantEditor().draft.tags = ['night']
+      await submit('Save')
+
+      expect(body().text()).toContain('The variant was saved, but not its tags')
+      expect(wrapper!.text()).toContain('Loop (theirs)')
+    })
+
+    it('shows a tag difference in the conflict', async () => {
+      api.PUT.mockResolvedValue(refused({ ...fields().variants[0], tags: [], version: 5 }, 409))
+      await mountPage()
+      await expand('Fields')
+
+      await labelled('Edit Loop').trigger('click')
+      await flushPromises()
+      variantEditor().draft.tags = ['night']
+      await submit('Save')
+
+      expect(body().find('.n-table').text()).toContain('Tags')
+    })
+
+    it('opens the variant editor for the latest click when the tags answer out of order', async () => {
+      const pending: ((value: unknown) => void)[] = []
+      const others = api.GET.getMockImplementation()!
+      api.GET.mockImplementation((path: string) =>
+        path === '/api/catalogue/tags' ? new Promise((resolve) => pending.push(resolve)) : others(path),
+      )
+      await mountPage()
+
+      await labelled('Add a variant to Fields').trigger('click')
+      await labelled('Add a variant to Crash Arena').trigger('click')
+      pending[1]!(answer([]))
+      await flushPromises()
+      await input('Name').setValue('Half Bowl')
+      // The earlier click's answer arrives late: it must not reopen the form over this one.
+      pending[0]!(answer([]))
+      await flushPromises()
+
+      expect(dialog().text()).toContain('Add a variant to Crash Arena')
+      expect((input('Name').element as HTMLInputElement).value).toBe('Half Bowl')
+    })
+
+    it('adds a variant under a track, with its tags', async () => {
+      const added = variant(13, 1, 'loop_short', 'Loop Short', { isBuiltIn: false })
+      api.POST.mockResolvedValue(answer(added, 201))
+      api.PUT.mockResolvedValue(answer({ ...added, tags: [tag('night', 'Night')], version: 2 }))
+      await mountPage()
+
+      await labelled('Add a variant to Fields').trigger('click')
+      await flushPromises()
+      await input('Name').setValue('Loop Short')
+      await input('Variant id').setValue('loop_short')
+      const vm = wrapper!.findComponent({ name: 'VariantEditor' }).vm as unknown as { draft: { tags: string[] } }
+      vm.draft.tags = ['night']
+      await submit('Add')
+
+      expect(api.POST).toHaveBeenCalledWith('/api/catalogue/variants', {
+        body: { variantId: 'loop_short', name: 'Loop Short', gameMode: 'Racing', trackId: 1, allowedForVoting: true },
+      })
+      expect(api.PUT).toHaveBeenCalledWith('/api/catalogue/variants/{id}/tags', {
+        params: { path: { id: 13 } },
+        body: { tags: ['night'] },
+        headers: { 'If-Match': '"1"' },
+      })
+      await expand('Fields')
+      expect(wrapper!.text()).toContain('Loop Short')
+      expect(wrapper!.text()).toContain('Night')
+    })
+
+    it('edits a variant with its version and shows a conflict', async () => {
+      api.PUT.mockResolvedValue(refused({ ...fields().variants[0], name: 'Loop (theirs)', version: 5 }, 409))
+      await mountPage()
+      await expand('Fields')
+
+      await labelled('Edit Loop').trigger('click')
+      await flushPromises()
+      await input('Name').setValue('Loop (mine)')
+      await submit('Save')
+
+      expect(api.PUT).toHaveBeenCalledWith('/api/catalogue/variants/{id}', {
+        params: { path: { id: 11 } },
+        body: { variantId: 'loop', name: 'Loop (mine)', gameMode: 'Racing' },
+        headers: { 'If-Match': '"1"' },
+      })
+      expect(body().text()).toContain('Changed elsewhere')
+      expect(body().text()).toContain('Loop (theirs)')
+    })
   })
 })
