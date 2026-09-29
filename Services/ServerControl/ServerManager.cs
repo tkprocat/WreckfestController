@@ -1316,8 +1316,23 @@ public class ServerManager
                     var logFileName = trimmedLine.Substring(4).Trim();
                     if (!string.IsNullOrEmpty(logFileName))
                     {
-                        // Log file path is relative to working directory
-                        return Path.Combine(workingDir, logFileName);
+                        // Log file path is relative to working directory, and must stay
+                        // in it: server_config.cfg is a file other code writes, so an
+                        // absolute or ../ path here must not make the log viewer return
+                        // any file on the PC.
+                        var root = Path.GetFullPath(workingDir);
+                        var logPath = Path.GetFullPath(Path.Combine(root, logFileName));
+                        var rootWithSeparator = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
+                        if (!logPath.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+                        {
+                            _logger.LogWarning(
+                                "Ignoring log={LogFile} in {Config}: the log file must be inside the server's working directory",
+                                logFileName,
+                                configFilePath);
+                            return null;
+                        }
+
+                        return logPath;
                     }
                 }
             }

@@ -235,6 +235,8 @@ public sealed class ApiTestHost : IAsyncDisposable
         });
         services.AddLogging();
         services.AddSingleton(configuration);
+        services.AddSingleton(new ShippedSettings(new ConfigurationBuilder().Build()));
+        services.AddSingleton<ISettingsStore, SettingsStore>();
         services.AddSingleton<HubServerEventPublisher>();
         services.AddSingleton<IServerEventPublisher>(sp => sp.GetRequiredService<HubServerEventPublisher>());
         services.AddSingleton<PlayerTracker>();

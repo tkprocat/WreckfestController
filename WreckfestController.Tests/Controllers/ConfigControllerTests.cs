@@ -139,6 +139,10 @@ public class ConfigControllerTests
     [InlineData("""{"serverName":null}""")]
     [InlineData("""{"serverName":"a\nlaps=99"}""")]
     [InlineData("""["serverName"]""")]
+    // log= names the file the log viewer returns: never written over the API.
+    [InlineData("""{"log":"C:\\Users\\someone\\AppData\\Local\\WreckfestController\\user-settings.json"}""")]
+    [InlineData("""{"Log":"log.txt"}""")]
+    [InlineData("""{"serverName":"New name","log":"..\\..\\secret.txt"}""")]
     public void UpdateBasicConfig_InvalidBody_ReturnsBadRequestWithoutWriting(string body)
     {
         var current = SetUpCurrentConfig();
