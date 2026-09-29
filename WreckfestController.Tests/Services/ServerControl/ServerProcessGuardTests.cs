@@ -73,6 +73,18 @@ public class ServerProcessGuardTests
         Assert.False(success);
     }
 
+    // PID 4 is Windows' System process: a normal account cannot open a handle to it. That
+    // must be a refusal, not an exception.
+    [Fact]
+    public void AProcessThatCannotBeOpened_IsRefused()
+    {
+        var manager = Manager(@"C:\Servers\Wreckfest\Wreckfest_x64.exe");
+
+        Assert.False(manager.CheckConfiguredServerProcess(4).Allowed);
+        Assert.False(manager.AttachToConfiguredServer(4).Success);
+        Assert.False(manager.IsRunning);
+    }
+
     private static ServerManager Manager(string serverPath)
     {
         var events = Mock.Of<IServerEventPublisher>();

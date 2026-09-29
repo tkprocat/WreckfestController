@@ -1197,20 +1197,16 @@ public class ServerManager
 
     /// <summary>
     /// Attaches, from the web API, only to the configured dedicated server
-    /// (<see cref="CheckConfiguredServerProcess"/>). The check and the attach use one
-    /// process handle: while it is open Windows cannot reuse the PID, so the process that
-    /// passed the check is the one attached - not another that took its PID in between.
+    /// (<see cref="CheckConfiguredServerProcess"/>). The check and the attach hold one open
+    /// native handle to the process: while it is open Windows cannot reuse the PID, so the
+    /// process that passed the check is the one attached - not another that took its PID
+    /// in between.
     /// </summary>
     public virtual (bool Success, string Message) AttachToConfiguredServer(int pid)
     {
-        Process process;
-        try
+        if (OpenHeld(pid) is not { } process)
         {
-            process = Process.GetProcessById(pid);
-        }
-        catch (ArgumentException)
-        {
-            return (false, $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.");
+            return (false, NotAnInspectableServer(pid));
         }
 
         using (process)
@@ -1219,6 +1215,31 @@ public class ServerManager
             return check.Allowed ? AttachToExistingProcess(process) : (false, check.Reason);
         }
     }
+
+    /// <summary>
+    /// The process with a native handle opened and held (Process.SafeHandle keeps it until
+    /// the Process is disposed). Process.GetProcessById alone holds nothing: each property
+    /// would open and close its own handle, and the PID could change owner in between.
+    /// Null when the process is gone or cannot be opened - another user's, say.
+    /// </summary>
+    private static Process? OpenHeld(int pid)
+    {
+        Process? process = null;
+        try
+        {
+            process = Process.GetProcessById(pid);
+            _ = process.SafeHandle;
+            return process;
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            process?.Dispose();
+            return null;
+        }
+    }
+
+    private static string NotAnInspectableServer(int pid) =>
+        $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.";
 
     private (bool Success, string Message) AttachToExistingProcess(Process process)
     {
@@ -1907,22 +1928,19 @@ public class ServerManager
     /// </summary>
     public virtual (bool Allowed, string Reason) CheckConfiguredServerProcess(int pid)
     {
-        try
-        {
-            using var process = Process.GetProcessById(pid);
-            return CheckConfiguredServer(process);
-        }
-        catch (ArgumentException)
-        {
-            return (false, $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.");
-        }
+        using var process = OpenHeld(pid);
+        return process is null ? (false, NotAnInspectableServer(pid)) : CheckConfiguredServer(process);
     }
 
-    /// <summary>The check behind <see cref="CheckConfiguredServerProcess"/>, on an open handle.</summary>
+    /// <summary>
+    /// The check behind <see cref="CheckConfiguredServerProcess"/>, on a process whose handle
+    /// is held (<see cref="OpenHeld"/>): the lookups by PID below - the module, the command
+    /// line - then reach this same process.
+    /// </summary>
     private (bool Allowed, string Reason) CheckConfiguredServer(Process process)
     {
         var pid = process.Id;
-        var notAServer = $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.";
+        var notAServer = NotAnInspectableServer(pid);
         if (string.IsNullOrWhiteSpace(_server.CurrentValue.ServerPath))
         {
             return (false, "No server path is set in the desktop app's Configuration, so no process can be confirmed as the server.");
