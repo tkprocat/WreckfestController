@@ -29,6 +29,9 @@ const players = computed(() =>
 <template>
   <section class="home">
     <NAlert v-if="error && !overview" type="warning" :title="error" />
+    <NAlert v-else-if="error" type="warning" :title="error" class="stale">
+      Showing what the page last knew; it may be out of date.
+    </NAlert>
 
     <NSkeleton v-if="loading && !overview" text :repeat="6" />
 
@@ -101,6 +104,10 @@ const players = computed(() =>
 </template>
 
 <style scoped>
+.stale {
+  margin-bottom: 16px;
+}
+
 .home-header {
   display: flex;
   align-items: center;
