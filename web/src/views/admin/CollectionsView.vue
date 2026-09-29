@@ -11,6 +11,7 @@ import { NO_ANSWER, hasId, send, useConfirm, type Outcome } from '@/crud/outcome
 import { useResourceEditor } from '@/crud/useResourceEditor'
 import { useResourceList } from '@/crud/useResourceList'
 import { formatWhen } from '@/utils/format'
+import { describeTrack as describe } from '@/utils/trackText'
 
 type Summary = components['schemas']['CollectionSummaryResponse']
 type Collection = components['schemas']['CollectionResponse']
@@ -49,22 +50,6 @@ const summaryOf = (c: Collection): Summary => ({
   createdAt: c.createdAt,
   updatedAt: c.updatedAt,
 })
-
-/** A track and every setting it saves with, so a conflict shows any setting that differs. */
-function describe(t: Track): string {
-  const settings = [
-    t.gamemode,
-    t.laps != null && `laps ${t.laps}`,
-    t.bots != null && `bots ${t.bots}`,
-    t.numTeams != null && `teams ${t.numTeams}`,
-    t.carResetDisabled != null && `car reset ${t.carResetDisabled ? 'off' : 'on'}`,
-    t.wrongWayLimiterDisabled != null && `wrong-way limiter ${t.wrongWayLimiterDisabled ? 'off' : 'on'}`,
-    t.carClassRestriction && `class ${t.carClassRestriction}`,
-    t.carRestriction && `car ${t.carRestriction}`,
-    t.weather && `weather ${t.weather}`,
-  ].filter(Boolean)
-  return settings.length ? `${t.track} [${settings.join(' · ')}]` : (t.track ?? '')
-}
 
 /** The request's shape: the response's rows without their catalogue link. */
 function toTrack({ variant: _variant, ...track }: Collection['tracks'][number]): Track {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { h, onMounted, ref } from 'vue'
+import { h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NCard, NSpace, NTag, useMessage, type DataTableColumns } from 'naive-ui'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
@@ -7,6 +7,7 @@ import ResourceTable from '@/crud/ResourceTable.vue'
 import { NO_ANSWER, hasId, send, useConfirm, type Outcome } from '@/crud/outcome'
 import { useResourceList } from '@/crud/useResourceList'
 import { formatWhen } from '@/utils/format'
+import { onHub } from '@/realtime/hub'
 import CupEditor from './cups/CupEditor.vue'
 
 type Cup = components['schemas']['CupResponse']
@@ -60,6 +61,7 @@ async function activate(cup: Cup) {
     if (outcome.kind === 'ok') {
       const answer = outcome.row as { message?: string } | undefined
       message.success(answer?.message ?? 'Activation started.')
+      watchActivation(cup.id)
     } else {
       fail(outcome, 'The cup was not activated.')
     }
@@ -134,7 +136,33 @@ const columns: DataTableColumns<Cup> = [
   },
 ]
 
-onMounted(() => void list.reload())
+// Activation takes minutes (warnings, then a restart). The hub says when a cup became
+// active or a run ended; polling covers a hub that is not connected.
+const stops: (() => void)[] = []
+let poll: ReturnType<typeof setInterval> | undefined
+
+function watchActivation(id: number) {
+  clearInterval(poll)
+  let left = 36
+  poll = setInterval(() => {
+    void list.reload().then(() => {
+      if (--left <= 0 || cups.value.some((c) => c.id === id && c.isActive)) clearInterval(poll)
+    })
+  }, 5000)
+}
+
+onMounted(() => {
+  void list.reload()
+  stops.push(
+    onHub('CupActivated', () => void list.reload()),
+    onHub('CupOccurrenceEnded', () => void list.reload()),
+  )
+})
+
+onBeforeUnmount(() => {
+  stops.forEach((stop) => stop())
+  clearInterval(poll)
+})
 </script>
 
 <template>

@@ -20,10 +20,11 @@ import type { components } from '@/api/schema'
 import ConflictDialog from '@/crud/ConflictDialog.vue'
 import FormField from '@/crud/FormField.vue'
 import TrackListEditor from '@/crud/TrackListEditor.vue'
-import { hasId, send } from '@/crud/outcome'
+import { hasId, send, type Outcome } from '@/crud/outcome'
 import { vSelectFocus } from '@/crud/selectFocus'
 import { useResourceEditor } from '@/crud/useResourceEditor'
 import { timeZoneOptions } from '@/utils/timeZones'
+import { describeTrack } from '@/utils/trackText'
 import { GRID_ORDERS, SESSION_MODES } from '../configFields'
 
 /**
@@ -38,9 +39,12 @@ type Summary = components['schemas']['CollectionSummaryResponse']
 type ServerConfig = components['schemas']['EventServerConfig']
 
 type Source = 'server' | 'collection' | 'own'
+/** The API tells these apart: null keeps the server's password, "" removes it. */
+type PasswordMode = 'inherit' | 'none' | 'set'
 interface Overrides {
   serverName: string
   welcomeMessage: string
+  passwordMode: PasswordMode
   password: string
   maxPlayers: number | null
   bots: number | null
@@ -106,6 +110,7 @@ function toInstant(local: string): string | null {
 const blankOverrides = (): Overrides => ({
   serverName: '',
   welcomeMessage: '',
+  passwordMode: 'inherit',
   password: '',
   maxPlayers: null,
   bots: null,
@@ -135,6 +140,8 @@ function toDraft(cup: Cup | null): CupDraft {
     config: {
       ...blankOverrides(),
       ...Object.fromEntries(Object.entries(config ?? {}).filter(([, v]) => v !== null && v !== undefined)),
+      passwordMode: config?.password == null ? 'inherit' : config.password === '' ? 'none' : 'set',
+      password: config?.password ?? '',
     },
   }
 }
@@ -146,7 +153,7 @@ function toServerConfig(o: Overrides): ServerConfig | null {
     serverName: text(o.serverName),
     welcomeMessage: text(o.welcomeMessage),
     // A password is kept as typed: spaces may be part of it.
-    password: o.password === '' ? null : o.password,
+    password: o.passwordMode === 'inherit' ? null : o.passwordMode === 'none' ? '' : o.password,
     maxPlayers: o.maxPlayers,
     bots: o.bots,
     aiDifficulty: o.aiDifficulty,
@@ -162,12 +169,24 @@ const isCup = (body: unknown): body is Cup => hasId(body) && 'startTime' in body
 const editor = useResourceEditor<Cup, CupDraft>({
   what: 'cup',
   toDraft,
-  save: (draft, version, cup) => {
+  save: async (draft, version, cup): Promise<Outcome<Cup>> => {
+    // What the API would accept but not mean: say so here instead of sending it.
+    if (draft.source === 'collection' && draft.collectionId == null) {
+      return invalid('collectionId', 'Pick a collection, or choose another rotation.')
+    }
+
+    if (draft.config.passwordMode === 'set' && draft.config.password === '') {
+      return invalid('serverConfig.password', 'Type the password, or choose another option.')
+    }
+
+    // The start shows to the minute in local time: unless it was edited, send the instant
+    // as it was, so a save never moves it (seconds, or a daylight-saving hour).
+    const startEdited: boolean = editor.changes.value.includes('start')
     const body = {
       name: draft.name.trim(),
       description: draft.description.trim(),
       // Missing or invalid: sent as null, so the server names the field.
-      startTime: toInstant(draft.start),
+      startTime: !startEdited && cup ? cup.startTime : toInstant(draft.start),
       timeZone: draft.timeZone,
       repeat: draft.repeat === 'none' ? null : { frequency: draft.repeat, days: draft.repeat === 'weekly' ? draft.days : null, time: draft.time },
       serverConfig: toServerConfig(draft.config),
@@ -190,6 +209,10 @@ const editor = useResourceEditor<Cup, CupDraft>({
 })
 const { draft, errors, saving, conflict } = editor
 
+function invalid(field: string, text: string): Outcome<Cup> {
+  return { kind: 'invalid', errors: { [field]: text }, message: text }
+}
+
 const collectionOptions = computed(() => collections.value.map((c) => ({ value: c.id, label: `${c.name} (${c.trackCount} tracks)` })))
 
 /** What a conflict compares: everything the form sets, as text. */
@@ -200,7 +223,12 @@ function comparable(d: CupDraft) {
     start: d.start,
     timeZone: d.timeZone,
     repeat: d.repeat === 'none' ? 'no' : d.repeat === 'daily' ? `daily at ${d.time}` : `weekly (${[...d.days].sort().map((x) => DAYS[x]).join(', ')}) at ${d.time}`,
-    rotation: d.source === 'collection' ? `collection ${collections.value.find((c) => c.id === d.collectionId)?.name ?? d.collectionId}` : d.source === 'own' ? d.tracks.map((t) => t.track).join(', ') : "the server's",
+    rotation:
+      d.source === 'collection'
+        ? `collection ${collections.value.find((c) => c.id === d.collectionId)?.name ?? d.collectionId}`
+        : d.source === 'own'
+          ? `${d.collectionName ? `"${d.collectionName}": ` : ''}${d.tracks.map(describeTrack).join('; ')}`
+          : "the server's",
     scoring: `${d.sessionMode ?? 'server'} / ${d.gridOrder ?? 'server'}`,
     overrides: JSON.stringify(toServerConfig(d.config)),
   }
@@ -256,7 +284,7 @@ defineExpose({ start })
       </NSpace>
 
       <FormField v-slot="{ controlProps }" label="Repeats" field="repeat.frequency" :errors="errors">
-        <NRadioGroup v-model:value="draft.repeat" v-bind="controlProps">
+        <NRadioGroup v-model:value="draft.repeat" name="cup-repeat" role="radiogroup" v-bind="controlProps">
           <NRadioButton value="none">Once</NRadioButton>
           <NRadioButton value="daily">Daily</NRadioButton>
           <NRadioButton value="weekly">Weekly</NRadioButton>
@@ -276,7 +304,7 @@ defineExpose({ start })
       </NSpace>
 
       <FormField v-slot="{ controlProps }" label="Rotation" field="collectionId" :errors="errors">
-        <NRadioGroup v-model:value="draft.source" v-bind="controlProps">
+        <NRadioGroup v-model:value="draft.source" name="cup-rotation" role="radiogroup" v-bind="controlProps">
           <NRadioButton value="collection">A collection</NRadioButton>
           <NRadioButton value="own">Its own tracks</NRadioButton>
           <NRadioButton value="server">Leave the server's</NRadioButton>
@@ -312,8 +340,23 @@ defineExpose({ start })
             <FormField v-slot="{ inputProps }" label="Welcome message" field="serverConfig.welcomeMessage" :errors="errors">
               <NInput v-model:value="draft.config.welcomeMessage" :maxlength="256" style="width: 260px" :input-props="inputProps" />
             </FormField>
-            <FormField v-slot="{ inputProps }" label="Password" field="serverConfig.password" :errors="errors">
-              <NInput v-model:value="draft.config.password" type="password" show-password-on="click" :maxlength="256" style="width: 200px" :input-props="{ ...inputProps, autocomplete: 'off' }" />
+            <FormField v-slot="{ controlProps }" label="Password" field="serverConfig.password" :errors="errors">
+              <NSpace vertical :size="8">
+                <NRadioGroup v-model:value="draft.config.passwordMode" name="cup-password" role="radiogroup" v-bind="controlProps">
+                  <NRadioButton value="inherit">Keep the server's</NRadioButton>
+                  <NRadioButton value="none">No password</NRadioButton>
+                  <NRadioButton value="set">Set one</NRadioButton>
+                </NRadioGroup>
+                <NInput
+                  v-if="draft.config.passwordMode === 'set'"
+                  v-model:value="draft.config.password"
+                  type="password"
+                  show-password-on="click"
+                  :maxlength="256"
+                  style="width: 220px"
+                  :input-props="{ 'aria-label': 'Cup password', autocomplete: 'off' }"
+                />
+              </NSpace>
             </FormField>
             <FormField v-slot="{ inputProps }" label="Max players" field="serverConfig" :errors="errors">
               <NInputNumber v-model:value="draft.config.maxPlayers" :min="1" style="width: 120px" :input-props="inputProps" />

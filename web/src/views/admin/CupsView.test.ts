@@ -6,6 +6,13 @@ import CupsView from './CupsView.vue'
 
 const api = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() }))
 vi.mock('@/api/client', () => ({ api }))
+const hub = vi.hoisted(() => new Map<string, (message: unknown) => void>())
+vi.mock('@/realtime/hub', () => ({
+  onHub: (event: string, handler: (message: unknown) => void) => {
+    hub.set(event, handler)
+    return () => hub.delete(event)
+  },
+}))
 
 const when = '2026-10-02T18:00:00Z'
 const cup = (id: number, name: string, extra: Record<string, unknown> = {}) => ({
@@ -110,7 +117,7 @@ describe('CupsView', () => {
       headers: { 'If-Match': '"3"' },
       body: expect.objectContaining({
         name: 'Friday Night Derby',
-        startTime: when.replace('Z', '.000Z'),
+        startTime: when,
         timeZone: 'Europe/Copenhagen',
         repeat: { frequency: 'weekly', days: [5], time: '20:00' },
         collectionId: 7,
@@ -230,5 +237,90 @@ describe('CupsView', () => {
 
     expect(wrapper!.text()).toContain('Friday Derby (moved)')
     expect(body().text()).toContain('was changed meanwhile')
+  })
+
+  // The form shows the start to the minute, in local time: a save that did not touch it
+  // must send it back exactly, seconds and daylight-saving hour included.
+  it('keeps the start instant when the start was not edited', async () => {
+    const odd = { ...friday(), startTime: '2026-10-25T01:30:45Z' }
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/cups' ? Promise.resolve(answer({ count: 1, cups: [odd] })) : path === '/api/collections' ? Promise.resolve(answer([])) : Promise.resolve(answer([])),
+    )
+    api.PUT.mockResolvedValue(answer({ ...odd, version: 4 }))
+    await mountPage()
+
+    await labelled('Edit Friday Derby').trigger('click')
+    await flushPromises()
+    await dialog().find('input[aria-label="Name"]').setValue('Renamed')
+    await click('Save', dialog())
+
+    expect(api.PUT.mock.calls[0]![1].body.startTime).toBe('2026-10-25T01:30:45Z')
+  })
+
+  // "" removes the server's password; null keeps it. A rename must not turn one into the other.
+  it('keeps a "no password" override', async () => {
+    const open = { ...sunday(), serverConfig: { password: '' } }
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/cups' ? Promise.resolve(answer({ count: 1, cups: [open] })) : Promise.resolve(answer([])),
+    )
+    api.PUT.mockResolvedValue(answer({ ...open, version: 4 }))
+    await mountPage()
+
+    await labelled('Edit Sunday Race').trigger('click')
+    await flushPromises()
+    await dialog().find('input[aria-label="Name"]').setValue('Open Sunday')
+    await click('Save', dialog())
+
+    expect(api.PUT.mock.calls[0]![1].body.serverConfig).toEqual(expect.objectContaining({ password: '' }))
+  })
+
+  it('does not send "a collection" without one', async () => {
+    await mountPage()
+
+    await labelled('Edit Sunday Race').trigger('click')
+    await flushPromises()
+    editor().draft.source = 'collection'
+    await flushPromises()
+    await click('Save', dialog())
+
+    expect(api.PUT).not.toHaveBeenCalled()
+    expect(dialog().text()).toContain('Pick a collection')
+  })
+
+  it('shows a changed track setting in the conflict', async () => {
+    api.PUT.mockResolvedValue(refused({ ...sunday(), tracks: [{ track: 'arena', gamemode: 'derby', weather: 'rain', laps: 8 }], version: 5 }, 409))
+    await mountPage()
+
+    await labelled('Edit Sunday Race').trigger('click')
+    await flushPromises()
+    await click('Save', dialog())
+
+    expect(dialog().find('.n-table').text()).toContain('laps 8')
+  })
+
+  it('refreshes when the hub says a cup became active', async () => {
+    await mountPage()
+    api.GET.mockImplementation((path: string) =>
+      Promise.resolve(answer(path === '/api/cups' ? { count: 2, cups: [{ ...friday(), isActive: true }, { ...sunday(), isActive: false }] } : [])),
+    )
+
+    hub.get('CupActivated')!({ cupId: 1, cupName: 'Friday Derby', timestamp: when })
+    await flushPromises()
+
+    expect(labelled('Activate Friday Derby').attributes('disabled')).toBeDefined()
+    expect(labelled('Activate Sunday Race').attributes('disabled')).toBeUndefined()
+  })
+
+  it('names its choice groups as radio groups', async () => {
+    await mountPage()
+
+    await labelled('Edit Friday Derby').trigger('click')
+    await flushPromises()
+
+    for (const [label, name] of [['Repeats', 'cup-repeat'], ['Rotation', 'cup-rotation']]) {
+      const group = dialog().find(`[aria-label="${label}"]`)
+      expect(group.attributes('role')).toBe('radiogroup')
+      expect(group.findAll('input[type="radio"]').every((r) => r.attributes('name') === name)).toBe(true)
+    }
   })
 })
