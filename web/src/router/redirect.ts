@@ -23,7 +23,9 @@ export function redirectTarget(redirect: unknown): string {
     return AFTER_SIGN_IN
   }
 
-  if (url.origin !== APP || /^\/login\/*$/i.test(url.pathname)) {
+  // The normalised path is checked again: "/a/..//host" stays on this origin while it is
+  // resolved here, but normalises to "//host", which the browser would read as another site.
+  if (url.origin !== APP || url.pathname.startsWith('//') || /^\/login\/*$/i.test(url.pathname)) {
     return AFTER_SIGN_IN
   }
 

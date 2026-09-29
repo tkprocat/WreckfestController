@@ -16,6 +16,9 @@ describe('redirectTarget', () => {
       String.raw`/\evil.example`,
       '/\t/evil.example',
       '/\n/evil.example',
+      // Normalises to "//evil.example".
+      '/a/..//evil.example',
+      '/./..//evil.example',
       'javascript:alert(1)',
       'admin',
       '',
