@@ -104,34 +104,30 @@ public class ConfigControllerTests
     public void UpdateBasicConfig_PartialBody_ChangesOnlySuppliedFields()
     {
         SetUpCurrentConfig();
-        ServerConfig? written = null;
-        _mockConfigService.Setup(s => s.WriteBasicConfig(It.IsAny<ServerConfig>()))
-            .Callback<ServerConfig>(c => written = c);
+        IReadOnlyDictionary<string, string>? written = null;
+        _mockConfigService.Setup(s => s.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Callback<IReadOnlyDictionary<string, string>>(s => written = new Dictionary<string, string>(s));
 
         var result = _controller.UpdateBasicConfig(Json("""{"serverName":"New name","maxPlayers":20}"""));
 
         // The settings as they now are.
         Assert.Equal(("New name", 20), (result.Value!.ServerName, result.Value.MaxPlayers));
-        Assert.NotNull(written);
-        Assert.Equal("New name", written.ServerName);
-        Assert.Equal(20, written.MaxPlayers);
-        Assert.Equal("secret", written.Password);
-        Assert.Equal(40000, written.GamePort);
-        Assert.Equal("loop", written.Track);
+        // Only the changed keys are written: every other line of the file stays as it is.
+        Assert.Equal(new Dictionary<string, string> { ["server_name"] = "New name", ["max_players"] = "20" }, written);
     }
 
     [Fact]
     public void UpdateBasicConfig_FieldNamesAreCaseInsensitive()
     {
         SetUpCurrentConfig();
-        ServerConfig? written = null;
-        _mockConfigService.Setup(s => s.WriteBasicConfig(It.IsAny<ServerConfig>()))
-            .Callback<ServerConfig>(c => written = c);
+        IReadOnlyDictionary<string, string>? written = null;
+        _mockConfigService.Setup(s => s.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Callback<IReadOnlyDictionary<string, string>>(s => written = new Dictionary<string, string>(s));
 
         var result = _controller.UpdateBasicConfig(Json("""{"ServerName":"New name"}"""));
 
         Assert.NotNull(result.Value);
-        Assert.Equal("New name", written?.ServerName);
+        Assert.Equal("New name", written?["server_name"]);
     }
 
     [Theory]
@@ -154,7 +150,7 @@ public class ConfigControllerTests
         var result = _controller.UpdateBasicConfig(Json(body));
 
         ControllerTesting.AssertFieldError(result, field);
-        _mockConfigService.Verify(s => s.WriteBasicConfig(It.IsAny<ServerConfig>()), Times.Never);
+        _mockConfigService.Verify(s => s.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()), Times.Never);
         Assert.Equal("Old name", current.ServerName);
     }
 
@@ -162,7 +158,7 @@ public class ConfigControllerTests
     public void UpdateBasicConfig_WhenTheFileCannotBeWritten_IsRefused()
     {
         SetUpCurrentConfig();
-        _mockConfigService.Setup(s => s.WriteBasicConfig(It.IsAny<ServerConfig>()))
+        _mockConfigService.Setup(s => s.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
             .Throws(new System.IO.IOException("Write failed"));
 
         var result = _controller.UpdateBasicConfig(Json("""{"serverName":"New name"}"""));

@@ -424,59 +424,60 @@ public class SmartRestartService
             // Read current config
             var currentConfig = _configService.ReadBasicConfig();
 
-            // Apply server config overrides if present
+            // Apply server config overrides if present, noting each key set
+            var overridden = new List<string>();
             if (@event.ServerConfig != null)
             {
                 var eventConfig = @event.ServerConfig;
+                void Set(string key, Action apply)
+                {
+                    apply();
+                    overridden.Add(key);
+                }
 
                 if (!string.IsNullOrWhiteSpace(eventConfig.ServerName))
-                    currentConfig.ServerName = eventConfig.ServerName;
+                    Set("server_name", () => currentConfig.ServerName = eventConfig.ServerName);
 
                 if (!string.IsNullOrWhiteSpace(eventConfig.WelcomeMessage))
-                    currentConfig.WelcomeMessage = eventConfig.WelcomeMessage;
+                    Set("welcome_message", () => currentConfig.WelcomeMessage = eventConfig.WelcomeMessage);
 
                 if (eventConfig.Password != null)
-                    currentConfig.Password = eventConfig.Password;
+                    Set("password", () => currentConfig.Password = eventConfig.Password);
 
                 if (eventConfig.MaxPlayers.HasValue)
-                    currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value;
+                    Set("max_players", () => currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value);
 
                 if (eventConfig.Bots.HasValue)
-                    currentConfig.Bots = eventConfig.Bots.Value;
+                    Set("bots", () => currentConfig.Bots = eventConfig.Bots.Value);
 
                 if (!string.IsNullOrWhiteSpace(eventConfig.AiDifficulty))
-                    currentConfig.AiDifficulty = eventConfig.AiDifficulty;
+                    Set("ai_difficulty", () => currentConfig.AiDifficulty = eventConfig.AiDifficulty);
 
                 if (eventConfig.Laps.HasValue)
-                    currentConfig.Laps = eventConfig.Laps.Value;
+                    Set("laps", () => currentConfig.Laps = eventConfig.Laps.Value);
 
                 if (!string.IsNullOrWhiteSpace(eventConfig.VehicleDamage))
-                    currentConfig.VehicleDamage = eventConfig.VehicleDamage;
+                    Set("vehicle_damage", () => currentConfig.VehicleDamage = eventConfig.VehicleDamage);
 
                 if (eventConfig.LobbyCountdown.HasValue)
-                    currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value;
+                    Set("lobby_countdown", () => currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value);
             }
 
-            if (@event.ServerConfig != null)
-            {
-                _configService.WriteBasicConfig(currentConfig);
-                _logger.LogInformation("Server configuration updated");
-            }
-
-            // The cup's scoring. Written separately, because a config whose session_mode is
-            // commented out or missing must still get it. The restart below starts a new
-            // server process, which reads these and begins with no cup points.
-            var scoring = new Dictionary<string, string>();
+            // The overrides and the cup's scoring, each by its key, in one write: a key the
+            // file lacks (a password on a public server, a commented-out session_mode) is
+            // added or uncommented, never silently dropped. The restart below starts a new
+            // server process, which reads them and begins with no cup points.
+            var settings = overridden.ToDictionary(key => key, key => ConfigService.ValueOf(currentConfig, key) ?? string.Empty);
             if (@event.SessionMode != null)
-                scoring["session_mode"] = @event.SessionMode;
+                settings["session_mode"] = @event.SessionMode;
 
             if (@event.GridOrder != null)
-                scoring["grid_order"] = @event.GridOrder;
+                settings["grid_order"] = @event.GridOrder;
 
-            if (scoring.Count > 0)
+            if (settings.Count > 0)
             {
-                _configService.WriteSettings(scoring);
-                _logger.LogInformation("Cup scoring applied: {Scoring}", string.Join(", ", scoring.Select(s => $"{s.Key}={s.Value}")));
+                _configService.WriteSettings(settings);
+                _logger.LogInformation("Cup settings applied: {Keys}", string.Join(", ", settings.Keys));
             }
 
             // Apply track rotation if present

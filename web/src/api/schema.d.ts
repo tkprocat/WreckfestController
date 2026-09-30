@@ -3530,6 +3530,7 @@ export interface components {
             key: string;
             savable: boolean;
             reason: null | string;
+            active: boolean;
         };
         CreateUserRequest: {
             userName: string;

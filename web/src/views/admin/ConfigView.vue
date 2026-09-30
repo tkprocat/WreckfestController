@@ -56,7 +56,8 @@ const changes = computed<Partial<ServerConfig>>(() => {
 const dirty = computed(() => Object.keys(changes.value).length > 0)
 
 const keys = computed(() => Object.fromEntries(Object.values(fieldInfo.value).map((f) => [f.field, f.key])))
-const inactive = computed(() => new Set(Object.values(fieldInfo.value).filter((f) => !f.savable).map((f) => f.field)))
+// Not set in the file: the preview shows them commented out, as the server does not use them.
+const inactive = computed(() => new Set(Object.values(fieldInfo.value).filter((f) => !f.active).map((f) => f.field)))
 const preview = computed(() => previewText(form, keys.value, rotation.value, inactive.value))
 
 function savable(field: ConfigField): boolean {
@@ -145,8 +146,14 @@ function setFlag(field: ConfigField, on: boolean) {
   ;(form as Record<string, unknown>)[field] = on ? 1 : 0
 }
 
+/** Shown under a setting the file does not set: the server's default applies until it does. */
+const NOT_IN_FILE = "Not in server_config.cfg: the server's default applies. Saving a change adds it."
+
 function feedback(def: FieldDef): string | undefined {
-  return errors.value[def.field] ?? (savable(def.field) ? def.help : fieldInfo.value[def.field]?.reason ?? undefined)
+  const info = fieldInfo.value[def.field]
+  if (errors.value[def.field]) return errors.value[def.field]
+  if (!savable(def.field)) return info?.reason ?? undefined
+  return info && !info.active ? NOT_IN_FILE : def.help
 }
 
 function status(def: FieldDef): 'error' | 'warning' | undefined {
@@ -167,8 +174,9 @@ onMounted(() => void load())
           Editing is off, so nothing is saved that the file cannot take. Reload to try again.
         </NAlert>
         <NAlert type="info" class="gap" :show-icon="false">
-          These are written to server_config.cfg and apply when the server restarts. A greyed-out setting has no
-          active line in the file; the note under it says what to change there.
+          These are written to server_config.cfg and apply when the server restarts. Saving changes only what you
+          changed: a setting the file does not have yet is added. A greyed-out setting is set again below the event
+          loop, where that later value wins; the note under it says what to change there.
         </NAlert>
         <NForm label-placement="left" label-width="auto" :disabled="!loaded || saving" @submit.prevent="save">
           <NCard v-for="section in SECTIONS" :key="section.title" :title="section.title" class="gap" size="small">
@@ -227,7 +235,7 @@ onMounted(() => void load())
       <NTabPane name="preview" tab="Preview">
         <NAlert type="info" class="gap" :show-icon="false">
           A summary of the settings and the rotation in server_config.cfg's format, including unsaved changes. Settings the
-          file has no active line for are shown commented out. It is not the file itself.
+          file does not set yet are shown commented out. It is not the file itself.
         </NAlert>
         <!-- Without the field list, what is active in the file is unknown: no guessing. -->
         <NAlert v-if="fieldsError" type="warning" :title="fieldsError">

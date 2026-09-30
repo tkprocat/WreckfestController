@@ -158,8 +158,8 @@ export const FIELDS: readonly FieldDef[] = SECTIONS.flatMap((section) => section
 /**
  * A summary of the settings and the rotation in server_config.cfg's own format, as the
  * controller reads them - not the file byte for byte (the web never reads files). A
- * setting the file has no active line for is shown commented out, as it is in the file:
- * the server does not use it, and Save cannot change it.
+ * setting the file does not set (no active line) is shown commented out: the server does
+ * not use it until Save adds it.
  */
 export function previewText(
   config: ServerConfig,

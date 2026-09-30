@@ -35,7 +35,7 @@ public static class ServerConfigPatch
     /// <summary>
     /// The server_config.cfg key a field is written to: its name in snake_case
     /// (<c>MaxPlayers</c> is <c>max_players</c>), as <see cref="ServerConfig.ApplyConfigValue"/>
-    /// and ConfigService.WriteBasicConfig spell them.
+    /// and ConfigService.ValueOf spell them.
     /// </summary>
     public static string KeyOf(string propertyName) => JsonNamingPolicy.SnakeCaseLower.ConvertName(propertyName);
 
