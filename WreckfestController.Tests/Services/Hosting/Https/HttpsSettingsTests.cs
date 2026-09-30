@@ -60,7 +60,7 @@ public sealed class HttpsSettingsTests
     {
         var https = Resolve(("Api:Https:Host", "wf.example.com"), ("Api:Https:Store", "My"), ("Api:Https:Location", "LocalMachine")).Https!;
 
-        Assert.Equal(new StoreSourceSettings("wf.example.com", StoreName.My, StoreLocation.LocalMachine), https.Source);
+        Assert.Equal(new StoreSourceSettings("wf.example.com", "My", StoreLocation.LocalMachine), https.Source);
         Assert.Equal(5101, https.PublicPort);
         Assert.False(https.Hsts);
     }
@@ -95,7 +95,7 @@ public sealed class HttpsSettingsTests
     // Nothing that names a certificate.
     [InlineData("Api:Https:Hsts", "false", "Api:Https:PublicPort", "443", "names no certificate")]
     // Values that are not what they claim.
-    [InlineData("Api:Https:Host", "wf.example.com", "Api:Https:Store", "Nowhere", "Nowhere")]
+    [InlineData("Api:Https:Host", "wf.example.com", "Api:Https:Store", @"My\Other", "My")]
     [InlineData("Api:Https:Path", "server.pfx", "Api:Https:PublicPort", "port", "PublicPort")]
     [InlineData("Api:Https:Path", "server.pfx", "Api:Https:Hsts", "sometimes", "Hsts")]
     public void AnIncompleteOrConflictingSection_IsAnError_SayingWhat(string key1, string value1, string key2, string value2, string named)
@@ -120,5 +120,28 @@ public sealed class HttpsSettingsTests
         var https = Resolve(("Api:Https:Path", "server.pfx"), ("Api:Https:PublicPort", "443"), ("Api:Https:Hsts", "true")).Https!;
 
         Assert.Equal((443, true), (https.PublicPort, https.Hsts));
+    }
+
+    // "Https": {} in appsettings.json reads as absent to the configuration system: it must
+    // stop the API, not quietly mean HTTP only.
+    [Fact]
+    public void AnEmptyHttpsSection_IsAnError_NotHttpOnly()
+    {
+        var json = """{ "Api": { "Enabled": true, "AllowRemote": true, "Https": {} } }""";
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+        var configuration = new ConfigurationBuilder().AddJsonStream(stream).Build();
+
+        var error = Assert.Throws<HttpsConfigurationException>(() => ApiEndpoints.Resolve(configuration, BaseDirectory));
+
+        Assert.Contains("names no certificate", error.Message, StringComparison.Ordinal);
+    }
+
+    // win-acme's default store for web servers: a real Windows store without an enum member.
+    [Fact]
+    public void TheWebHostingStore_IsAccepted()
+    {
+        var source = Assert.IsType<StoreSourceSettings>(Resolve(("Api:Https:Host", "wf.example.com"), ("Api:Https:Store", "WebHosting")).Https!.Source);
+
+        Assert.Equal("WebHosting", source.StoreName);
     }
 }

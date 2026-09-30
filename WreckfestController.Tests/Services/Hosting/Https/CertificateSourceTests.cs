@@ -142,4 +142,53 @@ public sealed class CertificateSourceTests : IDisposable
     }
 
     private static FileCertificateSource Source(FileSourceSettings settings) => new(settings, () => DateTimeOffset.UtcNow);
+
+    // A damaged extension throws when read: the store passes over that certificate, a file
+    // holding one is refused with a reason, and neither throws anything else.
+    [Fact]
+    public void TheStore_PassesOverACertificateWithADamagedExtension()
+    {
+        var usable = _ca.Leaf([Host], notBefore: Now.AddDays(-5));
+        var badEku = _ca.Malformed(Host, badSan: false);
+        var badSan = _ca.Malformed(Host, badSan: true);
+
+        var chosen = StoreCertificateSource.Choose([badSan, badEku, usable], Host, Now, out _);
+
+        Assert.Equal(usable.Thumbprint, chosen!.Thumbprint);
+    }
+
+    [Fact]
+    public void AFileWithADamagedExtension_IsRefused_WithAReason()
+    {
+        var path = _ca.Pfx(_ca.Malformed(Host, badSan: false));
+
+        var error = Assert.Throws<HttpsConfigurationException>(() => Source(new FileSourceSettings(path, null, null)).Load());
+
+        Assert.Contains("cannot be read", error.Message, StringComparison.Ordinal);
+    }
+
+    // A renewal still writing the file holds it: the message names the file, not the folder.
+    [Fact]
+    public void ALockedFile_SaysSo_WithoutItsFolder()
+    {
+        var path = _ca.Pfx(_ca.Leaf([Host]));
+        using var hold = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var error = Assert.Throws<HttpsConfigurationException>(() => Source(new FileSourceSettings(path, null, null)).Load());
+
+        Assert.Contains("server.pfx", error.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(_ca.Folder, error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // PEM files are read as text, which reports a locked file differently: still no folder.
+    [Fact]
+    public void ALockedPemKey_SaysSo_WithoutItsFolder()
+    {
+        var (certificate, key) = _ca.Pem(_ca.Leaf([Host]));
+        using var hold = new FileStream(key, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        var error = Assert.Throws<HttpsConfigurationException>(() => Source(new FileSourceSettings(certificate, key, null)).Load());
+
+        Assert.DoesNotContain(_ca.Folder, error.Message, StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -55,6 +55,31 @@ internal sealed class TestCertificates : IDisposable
         return signed.CopyWithPrivateKey(key);
     }
 
+    /// <summary>
+    /// A server certificate whose Subject Alternative Name or Enhanced Key Usage bytes are
+    /// not valid DER: it loads, but reading that extension throws.
+    /// </summary>
+    public X509Certificate2 Malformed(string dnsName, bool badSan)
+    {
+        using var key = RSA.Create(2048);
+        var request = new CertificateRequest($"CN={dnsName}", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var garbage = new byte[] { 0x30, 0x05, 0xFF, 0xFF };
+        if (badSan)
+        {
+            request.CertificateExtensions.Add(new X509Extension("2.5.29.17", garbage, false));
+        }
+        else
+        {
+            var san = new SubjectAlternativeNameBuilder();
+            san.AddDnsName(dnsName);
+            request.CertificateExtensions.Add(san.Build());
+            request.CertificateExtensions.Add(new X509Extension("2.5.29.37", garbage, false));
+        }
+
+        using var signed = request.Create(Intermediate, DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(60), RandomNumberGenerator.GetBytes(16));
+        return signed.CopyWithPrivateKey(key);
+    }
+
     /// <summary>A client-only certificate: valid, keyed, but not for servers.</summary>
     public X509Certificate2 ClientOnly(string dnsName) => Leaf([dnsName], eku: ClientAuthentication);
 

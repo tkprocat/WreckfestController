@@ -108,6 +108,8 @@ public sealed class CertificateProvider : IDisposable
                     && loaded.Certificate.Thumbprint == _current.Loaded.Certificate.Thumbprint
                     && SameChain(loaded.Chain, _current.Loaded.Chain))
                 {
+                    // The same certificate again: this copy (and its key container) goes now.
+                    Dispose(loaded);
                     _lastRefresh = _now();
                     ClearError();
                     return;
@@ -116,10 +118,14 @@ public sealed class CertificateProvider : IDisposable
                 Publish(loaded);
                 _logger.LogInformation("HTTPS certificate replaced: {Subject}, valid until {NotAfter:u}", loaded.Certificate.Subject, loaded.Certificate.NotAfter.ToUniversalTime());
             }
-            catch (Exception ex) when (ex is HttpsConfigurationException or IOException or UnauthorizedAccessException)
+            catch (Exception ex)
             {
-                // Keep serving what works; say why the new one does not, and look again sooner.
-                _error = ex.Message;
+                // Runs on the timer: nothing may escape, whatever a certificate holds. Keep
+                // serving what works, say why the new one does not, and look again sooner.
+                // Only this code's own messages are shown; others can name paths.
+                _error = ex is HttpsConfigurationException
+                    ? ex.Message
+                    : "The certificate could not be reloaded. The desktop app's log has the details.";
                 _logger.LogWarning(ex, "HTTPS certificate reload failed; still serving the one loaded {LoadedAt:u}", _current?.LoadedAt);
                 var retry = _retry;
                 _retry = TimeSpan.FromTicks(Math.Min(_retry.Ticks * 2, RefreshInterval.Ticks));
@@ -184,6 +190,15 @@ public sealed class CertificateProvider : IDisposable
         if (!_disposed)
         {
             _timer.Change(delay, RefreshInterval);
+        }
+    }
+
+    private static void Dispose(LoadedCertificate loaded)
+    {
+        loaded.Certificate.Dispose();
+        foreach (var c in loaded.Chain)
+        {
+            c.Dispose();
         }
     }
 

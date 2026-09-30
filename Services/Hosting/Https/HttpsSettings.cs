@@ -25,7 +25,12 @@ public sealed record ApiEndpoints(IPAddress Address, int HttpPort, int HttpsPort
         var address = configuration.GetValue<bool>("Api:AllowRemote") ? IPAddress.Any : IPAddress.Loopback;
         var httpPort = Port(configuration, "Api:HttpPort", DefaultHttpPort);
         var httpsPort = Port(configuration, "Api:HttpsPort", DefaultHttpsPort);
-        var https = HttpsSettings.Read(configuration.GetSection("Api:Https"), httpsPort, baseDirectory);
+        // "Https": {} is not "no Https": the configuration system reports an empty section as
+        // absent, which would quietly mean HTTP only. Its key is still there; look for it.
+        var section = configuration.GetSection("Api:Https");
+        var present = section.Exists()
+            || configuration.AsEnumerable().Any(kv => string.Equals(kv.Key, "Api:Https", StringComparison.OrdinalIgnoreCase));
+        var https = present ? HttpsSettings.Read(section, httpsPort, baseDirectory) : null;
         if (https is not null && httpPort == httpsPort)
         {
             throw new HttpsConfigurationException(
@@ -55,8 +60,12 @@ public sealed record ApiEndpoints(IPAddress Address, int HttpPort, int HttpsPort
 /// <summary>Where the HTTPS certificate comes from: exactly one of the two.</summary>
 public abstract record CertificateSourceSettings;
 
-/// <summary>The Windows certificate store: the newest usable certificate for <see cref="Host"/>.</summary>
-public sealed record StoreSourceSettings(string Host, StoreName StoreName, StoreLocation Location) : CertificateSourceSettings;
+/// <summary>
+/// The Windows certificate store: the newest usable certificate for <see cref="Host"/>.
+/// <see cref="StoreName"/> is the store's own name (My, WebHosting, ...): not every store has
+/// a <see cref="System.Security.Cryptography.X509Certificates.StoreName"/> member.
+/// </summary>
+public sealed record StoreSourceSettings(string Host, string StoreName, StoreLocation Location) : CertificateSourceSettings;
 
 /// <summary>A file: .pfx (with <see cref="Password"/> if it has one), or .pem/.crt with its chain plus <see cref="KeyPath"/>.</summary>
 public sealed record FileSourceSettings(string Path, string? KeyPath, string? Password) : CertificateSourceSettings;
@@ -69,16 +78,11 @@ public sealed record FileSourceSettings(string Path, string? KeyPath, string? Pa
 public sealed record HttpsSettings(CertificateSourceSettings Source, int PublicPort, bool Hsts)
 {
     /// <summary>
-    /// Null when the section is absent. Otherwise the settings, or an error that names what
-    /// is wrong: both sources, neither, or one only partly given.
+    /// The settings, or an error that names what is wrong: both sources, neither, or one only
+    /// partly given. The caller has established the section is there (empty counts).
     /// </summary>
-    public static HttpsSettings? Read(IConfigurationSection section, int httpsPort, string baseDirectory)
+    public static HttpsSettings Read(IConfigurationSection section, int httpsPort, string baseDirectory)
     {
-        if (!section.Exists())
-        {
-            return null;
-        }
-
         var host = Text(section, "Host");
         var store = Text(section, "Store");
         var location = Text(section, "Location");
@@ -103,7 +107,9 @@ public sealed record HttpsSettings(CertificateSourceSettings Source, int PublicP
                     "Api:Https from the certificate store needs Host (the name browsers use) and Store (such as My or WebHosting).");
             }
 
-            if (!Enum.TryParse<StoreName>(store, ignoreCase: true, out var storeName) || !Enum.IsDefined(storeName))
+            // Any name Windows has, WebHosting included; a store that does not exist is an
+            // error when it is opened, which names it.
+            if (store.IndexOfAny(['\\', '/']) >= 0)
             {
                 throw new HttpsConfigurationException($"Api:Https:Store is '{store}'. Use a Windows store name such as My or WebHosting.");
             }
@@ -115,7 +121,7 @@ public sealed record HttpsSettings(CertificateSourceSettings Source, int PublicP
                 throw new HttpsConfigurationException($"Api:Https:Location is '{location}'. Use CurrentUser or LocalMachine.");
             }
 
-            source = new StoreSourceSettings(host, storeName, storeLocation);
+            source = new StoreSourceSettings(host, store, storeLocation);
         }
         else if (fileGiven)
         {

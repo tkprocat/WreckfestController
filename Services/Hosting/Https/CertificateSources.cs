@@ -25,8 +25,23 @@ public static class CertificateRules
 {
     private const string ServerAuthentication = "1.3.6.1.5.5.7.3.1";
 
-    /// <summary>Null when <paramref name="certificate"/> can be served, else why not.</summary>
+    /// <summary>
+    /// Null when <paramref name="certificate"/> can be served, else why not. A certificate
+    /// whose extensions cannot be read is not served: it says so, rather than throwing.
+    /// </summary>
     public static string? Unusable(X509Certificate2 certificate, DateTimeOffset now)
+    {
+        try
+        {
+            return Check(certificate, now);
+        }
+        catch (CryptographicException)
+        {
+            return "its extensions cannot be read (a damaged or malformed certificate)";
+        }
+    }
+
+    private static string? Check(X509Certificate2 certificate, DateTimeOffset now)
     {
         if (now < certificate.NotBefore.ToUniversalTime())
         {
@@ -52,9 +67,30 @@ public static class CertificateRules
         return null;
     }
 
-    /// <summary>The certificate's DNS names (its Subject Alternative Names).</summary>
-    public static IReadOnlyList<string> DnsNames(X509Certificate2 certificate) =>
-        certificate.Extensions.OfType<X509SubjectAlternativeNameExtension>().SelectMany(e => e.EnumerateDnsNames()).ToList();
+    /// <summary>The certificate's DNS names (its Subject Alternative Names); none when they cannot be read.</summary>
+    public static IReadOnlyList<string> DnsNames(X509Certificate2 certificate)
+    {
+        try
+        {
+            return certificate.Extensions.OfType<X509SubjectAlternativeNameExtension>().SelectMany(e => e.EnumerateDnsNames()).ToList();
+        }
+        catch (CryptographicException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Disposes each of <paramref name="certificates"/> but <paramref name="keep"/>: loaded, not used.</summary>
+    public static void DisposeAllBut(IEnumerable<X509Certificate2> certificates, params X509Certificate2?[] keep)
+    {
+        foreach (var c in certificates)
+        {
+            if (!keep.Any(k => ReferenceEquals(k, c)))
+            {
+                c.Dispose();
+            }
+        }
+    }
 
     private static bool HasUsableKey(X509Certificate2 certificate)
     {
@@ -96,10 +132,14 @@ public sealed class StoreCertificateSource(StoreSourceSettings settings, Func<Da
         }
         catch (CryptographicException ex)
         {
-            throw new HttpsConfigurationException($"The {settings.Location} {settings.StoreName} certificate store could not be opened.", ex);
+            throw new HttpsConfigurationException($"The {settings.Location} {settings.StoreName} certificate store could not be opened: check Api:Https:Store and Location.", ex);
         }
 
-        var chosen = Choose(store.Certificates.Cast<X509Certificate2>(), settings.Host, now(), out var rejected);
+        // Each read of the store makes new certificate objects: all but the one chosen are
+        // let go here, not left for the finalizer.
+        var all = store.Certificates.Cast<X509Certificate2>().ToList();
+        var chosen = Choose(all, settings.Host, now(), out var rejected);
+        CertificateRules.DisposeAllBut(all, chosen);
         if (chosen is null)
         {
             throw new HttpsConfigurationException(
@@ -175,9 +215,18 @@ public sealed class FileCertificateSource(FileSourceSettings settings, Func<Date
                 $"The certificate file {Path.GetFileName(settings.Path)} could not be read: check Api:Https:Password and that the key matches the certificate.",
                 ex);
         }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // In use by a renewal that is still writing it, or not readable by this account.
+            // The exception names the full path; the answer names only the file.
+            throw new HttpsConfigurationException(
+                $"The certificate file {Path.GetFileName(settings.Path)} could not be opened: it may be in use, or this account may not read it.",
+                ex);
+        }
 
         if (CertificateRules.Unusable(loaded.Certificate, now()) is { } why)
         {
+            Dispose(loaded);
             throw new HttpsConfigurationException($"The certificate in {Path.GetFileName(settings.Path)} cannot be used: {why}.");
         }
 
@@ -190,9 +239,16 @@ public sealed class FileCertificateSource(FileSourceSettings settings, Func<Date
             settings.Path,
             settings.Password,
             X509KeyStorageFlags.UserKeySet | X509KeyStorageFlags.Exportable);
-        var leaf = all.Cast<X509Certificate2>().FirstOrDefault(c => c.HasPrivateKey)
-            ?? throw new HttpsConfigurationException($"The certificate file {Path.GetFileName(settings.Path)} holds no private key.");
-        return new LoadedCertificate(leaf, Others(all, leaf));
+        var leaf = all.Cast<X509Certificate2>().FirstOrDefault(c => c.HasPrivateKey);
+        if (leaf is null)
+        {
+            CertificateRules.DisposeAllBut(all.Cast<X509Certificate2>());
+            throw new HttpsConfigurationException($"The certificate file {Path.GetFileName(settings.Path)} holds no private key.");
+        }
+
+        var chain = Others(all, leaf);
+        CertificateRules.DisposeAllBut(all.Cast<X509Certificate2>(), [leaf, .. chain.Cast<X509Certificate2>()]);
+        return new LoadedCertificate(leaf, chain);
     }
 
     private LoadedCertificate LoadPem(string keyPath)
@@ -211,7 +267,15 @@ public sealed class FileCertificateSource(FileSourceSettings settings, Func<Date
         var leaf = X509CertificateLoader.LoadPkcs12(pem.Export(X509ContentType.Pkcs12), null, X509KeyStorageFlags.UserKeySet);
         var all = new X509Certificate2Collection();
         all.ImportFromPemFile(settings.Path);
-        return new LoadedCertificate(leaf, Others(all, leaf));
+        var chain = Others(all, leaf);
+        CertificateRules.DisposeAllBut(all.Cast<X509Certificate2>(), chain.Cast<X509Certificate2>().ToArray());
+        return new LoadedCertificate(leaf, chain);
+    }
+
+    private static void Dispose(LoadedCertificate loaded)
+    {
+        loaded.Certificate.Dispose();
+        CertificateRules.DisposeAllBut(loaded.Chain.Cast<X509Certificate2>());
     }
 
     /// <summary>The rest of the file's certificates, less any root: the chain to send.</summary>
