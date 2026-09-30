@@ -112,7 +112,7 @@ dotnet run --configuration Release
 
 Once running, the API will be available at:
 - **HTTP:** http://localhost:5100
-- **HTTPS:** https://localhost:5101
+- **HTTPS:** https://localhost:5101, once HTTPS is set up: see [docs/https.md](docs/https.md)
 - **Swagger UI:** http://localhost:5100/swagger
 
 Open the Swagger UI to explore the API endpoints.
@@ -241,7 +241,7 @@ After installation, these files will be created/managed:
 
 3. **Firewall** - Use Windows Firewall to restrict access to trusted IPs only.
 
-4. **HTTPS** - For production, configure proper SSL certificates instead of using the development certificate.
+4. **HTTPS** - Anything reachable from another computer should use HTTPS, directly ([docs/https.md](docs/https.md), with a free Let's Encrypt certificate via [docs/LetsEncrypt.md](docs/LetsEncrypt.md)) or through a reverse proxy.
 
 ## License
 
