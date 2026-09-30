@@ -4143,7 +4143,8 @@
           "field",
           "key",
           "savable",
-          "reason"
+          "reason",
+          "active"
         ],
         "type": "object",
         "properties": {
@@ -4161,6 +4162,9 @@
               "null",
               "string"
             ]
+          },
+          "active": {
+            "type": "boolean"
           }
         }
       },

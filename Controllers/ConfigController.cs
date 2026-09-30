@@ -48,13 +48,15 @@ public class ConfigController : ControllerBase
         {
             var fields = ServerConfigPatch.Fields.Order().ToList();
             var problems = _configService.BasicKeyProblems(fields.Select(ServerConfigPatch.KeyOf));
+            var active = _configService.ActiveBasicKeys(fields.Select(ServerConfigPatch.KeyOf));
             return fields
                 .Select(field => ServerConfigPatch.KeyOf(field))
                 .Zip(fields, (key, field) => new ConfigFieldResponse(
                     JsonNamingPolicy.CamelCase.ConvertName(field),
                     key,
                     !problems.ContainsKey(key),
-                    problems.GetValueOrDefault(key)))
+                    problems.GetValueOrDefault(key),
+                    active.Contains(key)))
                 .ToList();
         }
         catch (Exception ex)
@@ -116,7 +118,14 @@ public class ConfigController : ControllerBase
                     "Fix server_config.cfg, then try again. Nothing was changed.");
             }
 
-            _configService.WriteBasicConfig(config);
+            // Only what the patch changed, each by its key: a key the file lacks is added, one
+            // commented out is uncommented. Every other line stays as it is.
+            // A field named twice ("serverName" and "ServerName") is one key, with the value
+            // the patch left it at.
+            _configService.WriteSettings(applied
+                .Select(ServerConfigPatch.KeyOf)
+                .Distinct(StringComparer.Ordinal)
+                .ToDictionary(key => key, key => ConfigService.ValueOf(config, key) ?? string.Empty));
             saved = _configService.ReadBasicConfig();
         }
         catch (Exception ex)
@@ -250,4 +259,8 @@ public sealed record EventLoopResponse(int Count, IReadOnlyList<EventLoopTrack> 
 /// A server setting as PUT basic sees it: the field, its server_config.cfg key, and whether
 /// a change to it can be saved - with why not, when it cannot.
 /// </summary>
-public sealed record ConfigFieldResponse(string Field, string Key, bool Savable, string? Reason);
+/// <param name="Active">
+/// The file sets it (an active line above the event loop). When false, the server runs on
+/// its default, and saving a change adds or uncomments the line.
+/// </param>
+public sealed record ConfigFieldResponse(string Field, string Key, bool Savable, string? Reason, bool Active);

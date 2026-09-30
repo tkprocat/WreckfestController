@@ -21,10 +21,11 @@ const config = (overrides: Record<string, unknown> = {}) => ({
 })
 
 const fields = [
-  { field: 'serverName', key: 'server_name', savable: true, reason: null },
-  { field: 'maxPlayers', key: 'max_players', savable: true, reason: null },
-  { field: 'lan', key: 'lan', savable: true, reason: null },
-  { field: 'adminSteamIds', key: 'admin_steam_ids', savable: false, reason: 'no active line; add or uncomment it' },
+  { field: 'serverName', key: 'server_name', savable: true, reason: null, active: true },
+  { field: 'maxPlayers', key: 'max_players', savable: true, reason: null, active: true },
+  // Not in the file yet: editable, and saving adds it.
+  { field: 'lan', key: 'lan', savable: true, reason: null, active: false },
+  { field: 'adminSteamIds', key: 'admin_steam_ids', savable: false, reason: "set again below '# Event Loop', which wins; remove that line", active: true },
 ]
 
 const answer = (data: unknown) => ({ data, error: undefined, response: new Response(null, { status: 200 }) })
@@ -80,16 +81,28 @@ describe('ConfigView', () => {
     expect(document.body.textContent).toContain('Server settings saved.')
   })
 
-  // A setting server_config.cfg has no active line for cannot be saved: greyed out, with
-  // what to change in the file, instead of failing on Save.
+  // A setting set again below the event loop cannot take a change: greyed out, with what to
+  // change in the file, instead of failing on Save.
   it('greys out a setting the file cannot take, and says why', async () => {
     serve()
     mountPage()
     await flushPromises()
 
     expect(input('Admin Steam IDs').attributes('disabled')).toBeDefined()
-    expect(wrapper!.text()).toContain('no active line; add or uncomment it')
+    expect(wrapper!.text()).toContain("set again below '# Event Loop'")
     expect(input('Server name').attributes('disabled')).toBeUndefined()
+  })
+
+  // A setting the file does not have yet can still be changed: saving adds it.
+  it('says when a setting is not in the file yet, and lets it be changed', async () => {
+    serve()
+    mountPage()
+    await flushPromises()
+
+    expect(wrapper!.text()).toContain("Not in server_config.cfg: the server's default applies. Saving a change adds it.")
+    const lan = wrapper!.find('[aria-label="LAN only"]')
+    expect(lan.exists()).toBe(true)
+    expect(lan.classes()).not.toContain('n-switch--disabled')
   })
 
   // 0/1 settings are switches: flipping one sends 1 or 0, not true or false.
@@ -104,6 +117,32 @@ describe('ConfigView', () => {
     await flushPromises()
 
     expect(api.PUT).toHaveBeenCalledWith('/api/config/basic', { body: { lan: 1 } })
+  })
+
+  // LAN was not in the file; the save added it. The note and the preview follow at once.
+  it('stops calling a setting missing once a save has added it', async () => {
+    serve()
+    api.PUT.mockResolvedValue(answer(config({ lan: 1 })))
+    mountPage()
+    await flushPromises()
+    expect(wrapper!.text()).toContain('Not in server_config.cfg')
+
+    // From now on the controller reports LAN as set (fresh objects, as a new answer would be).
+    const before = api.GET.getMockImplementation()!
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/config/basic/fields'
+        ? Promise.resolve(answer(fields.map((f) => ({ ...f, active: f.field === 'lan' ? true : f.active }))))
+        : before(path),
+    )
+
+    await wrapper!.find('[aria-label="LAN only"]').trigger('click')
+    await button('Save').trigger('click')
+    await flushPromises()
+
+    expect(wrapper!.text()).not.toContain('Not in server_config.cfg')
+    await wrapper!.findAll('.n-tabs-tab').find((tab) => tab.text().trim() === 'Preview')!.trigger('click')
+    await flushPromises()
+    expect(wrapper!.find('pre.preview').text()).toMatch(/^lan=1$/m)
   })
 
   it('shows a refusal from the server', async () => {
@@ -134,8 +173,9 @@ describe('ConfigView', () => {
     expect(preview.text()).toContain('server_name=Changed name')
     expect(preview.text()).toContain('#CollectionName Evening')
     expect(preview.text()).toContain('el_add=fields14')
-    // Not active in the file: shown commented out, as it is there.
-    expect(preview.text()).toContain('#admin_steam_ids=')
+    // Not in the file yet: shown commented out, as the server does not use it.
+    expect(preview.text()).toMatch(/^#lan=/m)
+    expect(preview.text()).not.toMatch(/^#admin_steam_ids=/m)
   })
 
   // Each control's own disabled overrides the form's, so each must lock itself: the

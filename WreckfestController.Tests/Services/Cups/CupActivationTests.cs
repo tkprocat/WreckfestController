@@ -40,8 +40,15 @@ public sealed class CupActivationTests : IDisposable
 
         _config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>());
         _config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig { ServerName = "Old name" });
-        _config.Setup(c => c.WriteBasicConfig(It.IsAny<ServerConfig>()))
-            .Callback<ServerConfig>(c => _writes.Add($"settings:{c.ServerName}"));
+        // The overrides are written by key; a write with a server name is the "settings" step.
+        _config.Setup(c => c.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Callback<IReadOnlyDictionary<string, string>>(s =>
+            {
+                if (s.TryGetValue("server_name", out var name))
+                {
+                    _writes.Add($"settings:{name}");
+                }
+            });
         _config.Setup(c => c.WriteEventLoopTracks(It.IsAny<string>(), It.IsAny<List<EventLoopTrack>>()))
             .Callback<string, List<EventLoopTrack>>((name, t) => _writes.Add($"tracks:{name}:{string.Join(",", t.Select(x => x.Track))}"));
 
@@ -196,7 +203,7 @@ public sealed class CupActivationTests : IDisposable
     [Fact]
     public async Task SettingsThatCannotBeWritten_SkipTheOccurrence_AndReleaseTheScheduler()
     {
-        _config.Setup(c => c.WriteBasicConfig(It.IsAny<ServerConfig>())).Throws(new IOException("Write failed"));
+        _config.Setup(c => c.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>())).Throws(new IOException("Write failed"));
         var broken = await _db.CreateAsync(CupTestDatabase.Definition("Broken", Now.AddMinutes(1), serverConfig: NewName));
         var plain = await _db.CreateAsync(CupTestDatabase.Definition("Plain", Now.AddMinutes(2)));
 
@@ -496,5 +503,26 @@ public sealed class CupActivationTests : IDisposable
         }
 
         _db.Dispose();
+    }
+
+    // Overrides and scoring go in one write, by key: a key the file lacks is added there,
+    // not dropped (a cup's password on a server that has none, say).
+    [Fact]
+    public async Task Activation_WritesOnlyTheOverriddenKeys_WithTheScoring_InOneWrite()
+    {
+        var written = new List<IReadOnlyDictionary<string, string>>();
+        _config.Setup(c => c.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
+            .Callback<IReadOnlyDictionary<string, string>>(s => written.Add(new Dictionary<string, string>(s)));
+        var cup = await _db.CreateAsync(CupTestDatabase.Definition(
+            "Locked night",
+            Now.AddDays(1),
+            serverConfig: new EventServerConfig { Password = "", MaxPlayers = 12 },
+            sessionMode: "30p-aggr"));
+
+        Assert.Equal(ActivationResult.Started, await _activator.ActivateAsync(cup.Id));
+        await EventuallyAsync(cup.Id, e => e.IsActive);
+
+        var only = Assert.Single(written);
+        Assert.Equal(new Dictionary<string, string> { ["password"] = "", ["max_players"] = "12", ["session_mode"] = "30p-aggr" }, only);
     }
 }

@@ -135,9 +135,9 @@ public class ConfigService
 
     /// <summary>
     /// Of <paramref name="keys"/>, those a change could not take effect for, each with the
-    /// reason: no active <c>key=value</c> line above the event loop (WriteBasicConfig only
-    /// rewrites lines that exist), or the key set again below the <c># Event Loop</c>
-    /// heading (WriteBasicConfig leaves that part alone, and the later value wins).
+    /// reason: the key is set again below the <c># Event Loop</c> heading, where the writer
+    /// does not go and the later value wins. A missing or commented-out key is not a problem:
+    /// <see cref="WriteSettings"/> uncomments or adds it.
     /// </summary>
     public virtual IReadOnlyList<string> BasicKeysThatCannotBeSaved(IEnumerable<string> keys) =>
         BasicKeyProblems(keys).Select(problem => $"{problem.Key} ({problem.Value})").ToList();
@@ -146,7 +146,17 @@ public class ConfigService
     /// Of <paramref name="keys"/>, those a change could not take effect for, each with the
     /// reason (see <see cref="BasicKeysThatCannotBeSaved"/>), keyed by the key.
     /// </summary>
-    public virtual IReadOnlyDictionary<string, string> BasicKeyProblems(IEnumerable<string> keys)
+    public virtual IReadOnlyDictionary<string, string> BasicKeyProblems(IEnumerable<string> keys) =>
+        ScanBasicKeys(keys).Problems;
+
+    /// <summary>
+    /// Of <paramref name="keys"/>, those the file sets with an active line above the event
+    /// loop: what the server uses. The others run on the server's defaults until set.
+    /// </summary>
+    public virtual IReadOnlySet<string> ActiveBasicKeys(IEnumerable<string> keys) =>
+        ScanBasicKeys(keys).Active;
+
+    private (IReadOnlyDictionary<string, string> Problems, IReadOnlySet<string> Active) ScanBasicKeys(IEnumerable<string> keys)
     {
         var above = new HashSet<string>(StringComparer.Ordinal);
         var below = new HashSet<string>(StringComparer.Ordinal);
@@ -170,17 +180,13 @@ public class ConfigService
         var problems = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var key in keys)
         {
-            if (!above.Contains(key))
-            {
-                problems[key] = "no active line; add or uncomment it";
-            }
-            else if (below.Contains(key))
+            if (below.Contains(key))
             {
                 problems[key] = "set again below '# Event Loop', which wins; remove that line";
             }
         }
 
-        return problems;
+        return (problems, above);
     }
 
     /// <summary>
@@ -191,117 +197,61 @@ public class ConfigService
     public virtual bool LacksEventLoopHeading() =>
         !File.ReadAllLines(GetConfigFilePath()).Any(line => line.Trim().StartsWith("# Event Loop"));
 
-    public virtual void WriteBasicConfig(ServerConfig config)
+    /// <summary>
+    /// The value <paramref name="key"/> is written as, from <paramref name="config"/>; null
+    /// for a key the server config has no field for, or a text field that is not set.
+    /// </summary>
+    public static string? ValueOf(ServerConfig config, string key) => key switch
     {
-        lock (_writeLock)
-        {
-            WriteBasicConfigCore(config);
-        }
-    }
-
-    private void WriteBasicConfigCore(ServerConfig config)
-    {
-        var configPath = GetConfigFilePath();
-        var lines = File.ReadAllLines(configPath);
-        var newLines = new List<string>();
-        bool inEventLoop = false;
-
-        foreach (var line in lines)
-        {
-            var trimmed = line.Trim();
-
-            // Mark when we reach event loop section
-            if (trimmed.StartsWith("# Event Loop"))
-            {
-                inEventLoop = true;
-            }
-
-            // Skip processing if we're in the event loop section
-            if (inEventLoop)
-            {
-                newLines.Add(line);
-                continue;
-            }
-
-            // If it's a comment or empty line, keep as-is
-            if (trimmed.StartsWith("#") || string.IsNullOrWhiteSpace(trimmed))
-            {
-                newLines.Add(line);
-                continue;
-            }
-
-            var parts = trimmed.Split('=', 2);
-            if (parts.Length != 2)
-            {
-                newLines.Add(line);
-                continue;
-            }
-
-            var key = parts[0].Trim();
-            var newValue = key switch
-            {
-                "server_name" => config.ServerName,
-                "welcome_message" => config.WelcomeMessage,
-                "password" => config.Password,
-                "max_players" => config.MaxPlayers.ToString(),
-                "lan" => config.Lan.ToString(),
-                "steam_port" => config.SteamPort.ToString(),
-                "game_port" => config.GamePort.ToString(),
-                "query_port" => config.QueryPort.ToString(),
-                "exclude_from_quickplay" => config.ExcludeFromQuickplay.ToString(),
-                "clear_users" => config.ClearUsers.ToString(),
-                "owner_disabled" => config.OwnerDisabled.ToString(),
-                "admin_control" => config.AdminControl.ToString(),
-                "lobby_countdown" => config.LobbyCountdown.ToString(),
-                "ready_players_required" => config.ReadyPlayersRequired.ToString(),
-                "admin_steam_ids" => config.AdminSteamIds,
-                "op_steam_ids" => config.OpSteamIds,
-                "session_mode" => config.SessionMode,
-                "grid_order" => config.GridOrder,
-                "enable_track_vote" => config.EnableTrackVote.ToString(),
-                "disable_idle_kick" => config.DisableIdleKick.ToString(),
-                "track" => config.Track,
-                "gamemode" => config.Gamemode,
-                "bots" => config.Bots.ToString(),
-                "ai_difficulty" => config.AiDifficulty,
-                "num_teams" => config.NumTeams.ToString(),
-                "laps" => config.Laps.ToString(),
-                "time_limit" => config.TimeLimit.ToString(),
-                "elimination_interval" => config.EliminationInterval.ToString(),
-                "vehicle_damage" => config.VehicleDamage,
-                "car_class_restriction" => config.CarClassRestriction,
-                "car_restriction" => config.CarRestriction,
-                "special_vehicles_disabled" => config.SpecialVehiclesDisabled.ToString(),
-                "car_reset_disabled" => config.CarResetDisabled.ToString(),
-                "car_reset_delay" => config.CarResetDelay.ToString(),
-                "wrong_way_limiter_disabled" => config.WrongWayLimiterDisabled.ToString(),
-                "weather" => config.Weather,
-                "frequency" => config.Frequency,
-                "mods" => config.Mods,
-                "log" => config.Log,
-                _ => null
-            };
-
-            if (newValue != null)
-            {
-                newLines.Add($"{key}={newValue}");
-            }
-            else
-            {
-                newLines.Add(line);
-            }
-        }
-
-        File.WriteAllLines(configPath, newLines);
-        _logger.LogInformation("Basic config updated successfully");
-    }
+        "server_name" => config.ServerName,
+        "welcome_message" => config.WelcomeMessage,
+        "password" => config.Password,
+        "max_players" => config.MaxPlayers.ToString(),
+        "lan" => config.Lan.ToString(),
+        "steam_port" => config.SteamPort.ToString(),
+        "game_port" => config.GamePort.ToString(),
+        "query_port" => config.QueryPort.ToString(),
+        "exclude_from_quickplay" => config.ExcludeFromQuickplay.ToString(),
+        "clear_users" => config.ClearUsers.ToString(),
+        "owner_disabled" => config.OwnerDisabled.ToString(),
+        "admin_control" => config.AdminControl.ToString(),
+        "lobby_countdown" => config.LobbyCountdown.ToString(),
+        "ready_players_required" => config.ReadyPlayersRequired.ToString(),
+        "admin_steam_ids" => config.AdminSteamIds,
+        "op_steam_ids" => config.OpSteamIds,
+        "session_mode" => config.SessionMode,
+        "grid_order" => config.GridOrder,
+        "enable_track_vote" => config.EnableTrackVote.ToString(),
+        "disable_idle_kick" => config.DisableIdleKick.ToString(),
+        "track" => config.Track,
+        "gamemode" => config.Gamemode,
+        "bots" => config.Bots.ToString(),
+        "ai_difficulty" => config.AiDifficulty,
+        "num_teams" => config.NumTeams.ToString(),
+        "laps" => config.Laps.ToString(),
+        "time_limit" => config.TimeLimit.ToString(),
+        "elimination_interval" => config.EliminationInterval.ToString(),
+        "vehicle_damage" => config.VehicleDamage,
+        "car_class_restriction" => config.CarClassRestriction,
+        "car_restriction" => config.CarRestriction,
+        "special_vehicles_disabled" => config.SpecialVehiclesDisabled.ToString(),
+        "car_reset_disabled" => config.CarResetDisabled.ToString(),
+        "car_reset_delay" => config.CarResetDelay.ToString(),
+        "wrong_way_limiter_disabled" => config.WrongWayLimiterDisabled.ToString(),
+        "weather" => config.Weather,
+        "frequency" => config.Frequency,
+        "mods" => config.Mods,
+        "log" => config.Log,
+        _ => null
+    };
 
     /// <summary>
     /// Sets each of <paramref name="settings"/> (key to value) in the server settings, above
-    /// the event loop. An active <c>key=</c> line is replaced; a key that is missing, or only
-    /// present commented out, is added just above the event loop, so the setting is never
-    /// silently dropped. Commented lines are left as they are. Callers validate the values:
-    /// each becomes a line of the file.
+    /// the event loop, so a setting is never silently dropped:
+    /// an active <c>key=</c> line is replaced where it is; otherwise a commented-out
+    /// <c>#key=</c> line is uncommented in place, next to its documentation; otherwise the
+    /// key is added just above the event loop, under a comment saying who added it. Nothing
+    /// else changes. Callers validate the values: each becomes a line of the file.
     /// </summary>
     public virtual void WriteSettings(IReadOnlyDictionary<string, string> settings)
     {
@@ -315,8 +265,27 @@ public class ConfigService
     {
         var configPath = GetConfigFilePath();
         var lines = File.ReadAllLines(configPath);
+
+        // Keys with an active line above the heading: only those are replaced; the rest are
+        // uncommented or added.
+        var active = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (trimmed.StartsWith("# Event Loop"))
+            {
+                break;
+            }
+
+            var parts = trimmed.Split('=', 2);
+            if (!trimmed.StartsWith("#") && parts.Length == 2)
+            {
+                active.Add(parts[0].Trim());
+            }
+        }
+
         var newLines = new List<string>();
-        var written = new HashSet<string>();
+        var written = new HashSet<string>(StringComparer.Ordinal);
         int? eventLoopStart = null;
 
         foreach (var line in lines)
@@ -327,16 +296,29 @@ public class ConfigService
                 eventLoopStart = newLines.Count;
             }
 
-            var parts = trimmed.Split('=', 2);
-            if (eventLoopStart is null
-                && !trimmed.StartsWith("#")
-                && parts.Length == 2
-                && settings.TryGetValue(parts[0].Trim(), out var value))
+            if (eventLoopStart is null)
             {
-                var key = parts[0].Trim();
-                newLines.Add($"{key}={value}");
-                written.Add(key);
-                continue;
+                var parts = trimmed.Split('=', 2);
+                if (!trimmed.StartsWith("#") && parts.Length == 2 && settings.TryGetValue(parts[0].Trim(), out var value))
+                {
+                    var key = parts[0].Trim();
+                    newLines.Add($"{key}={value}");
+                    written.Add(key);
+                    continue;
+                }
+
+                // "#key=value": the setting itself, commented out, as the stock config writes
+                // it. "# key=..." (a space) or "##..." is documentation, even when it reads
+                // like an assignment ("# session_mode=normal is the default"), and stays.
+                var commented = CommentedSetting.Match(trimmed);
+                if (commented.Success
+                    && settings.TryGetValue(commented.Groups[1].Value, out var uncommented)
+                    && !active.Contains(commented.Groups[1].Value)
+                    && written.Add(commented.Groups[1].Value))
+                {
+                    newLines.Add($"{commented.Groups[1].Value}={uncommented}");
+                    continue;
+                }
             }
 
             newLines.Add(line);
@@ -347,13 +329,24 @@ public class ConfigService
         {
             // Above the event loop's heading, with a blank line after, as the file lays out
             // its own settings. With no heading, at the end.
-            var at = eventLoopStart ?? newLines.Count;
-            newLines.InsertRange(at, eventLoopStart is null ? missing : [.. missing, string.Empty]);
-            _logger.LogInformation("Added missing settings to server config: {Keys}", string.Join(", ", missing));
+            var block = new List<string> { "# Added by WreckfestController" };
+            block.AddRange(missing);
+            if (eventLoopStart is not null)
+            {
+                block.Add(string.Empty);
+            }
+
+            newLines.InsertRange(eventLoopStart ?? newLines.Count, block);
+            // Key names only: a value can be a password.
+            _logger.LogInformation(
+                "Added missing settings to server config: {Keys}",
+                string.Join(", ", settings.Keys.Where(k => !written.Contains(k))));
         }
 
         File.WriteAllLines(configPath, newLines);
     }
+
+    private static readonly Regex CommentedSetting = new(@"^#([a-z_]+)=", RegexOptions.CultureInvariant);
 
     /// <exception cref="EventLoopHeadingMissingException">
     /// server_config.cfg has no <c># Event Loop</c> heading, so there is nowhere to write

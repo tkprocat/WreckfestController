@@ -58,21 +58,47 @@ public sealed class ConfigControllerFileTests : IDisposable
         Assert.Contains("max_players=20", File.ReadAllLines(_file));
     }
 
-    // WriteBasicConfig only rewrites lines that exist: a commented-out or missing key would
-    // be silently dropped while the answer claimed it was saved.
+    // A commented-out key is uncommented where it is, a missing one added above the loop:
+    // either way the change is in the file, once, and takes effect.
     [Theory]
-    [InlineData("# max_players=24")]
+    [InlineData("#max_players=24")]
     [InlineData("")]
-    public void PutBasic_AKeyWithNoActiveLine_IsRefused_AndNothingIsWritten(string maxPlayersLine)
+    public void PutBasic_AKeyWithNoActiveLine_IsSaved(string maxPlayersLine)
     {
         File.WriteAllLines(_file, ["server_name=Old", maxPlayersLine, "", "# Event Loop", "el_add=urban09_1"]);
-        var before = File.ReadAllText(_file);
 
         var result = _controller.UpdateBasicConfig(Json("""{"serverName":"New","maxPlayers":20}"""));
 
-        var refusal = ControllerTesting.RefusalOf(result);
-        Assert.Contains("max_players", refusal, StringComparison.Ordinal);
-        Assert.Equal(before, File.ReadAllText(_file));
+        Assert.Equal(("New", 20), (result.Value!.ServerName, result.Value.MaxPlayers));
+        var lines = File.ReadAllLines(_file);
+        Assert.Single(lines, line => line.Contains("max_players", StringComparison.Ordinal));
+        Assert.Contains("max_players=20", lines);
+        Assert.Equal("el_add=urban09_1", lines[^1]);
+    }
+
+    // A field named twice, in any case, is one key: the patch's final value is saved.
+    [Theory]
+    [InlineData("""{"serverName":"First","serverName":"Final"}""")]
+    [InlineData("""{"serverName":"First","ServerName":"Final"}""")]
+    public void PutBasic_AFieldNamedTwice_SavesTheFinalValue(string body)
+    {
+        File.WriteAllLines(_file, ["server_name=Old", "", "# Event Loop", "el_add=urban09_1"]);
+
+        var result = _controller.UpdateBasicConfig(Json(body));
+
+        Assert.Equal("Final", result.Value!.ServerName);
+        Assert.Single(File.ReadAllLines(_file), line => line == "server_name=Final");
+    }
+
+    // Only what changed is written: a field the file does not have stays out of it.
+    [Fact]
+    public void PutBasic_WritesOnlyTheChangedKeys()
+    {
+        File.WriteAllLines(_file, ["server_name=Old", "max_players=24", "", "# Event Loop", "el_add=urban09_1"]);
+
+        _controller.UpdateBasicConfig(Json("""{"maxPlayers":20}"""));
+
+        Assert.Equal(["server_name=Old", "max_players=20", "", "# Event Loop", "el_add=urban09_1"], File.ReadAllLines(_file));
     }
 
     // The writer leaves everything below the heading alone, and the later value wins, so the
@@ -113,8 +139,12 @@ public sealed class ConfigControllerFileTests : IDisposable
         Assert.True(fields["serverName"].Savable);
         Assert.Equal("server_name", fields["serverName"].Key);
         Assert.Null(fields["serverName"].Reason);
-        Assert.False(fields["adminSteamIds"].Savable);
-        Assert.Contains("no active line", fields["adminSteamIds"].Reason, StringComparison.Ordinal);
+        // Commented out: not what the server uses, but saving uncomments it, so it can be saved.
+        Assert.True(fields["adminSteamIds"].Savable);
+        Assert.Null(fields["adminSteamIds"].Reason);
+        Assert.False(fields["adminSteamIds"].Active);
+        Assert.True(fields["serverName"].Active);
+        Assert.False(fields["lan"].Active);
         Assert.False(fields["laps"].Savable);
         Assert.Contains("below '# Event Loop'", fields["laps"].Reason, StringComparison.Ordinal);
         Assert.DoesNotContain("log", fields.Keys);
