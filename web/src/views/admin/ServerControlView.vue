@@ -46,7 +46,7 @@ const { status, error: statusError, refreshing, load: loadStatus } = useServerSt
 const running = computed(() => (refreshing.value ? null : (status.value?.isRunning ?? null)))
 
 /** One thing at a time: an action or a command in flight blocks the rest. */
-const busy = ref<Action | 'command' | null>(null)
+const busy = ref<Action | 'command' | 'bot' | null>(null)
 const command = ref('')
 
 /** The console: the log file's tail when the page opens, then live lines from the hub. */
@@ -132,16 +132,21 @@ function ask(action: Action) {
   }
 }
 
-async function sendNow(text: string) {
+/** Sends a console command: the typed one, or a button's (which says so when it worked). */
+async function sendNow(text: string, button?: { busy: 'bot'; done: string }) {
   if (busy.value) {
     return
   }
 
-  busy.value = 'command'
+  busy.value = button?.busy ?? 'command'
   try {
     const { data, error } = await api.POST('/api/server/command', { body: { command: text } })
     if (data) {
-      command.value = ''
+      if (button) {
+        message.success(button.done)
+      } else {
+        command.value = ''
+      }
     } else {
       message.error(problemMessage(error, 'The command was not sent.'))
     }
@@ -163,6 +168,13 @@ function send() {
     confirmThen('Send command', `"${text}" disconnects players. Send it?`, 'Send', () => void sendNow(text))
   } else {
     void sendNow(text)
+  }
+}
+
+/** The game's own console command for one more AI driver, as the Laravel page sent it. */
+function addBot() {
+  if (running.value === true) {
+    void sendNow('/bot', { busy: 'bot', done: 'AI bot added.' })
   }
 }
 
@@ -204,6 +216,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
         <NButton :loading="busy === 'restart'" :disabled="!!busy || running !== true" @click="ask('restart')">Restart</NButton>
         <NButton :loading="busy === 'inject'" :disabled="!!busy || running !== true" @click="ask('inject')">Inject hook</NButton>
         <NButton :loading="busy === 'update'" :disabled="!!busy || running !== false" @click="ask('update')">Update</NButton>
+        <NButton :loading="busy === 'bot'" :disabled="!!busy || running !== true" @click="addBot">Add AI bot</NButton>
       </NSpace>
       <NSpace class="danger">
         <NButton type="error" ghost :loading="busy === 'forcestop'" :disabled="!!busy || running !== true" @click="ask('forcestop')">
@@ -229,6 +242,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
         <NInput
           v-model:value="command"
           placeholder="A console command, such as /message Hello everyone"
+          :input-props="{ 'aria-label': 'Console command' }"
           :disabled="!!busy || running !== true"
           @keyup.enter="send"
         />
