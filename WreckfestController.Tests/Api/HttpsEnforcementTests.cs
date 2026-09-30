@@ -194,4 +194,65 @@ public sealed class HttpsEnforcementTests
         Assert.False(notOn.Headers.Contains("Strict-Transport-Security"));
         Assert.False(plain.Headers.Contains("Strict-Transport-Security"));
     }
+
+    // A malformed X-Forwarded-For makes ASP.NET skip every forwarded header without a trace:
+    // the peer still reads as loopback. It came through a proxy all the same: refused.
+    [Theory]
+    [InlineData("127.0.0.1")]
+    [InlineData("::ffff:127.0.0.1")]
+    public async Task MalformedForwarding_ThroughALoopbackProxy_IsNotExempt(string proxy)
+    {
+        await using var host = await ApiTestHost.StartAsync(HttpsOn(trustedProxy: proxy));
+
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state", proxy, headers: new Dictionary<string, string>
+        {
+            ["X-Forwarded-For"] = "not an address",
+            ["X-Forwarded-Proto"] = "http",
+        });
+
+        // The refusal itself, not any 400: exempt, this request would answer 200.
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Contains("Use HTTPS", await response.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+    }
+
+    // A trusted proxy forwarding a client on this PC is still a proxy: no plain-HTTP exemption.
+    [Fact]
+    public async Task ForwardingThatResolvesToLoopback_IsNotExempt()
+    {
+        await using var host = await ApiTestHost.StartAsync(HttpsOn(trustedProxy: "192.168.1.1"));
+
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state", "192.168.1.1", headers: new Dictionary<string, string>
+        {
+            ["X-Forwarded-For"] = "127.0.0.1",
+            ["X-Forwarded-Proto"] = "http",
+        });
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
+    // Enforcement is ahead of everything that answers: the web app's pages and the fallback too.
+    [Fact]
+    public async Task RemotePlainHttp_ToAnyPage_IsRedirected_BeforeTheWebApp()
+    {
+        await using var host = await ApiTestHost.StartAsync(HttpsOn());
+
+        using var index = await SendAsync(host, HttpMethod.Get, "/index.html");
+        using var fallback = await SendAsync(host, HttpMethod.Get, "/no/such/page");
+
+        Assert.Equal(HttpStatusCode.TemporaryRedirect, index.StatusCode);
+        Assert.Equal(HttpStatusCode.TemporaryRedirect, fallback.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("localhost.")]
+    [InlineData("app.localhost.")]
+    [InlineData("[::ffff:127.0.0.1]")]
+    public async Task Hsts_IsNeverSentForLocalNames_WrittenAnyWay(string name)
+    {
+        await using var host = await ApiTestHost.StartAsync(HttpsOn(hsts: "true"));
+
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state", https: true, hostHeader: name);
+
+        Assert.False(response.Headers.Contains("Strict-Transport-Security"));
+    }
 }

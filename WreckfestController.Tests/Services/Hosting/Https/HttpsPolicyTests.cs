@@ -73,4 +73,17 @@ public sealed class HttpsPolicyTests
 
         Assert.Contains("HTTPS is off", text, StringComparison.Ordinal);
     }
+
+    // An IPv6 address needs brackets in a URL, or a browser cannot follow the redirect.
+    [Theory]
+    [InlineData("2001:db8::1", 8443, "https://[2001:db8::1]:8443")]
+    [InlineData("[2001:db8::1]", 8443, "https://[2001:db8::1]:8443")]
+    [InlineData("2001:db8::1", 443, "https://[2001:db8::1]")]
+    [InlineData("192.0.2.10", 8443, "https://192.0.2.10:8443")]
+    public void AnAddressAsPublicHost_MakesAValidOrigin(string publicHost, int port, string expected)
+    {
+        var policy = new HttpsPolicy(new HttpsSettings(File, port, false, publicHost), HttpsStatusSource.None);
+
+        Assert.Equal(expected, policy.PublicOrigin);
+    }
 }

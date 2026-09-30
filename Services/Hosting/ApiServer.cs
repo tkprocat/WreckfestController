@@ -238,6 +238,10 @@ public class ApiServer : IApiServer, IDisposable
     /// </summary>
     public static void ConfigurePipeline(WebApplication app)
     {
+        // What arrived, before the forwarded headers rewrite it: HTTPS enforcement decides
+        // "this PC or not" from that.
+        app.Use(HttpsEnforcementMiddleware.CaptureOriginal);
+
         // Before anything reads the client IP or the scheme.
         app.UseForwardedHeaders();
 

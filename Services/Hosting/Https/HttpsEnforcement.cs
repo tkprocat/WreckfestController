@@ -36,7 +36,9 @@ public sealed class HttpsPolicy(HttpsSettings? settings, HttpsStatusSource statu
                 return null;
             }
 
-            return settings.PublicPort == 443 ? $"https://{host}" : $"https://{host}:{settings.PublicPort}";
+            // UriBuilder brackets an IPv6 address, which a URL's authority needs.
+            var builder = new UriBuilder(Uri.UriSchemeHttps, host.Trim('[', ']'), settings.PublicPort == 443 ? -1 : settings.PublicPort);
+            return builder.Uri.GetLeftPart(UriPartial.Authority);
         }
     }
 }
@@ -53,6 +55,29 @@ public sealed class HttpsPolicy(HttpsSettings? settings, HttpsStatusSource statu
 /// </summary>
 public sealed class HttpsEnforcementMiddleware(RequestDelegate next, HttpsPolicy policy)
 {
+    private const string OriginalKey = "WreckfestController.Https.Original";
+
+    /// <summary>The TCP peer, and whether any forwarding header came, before the forwarded headers are applied.</summary>
+    private sealed record Original(IPAddress? Peer, bool Forwarded);
+
+    private static readonly string[] ForwardingHeaders =
+    [
+        "X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host", "X-Forwarded-Prefix", "Forwarded",
+        ForwardedHeadersDefaults.XOriginalForHeaderName, ForwardedHeadersDefaults.XOriginalProtoHeaderName,
+    ];
+
+    /// <summary>
+    /// Runs before UseForwardedHeaders: notes the connection's peer and whether any forwarding
+    /// header came. Applying the headers rewrites the one and removes the others, and a
+    /// malformed header is dropped without a trace; what the client sent is known only here.
+    /// </summary>
+    public static Task CaptureOriginal(HttpContext context, Func<Task> next)
+    {
+        var headers = context.Request.Headers;
+        context.Items[OriginalKey] = new Original(context.Connection.RemoteIpAddress, ForwardingHeaders.Any(headers.ContainsKey));
+        return next();
+    }
+
     /// <summary>180 days. Documented; no includeSubDomains or preload.</summary>
     public const string HstsValue = "max-age=15552000";
 
@@ -99,22 +124,20 @@ public sealed class HttpsEnforcementMiddleware(RequestDelegate next, HttpsPolicy
     }
 
     /// <summary>
-    /// The TCP peer was this PC, and no trusted proxy spoke for someone else. The address is
-    /// the connection's: forwarded headers from an untrusted peer are never applied to it.
+    /// The TCP peer was this PC, and the request came with no forwarding header at all: a tool
+    /// on this PC, not a proxy speaking for someone else. Decided from what arrived, before
+    /// the forwarded headers were applied, so a malformed header that ASP.NET drops (leaving
+    /// no trace) still counts as "came through a proxy". Fails closed: a local tool that sends
+    /// forwarding headers itself loses the exemption; nobody can gain it.
     /// </summary>
     private static bool IsLocalPeer(HttpContext context)
     {
-        // Applying a trusted proxy's X-Forwarded-* records the originals in X-Original-*.
-        // Either there means the request came through a proxy, from somewhere else. A client
-        // that sends them itself only loses the exemption; it cannot gain one.
-        var headers = context.Request.Headers;
-        if (headers.ContainsKey(ForwardedHeadersDefaults.XOriginalForHeaderName)
-            || headers.ContainsKey(ForwardedHeadersDefaults.XOriginalProtoHeaderName))
+        if (context.Items[OriginalKey] is not Original original || original.Forwarded)
         {
             return false;
         }
 
-        var peer = context.Connection.RemoteIpAddress;
+        var peer = original.Peer;
         if (peer is null)
         {
             return false;
@@ -128,8 +151,12 @@ public sealed class HttpsEnforcementMiddleware(RequestDelegate next, HttpsPolicy
         return IPAddress.IsLoopback(peer);
     }
 
-    private static bool IsLocalName(string host) =>
-        host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-        || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)
-        || (IPAddress.TryParse(host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address));
+    private static bool IsLocalName(string host)
+    {
+        // "localhost." is the same name, fully qualified.
+        host = host.TrimEnd('.');
+        return host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase)
+            || (IPAddress.TryParse(host.Trim('[', ']'), out var address) && IPAddress.IsLoopback(address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address));
+    }
 }
