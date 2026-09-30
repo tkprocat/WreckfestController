@@ -94,7 +94,8 @@ is bound at all. `Key` no longer affects whether it starts.
 | `AllowRemote: false` (default) | binds `127.0.0.1` only |
 | `AllowRemote: true` | binds `0.0.0.0` |
 | `TrustedProxies` | reverse proxies whose `X-Forwarded-For` / `X-Forwarded-Proto` are honoured; default none |
-| `HttpPort` / `HttpsPort` | defaults 5100 / 5101 |
+| `HttpPort` / `HttpsPort` | defaults 5100 / 5101; HTTPS listens only with `Https` |
+| `Https` | HTTPS from the certificate store or a file, and what plain HTTP from other computers gets: see [https.md](https.md) |
 
 ### Behind a reverse proxy
 
@@ -109,12 +110,14 @@ pick its own IP by sending them. An entry that is not an address or range is log
 skipped.
 
 Ports are configurable so several controller instances can manage separate servers
-on one Windows host. A value outside 1–65535 is ignored with a warning and the
-default is used.
+on one Windows host. A port that is not 1–65535, the same port for HTTP and HTTPS (with
+`Https`), or an `Https` section that is incomplete or unusable stops the API, with the reason in the
+desktop app and the log; it never falls back to another port or to plain HTTP.
+`Kestrel:Endpoints` and `urls` are not used.
 
-> HTTPS URLs are filtered out when no valid certificate is available — a startup
-> safeguard for running as a WPF app — so the configured HTTPS port may not
-> actually be listened on.
+`GET /api/https` (signed in) reports HTTPS: off, or the certificate's names, issuer,
+expiry, a 14-day warning, `lastRefresh` (the last successful check, even when the
+certificate did not change) and the last reload's error. No key, password or path.
 
 ## Endpoints
 
