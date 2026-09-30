@@ -171,10 +171,13 @@ function send() {
   }
 }
 
-/** The game's own console command for one more AI driver, as the Laravel page sent it. */
+/**
+ * The game's own console command for one more AI driver, as the Laravel page sent it. The
+ * answer says the command was sent, not that a bot joined: a full server adds none.
+ */
 function addBot() {
   if (running.value === true) {
-    void sendNow('/bot', { busy: 'bot', done: 'AI bot added.' })
+    void sendNow('/bot', { busy: 'bot', done: 'Sent /bot: an AI bot joins if there is room.' })
   }
 }
 
