@@ -61,7 +61,9 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
         if (!NativeConsoleHookInjector.InjectDll(processId, hookDllPath, TimeSpan.FromSeconds(10), out var error, out var wasAlreadyLoaded))
         {
             StopPipeListener(processId);
-            return Task.FromResult((false, $"Console hook injection failed: {error}"));
+            // The error can name the DLL's path and carries Windows' own text: log it, answer plainly.
+            _logger.LogWarning("Console hook injection into process {ProcessId} failed: {Error}", processId, error);
+            return Task.FromResult((false, "The console hook could not be injected. The desktop app's log has the details."));
         }
 
         var action = wasAlreadyLoaded ? "Reconnected existing" : "Injected";

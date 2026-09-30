@@ -87,6 +87,55 @@ public class ServerManagerTests
         Assert.Contains("not found", result.Message);
     }
 
+    // The answer reaches the web API: the path goes to the log, not into it (#153).
+    [Fact]
+    public async Task StartServerAsync_WhenServerPathDoesNotExist_AnswersWithoutThePath_AndLogsIt()
+    {
+        var serverManager = new ServerManager(
+            _mockConfiguration.Object, TestSettings.Server(serverPath: @"C:\nonexistent-secret\server.bat"), TestSettings.SteamCmd(),
+            _mockLogger.Object, _playerTracker, _trackChangeTracker, _serverInfoTracker, _mockEvents.Object);
+
+        var result = await serverManager.StartServerAsync();
+
+        Assert.DoesNotContain("nonexistent-secret", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("server path", result.Message, StringComparison.Ordinal);
+        VerifyWarningLogged("nonexistent-secret");
+    }
+
+    [Fact]
+    public async Task UpdateServerAsync_WhenTheWorkingDirectoryIsMissing_AnswersWithoutThePath_AndLogsIt()
+    {
+        var steamCmd = Path.Combine(Path.GetTempPath(), $"steamcmd-{Guid.NewGuid():N}.exe");
+        File.WriteAllText(steamCmd, "");
+        try
+        {
+            var serverManager = new ServerManager(
+                _mockConfiguration.Object, TestSettings.Server(workingDirectory: @"C:\missing-secret-dir"), TestSettings.SteamCmd(steamCmd),
+                _mockLogger.Object, _playerTracker, _trackChangeTracker, _serverInfoTracker, _mockEvents.Object);
+
+            var result = await serverManager.UpdateServerAsync();
+
+            Assert.False(result.Success);
+            Assert.DoesNotContain("missing-secret-dir", result.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("working directory", result.Message, StringComparison.Ordinal);
+            VerifyWarningLogged("missing-secret-dir");
+        }
+        finally
+        {
+            File.Delete(steamCmd);
+        }
+    }
+
+    private void VerifyWarningLogged(string text) =>
+        _mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((state, _) => state.ToString()!.Contains(text)),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.AtLeastOnce);
+
     [Fact]
     public async Task StartServerAsync_WhenServerPathIsEmpty_ReturnsFailure()
     {

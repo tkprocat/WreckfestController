@@ -26,14 +26,14 @@ public class ConfigService
 
         if (string.IsNullOrEmpty(workingDir))
         {
-            throw new InvalidOperationException("WorkingDirectory not configured");
+            throw ConfigLocationException.NoWorkingDirectory();
         }
 
         // Extract server_config file path from arguments
         var match = Regex.Match(serverArgs, @"server_config=([^\s]+)");
         if (!match.Success)
         {
-            throw new InvalidOperationException("server_config not found in ServerArguments");
+            throw ConfigLocationException.NoServerConfigArgument();
         }
 
         var configFileName = match.Groups[1].Value;

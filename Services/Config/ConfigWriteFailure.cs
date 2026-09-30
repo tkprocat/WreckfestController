@@ -46,10 +46,13 @@ public sealed record ConfigWriteFailure(string Reason, string Message)
         // there, it just has nowhere to put the rotation.
         EventLoopHeadingMissingException => new(MissingEventLoop, exception.Message),
 
-        // Thrown by ConfigService when the settings do not say where the config is.
+        // The settings do not say where the config is; the exception names which one.
+        ConfigLocationException => new(NotConfigured, exception.Message),
+
+        // Anything else of this kind: the location is not set up, and the log says why.
         InvalidOperationException => new(
             NotConfigured,
-            "The server config's location is not set up. Set the working directory in the server settings."),
+            "The server config's location is not set up. Check the working directory and server arguments in the desktop app's settings."),
 
         _ => null,
     };

@@ -923,7 +923,8 @@ public class ServerManager
 
         if (string.IsNullOrEmpty(installDir) || !Directory.Exists(installDir))
         {
-            return (false, $"Wreckfest Working Directory not found: {installDir}. Please configure in settings.");
+            _logger.LogWarning("Working directory for the update not found: {InstallDir}", installDir);
+            return (false, "The server's working directory was not found. Check it in the desktop app's settings.");
         }
 
         try
