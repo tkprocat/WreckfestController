@@ -117,18 +117,28 @@ public sealed class ConfigServiceTests : IDisposable
         [
             "# Leave blank for random weather",
             "# weather is one of clear, overcast, fog, rain, storm",
-            "# weather=rain",
+            "# session_mode=normal is the default",
+            "## grid_order=random",
+            "#weather=rain",
             "",
             "# Event Loop",
         ]);
 
-        _service.WriteSettings(new Dictionary<string, string> { ["weather"] = "fog" });
+        _service.WriteSettings(new Dictionary<string, string> { ["weather"] = "fog", ["session_mode"] = "30p-aggr", ["grid_order"] = "cup_reverse" });
 
+        // Only "#key=value" is the setting itself; the rest is documentation, kept, and those
+        // keys are added above the loop instead.
         Assert.Equal(
             [
                 "# Leave blank for random weather",
                 "# weather is one of clear, overcast, fog, rain, storm",
+                "# session_mode=normal is the default",
+                "## grid_order=random",
                 "weather=fog",
+                "",
+                "# Added by WreckfestController",
+                "session_mode=30p-aggr",
+                "grid_order=cup_reverse",
                 "",
                 "# Event Loop",
             ],
@@ -169,5 +179,60 @@ public sealed class ConfigServiceTests : IDisposable
         var expected = original.ToArray();
         expected[3] = "max_players=12";
         Assert.Equal(expected, File.ReadAllLines(_file));
+    }
+
+    // The first commented copy is the one uncommented; the others stay comments.
+    [Fact]
+    public void WriteSettings_UncommentsOnlyTheFirstCommentedCopy()
+    {
+        File.WriteAllLines(_file, ["#max_players=24", "#max_players=32", "", "# Event Loop"]);
+
+        _service.WriteSettings(new Dictionary<string, string> { ["max_players"] = "20" });
+
+        Assert.Equal(["max_players=20", "#max_players=32", "", "# Event Loop"], File.ReadAllLines(_file));
+    }
+
+    // A key set twice above the loop is set to the same value on both lines.
+    [Fact]
+    public void WriteSettings_ReplacesEveryActiveCopy()
+    {
+        File.WriteAllLines(_file, ["max_players=24", "bots=2", "max_players=32", "", "# Event Loop"]);
+
+        _service.WriteSettings(new Dictionary<string, string> { ["max_players"] = "20" });
+
+        Assert.Equal(["max_players=20", "bots=2", "max_players=20", "", "# Event Loop"], File.ReadAllLines(_file));
+    }
+
+    // A value can be a password: what is logged names the keys, never their values.
+    [Fact]
+    public void WriteSettings_NeverLogsAValue()
+    {
+        var logger = new CollectingLogger<ConfigService>();
+        var service = new ConfigService(TestSettings.Server(workingDirectory: _folder), logger);
+        File.WriteAllLines(_file, ["server_name=Race night", "", "# Event Loop"]);
+
+        service.WriteSettings(new Dictionary<string, string> { ["password"] = "hunter2-secret" });
+
+        Assert.Contains("password=hunter2-secret", File.ReadAllLines(_file));
+        Assert.NotEmpty(logger.Messages);
+        Assert.DoesNotContain(logger.Messages, m => m.Contains("hunter2-secret", StringComparison.Ordinal));
+    }
+
+    private sealed class CollectingLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
+    {
+        public List<string> Messages { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            Microsoft.Extensions.Logging.LogLevel logLevel,
+            Microsoft.Extensions.Logging.EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter) =>
+            Messages.Add(formatter(state, exception));
     }
 }

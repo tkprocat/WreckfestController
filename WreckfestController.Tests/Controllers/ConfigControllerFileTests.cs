@@ -61,7 +61,7 @@ public sealed class ConfigControllerFileTests : IDisposable
     // A commented-out key is uncommented where it is, a missing one added above the loop:
     // either way the change is in the file, once, and takes effect.
     [Theory]
-    [InlineData("# max_players=24")]
+    [InlineData("#max_players=24")]
     [InlineData("")]
     public void PutBasic_AKeyWithNoActiveLine_IsSaved(string maxPlayersLine)
     {
@@ -74,6 +74,20 @@ public sealed class ConfigControllerFileTests : IDisposable
         Assert.Single(lines, line => line.Contains("max_players", StringComparison.Ordinal));
         Assert.Contains("max_players=20", lines);
         Assert.Equal("el_add=urban09_1", lines[^1]);
+    }
+
+    // A field named twice, in any case, is one key: the patch's final value is saved.
+    [Theory]
+    [InlineData("""{"serverName":"First","serverName":"Final"}""")]
+    [InlineData("""{"serverName":"First","ServerName":"Final"}""")]
+    public void PutBasic_AFieldNamedTwice_SavesTheFinalValue(string body)
+    {
+        File.WriteAllLines(_file, ["server_name=Old", "", "# Event Loop", "el_add=urban09_1"]);
+
+        var result = _controller.UpdateBasicConfig(Json(body));
+
+        Assert.Equal("Final", result.Value!.ServerName);
+        Assert.Single(File.ReadAllLines(_file), line => line == "server_name=Final");
     }
 
     // Only what changed is written: a field the file does not have stays out of it.

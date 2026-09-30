@@ -119,6 +119,32 @@ describe('ConfigView', () => {
     expect(api.PUT).toHaveBeenCalledWith('/api/config/basic', { body: { lan: 1 } })
   })
 
+  // LAN was not in the file; the save added it. The note and the preview follow at once.
+  it('stops calling a setting missing once a save has added it', async () => {
+    serve()
+    api.PUT.mockResolvedValue(answer(config({ lan: 1 })))
+    mountPage()
+    await flushPromises()
+    expect(wrapper!.text()).toContain('Not in server_config.cfg')
+
+    // From now on the controller reports LAN as set (fresh objects, as a new answer would be).
+    const before = api.GET.getMockImplementation()!
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/config/basic/fields'
+        ? Promise.resolve(answer(fields.map((f) => ({ ...f, active: f.field === 'lan' ? true : f.active }))))
+        : before(path),
+    )
+
+    await wrapper!.find('[aria-label="LAN only"]').trigger('click')
+    await button('Save').trigger('click')
+    await flushPromises()
+
+    expect(wrapper!.text()).not.toContain('Not in server_config.cfg')
+    await wrapper!.findAll('.n-tabs-tab').find((tab) => tab.text().trim() === 'Preview')!.trigger('click')
+    await flushPromises()
+    expect(wrapper!.find('pre.preview').text()).toMatch(/^lan=1$/m)
+  })
+
   it('shows a refusal from the server', async () => {
     serve()
     api.PUT.mockResolvedValue(refused({ title: 'server_config.cfg cannot take this change: laps (set again below).' }, 409))

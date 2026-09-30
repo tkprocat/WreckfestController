@@ -307,8 +307,9 @@ public class ConfigService
                     continue;
                 }
 
-                // "#key=value" or "# key=value": the setting itself, commented out. Prose
-                // comments ("# Leave blank for ...") do not match a key.
+                // "#key=value": the setting itself, commented out, as the stock config writes
+                // it. "# key=..." (a space) or "##..." is documentation, even when it reads
+                // like an assignment ("# session_mode=normal is the default"), and stays.
                 var commented = CommentedSetting.Match(trimmed);
                 if (commented.Success
                     && settings.TryGetValue(commented.Groups[1].Value, out var uncommented)
@@ -336,13 +337,16 @@ public class ConfigService
             }
 
             newLines.InsertRange(eventLoopStart ?? newLines.Count, block);
-            _logger.LogInformation("Added missing settings to server config: {Keys}", string.Join(", ", missing));
+            // Key names only: a value can be a password.
+            _logger.LogInformation(
+                "Added missing settings to server config: {Keys}",
+                string.Join(", ", settings.Keys.Where(k => !written.Contains(k))));
         }
 
         File.WriteAllLines(configPath, newLines);
     }
 
-    private static readonly Regex CommentedSetting = new(@"^#+\s*([a-z_]+)\s*=", RegexOptions.CultureInvariant);
+    private static readonly Regex CommentedSetting = new(@"^#([a-z_]+)=", RegexOptions.CultureInvariant);
 
     /// <exception cref="EventLoopHeadingMissingException">
     /// server_config.cfg has no <c># Event Loop</c> heading, so there is nowhere to write

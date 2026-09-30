@@ -108,6 +108,17 @@ async function load() {
   }
 }
 
+async function refreshFields() {
+  try {
+    const { data } = await api.GET('/api/config/basic/fields')
+    if (data) {
+      fieldInfo.value = Object.fromEntries(data.map((f) => [f.field, f]))
+    }
+  } catch {
+    // The notes stay as they were; the next load corrects them.
+  }
+}
+
 async function save() {
   if (!dirty.value || saving.value) {
     return
@@ -120,6 +131,8 @@ async function save() {
     if (data) {
       show(data)
       message.success('Server settings saved. They apply when the server restarts.')
+      // A setting the file lacked is in it now: the notes and the preview follow.
+      await refreshFields()
     } else {
       errors.value = fieldErrors(error)
       message.error(problemMessage(error, 'The server settings were not saved.'))

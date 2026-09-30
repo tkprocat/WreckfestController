@@ -120,8 +120,11 @@ public class ConfigController : ControllerBase
 
             // Only what the patch changed, each by its key: a key the file lacks is added, one
             // commented out is uncommented. Every other line stays as it is.
+            // A field named twice ("serverName" and "ServerName") is one key, with the value
+            // the patch left it at.
             _configService.WriteSettings(applied
                 .Select(ServerConfigPatch.KeyOf)
+                .Distinct(StringComparer.Ordinal)
                 .ToDictionary(key => key, key => ConfigService.ValueOf(config, key) ?? string.Empty));
             saved = _configService.ReadBasicConfig();
         }
