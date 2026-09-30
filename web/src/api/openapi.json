@@ -2550,6 +2550,35 @@
         }
       }
     },
+    "/api/https": {
+      "get": {
+        "tags": [
+          "Https"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpsStatus"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpsStatus"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpsStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/public/overview": {
       "get": {
         "tags": [
@@ -4724,6 +4753,65 @@
           "Derby"
         ]
       },
+      "HttpsStatus": {
+        "required": [
+          "enabled",
+          "subject",
+          "dnsNames",
+          "issuer",
+          "notAfter",
+          "expiresSoon",
+          "lastRefresh",
+          "error"
+        ],
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "subject": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "dnsNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "issuer": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "notAfter": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "expiresSoon": {
+            "type": "boolean"
+          },
+          "lastRefresh": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
       "InjectResponse": {
         "required": [
           "message",
@@ -6019,6 +6107,9 @@
     },
     {
       "name": "Cups"
+    },
+    {
+      "name": "Https"
     },
     {
       "name": "Public"

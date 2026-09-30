@@ -2159,6 +2159,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/https": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["HttpsStatus"];
+                        "application/json": components["schemas"]["HttpsStatus"];
+                        "text/json": components["schemas"]["HttpsStatus"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/public/overview": {
         parameters: {
             query?: never;
@@ -3662,6 +3699,18 @@ export interface components {
         };
         /** @enum {unknown} */
         GameMode: "Racing" | "Derby";
+        HttpsStatus: {
+            enabled: boolean;
+            subject: null | string;
+            dnsNames: string[];
+            issuer: null | string;
+            /** Format: date-time */
+            notAfter: null | string;
+            expiresSoon: boolean;
+            /** Format: date-time */
+            lastRefresh: null | string;
+            error: null | string;
+        };
         InjectResponse: {
             message: string;
             /** Format: int32 */

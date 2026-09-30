@@ -3,12 +3,14 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.ModelBinding.Metadata;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using WreckfestController.Data;
 using WreckfestController.Hubs;
 using WreckfestController.Services.Auth;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Cups;
+using WreckfestController.Services.Hosting.Https;
 using WreckfestController.Services.Publishing;
 using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Tracking;
@@ -32,13 +34,12 @@ public interface IApiServer
 /// </summary>
 public class ApiServer : IApiServer, IDisposable
 {
-    public const int DefaultHttpPort = 5100;
-    public const int DefaultHttpsPort = 5101;
-    private const string LoopbackHost = "127.0.0.1";
-    private const string RemoteHost = "0.0.0.0";
+    public const int DefaultHttpPort = ApiEndpoints.DefaultHttpPort;
+    public const int DefaultHttpsPort = ApiEndpoints.DefaultHttpsPort;
     private readonly ILogger<ApiServer> _logger;
     private readonly IServiceProvider _serviceProvider;
     private WebApplication? _app;
+    private CertificateProvider? _certificates;
     private bool _isRunning;
 
     public ApiServer(ILogger<ApiServer> logger, IServiceProvider serviceProvider)
@@ -59,42 +60,13 @@ public class ApiServer : IApiServer, IDisposable
         bool.TryParse(configuration["Api:Enabled"], out var enabled) && enabled;
 
     /// <summary>
-    /// Builds the listen URLs. Ports are configurable so several controller
-    /// instances can manage separate servers on one Windows host.
+    /// HTTPS as it stands: the certificate being served and any error, or "off". Null
+    /// before the API has started; the desktop app shows it when set.
     /// </summary>
-    public static string GetListenUrls(
-        bool allowRemote,
-        int httpPort = DefaultHttpPort,
-        int httpsPort = DefaultHttpsPort)
-    {
-        var host = allowRemote ? RemoteHost : LoopbackHost;
-        return $"http://{host}:{httpPort};https://{host}:{httpsPort}";
-    }
+    public HttpsStatus? HttpsStatus => _certificates?.Status ?? (_isRunning ? Https.HttpsStatus.Off : null);
 
-    /// <summary>
-    /// Reads a port from configuration, falling back to the default when the value
-    /// is absent or outside the valid TCP range.
-    /// </summary>
-    private int ResolvePort(IConfiguration configuration, string key, int fallback)
-    {
-        var configured = configuration.GetValue<int?>(key);
-        if (configured is null)
-        {
-            return fallback;
-        }
-
-        if (configured is <= 0 or > 65535)
-        {
-            _logger.LogWarning(
-                "{Key} is {Value}, which is not a valid TCP port. Falling back to {Fallback}.",
-                key,
-                configured,
-                fallback);
-            return fallback;
-        }
-
-        return configured.Value;
-    }
+    /// <summary>Why the API did not start, when it did not; for the desktop app.</summary>
+    public string? StartError { get; private set; }
 
     public async Task StartAsync()
     {
@@ -118,25 +90,44 @@ public class ApiServer : IApiServer, IDisposable
                 return;
             }
 
-            var allowRemote = configuration.GetValue<bool>("Api:AllowRemote");
-            var httpPort = ResolvePort(configuration, "Api:HttpPort", DefaultHttpPort);
-            var httpsPort = ResolvePort(configuration, "Api:HttpsPort", DefaultHttpsPort);
-            var urls = GetListenUrls(allowRemote, httpPort, httpsPort);
+            StartError = null;
+            var endpoints = ApiEndpoints.Resolve(configuration, AppContext.BaseDirectory);
 
-            // Filter out HTTPS URLs if no valid certificate is available
-            // This prevents startup errors when running as a WPF app
-            var filteredUrls = string.Join(";", urls.Split(';')
-                .Where(url => !url.Trim().StartsWith("https://", StringComparison.OrdinalIgnoreCase)));
-
-            if (string.IsNullOrWhiteSpace(filteredUrls))
+            // HTTPS configured but unusable stops here, with the reason: the API never
+            // falls back to HTTP for a remote browser that expected HTTPS.
+            if (endpoints.Https is { } https)
             {
-                filteredUrls = $"http://{(allowRemote ? RemoteHost : LoopbackHost)}:{httpPort}"; // Fallback to HTTP
+                ICertificateSource source = https.Source switch
+                {
+                    StoreSourceSettings store => new StoreCertificateSource(store, () => DateTimeOffset.UtcNow),
+                    FileSourceSettings file => new FileCertificateSource(file, () => DateTimeOffset.UtcNow),
+                    _ => throw new HttpsConfigurationException("Api:Https names no certificate source."),
+                };
+                _certificates = new CertificateProvider(source, () => DateTimeOffset.UtcNow, _logger);
+                _certificates.Start();
+                var status = _certificates.Status;
+                _logger.LogInformation(
+                    "HTTPS on port {Port} with {Subject} ({DnsNames}), valid until {NotAfter:u}",
+                    endpoints.HttpsPort, status.Subject, string.Join(", ", status.DnsNames), status.NotAfter);
+                if (status.ExpiresSoon)
+                {
+                    _logger.LogWarning("The HTTPS certificate expires on {NotAfter:u}: renew it", status.NotAfter);
+                }
+            }
+            else
+            {
+                _logger.LogInformation("HTTPS is off (no Api:Https): serving HTTP only");
             }
 
-            builder.WebHost.UseUrls(filteredUrls);
-            BaseUrl = filteredUrls.Split(';')[0];
+            builder.WebHost.ConfigureKestrel(options => HttpsEndpoint.Configure(options, endpoints, _certificates));
+            builder.Services.AddSingleton(new HttpsStatusSource(_certificates));
+            var host = endpoints.Address.Equals(System.Net.IPAddress.Any) ? "0.0.0.0" : "127.0.0.1";
+            BaseUrl = $"http://{host}:{endpoints.HttpPort}";
 
-            _logger.LogInformation("API server will listen on: {Urls}", filteredUrls);
+            _logger.LogInformation(
+                "API server will listen on {BaseUrl}{Https}",
+                BaseUrl,
+                _certificates is null ? string.Empty : $" and https://{host}:{endpoints.HttpsPort}");
 
             ConfigureServices(builder, _serviceProvider, configuration);
 
@@ -151,6 +142,17 @@ public class ApiServer : IApiServer, IDisposable
         }
         catch (Exception ex)
         {
+            // A half-built host still holds ports and services: let it go, so a corrected
+            // configuration can start cleanly.
+            StartError = ex is HttpsConfigurationException ? ex.Message : "The API did not start. The log has the details.";
+            if (_app is not null)
+            {
+                await _app.DisposeAsync();
+                _app = null;
+            }
+
+            _certificates?.Dispose();
+            _certificates = null;
             _logger.LogError(ex, "Failed to start API server");
             throw;
         }
@@ -218,6 +220,8 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddRateLimits();
         builder.Services.AddSignalR();
         builder.Services.AddSingleton(WebApp.Resolve(configuration));
+        // HTTPS status: StartAsync registers the real one first; a test host has none.
+        builder.Services.TryAddSingleton(new HttpsStatusSource(null));
     }
 
     /// <summary>
@@ -276,6 +280,8 @@ public class ApiServer : IApiServer, IDisposable
             await _app.StopAsync();
             await _app.DisposeAsync();
             _app = null;
+            _certificates?.Dispose();
+            _certificates = null;
             _isRunning = false;
             _logger.LogInformation("API server stopped");
         }
