@@ -108,7 +108,8 @@ public class CatalogueTracksController : ControllerBase
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
-                return this.Refused($"Cannot tell which mods are active: {ex.Message}");
+                _logger.LogWarning(ex, "Could not read the active mods from server_config.cfg");
+                return this.Refused("Cannot tell which mods are active: server_config.cfg could not be read. The desktop app's log has the details.");
             }
 
             query = query.Where(t => t.ModId == null || activeMods.Contains(t.Mod!.FolderName));

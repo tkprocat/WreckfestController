@@ -78,7 +78,10 @@ public class ConfigControllerTests
 
         var result = _controller.GetBasicConfig();
 
-        Assert.Contains("Config file not found", ControllerTesting.RefusalOf(result), StringComparison.Ordinal);
+        // A fixed message: the exception's text can hold the file's path (#153).
+        var refusal = ControllerTesting.RefusalOf(result);
+        Assert.Contains("server_config.cfg could not be read", refusal, StringComparison.Ordinal);
+        Assert.DoesNotContain("Config file not found", refusal, StringComparison.Ordinal);
     }
 
     private static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement.Clone();
@@ -164,7 +167,9 @@ public class ConfigControllerTests
 
         var result = _controller.UpdateBasicConfig(Json("""{"serverName":"New name"}"""));
 
-        Assert.Contains("Write failed", ControllerTesting.RefusalOf(result), StringComparison.Ordinal);
+        var refusal = ControllerTesting.RefusalOf(result);
+        Assert.Contains("Could not write the server config", refusal, StringComparison.Ordinal);
+        Assert.DoesNotContain("Write failed", refusal, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -197,7 +202,9 @@ public class ConfigControllerTests
 
         var result = _controller.GetEventLoopTracks();
 
-        Assert.Contains("Read failed", ControllerTesting.RefusalOf(result), StringComparison.Ordinal);
+        var refusal = ControllerTesting.RefusalOf(result);
+        Assert.Contains("server_config.cfg could not be read", refusal, StringComparison.Ordinal);
+        Assert.DoesNotContain("Read failed", refusal, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -230,7 +237,9 @@ public class ConfigControllerTests
 
         var result = _controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest(collectionName, tracks));
 
-        Assert.Contains("Write failed", ControllerTesting.RefusalOf(result), StringComparison.Ordinal);
+        var refusal = ControllerTesting.RefusalOf(result);
+        Assert.Contains("server_config.cfg could not be written", refusal, StringComparison.Ordinal);
+        Assert.DoesNotContain("Write failed", refusal, StringComparison.Ordinal);
     }
 
     public static TheoryData<string, List<EventLoopTrack>?> InvalidTrackRequests => new()

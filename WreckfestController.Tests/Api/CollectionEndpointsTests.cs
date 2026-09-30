@@ -250,7 +250,8 @@ public class CollectionEndpointsTests
 
         using var deploy = await client.PostAsync($"/api/collections/{id}/deploy", null, Ct);
 
-        await AssertRefusedAsync(deploy, "notConfigured", "not set up");
+        // Names the setting to fix, never a path (#153).
+        await AssertRefusedAsync(deploy, "notConfigured", "working directory is not set");
     }
 
     [Fact]

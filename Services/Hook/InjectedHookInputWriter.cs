@@ -82,7 +82,7 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
         {
             var pipeName = GetPipeName(processId);
             _logger.LogError(ex, "Failed to send command through injected hook input pipe {PipeName}", pipeName);
-            return (false, $"Injected hook input failed: {ex.Message}");
+            return (false, "The hook did not take the command. The desktop app's log has the details.");
         }
     }
 
@@ -111,7 +111,7 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
         {
             var pipeName = GetPipeName(processId);
             _logger.LogError(ex, "Failed to read player snapshot through injected hook input pipe {PipeName}", pipeName);
-            return (false, $"Injected hook player snapshot failed: {ex.Message}", Array.Empty<Player>());
+            return (false, "The hook could not read the players. The desktop app's log has the details.", Array.Empty<Player>());
         }
     }
 
@@ -191,7 +191,7 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "Hook memory read failed at rva 0x{Rva:X8}", rva);
-            return (false, $"Hook memory read failed: {ex.Message}", []);
+            return (false, "The hook could not read the game's memory. The desktop app's log has the details.", []);
         }
     }
 
