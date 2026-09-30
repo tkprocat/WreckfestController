@@ -210,6 +210,29 @@ public sealed class ConfigControllerFileTests : IDisposable
         Assert.Single(service.ReadEventLoopTracks());
     }
 
+    // Every writer reads the whole file and writes it back: run together, one of them would
+    // put back what it read and undo the others. They take turns, so each change stays.
+    [Fact]
+    public void DifferentWritersTogether_EachChangeStays()
+    {
+        var service = new ConfigService(TestSettings.Server(workingDirectory: _folder), NullLogger<ConfigService>.Instance);
+        for (var round = 0; round < 20; round++)
+        {
+            File.WriteAllLines(_file, ["server_name=Old", "session_mode=normal", "", "# Event Loop", "#CollectionName Start", "el_add=urban09_1"]);
+            var version = ConfigService.EventLoopVersion(service.GetCurrentCollectionName(), service.ReadEventLoopTracks());
+
+            Parallel.Invoke(
+                () => service.TryWriteEventLoopTracks("Mine", [new EventLoopTrack { Track = "fields14" }], version, out _),
+                () => service.WriteSettings(new Dictionary<string, string> { ["session_mode"] = "30p-aggr" }),
+                () => service.WriteEventLoopTracks("Deployed", [new EventLoopTrack { Track = "loop" }, new EventLoopTrack { Track = "arena" }]));
+
+            var text = File.ReadAllText(_file);
+            Assert.Contains("session_mode=30p-aggr", text, StringComparison.Ordinal);
+            // Whichever rotation came last, it is whole: one name, and its own tracks.
+            Assert.Single(File.ReadAllLines(_file), line => line.StartsWith("#CollectionName", StringComparison.Ordinal));
+        }
+    }
+
     // The old #CollectionName was kept above the new one and read first: a rename never showed.
     [Fact]
     public void PutTracks_Renames_AndKeepsOneCollectionName()

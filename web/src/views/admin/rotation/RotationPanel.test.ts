@@ -347,4 +347,73 @@ describe('RotationPanel', () => {
     await flushPromises()
     expect(document.activeElement?.hasAttribute('data-save')).toBe(true)
   })
+
+  // Two loads, answered in reverse order: only the latest decides the cup, and the
+  // collection a save to it writes.
+  it('keeps the latest load\'s collection when an older one answers late', async () => {
+    current = cup({ collectionId: 3, collectionName: 'Short set' })
+    await mountPanel()
+    const answers: ((value: unknown) => void)[] = []
+    const others = api.GET.getMockImplementation()!
+    api.GET.mockImplementation((path: string) => {
+      if (path === '/api/collections/{id}') return new Promise((resolve) => answers.push(resolve))
+      if (path === '/api/cups/current') return Promise.resolve(answer(cup({ collectionId: answers.length === 0 ? 3 : 4, collectionName: 'Other' })))
+      return others(path)
+    })
+
+    hub.get('CupActivated')!({ cupId: 5, cupName: 'Friday Derby', timestamp: when })
+    await flushPromises()
+    hub.get('CupActivated')!({ cupId: 5, cupName: 'Friday Derby', timestamp: when })
+    await flushPromises()
+    answers[1]!(answer({ id: 4, name: 'Other', version: 9, tracks: [], createdAt: when, updatedAt: when }))
+    await flushPromises()
+    answers[0]!(answer({ id: 3, name: 'Short set', version: 2, tracks: [], createdAt: when, updatedAt: when }))
+    await flushPromises()
+
+    api.PUT.mockImplementation((path: string) =>
+      Promise.resolve(path === '/api/config/tracks' ? answer(loop([{ track: 'arena' }, { track: 'loop', laps: 3, weather: 'rain' }], 'v2')) : answer({ id: 4, name: 'Other', version: 10, tracks: [], createdAt: when, updatedAt: when })),
+    )
+    await moveLoopDown()
+    await click('Save rotation')
+    await click('Also save to the collection "Other"')
+    await click('Save', body().find('.n-dialog'))
+
+    expect(api.PUT).toHaveBeenLastCalledWith('/api/collections/{id}', expect.objectContaining({ params: { path: { id: 4 } }, headers: { 'If-Match': '"9"' } }))
+  })
+
+  // A reload that starts while the save is on its way read the file before it.
+  it('ignores a reload that started during a save', async () => {
+    const put = deferred<unknown>()
+    api.PUT.mockReturnValue(put.promise)
+    await mountPanel()
+    await labelled('Rotation name').setValue('Saved name')
+    await click('Save rotation')
+
+    const old = deferred<unknown>()
+    const others = api.GET.getMockImplementation()!
+    api.GET.mockImplementation((path: string) => (path === '/api/config/tracks' ? old.promise : others(path)))
+    hub.get('CupActivated')!({ cupId: 5, cupName: 'Friday Derby', timestamp: when })
+    await flushPromises()
+
+    put.resolve(answer(loop([{ track: 'loop', laps: 3, weather: 'rain' }, { track: 'arena' }], 'v2', 'Saved name')))
+    await flushPromises()
+    old.resolve(answer(loop([{ track: 'stale' }], 'v1', 'Evening')))
+    await flushPromises()
+
+    expect(nameValue()).toBe('Saved name')
+  })
+
+  // After "Use theirs" the draft is clean and Save disabled: focus goes to the name.
+  it('puts focus on the name after using theirs', async () => {
+    api.PUT.mockResolvedValue(refused(loop([{ track: 'fields14' }], 'v9', 'Theirs'), 409))
+    await mountPanel()
+
+    await moveLoopDown()
+    await click('Save rotation')
+    await click('Use theirs')
+    await flushPromises()
+
+    expect(document.activeElement?.getAttribute('aria-label')).toBe('Rotation name')
+    expect(nameValue()).toBe('Theirs')
+  })
 })

@@ -103,14 +103,19 @@ async function load(options: { keepDraft?: boolean } = {}) {
       return
     }
 
-    loadError.value = null
-    cup.value = current.response.status === 200 && current.data ? current.data : null
-    if (variantList?.data) variants.value = variantList.data
-    collections.value = collectionList.data ?? collections.value
-    followed.value = cup.value?.collectionId != null ? await readCollection(cup.value.collectionId) : null
+    // Held here until this load is known to be the latest: an older answer must not change
+    // the cup, or the collection a save to it would write.
+    const activeCup = current.response.status === 200 && current.data ? current.data : null
+    const followedNow = activeCup?.collectionId != null ? await readCollection(activeCup.collectionId) : null
     if (mine !== loadNumber) {
       return
     }
+
+    loadError.value = null
+    cup.value = activeCup
+    followed.value = followedNow
+    if (variantList?.data) variants.value = variantList.data
+    collections.value = collectionList.data ?? collections.value
 
     const keep = edits !== editsAtStart || (options.keepDraft && dirty.value)
     if (!keep) {
@@ -160,6 +165,9 @@ async function save() {
       'The rotation was not saved.',
     )
     if (outcome.kind === 'ok' && isLoop(outcome.row)) {
+      // Loads started while the save was on its way read the file before it: not theirs to show.
+      loadNumber++
+      loading.value = false
       adopt(outcome.row)
       conflict.value = null
       await nextTick()
@@ -176,11 +184,11 @@ async function save() {
   }
 }
 
-/** Their rotation wins: the draft shows it. */
+/** Their rotation wins: the draft shows it. Save is then disabled, so focus goes to the name. */
 function useTheirs() {
   if (conflict.value) adopt(conflict.value)
   conflict.value = null
-  void focusIn('[data-save]')
+  void focusIn('input[aria-label="Rotation name"]')
 }
 
 /** Mine wins: my draft stays, on top of their version, to save again. */

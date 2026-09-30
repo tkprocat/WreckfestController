@@ -305,6 +305,14 @@ public class ConfigService
     /// </summary>
     public virtual void WriteSettings(IReadOnlyDictionary<string, string> settings)
     {
+        lock (_writeLock)
+        {
+            WriteSettingsCore(settings);
+        }
+    }
+
+    private void WriteSettingsCore(IReadOnlyDictionary<string, string> settings)
+    {
         var configPath = GetConfigFilePath();
         var lines = File.ReadAllLines(configPath);
         var newLines = new List<string>();
