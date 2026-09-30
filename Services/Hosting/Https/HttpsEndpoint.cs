@@ -7,9 +7,19 @@ using Microsoft.AspNetCore.Server.Kestrel.Https;
 namespace WreckfestController.Services.Hosting.Https;
 
 /// <summary>The status the API reports: the provider's, or "off" when HTTPS is not configured.</summary>
-public sealed class HttpsStatusSource(CertificateProvider? provider)
+public sealed class HttpsStatusSource
 {
-    public HttpsStatus Status => provider?.Status ?? HttpsStatus.Off;
+    private readonly Func<HttpsStatus> _status;
+
+    public HttpsStatusSource(CertificateProvider? provider) => _status = () => provider?.Status ?? HttpsStatus.Off;
+
+    /// <summary>A fixed or computed status, for a host without a provider.</summary>
+    public HttpsStatusSource(Func<HttpsStatus> status) => _status = status;
+
+    public HttpsStatus Status => _status();
+
+    /// <summary>HTTPS not configured.</summary>
+    public static HttpsStatusSource None => new(() => HttpsStatus.Off);
 }
 
 /// <summary>Kestrel's endpoints, from <see cref="ApiEndpoints"/> only.</summary>

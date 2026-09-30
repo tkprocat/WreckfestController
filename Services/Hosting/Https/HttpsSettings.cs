@@ -75,7 +75,7 @@ public sealed record FileSourceSettings(string Path, string? KeyPath, string? Pa
 /// port browsers use (<see cref="PublicPort"/>, when NAT maps 443 to the HTTPS port), and
 /// HSTS, which is opt-in.
 /// </summary>
-public sealed record HttpsSettings(CertificateSourceSettings Source, int PublicPort, bool Hsts)
+public sealed record HttpsSettings(CertificateSourceSettings Source, int PublicPort, bool Hsts, string? PublicHost = null)
 {
     /// <summary>
     /// The settings, or an error that names what is wrong: both sources, neither, or one only
@@ -158,7 +158,15 @@ public sealed record HttpsSettings(CertificateSourceSettings Source, int PublicP
             throw new HttpsConfigurationException($"Api:Https:Hsts is '{rawHsts}'. Use true or false.");
         }
 
-        return new HttpsSettings(source, publicPort, hsts);
+        // The name remote browsers use, for the HTTP -> HTTPS redirect. Optional: the store's
+        // Host, or the certificate's name, stands in. Never taken from a request.
+        var publicHost = Text(section, "PublicHost");
+        if (publicHost is not null && Uri.CheckHostName(publicHost) is not (UriHostNameType.Dns or UriHostNameType.IPv4 or UriHostNameType.IPv6))
+        {
+            throw new HttpsConfigurationException($"Api:Https:PublicHost is '{publicHost}'. Use a host name, such as wf.example.com.");
+        }
+
+        return new HttpsSettings(source, publicPort, hsts, publicHost);
     }
 
     private static string? Text(IConfigurationSection section, string key) =>

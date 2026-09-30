@@ -1,3 +1,5 @@
+using WreckfestController.Services.Hosting;
+using WreckfestController.Services.Hosting.Https;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Extensions.Logging;
@@ -27,12 +29,21 @@ public partial class ConfigurationTab : UserControl
     public ConfigurationTab(
         SettingsService settingsService,
         AccountService accountService,
+        IApiServer apiServer,
         ILogger<ConfigurationTab> logger)
     {
         InitializeComponent();
 
         _settingsService = settingsService;
         _accountService = accountService;
+        _apiServer = apiServer;
+
+        // The web API's state, HTTPS included: broken HTTPS locks the browser out, so this is
+        // where it has to be visible. Refreshed while the tab exists.
+        ShowApiStatus();
+        _apiStatusTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
+        _apiStatusTimer.Tick += (_, _) => ShowApiStatus();
+        _apiStatusTimer.Start();
         _logger = logger;
         _currentSettings = new UserSettings();
 
@@ -55,6 +66,19 @@ public partial class ConfigurationTab : UserControl
                 LoadSettings();
             }
         });
+    }
+
+    private readonly IApiServer _apiServer;
+    private readonly System.Windows.Threading.DispatcherTimer _apiStatusTimer;
+
+    /// <summary>Shows where the API listens and how HTTPS stands, or why the API is not running.</summary>
+    private void ShowApiStatus()
+    {
+        ApiStatusText.Text = ApiStatusDescription.Describe(_apiServer.IsRunning, _apiServer.BaseUrl, _apiServer.StartError, _apiServer.HttpsStatus, DateTimeOffset.UtcNow);
+        var colour = _apiServer.StartError is not null ? "RedColor"
+            : _apiServer.HttpsStatus is { Error: not null } or { ExpiresSoon: true } ? "YellowColor"
+            : "TextSecondary";
+        ApiStatusText.Foreground = (System.Windows.Media.Brush)FindResource(colour);
     }
 
     /// <summary>Re-reads the account count. Also called when the database becomes ready.</summary>
