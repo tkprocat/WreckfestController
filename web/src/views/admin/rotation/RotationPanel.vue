@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
 import { NAlert, NButton, NInput, NSelect, NSkeleton, NSpace, NTag, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
@@ -39,8 +39,16 @@ const name = ref('')
 const tracks = ref<Track[]>([])
 const busy = ref<'save' | 'deploy' | 'cup' | null>(null)
 const conflict = shallowRef<Loop | null>(null)
-/** Set after a save while a cup is active: offer to save the same tracks there too. */
-const offerCup = ref(false)
+/**
+ * Set after a save while a cup is active: the rotation as saved, to offer to the cup (or the
+ * collection it follows) too. What the offer sends is this, never later edits; editing again
+ * withdraws it.
+ */
+const savedForCup = shallowRef<{ name: string; tracks: Track[] } | null>(null)
+/** The collection the active cup follows, as it was when the panel loaded: its version guards the save. */
+const followed = shallowRef<Collection | null>(null)
+const root = ref<HTMLElement | null>(null)
+const nameHintId = useId()
 /** A change on the server while the draft had unsaved edits: say so, do not overwrite. */
 const staleNotice = ref(false)
 const deployId = ref<number | null>(null)
@@ -49,14 +57,35 @@ const dirty = computed(
   () => !!loop.value && (name.value !== loop.value.collectionName || JSON.stringify(tracks.value) !== JSON.stringify(loop.value.tracks)),
 )
 
+// Loads are numbered, and edits counted: an answer is used only if it is the latest load's,
+// and it replaces the draft only if nothing was typed while it was on its way.
+let loadNumber = 0
+let edits = 0
+let adopting = false
+watch([name, tracks], () => {
+  if (!adopting) {
+    edits++
+    savedForCup.value = null
+  }
+}, { deep: true })
+
 function adopt(next: Loop) {
+  adopting = true
   loop.value = next
   name.value = next.collectionName
   tracks.value = next.tracks.map((t) => ({ ...t }))
   staleNotice.value = false
+  void nextTick(() => (adopting = false))
 }
 
+/**
+ * Reads the rotation and the active cup. `keepDraft` (a hub event): unsaved edits stay, with
+ * a notice when the file changed. Without it (Reload, Discard) the draft is replaced, unless
+ * something was typed after the click.
+ */
 async function load(options: { keepDraft?: boolean } = {}) {
+  const mine = ++loadNumber
+  const editsAtStart = edits
   loading.value = true
   try {
     const [rotation, current, variantList, collectionList] = await Promise.all([
@@ -65,6 +94,10 @@ async function load(options: { keepDraft?: boolean } = {}) {
       variants.value.length ? Promise.resolve(null) : api.GET('/api/catalogue/variants', { params: { query: { includeHidden: true } } }),
       api.GET('/api/collections'),
     ])
+    if (mine !== loadNumber) {
+      return
+    }
+
     if (!rotation.data) {
       loadError.value = rotation.error && typeof rotation.error === 'object' && 'title' in rotation.error ? String(rotation.error.title) : 'The rotation could not be read.'
       return
@@ -74,15 +107,32 @@ async function load(options: { keepDraft?: boolean } = {}) {
     cup.value = current.response.status === 200 && current.data ? current.data : null
     if (variantList?.data) variants.value = variantList.data
     collections.value = collectionList.data ?? collections.value
-    if (options.keepDraft && dirty.value && rotation.data.version !== loop.value?.version) {
-      staleNotice.value = true
-    } else if (!(options.keepDraft && dirty.value)) {
+    followed.value = cup.value?.collectionId != null ? await readCollection(cup.value.collectionId) : null
+    if (mine !== loadNumber) {
+      return
+    }
+
+    const keep = edits !== editsAtStart || (options.keepDraft && dirty.value)
+    if (!keep) {
       adopt(rotation.data)
+    } else if (rotation.data.version !== loop.value?.version) {
+      staleNotice.value = true
     }
   } catch {
     loadError.value = 'The rotation could not be read: no answer from the controller.'
   } finally {
-    loading.value = false
+    if (mine === loadNumber) {
+      loading.value = false
+    }
+  }
+}
+
+async function readCollection(id: number): Promise<Collection | null> {
+  try {
+    const { data } = await api.GET('/api/collections/{id}', { params: { path: { id } } })
+    return data ?? null
+  } catch {
+    return null
   }
 }
 
@@ -93,13 +143,17 @@ function fail(outcome: Outcome<unknown>, fallback: string) {
 }
 
 async function save() {
-  if (busy.value || !loop.value) return
+  if (busy.value || !loop.value || !name.value.trim()) return
   busy.value = 'save'
+  // A load still on its way predates this save: its answer must not replace what it saves.
+  loadNumber++
+  loading.value = false
+  const sent = { name: name.value.trim(), tracks: tracks.value.map((t) => ({ ...t })) }
   try {
     const outcome = await send(
       () =>
         api.PUT('/api/config/tracks', {
-          body: { collectionName: name.value.trim(), tracks: tracks.value },
+          body: { collectionName: sent.name, tracks: sent.tracks },
           headers: { 'If-Match': `"${loop.value!.version}"` },
         }),
       isLoop,
@@ -108,10 +162,12 @@ async function save() {
     if (outcome.kind === 'ok' && isLoop(outcome.row)) {
       adopt(outcome.row)
       conflict.value = null
-      offerCup.value = cup.value !== null
+      await nextTick()
+      savedForCup.value = cup.value !== null ? sent : null
       message.success('Rotation saved. The server uses it from its next start.')
     } else if (outcome.kind === 'conflict') {
       conflict.value = outcome.current
+      await focusIn('[aria-label="Changed elsewhere"] button')
     } else {
       fail(outcome, 'The rotation was not saved.')
     }
@@ -124,12 +180,20 @@ async function save() {
 function useTheirs() {
   if (conflict.value) adopt(conflict.value)
   conflict.value = null
+  void focusIn('[data-save]')
 }
 
 /** Mine wins: my draft stays, on top of their version, to save again. */
 function keepMine() {
   if (conflict.value) loop.value = conflict.value
   conflict.value = null
+  void focusIn('[data-save]')
+}
+
+/** The conflict view replaces the editor, and back: keyboard focus follows. */
+async function focusIn(selector: string) {
+  await nextTick()
+  root.value?.querySelector<HTMLElement>(selector)?.focus()
 }
 
 const comparable = (n: string, t: Track[]) => ({ name: n, tracks: t.map(describeTrack) })
@@ -182,7 +246,8 @@ const cupTarget = computed(() => {
 async function saveToCup() {
   const target = cupTarget.value
   const c = cup.value
-  if (!target || !c || busy.value) return
+  const saved = savedForCup.value
+  if (!target || !c || !saved || busy.value) return
   if (target.kind === 'collection') {
     const sure = await confirm({
       title: 'Save to the collection',
@@ -194,9 +259,9 @@ async function saveToCup() {
 
   busy.value = 'cup'
   try {
-    const outcome = target.kind === 'cup' ? await saveCupTracks(c) : await saveCollectionTracks(target.id)
+    const outcome = target.kind === 'cup' ? await saveCupTracks(c, saved) : await saveCollectionTracks(saved)
     if (outcome.kind === 'ok') {
-      offerCup.value = false
+      savedForCup.value = null
       message.success(`Saved to ${target.label} too.`)
       await load()
     } else if (outcome.kind === 'conflict') {
@@ -210,8 +275,8 @@ async function saveToCup() {
   }
 }
 
-/** PUT replaces everything a cup sets: send it back as it is, with the new tracks. */
-function saveCupTracks(c: Cup) {
+/** PUT replaces everything a cup sets: send it back as it is, with the saved tracks. */
+function saveCupTracks(c: Cup, saved: { name: string; tracks: Track[] }) {
   const body = {
     name: c.name,
     description: c.description,
@@ -222,8 +287,8 @@ function saveCupTracks(c: Cup) {
     sessionMode: c.sessionMode,
     gridOrder: c.gridOrder,
     collectionId: null,
-    tracks: tracks.value,
-    collectionName: name.value.trim() || null,
+    tracks: saved.tracks,
+    collectionName: saved.name || null,
   }
   return send(
     () => api.PUT('/api/cups/{id}', { params: { path: { id: c.id } }, body, headers: { 'If-Match': `"${c.version}"` } }),
@@ -232,16 +297,22 @@ function saveCupTracks(c: Cup) {
   )
 }
 
-async function saveCollectionTracks(id: number): Promise<Outcome<Collection>> {
+/**
+ * With the collection's version from when the panel loaded: a change made to it since is a
+ * conflict, not something this save silently replaces.
+ */
+async function saveCollectionTracks(saved: { name: string; tracks: Track[] }): Promise<Outcome<Collection>> {
+  const row = followed.value
+  if (!row) {
+    return { kind: 'refused', message: 'The collection could not be read. Reload, then try again.' }
+  }
+
   const isCollection = (b: unknown): b is Collection => hasId(b) && 'tracks' in (b as object)
-  const current = await send(() => api.GET('/api/collections/{id}', { params: { path: { id } } }), isCollection, 'The collection could not be read.')
-  if (current.kind !== 'ok' || !current.row) return current
-  const row = current.row
   return send(
     () =>
       api.PUT('/api/collections/{id}', {
-        params: { path: { id } },
-        body: { name: row.name, tracks: tracks.value },
+        params: { path: { id: row.id } },
+        body: { name: row.name, tracks: saved.tracks },
         headers: { 'If-Match': `"${row.version}"` },
       }),
     isCollection,
@@ -264,7 +335,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
 </script>
 
 <template>
-  <div>
+  <div ref="root">
     <NAlert v-if="loadError" type="warning" :title="loadError" class="gap">
       <NButton size="small" @click="load()">Try again</NButton>
     </NAlert>
@@ -295,18 +366,27 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
         @mine="keepMine"
       />
       <template v-else>
-        <NInput v-model:value="name" :maxlength="128" placeholder="Rotation name (optional)" :input-props="{ 'aria-label': 'Rotation name' }" class="gap" style="max-width: 360px" />
+        <NInput
+          v-model:value="name"
+          :maxlength="128"
+          :disabled="busy !== null"
+          placeholder="Rotation name"
+          :status="name.trim() ? undefined : 'warning'"
+          :input-props="{ 'aria-label': 'Rotation name', 'aria-describedby': name.trim() ? undefined : nameHintId, 'aria-invalid': name.trim() ? undefined : 'true' }"
+          style="max-width: 360px"
+        />
+        <p :id="nameHintId" class="hint" :class="{ hidden: name.trim() }">A name is needed: the server shows it to players.</p>
         <TrackListEditor v-model="tracks" :variants="variants" :disabled="busy !== null" />
         <NSpace class="actions" align="center">
-          <NButton type="primary" :loading="busy === 'save'" :disabled="busy !== null || !dirty" @click="save">Save rotation</NButton>
+          <NButton type="primary" data-save :loading="busy === 'save'" :disabled="busy !== null || !dirty || !name.trim()" @click="save">Save rotation</NButton>
           <NButton :disabled="busy !== null || tracks.length < 2" @click="shuffle">Shuffle</NButton>
           <NButton :disabled="busy !== null" :loading="loading" @click="load()">{{ dirty ? 'Discard changes' : 'Reload' }}</NButton>
         </NSpace>
-        <NAlert v-if="offerCup && cupTarget" type="info" class="gap">
+        <NAlert v-if="savedForCup && cupTarget" type="info" class="gap">
           The rotation is saved. {{ cup?.name }} still has its own list for its next run.
           <NSpace class="offer">
             <NButton size="small" type="primary" :loading="busy === 'cup'" :disabled="busy !== null" @click="saveToCup">Also save to {{ cupTarget.label }}</NButton>
-            <NButton size="small" :disabled="busy !== null" @click="offerCup = false">Only this session</NButton>
+            <NButton size="small" :disabled="busy !== null" @click="savedForCup = null">Only this session</NButton>
           </NSpace>
         </NAlert>
         <NSpace align="center" class="deploy">
@@ -343,5 +423,13 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
 }
 .offer {
   margin-top: 8px;
+}
+.hint {
+  margin: 4px 0 12px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+.hint.hidden {
+  visibility: hidden;
 }
 </style>

@@ -9,6 +9,13 @@ namespace WreckfestController.Services.Config;
 
 public class ConfigService
 {
+    /// <summary>
+    /// Every write of server_config.cfg reads it, changes it and writes it back: one at a
+    /// time, or two writers each keep the other's change out. A conditional write checks
+    /// the version inside the same lock (<see cref="TryWriteEventLoopTracks"/>).
+    /// </summary>
+    private readonly object _writeLock = new();
+
     private readonly IOptionsMonitor<WreckfestServerSettings> _server;
     private readonly ILogger<ConfigService> _logger;
 
@@ -186,6 +193,14 @@ public class ConfigService
 
     public virtual void WriteBasicConfig(ServerConfig config)
     {
+        lock (_writeLock)
+        {
+            WriteBasicConfigCore(config);
+        }
+    }
+
+    private void WriteBasicConfigCore(ServerConfig config)
+    {
         var configPath = GetConfigFilePath();
         var lines = File.ReadAllLines(configPath);
         var newLines = new List<string>();
@@ -337,6 +352,50 @@ public class ConfigService
     /// the loop. Nothing is written.
     /// </exception>
     public virtual void WriteEventLoopTracks(String collectionName, List<EventLoopTrack> tracks)
+    {
+        lock (_writeLock)
+        {
+            WriteEventLoopTracksCore(collectionName, tracks);
+        }
+    }
+
+    /// <summary>
+    /// Writes the event loop only if it is still at <paramref name="expectedVersion"/>
+    /// (<see cref="EventLoopVersion"/>): the check and the write happen under one lock, so
+    /// two callers with the same version cannot both succeed. False, with the loop as it
+    /// is now, when it changed.
+    /// </summary>
+    public virtual bool TryWriteEventLoopTracks(
+        string collectionName,
+        List<EventLoopTrack> tracks,
+        string expectedVersion,
+        out (string Name, List<EventLoopTrack> Tracks) current)
+    {
+        lock (_writeLock)
+        {
+            current = (GetCurrentCollectionName(), ReadEventLoopTracks());
+            if (EventLoopVersion(current.Name, current.Tracks) != expectedVersion)
+            {
+                return false;
+            }
+
+            WriteEventLoopTracksCore(collectionName, tracks);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// The event loop's version: a hash of its name and every track setting. The file has
+    /// no version of its own, so any edit, from anywhere, changes this.
+    /// </summary>
+    public static string EventLoopVersion(string collectionName, IReadOnlyList<EventLoopTrack> tracks)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new { collectionName, tracks });
+        var hash = System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(json));
+        return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
+    }
+
+    private void WriteEventLoopTracksCore(String collectionName, List<EventLoopTrack> tracks)
     {
         var configPath = GetConfigFilePath();
         var lines = File.ReadAllLines(configPath);

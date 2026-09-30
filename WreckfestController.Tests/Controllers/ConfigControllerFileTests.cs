@@ -188,6 +188,28 @@ public sealed class ConfigControllerFileTests : IDisposable
         Assert.Equal(saved.Version, _controller.GetEventLoopTracks().Value!.Version);
     }
 
+    // Two writers holding the same version: the check and the write are one step, so only
+    // one of them succeeds and the other gets the rotation as it now is.
+    [Fact]
+    public void ConcurrentSavesWithTheSameVersion_OnlyOneWins()
+    {
+        File.WriteAllLines(_file, ["server_name=Old", "", "# Event Loop", "#CollectionName Start", "el_add=urban09_1"]);
+        var service = new ConfigService(TestSettings.Server(workingDirectory: _folder), NullLogger<ConfigService>.Instance);
+        var version = ConfigService.EventLoopVersion(service.GetCurrentCollectionName(), service.ReadEventLoopTracks());
+
+        var wins = 0;
+        Parallel.For(0, 8, i =>
+        {
+            if (service.TryWriteEventLoopTracks($"Writer {i}", [new EventLoopTrack { Track = $"track{i}" }], version, out _))
+            {
+                Interlocked.Increment(ref wins);
+            }
+        });
+
+        Assert.Equal(1, wins);
+        Assert.Single(service.ReadEventLoopTracks());
+    }
+
     // The old #CollectionName was kept above the new one and read first: a rename never showed.
     [Fact]
     public void PutTracks_Renames_AndKeepsOneCollectionName()

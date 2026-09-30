@@ -176,17 +176,21 @@ public class ConfigController : ControllerBase
             return this.Invalid(error.Field, error.Message);
         }
 
-        var expected = Request.Headers.IfMatch.ToString().Trim();
+        var expected = Request.Headers.IfMatch.ToString().Trim().Trim('"');
         EventLoopResponse saved;
         try
         {
-            if (expected.Length > 0 && ReadEventLoop() is var current && $"\"{current.Version}\"" != expected)
+            if (expected.Length == 0)
             {
-                Response.Headers.ETag = $"\"{current.Version}\"";
-                return Conflict(current);
+                _configService.WriteEventLoopTracks(request.CollectionName, request.Tracks);
+            }
+            else if (!_configService.TryWriteEventLoopTracks(request.CollectionName, request.Tracks, expected, out var current))
+            {
+                var now = ToResponse(current.Name, current.Tracks);
+                Response.Headers.ETag = $"\"{now.Version}\"";
+                return Conflict(now);
             }
 
-            _configService.WriteEventLoopTracks(request.CollectionName, request.Tracks);
             saved = ReadEventLoop();
         }
         catch (Exception ex)
@@ -199,12 +203,11 @@ public class ConfigController : ControllerBase
         return WithETag(saved);
     }
 
-    private EventLoopResponse ReadEventLoop()
-    {
-        var tracks = _configService.ReadEventLoopTracks();
-        var name = _configService.GetCurrentCollectionName();
-        return new EventLoopResponse(tracks.Count, tracks, name, EventLoopResponse.VersionOf(name, tracks));
-    }
+    private EventLoopResponse ReadEventLoop() =>
+        ToResponse(_configService.GetCurrentCollectionName(), _configService.ReadEventLoopTracks());
+
+    private static EventLoopResponse ToResponse(string name, List<EventLoopTrack> tracks) =>
+        new(tracks.Count, tracks, name, ConfigService.EventLoopVersion(name, tracks));
 
     private EventLoopResponse WithETag(EventLoopResponse loop)
     {
@@ -238,19 +241,10 @@ public class ConfigController : ControllerBase
 public sealed record CollectionNameResponse(string CollectionName);
 
 /// <summary>
-/// The event loop as server_config.cfg holds it. <see cref="Version"/> is a hash of the
-/// name and every track setting: the file has no version of its own, and any edit, from
-/// anywhere, changes it.
+/// The event loop as server_config.cfg holds it. <see cref="Version"/> is
+/// <see cref="ConfigService.EventLoopVersion"/>: any edit, from anywhere, changes it.
 /// </summary>
-public sealed record EventLoopResponse(int Count, IReadOnlyList<EventLoopTrack> Tracks, string CollectionName, string Version)
-{
-    public static string VersionOf(string collectionName, IReadOnlyList<EventLoopTrack> tracks)
-    {
-        var json = System.Text.Json.JsonSerializer.Serialize(new { collectionName, tracks });
-        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json));
-        return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
-    }
-}
+public sealed record EventLoopResponse(int Count, IReadOnlyList<EventLoopTrack> Tracks, string CollectionName, string Version);
 
 /// <summary>
 /// A server setting as PUT basic sees it: the field, its server_config.cfg key, and whether

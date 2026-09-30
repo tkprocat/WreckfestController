@@ -225,4 +225,126 @@ describe('RotationPanel', () => {
     expect(api.PUT).not.toHaveBeenCalled()
     random.mockRestore()
   })
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((r) => (resolve = r))
+    return { promise, resolve }
+  }
+  const nameValue = () => (labelled('Rotation name').element as HTMLInputElement).value
+  const moveLoopDown = () => labelled('Move loop (not in the catalogue) down').trigger('click')
+
+  // The collection's version is the one read when the panel loaded: a change made to the
+  // collection since then is a conflict, not silently replaced.
+  it('saves to the followed collection with the version it loaded', async () => {
+    current = cup({ collectionId: 3, collectionName: 'Short set' })
+    api.PUT.mockImplementation((path: string) =>
+      Promise.resolve(path === '/api/config/tracks' ? answer(loop([{ track: 'arena' }, { track: 'loop', laps: 3, weather: 'rain' }], 'v2')) : refused({ id: 3, name: 'Short set', version: 3, tracks: [], createdAt: when, updatedAt: when }, 409)),
+    )
+    await mountPanel()
+    const reads = api.GET.mock.calls.filter(([path]) => path === '/api/collections/{id}').length
+    // Someone changes the collection after the panel loaded it.
+    const others = api.GET.getMockImplementation()!
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/collections/{id}' ? Promise.resolve(answer({ id: 3, name: 'Short set', version: 3, tracks: [], createdAt: when, updatedAt: when })) : others(path),
+    )
+
+    await moveLoopDown()
+    await click('Save rotation')
+    await click('Also save to the collection "Short set"')
+    await click('Save', body().find('.n-dialog'))
+
+    expect(api.PUT.mock.calls.at(-1)![1].headers).toEqual({ 'If-Match': '"2"' })
+    expect(api.GET.mock.calls.filter(([path]) => path === '/api/collections/{id}').length).toBeLessThanOrEqual(reads + 1)
+    expect(body().text()).toContain('was changed meanwhile')
+  })
+
+  // The offer is for what was saved; editing again withdraws it.
+  it('withdraws the offer to save to the cup once the draft is edited again', async () => {
+    current = cup()
+    api.PUT.mockResolvedValue(answer(loop([{ track: 'arena' }, { track: 'loop', laps: 3, weather: 'rain' }], 'v2')))
+    await mountPanel()
+
+    await moveLoopDown()
+    await click('Save rotation')
+    expect(body().text()).toContain('Also save to "Friday Derby"')
+
+    await labelled('Rotation name').setValue('Edited after saving')
+    await flushPromises()
+    expect(body().text()).not.toContain('Also save to "Friday Derby"')
+  })
+
+  // A reload on its way when the user types keeps what was typed.
+  it('keeps typing done while a reload is on its way', async () => {
+    await mountPanel()
+    const slow = deferred<unknown>()
+    api.GET.mockImplementation((path: string) => (path === '/api/config/tracks' ? slow.promise : Promise.resolve(answer(path === '/api/cups/current' ? undefined : []))))
+
+    await click('Reload')
+    await labelled('Rotation name').setValue('Typed meanwhile')
+    slow.resolve(answer(loop([{ track: 'other' }], 'v7', 'From the file')))
+    await flushPromises()
+
+    expect(nameValue()).toBe('Typed meanwhile')
+  })
+
+  // A hub reload that started before a save must not put the older rotation back.
+  it('ignores a reload that started before a save', async () => {
+    await mountPanel()
+    const old = deferred<unknown>()
+    api.GET.mockImplementation((path: string) => (path === '/api/config/tracks' ? old.promise : Promise.resolve(path === '/api/cups/current' ? noContent() : answer([]))))
+    hub.get('CupActivated')!({ cupId: 5, cupName: 'Friday Derby', timestamp: when })
+    await flushPromises()
+
+    api.PUT.mockResolvedValue(answer(loop([{ track: 'arena' }, { track: 'loop', laps: 3, weather: 'rain' }], 'v2', 'Saved name')))
+    await labelled('Rotation name').setValue('Saved name')
+    await click('Save rotation')
+    old.resolve(answer(loop([{ track: 'stale' }], 'v0', 'Stale')))
+    await flushPromises()
+
+    expect(nameValue()).toBe('Saved name')
+  })
+
+  it('locks the name while a save is on its way', async () => {
+    const pending = deferred<unknown>()
+    api.PUT.mockReturnValue(pending.promise)
+    await mountPanel()
+
+    await moveLoopDown()
+    await click('Save rotation')
+    expect(labelled('Rotation name').attributes('disabled')).toBeDefined()
+
+    pending.resolve(answer(loop([{ track: 'arena' }, { track: 'loop', laps: 3, weather: 'rain' }], 'v2')))
+    await flushPromises()
+    expect(labelled('Rotation name').attributes('disabled')).toBeUndefined()
+  })
+
+  // The API requires the name: the panel says so instead of sending a save it refuses.
+  it('needs a name before it saves', async () => {
+    rotation = loop([{ track: 'loop' }, { track: 'arena' }], 'v1', '')
+    await mountPanel()
+
+    await moveLoopDown()
+    const save = wrapper!.findAll('button').find((b) => b.text() === 'Save rotation')!
+    expect(save.attributes('disabled')).toBeDefined()
+    expect(labelled('Rotation name').attributes('aria-invalid')).toBe('true')
+    expect(wrapper!.text()).toContain('A name is needed')
+
+    await labelled('Rotation name').setValue('Named')
+    expect(save.attributes('disabled')).toBeUndefined()
+  })
+
+  it('moves focus into the conflict view, and back to Save after it', async () => {
+    api.PUT.mockResolvedValue(refused(loop([{ track: 'fields14' }], 'v9', 'Theirs'), 409))
+    await mountPanel()
+
+    await moveLoopDown()
+    await click('Save rotation')
+    await flushPromises()
+    expect(document.activeElement?.closest('[aria-label="Changed elsewhere"]')).not.toBeNull()
+
+    await click('Keep mine')
+    await flushPromises()
+    expect(document.activeElement?.hasAttribute('data-save')).toBe(true)
+  })
 })
