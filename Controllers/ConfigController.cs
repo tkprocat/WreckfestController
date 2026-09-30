@@ -144,14 +144,16 @@ public class ConfigController : ControllerBase
         }
     }
 
-    /// <summary>The event loop: the tracks the server rotates through.</summary>
+    /// <summary>
+    /// The event loop: the tracks the server rotates through, its <c>#CollectionName</c>,
+    /// and its version (also the ETag), for a PUT that must not overwrite a change made since.
+    /// </summary>
     [HttpGet("tracks")]
     public ActionResult<EventLoopResponse> GetEventLoopTracks()
     {
         try
         {
-            var tracks = _configService.ReadEventLoopTracks();
-            return new EventLoopResponse(tracks.Count, tracks);
+            return WithETag(ReadEventLoop());
         }
         catch (Exception ex)
         {
@@ -162,7 +164,9 @@ public class ConfigController : ControllerBase
 
     /// <summary>
     /// Replaces the event loop. Returns it as read back from the file. A file without a
-    /// <c># Event Loop</c> heading has nowhere to put it: that is a 409.
+    /// <c># Event Loop</c> heading has nowhere to put it: that is a 409. If-Match is
+    /// optional: with the version a GET gave, a rotation changed since (by another admin, a
+    /// cup starting, a deploy or an edit of the file) answers 409 with the rotation as it is.
     /// </summary>
     [HttpPut("tracks")]
     public ActionResult<EventLoopResponse> UpdateEventLoopTracks(UpdateEventLoopTracksRequest request)
@@ -172,11 +176,22 @@ public class ConfigController : ControllerBase
             return this.Invalid(error.Field, error.Message);
         }
 
-        List<EventLoopTrack> saved;
+        var expected = Request.Headers.IfMatch.ToString().Trim().Trim('"');
+        EventLoopResponse saved;
         try
         {
-            _configService.WriteEventLoopTracks(request.CollectionName, request.Tracks);
-            saved = _configService.ReadEventLoopTracks();
+            if (expected.Length == 0)
+            {
+                _configService.WriteEventLoopTracks(request.CollectionName, request.Tracks);
+            }
+            else if (!_configService.TryWriteEventLoopTracks(request.CollectionName, request.Tracks, expected, out var current))
+            {
+                var now = ToResponse(current.Name, current.Tracks);
+                Response.Headers.ETag = $"\"{now.Version}\"";
+                return Conflict(now);
+            }
+
+            saved = ReadEventLoop();
         }
         catch (Exception ex)
         {
@@ -185,7 +200,19 @@ public class ConfigController : ControllerBase
         }
 
         _logger.LogInformation("{Caller} replaced the event loop ({Count} tracks)", this.Caller(), request.Tracks.Count);
-        return new EventLoopResponse(saved.Count, saved);
+        return WithETag(saved);
+    }
+
+    private EventLoopResponse ReadEventLoop() =>
+        ToResponse(_configService.GetCurrentCollectionName(), _configService.ReadEventLoopTracks());
+
+    private static EventLoopResponse ToResponse(string name, List<EventLoopTrack> tracks) =>
+        new(tracks.Count, tracks, name, ConfigService.EventLoopVersion(name, tracks));
+
+    private EventLoopResponse WithETag(EventLoopResponse loop)
+    {
+        Response.Headers.ETag = $"\"{loop.Version}\"";
+        return loop;
     }
 
     /// <summary>Live server info, asked of the running server with its <c>?</c> command.</summary>
@@ -213,7 +240,11 @@ public class ConfigController : ControllerBase
 
 public sealed record CollectionNameResponse(string CollectionName);
 
-public sealed record EventLoopResponse(int Count, IReadOnlyList<EventLoopTrack> Tracks);
+/// <summary>
+/// The event loop as server_config.cfg holds it. <see cref="Version"/> is
+/// <see cref="ConfigService.EventLoopVersion"/>: any edit, from anywhere, changes it.
+/// </summary>
+public sealed record EventLoopResponse(int Count, IReadOnlyList<EventLoopTrack> Tracks, string CollectionName, string Version);
 
 /// <summary>
 /// A server setting as PUT basic sees it: the field, its server_config.cfg key, and whether
