@@ -26,6 +26,12 @@ public interface IApiServer
     Task StopAsync();
     bool IsRunning { get; }
     string BaseUrl { get; }
+
+    /// <summary>The HTTPS certificate's status, "off", or null before the API has started.</summary>
+    HttpsStatus? HttpsStatus { get; }
+
+    /// <summary>Why the API did not start, when it did not.</summary>
+    string? StartError { get; }
 }
 
 /// <summary>
@@ -221,7 +227,9 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddSignalR();
         builder.Services.AddSingleton(WebApp.Resolve(configuration));
         // HTTPS status: StartAsync registers the real one first; a test host has none.
-        builder.Services.TryAddSingleton(new HttpsStatusSource(null));
+        builder.Services.TryAddSingleton(HttpsStatusSource.None);
+        var https = ApiEndpoints.Resolve(configuration, AppContext.BaseDirectory).Https;
+        builder.Services.AddSingleton(sp => new HttpsPolicy(https, sp.GetRequiredService<HttpsStatusSource>()));
     }
 
     /// <summary>
@@ -232,6 +240,10 @@ public class ApiServer : IApiServer, IDisposable
     {
         // Before anything reads the client IP or the scheme.
         app.UseForwardedHeaders();
+
+        // With HTTPS on: remote plain HTTP is redirected (page loads) or refused (the rest)
+        // before any file, recovery page, sign-in or API call is served over it.
+        app.UseMiddleware<HttpsEnforcementMiddleware>();
 
         // The web app's files, which need neither the database nor a signed-in user.
         var web = app.Services.GetRequiredService<WebApp>();

@@ -1,3 +1,5 @@
+using WreckfestController.Services.Hosting;
+using WreckfestController.Services.Hosting.Https;
 using System.Timers;
 using System.Windows;
 using System.Windows.Input;
@@ -49,6 +51,7 @@ public partial class MainWindow : Window
         DatabaseState databaseState,
         DatabaseBootstrapper databaseBootstrapper,
         AccountService accountService,
+        IApiServer apiServer,
         ILogger<MainWindow> logger,
         ILoggerFactory loggerFactory)
     {
@@ -77,6 +80,7 @@ public partial class MainWindow : Window
         _configurationTab = new ConfigurationTab(
             settingsService,
             accountService,
+            apiServer,
             _loggerFactory.CreateLogger<ConfigurationTab>());
 
         _cupsTab = new CupsTab(

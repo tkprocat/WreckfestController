@@ -12,6 +12,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Settings File Path Info -->
@@ -260,6 +261,29 @@
                             Width="200"
                             Margin="15,0,0,0"/>
                 </Grid>
+            </Border>
+
+            <!-- Web API: where it listens, and how HTTPS stands. Read only: the startup
+                 settings file holds these, edited by hand. -->
+            <Border Grid.Row="7"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,20,0,0">
+                <StackPanel>
+                    <TextBlock Text="WEB API"
+                               FontSize="14"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextPrimary}"
+                               Margin="0,0,0,5"/>
+                    <TextBlock x:Name="ApiStatusText"
+                               Text="Loading..."
+                               FontSize="11"
+                               Foreground="{StaticResource TextSecondary}"
+                               TextWrapping="Wrap"/>
+                </StackPanel>
             </Border>
         </Grid>
     </ScrollViewer>

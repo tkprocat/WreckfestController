@@ -144,4 +144,13 @@ public sealed class HttpsSettingsTests
 
         Assert.Equal("WebHosting", source.StoreName);
     }
+
+    [Fact]
+    public void PublicHost_IsRead_AndMustBeAHostName()
+    {
+        Assert.Equal("wf.example.com", Resolve(("Api:Https:Path", "server.pfx"), ("Api:Https:PublicHost", "wf.example.com")).Https!.PublicHost);
+
+        var error = Assert.Throws<HttpsConfigurationException>(() => Resolve(("Api:Https:Path", "server.pfx"), ("Api:Https:PublicHost", "https://wf.example.com/")));
+        Assert.Contains("PublicHost", error.Message, StringComparison.Ordinal);
+    }
 }
