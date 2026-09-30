@@ -157,10 +157,12 @@ public sealed class CertificateSourceTests : IDisposable
         Assert.Equal(usable.Thumbprint, chosen!.Thumbprint);
     }
 
-    [Fact]
-    public void AFileWithADamagedExtension_IsRefused_WithAReason()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AFileWithADamagedExtension_IsRefused_WithAReason(bool badSan)
     {
-        var path = _ca.Pfx(_ca.Malformed(Host, badSan: false));
+        var path = _ca.Pfx(_ca.Malformed(Host, badSan));
 
         var error = Assert.Throws<HttpsConfigurationException>(() => Source(new FileSourceSettings(path, null, null)).Load());
 

@@ -53,6 +53,9 @@ public static class CertificateRules
             return $"it expired on {certificate.NotAfter.ToUniversalTime():u}";
         }
 
+        // Decoded here so a damaged name list is found now, not when a client asks for it.
+        _ = certificate.Extensions.OfType<X509SubjectAlternativeNameExtension>().SelectMany(e => e.EnumerateDnsNames()).ToList();
+
         var ekus = certificate.Extensions.OfType<X509EnhancedKeyUsageExtension>().SelectMany(e => e.EnhancedKeyUsages.Cast<Oid>()).ToList();
         if (ekus.Count > 0 && !ekus.Any(o => o.Value == ServerAuthentication))
         {

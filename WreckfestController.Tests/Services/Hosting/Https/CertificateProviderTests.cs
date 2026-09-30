@@ -70,8 +70,10 @@ public sealed class CertificateProviderTests : IDisposable
     }
 
     // A replacement whose extensions cannot be read: refused on reload, the old one serves on.
-    [Fact]
-    public void AMalformedReplacement_KeepsTheWorkingCertificate()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AMalformedReplacement_KeepsTheWorkingCertificate(bool badSan)
     {
         var first = _ca.Leaf([Host]);
         var path = _ca.Pfx(first);
@@ -81,7 +83,7 @@ public sealed class CertificateProviderTests : IDisposable
             NullLogger.Instance);
         provider.Start();
 
-        _ca.Pfx(_ca.Malformed(Host, badSan: false));
+        _ca.Pfx(_ca.Malformed(Host, badSan));
         provider.Refresh();
 
         Assert.Equal(first.Thumbprint, provider.Current.Loaded.Certificate.Thumbprint);
