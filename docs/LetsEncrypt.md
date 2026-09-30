@@ -100,14 +100,23 @@ What happened in the tested run:
 
 ## 5. The real certificate
 
-The same command **without `--baseuri`**, storing to the folder the controller will use
-(`--pfxfilepath C:\certs\wf.example.com`). Optionally add `--pfxpassword` to encrypt
+The same command **without `--baseuri`**, storing to the folder the controller will use,
+which must exist first:
+
+```powershell
+New-Item -ItemType Directory -Force C:\certs\wf.example.com | Out-Null
+```
+
+then `--pfxfilepath C:\certs\wf.example.com`. Optionally add `--pfxpassword` to encrypt
 the `.pfx`; the controller then needs the same value in `Api:Https:Password`.
 *Not run in this walkthrough: the staging run proved the method.*
 
 Once production works, remove the staging renewal, so it cannot renew into a folder
-anyone uses: `wacs.exe --cancel --baseuri https://acme-staging-v02.api.letsencrypt.org/`
-(or pick it from `wacs.exe`'s menu, *Manage renewals*).
+anyone uses. Name it with `--id` (without it, nothing is cancelled):
+`wacs.exe --cancel --id <staging renewal id> --baseuri https://acme-staging-v02.api.letsencrypt.org/`.
+To see the id, or to cancel from the menu instead, start
+`wacs.exe --baseuri https://acme-staging-v02.api.letsencrypt.org/` and choose *Manage
+renewals*: plain `wacs.exe` shows production's renewals only.
 
 ## 6. Point the controller at it
 
@@ -149,8 +158,8 @@ watcher, and a check every 5 minutes): no restart.
 
 To test a renewal, force it for **one** certificate on staging, into the staging folder:
 `wacs.exe --renew --force --id <renewal id> --baseuri https://acme-staging-v02.api.letsencrypt.org/`
-(the id is shown by *Manage renewals* in `wacs.exe`'s menu; without `--id`, every staging
-renewal is forced). Point a test controller at the staging folder, then open a **new**
+(the id is shown by *Manage renewals* in the menu of `wacs.exe` started with the staging
+`--baseuri`; without `--id`, every staging renewal is forced). Point a test controller at the staging folder, then open a **new**
 connection and check the certificate's dates. *Not run in this walkthrough.*
 
 ## Storing in the Windows store instead of a file
