@@ -29,9 +29,9 @@ app shows the result on its **Configuration** tab, under **WEB API**.
     "Location": "CurrentUser",  // or LocalMachine (default: CurrentUser)
 
     // ...OR a file (not both):
-    // "Path": "C:\\certs\\wf.pfx",   // .pfx, or .pem/.crt with its chain
-    // "KeyPath": "C:\\certs\\wf.key", // for .pem only
-    // "Password": "...",              // if the .pfx or the key has one
+    // "Path": "C:\\certs\\wf.pfx",   // .pfx/.p12, or a PEM file (.pem/.crt) with its chain
+    // "KeyPath": "C:\\certs\\wf.key", // for PEM: the key. Without KeyPath, Path is read as a .pfx
+    // "Password": "...",              // if the .pfx or the PEM key has one (plain text: protect this file)
 
     "PublicHost": "wf.example.com", // optional: where plain-HTTP visitors are sent (see below)
     "PublicPort": 443,              // optional: the HTTPS port browsers use, when NAT maps it (default: HttpsPort)
@@ -46,7 +46,7 @@ app shows the result on its **Configuration** tab, under **WEB API**.
   `"Https": {}`: an empty section never means "HTTP only".
 - **Relative paths** are relative to the folder the exe is in, not to where it was
   started from.
-- **Ports** must be 1-65535, and HTTP and HTTPS must differ.
+- **Ports** must be 1-65535; with `Https`, HTTP and HTTPS must differ.
 - `Kestrel:Endpoints`, `urls` and the .NET development certificate fallback are **not**
   used: `Api` alone decides where the API listens.
 - **Changing the settings needs a restart.** Replacing the certificate at the configured
@@ -70,6 +70,10 @@ A certificate is only served if:
 - from the store: one of its DNS names is exactly `Host`. Wildcards and longer names
   do not match. Of several, the one issued last wins, so a renewal is picked up
   without any change here.
+- from a file: the file's certificate with a private key (the first one, in a `.pfx`
+  that holds several). Put **one** server certificate per file. Its names are not
+  checked against anything: make sure they are the names browsers use (and
+  `PublicHost`).
 
 Clients do not have to trust it for the controller to use it: self-signed and company
 CAs work. **Browsers** will warn unless they trust the issuer (see *Self-signed*).
@@ -84,7 +88,9 @@ renewed file is picked up within seconds. A new certificate is used for the next
 connection; no restart. If a reload fails (a half-written file, a wrong key), the
 working certificate stays in use, the error shows under **WEB API** and in
 `GET /api/https`, and it is tried again sooner. Once the working certificate itself
-expires, HTTPS connections are refused - never swapped for plain HTTP.
+expires, **new** HTTPS connections are refused - never swapped for plain HTTP.
+Connections already open (a page's live-updates connection, say) are not cut; they end
+when the browser closes them.
 
 The desktop app turns the certificate line **yellow** 14 days before it expires.
 
@@ -92,11 +98,12 @@ The desktop app turns the certificate line **yellow** 14 days before it expires.
 
 With `Https` configured:
 
-- **Browsers on another computer** that open `http://...` are sent to the HTTPS
-  address (a temporary `307` redirect) - for page loads only.
+- **`GET` and `HEAD` requests from another computer** - page loads, and anything else
+  fetched that way outside `/api`, `/hubs` and `/openapi` - are sent to the HTTPS address
+  (a temporary `307` redirect).
 - **Everything else over plain HTTP from another computer is refused** (`400 Use
-  HTTPS`): the API, the live-updates hub, sign-ins, saves. A redirect cannot take back a
-  password that was already sent in the clear.
+  HTTPS`): anything under `/api`, `/hubs` or `/openapi`, and every other method (sign-ins,
+  saves). A redirect cannot take back a password that was already sent in the clear.
 - **This PC** keeps plain HTTP: `http://127.0.0.1:5100` still works for local tools and
   scripts, as long as the request carries no forwarding headers.
 - **Through a trusted reverse proxy** (`Api:TrustedProxies`) that says the browser used
@@ -123,7 +130,11 @@ HTTP. A reverse proxy should always send those headers.
 or preload). It is **off by default**, for a reason: HSTS applies to **every port** of a
 host name, so a browser that has learned it turns `http://wf.example.com:5100` into
 `https://wf.example.com:5100` - not 5101 - and never reaches the redirect. Turn it on
-only when HTTPS is on **443** (directly, or through NAT with `PublicPort: 443`).
+only when **every** address people use for this host name is plain `https://name` (port
+443) and `http://name` (port 80): an old link or bookmark to `http://name:5100` will stop
+working, since the browser rewrites it to `https://name:5100`. It also covers every
+other HTTP service on the same name. `PublicPort: 443` only changes where the redirect
+points; it does not make HSTS safe on its own.
 
 It is never sent for `localhost`, `*.localhost` or loopback addresses. A browser that
 has learned HSTS for a name also refuses to click past a certificate warning for it. To
@@ -134,8 +145,11 @@ make a browser forget, in Chrome or Edge open `chrome://net-internals/#hsts` (or
 
 - **Desktop app:** Configuration tab, **WEB API**: where it listens, the certificate's
   names, issuer and expiry, or why the API did not start.
-- **API:** `GET /api/https` (signed in): the same, for scripts. No key, password or path
-  is ever shown.
+- **API:** `GET /api/https` (signed in): the certificate part only - HTTPS on or off,
+  names, issuer, expiry, the 14-day warning, `lastRefresh` (the last successful check,
+  whether or not the certificate changed) and the last reload error. It cannot say why
+  the API did not start: then it does not answer at all. No key, password or path is
+  ever shown.
 - **Log:** the certificate used at start, each replacement, and each failed reload.
 
 ## Getting a certificate

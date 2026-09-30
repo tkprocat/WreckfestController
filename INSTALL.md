@@ -79,7 +79,7 @@ With `AllowRemote` set to `false` (the default), the API binds to `127.0.0.1`. S
 
 If a reverse proxy (for example HAProxy on OPNsense) terminates HTTPS in front of the controller, add its address to `TrustedProxies`, such as `["192.168.1.1"]`. The controller then sees each browser's real IP for the login rate limit, and knows the connection was HTTPS. Forwarded headers from any other address are ignored. See [docs/API.md](docs/API.md#behind-a-reverse-proxy).
 
-`HttpPort` and `HttpsPort` default to 5100 and 5101. Give each instance its own pair when running several controllers on one Windows host, otherwise the second instance fails to bind. A value outside 1-65535 is ignored with a warning and the default is used.
+`HttpPort` and `HttpsPort` default to 5100 and 5101. Give each instance its own pair when running several controllers on one Windows host, otherwise the second instance fails to bind. A value that is not a port (1-65535) stops the API, with the reason in the desktop app's log; it is not replaced by a default.
 
 ### 3. Configure Wreckfest Server
 

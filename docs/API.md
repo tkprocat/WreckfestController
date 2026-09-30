@@ -110,13 +110,14 @@ pick its own IP by sending them. An entry that is not an address or range is log
 skipped.
 
 Ports are configurable so several controller instances can manage separate servers
-on one Windows host. A port that is not 1–65535, the same port for HTTP and HTTPS, or an
-`Https` section that is incomplete or unusable stops the API, with the reason in the
+on one Windows host. A port that is not 1–65535, the same port for HTTP and HTTPS (with
+`Https`), or an `Https` section that is incomplete or unusable stops the API, with the reason in the
 desktop app and the log; it never falls back to another port or to plain HTTP.
 `Kestrel:Endpoints` and `urls` are not used.
 
 `GET /api/https` (signed in) reports HTTPS: off, or the certificate's names, issuer,
-expiry, a 14-day warning, the last reload and its error. No key, password or path.
+expiry, a 14-day warning, `lastRefresh` (the last successful check, even when the
+certificate did not change) and the last reload's error. No key, password or path.
 
 ## Endpoints
 
