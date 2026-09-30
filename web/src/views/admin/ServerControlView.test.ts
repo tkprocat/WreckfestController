@@ -116,6 +116,69 @@ describe('ServerControlView', () => {
   })
 
   // Like the Stop and Restart buttons: a command that disconnects players asks first.
+  // The game's /bot command, as the Laravel page sent it; the typed command stays.
+  it('adds an AI bot with the /bot command', async () => {
+    serve({ '/api/server/status': running, '/api/server/logfile': tail() })
+    api.POST.mockResolvedValue(answer({ message: 'Command sent.' }))
+    wrapper = mountPage()
+    await flushPromises()
+    await wrapper.find('input[aria-label="Console command"]').setValue('/message hi')
+
+    await button(wrapper, 'Add AI bot').trigger('click')
+    await flushPromises()
+
+    expect(api.POST).toHaveBeenCalledWith('/api/server/command', { body: { command: '/bot' } })
+    expect(document.body.textContent).toContain('Sent /bot: an AI bot joins if there is room.')
+    expect((wrapper.find('input[aria-label="Console command"]').element as HTMLInputElement).value).toBe('/message hi')
+  })
+
+  // One request at a time: while /bot is on its way, nothing else can be sent.
+  it('sends /bot once while it is pending, and frees the controls after a failure', async () => {
+    serve({ '/api/server/status': running, '/api/server/logfile': tail() })
+    const pending = deferred<unknown>()
+    api.POST.mockReturnValueOnce(pending.promise)
+    wrapper = mountPage()
+    await flushPromises()
+    await wrapper.find('input[aria-label="Console command"]').setValue('/message hi')
+
+    await button(wrapper, 'Add AI bot').trigger('click')
+    await button(wrapper, 'Add AI bot').trigger('click')
+    await wrapper.find('input[aria-label="Console command"]').trigger('keyup.enter')
+    await flushPromises()
+
+    expect(api.POST).toHaveBeenCalledTimes(1)
+    for (const label of ['Stop', 'Restart', 'Send']) {
+      expect(button(wrapper, label).attributes('disabled'), label).toBeDefined()
+    }
+
+    pending.resolve({ data: undefined, error: { title: 'The hook is not injected.', status: 409 }, response: new Response(null, { status: 409 }) })
+    await flushPromises()
+
+    expect(document.body.textContent).toContain('The hook is not injected.')
+    expect(button(wrapper, 'Add AI bot').attributes('disabled')).toBeUndefined()
+    expect((wrapper.find('input[aria-label="Console command"]').element as HTMLInputElement).value).toBe('/message hi')
+  })
+
+  it('offers Add AI bot only while the server is known to run', async () => {
+    const refresh = deferred<unknown>()
+    api.GET.mockImplementation((path: string) => (path === '/api/server/status' ? refresh.promise : Promise.resolve(tail())))
+    wrapper = mountPage()
+    await flushPromises()
+
+    expect(button(wrapper, 'Add AI bot').attributes('disabled')).toBeDefined()
+    refresh.resolve(running)
+    await flushPromises()
+    expect(button(wrapper, 'Add AI bot').attributes('disabled')).toBeUndefined()
+  })
+
+  it('offers Add AI bot only while the server runs', async () => {
+    serve({ '/api/server/status': stopped, '/api/server/logfile': tail() })
+    wrapper = mountPage()
+    await flushPromises()
+
+    expect(button(wrapper, 'Add AI bot').attributes('disabled')).toBeDefined()
+  })
+
   it('asks before sending a command that disconnects players', async () => {
     serve({ '/api/server/status': running, '/api/server/logfile': tail() })
     api.POST.mockResolvedValue(answer({ message: 'Sent' }))

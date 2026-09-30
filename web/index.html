@@ -8,6 +8,8 @@
   </head>
   <body>
     <div id="app"></div>
+    <!-- Toasts render here (App.vue): a live region, so screen readers announce them. -->
+    <div id="messages" role="status" aria-live="polite"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

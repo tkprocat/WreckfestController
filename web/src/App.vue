@@ -24,7 +24,7 @@ async function signOut() {
 
 <template>
   <NConfigProvider :theme="theme">
-    <NMessageProvider>
+    <NMessageProvider to="#messages">
       <NDialogProvider>
         <header class="app-header">
           <RouterLink to="/" class="app-title">Wreckfest Controller</RouterLink>
