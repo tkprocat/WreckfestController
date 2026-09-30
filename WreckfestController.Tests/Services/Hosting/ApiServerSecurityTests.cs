@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using WreckfestController.Services.Auth;
 using WreckfestController.Services.Hosting;
 
@@ -31,25 +32,25 @@ public class ApiServerSecurityTests
         Assert.False(ApiKeyAuthenticationHandler.Matches(configured, provided));
     }
 
-    [Theory]
-    [InlineData(false, "http://127.0.0.1:5100;https://127.0.0.1:5101")]
-    [InlineData(true, "http://0.0.0.0:5100;https://0.0.0.0:5101")]
-    public void GetListenUrls_UsesExpectedBindAddress(bool allowRemote, string expectedUrls)
-    {
-        Assert.Equal(expectedUrls, ApiServer.GetListenUrls(allowRemote));
-    }
-
     // Several controller instances can manage separate servers on one Windows host,
     // so the ports must not be fixed to the defaults.
     [Theory]
-    [InlineData(false, 6200, 6201, "http://127.0.0.1:6200;https://127.0.0.1:6201")]
-    [InlineData(true, 8080, 8443, "http://0.0.0.0:8080;https://0.0.0.0:8443")]
-    public void GetListenUrls_UsesConfiguredPorts(
-        bool allowRemote,
-        int httpPort,
-        int httpsPort,
-        string expectedUrls)
+    [InlineData(false, "6200", "6201")]
+    [InlineData(true, "8080", "8443")]
+    public void Endpoints_UseTheConfiguredAddressAndPorts(bool allowRemote, string httpPort, string httpsPort)
     {
-        Assert.Equal(expectedUrls, ApiServer.GetListenUrls(allowRemote, httpPort, httpsPort));
+        var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Api:AllowRemote"] = allowRemote.ToString(),
+                ["Api:HttpPort"] = httpPort,
+                ["Api:HttpsPort"] = httpsPort,
+            })
+            .Build();
+
+        var endpoints = WreckfestController.Services.Hosting.Https.ApiEndpoints.Resolve(configuration, AppContext.BaseDirectory);
+
+        Assert.Equal(allowRemote ? System.Net.IPAddress.Any : System.Net.IPAddress.Loopback, endpoints.Address);
+        Assert.Equal((int.Parse(httpPort), int.Parse(httpsPort)), (endpoints.HttpPort, endpoints.HttpsPort));
     }
 }
