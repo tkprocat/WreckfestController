@@ -12,6 +12,7 @@ const pages = [
   { name: 'admin-settings', label: 'Settings' },
   { name: 'admin-tracks', label: 'Tracks' },
   { name: 'admin-tags', label: 'Tags' },
+  { name: 'admin-rotation', label: 'Rotation' },
   { name: 'admin-collections', label: 'Collections' },
   { name: 'admin-cups', label: 'Cups' },
   { name: 'admin-users', label: 'Users' },

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Reflection;
 using System.Text.Json;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -140,6 +141,85 @@ public sealed class ConfigControllerFileTests : IDisposable
 
         Assert.Equal(1, result.Value!.Count);
         Assert.Equal(("fields14", 3), (result.Value.Tracks[0].Track, result.Value.Tracks[0].Laps));
+    }
+
+    // The file has no version of its own: the rotation's version is a hash of what it holds,
+    // so any edit, from anywhere, changes it.
+    [Fact]
+    public void GetTracks_GivesTheNameAndAVersion_ThatAnyEditChanges()
+    {
+        File.WriteAllLines(_file, ["server_name=Old", "", "# Event Loop", "#CollectionName Evening", "el_add=urban09_1", "el_laps=3"]);
+
+        var first = _controller.GetEventLoopTracks().Value!;
+        Assert.Equal("Evening", first.CollectionName);
+        Assert.Equal($"\"{first.Version}\"", _controller.Response.Headers.ETag.ToString());
+        Assert.Equal(first.Version, _controller.GetEventLoopTracks().Value!.Version);
+
+        File.WriteAllLines(_file, ["server_name=Old", "", "# Event Loop", "#CollectionName Evening", "el_add=urban09_1", "el_laps=4"]);
+        Assert.NotEqual(first.Version, _controller.GetEventLoopTracks().Value!.Version);
+    }
+
+    // With the version a GET gave, a rotation changed since is not overwritten: 409 with it as it is.
+    [Fact]
+    public void PutTracks_WithAStaleVersion_IsAConflict_AndNothingIsWritten()
+    {
+        File.WriteAllLines(_file, ["server_name=Old", "", "# Event Loop", "el_add=urban09_1"]);
+        var read = _controller.GetEventLoopTracks().Value!;
+        File.WriteAllLines(_file, ["server_name=Old", "", "# Event Loop", "el_add=fields14"]);
+        var before = File.ReadAllText(_file);
+
+        var result = Put($"\"{read.Version}\"", "loop");
+
+        var conflict = Assert.IsType<ConflictObjectResult>(result.Result);
+        Assert.Equal("fields14", Assert.IsType<EventLoopResponse>(conflict.Value).Tracks[0].Track);
+        Assert.Equal(before, File.ReadAllText(_file));
+    }
+
+    [Fact]
+    public void PutTracks_WithTheCurrentVersion_Saves_AndGivesTheNewOne()
+    {
+        File.WriteAllLines(_file, ["server_name=Old", "", "# Event Loop", "el_add=urban09_1"]);
+        var read = _controller.GetEventLoopTracks().Value!;
+
+        var saved = Put($"\"{read.Version}\"", "fields14").Value!;
+
+        Assert.Equal("fields14", saved.Tracks[0].Track);
+        Assert.NotEqual(read.Version, saved.Version);
+        Assert.Equal(saved.Version, _controller.GetEventLoopTracks().Value!.Version);
+    }
+
+    // The old #CollectionName was kept above the new one and read first: a rename never showed.
+    [Fact]
+    public void PutTracks_Renames_AndKeepsOneCollectionName()
+    {
+        File.WriteAllLines(_file, ["server_name=Old", "", "# Event Loop", "#CollectionName First", "el_add=urban09_1"]);
+
+        Put(null, "fields14");
+        _controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest("Second", [new EventLoopTrack { Track = "loop" }]));
+        var read = _controller.GetEventLoopTracks().Value!;
+
+        Assert.Equal("Second", read.CollectionName);
+        Assert.Single(File.ReadAllLines(_file), line => line.TrimStart().StartsWith("#CollectionName", StringComparison.Ordinal));
+    }
+
+    // If-Match stays optional: a caller without it writes as before.
+    [Fact]
+    public void PutTracks_WithoutIfMatch_Saves()
+    {
+        File.WriteAllLines(_file, ["server_name=Old", "", "# Event Loop", "el_add=urban09_1"]);
+
+        Assert.Equal("fields14", Put(null, "fields14").Value!.Tracks[0].Track);
+    }
+
+    private ActionResult<EventLoopResponse> Put(string? ifMatch, string track)
+    {
+        _controller.ControllerContext.HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        if (ifMatch is not null)
+        {
+            _controller.Request.Headers.IfMatch = ifMatch;
+        }
+
+        return _controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest("Evening", [new EventLoopTrack { Track = track }]));
     }
 
     // Without the heading there is nowhere to write the loop: it used to answer 200 anyway.

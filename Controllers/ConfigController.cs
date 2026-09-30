@@ -144,14 +144,16 @@ public class ConfigController : ControllerBase
         }
     }
 
-    /// <summary>The event loop: the tracks the server rotates through.</summary>
+    /// <summary>
+    /// The event loop: the tracks the server rotates through, its <c>#CollectionName</c>,
+    /// and its version (also the ETag), for a PUT that must not overwrite a change made since.
+    /// </summary>
     [HttpGet("tracks")]
     public ActionResult<EventLoopResponse> GetEventLoopTracks()
     {
         try
         {
-            var tracks = _configService.ReadEventLoopTracks();
-            return new EventLoopResponse(tracks.Count, tracks);
+            return WithETag(ReadEventLoop());
         }
         catch (Exception ex)
         {
@@ -162,7 +164,9 @@ public class ConfigController : ControllerBase
 
     /// <summary>
     /// Replaces the event loop. Returns it as read back from the file. A file without a
-    /// <c># Event Loop</c> heading has nowhere to put it: that is a 409.
+    /// <c># Event Loop</c> heading has nowhere to put it: that is a 409. If-Match is
+    /// optional: with the version a GET gave, a rotation changed since (by another admin, a
+    /// cup starting, a deploy or an edit of the file) answers 409 with the rotation as it is.
     /// </summary>
     [HttpPut("tracks")]
     public ActionResult<EventLoopResponse> UpdateEventLoopTracks(UpdateEventLoopTracksRequest request)
@@ -172,11 +176,18 @@ public class ConfigController : ControllerBase
             return this.Invalid(error.Field, error.Message);
         }
 
-        List<EventLoopTrack> saved;
+        var expected = Request.Headers.IfMatch.ToString().Trim();
+        EventLoopResponse saved;
         try
         {
+            if (expected.Length > 0 && ReadEventLoop() is var current && $"\"{current.Version}\"" != expected)
+            {
+                Response.Headers.ETag = $"\"{current.Version}\"";
+                return Conflict(current);
+            }
+
             _configService.WriteEventLoopTracks(request.CollectionName, request.Tracks);
-            saved = _configService.ReadEventLoopTracks();
+            saved = ReadEventLoop();
         }
         catch (Exception ex)
         {
@@ -185,7 +196,20 @@ public class ConfigController : ControllerBase
         }
 
         _logger.LogInformation("{Caller} replaced the event loop ({Count} tracks)", this.Caller(), request.Tracks.Count);
-        return new EventLoopResponse(saved.Count, saved);
+        return WithETag(saved);
+    }
+
+    private EventLoopResponse ReadEventLoop()
+    {
+        var tracks = _configService.ReadEventLoopTracks();
+        var name = _configService.GetCurrentCollectionName();
+        return new EventLoopResponse(tracks.Count, tracks, name, EventLoopResponse.VersionOf(name, tracks));
+    }
+
+    private EventLoopResponse WithETag(EventLoopResponse loop)
+    {
+        Response.Headers.ETag = $"\"{loop.Version}\"";
+        return loop;
     }
 
     /// <summary>Live server info, asked of the running server with its <c>?</c> command.</summary>
@@ -213,7 +237,20 @@ public class ConfigController : ControllerBase
 
 public sealed record CollectionNameResponse(string CollectionName);
 
-public sealed record EventLoopResponse(int Count, IReadOnlyList<EventLoopTrack> Tracks);
+/// <summary>
+/// The event loop as server_config.cfg holds it. <see cref="Version"/> is a hash of the
+/// name and every track setting: the file has no version of its own, and any edit, from
+/// anywhere, changes it.
+/// </summary>
+public sealed record EventLoopResponse(int Count, IReadOnlyList<EventLoopTrack> Tracks, string CollectionName, string Version)
+{
+    public static string VersionOf(string collectionName, IReadOnlyList<EventLoopTrack> tracks)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new { collectionName, tracks });
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json));
+        return Convert.ToHexString(hash, 0, 8).ToLowerInvariant();
+    }
+}
 
 /// <summary>
 /// A server setting as PUT basic sees it: the field, its server_config.cfg key, and whether

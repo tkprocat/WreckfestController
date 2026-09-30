@@ -375,7 +375,13 @@ public class ConfigService
                        !lines[i].Trim().StartsWith("## Add") &&
                        !lines[i].Trim().TrimStart('#').StartsWith("el_"))
                 {
-                    newLines.Add(lines[i]);
+                    // The old name is replaced below, not kept: a kept one came first and
+                    // was the one read back, so a rename never showed.
+                    if (!lines[i].Trim().StartsWith("#CollectionName"))
+                    {
+                        newLines.Add(lines[i]);
+                    }
+
                     i++;
                 }
 

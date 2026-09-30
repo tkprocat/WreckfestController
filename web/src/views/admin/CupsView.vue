@@ -9,6 +9,7 @@ import { useResourceList } from '@/crud/useResourceList'
 import { formatWhen } from '@/utils/format'
 import { onHub } from '@/realtime/hub'
 import CupEditor from './cups/CupEditor.vue'
+import RotationPanel from './rotation/RotationPanel.vue'
 
 type Cup = components['schemas']['CupResponse']
 
@@ -169,6 +170,10 @@ onBeforeUnmount(() => {
 <template>
   <section>
     <h1>Cups</h1>
+    <!-- The rotation as "the current cup": the same panel as the Rotation page, to compare. -->
+    <NCard title="Now running" class="gap">
+      <RotationPanel />
+    </NCard>
     <NCard title="Cups">
       <p class="muted">
         Scheduled events: at their time the server restarts with the cup's rotation, scoring and settings.
@@ -192,6 +197,9 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.gap {
+  margin-bottom: 16px;
+}
 :deep(.flag) {
   margin-left: 6px;
 }

@@ -60,7 +60,7 @@ let wrapper: VueWrapper | undefined
 async function mountPage() {
   wrapper = mount(
     defineComponent({ render: () => h(NMessageProvider, () => h(NDialogProvider, () => h(CupsView))) }),
-    { attachTo: document.body },
+    { attachTo: document.body, global: { stubs: { RotationPanel: true } } },
   )
   await flushPromises()
   return wrapper

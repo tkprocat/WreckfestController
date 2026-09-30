@@ -3624,6 +3624,8 @@ export interface components {
             /** Format: int32 */
             count: number;
             tracks: components["schemas"]["EventLoopTrack"][];
+            collectionName: string;
+            version: string;
         };
         EventLoopTrack: {
             track?: string;
