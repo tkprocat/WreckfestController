@@ -157,6 +157,29 @@ public sealed class ConfigControllerFileTests : IDisposable
         Assert.Equal(before, File.ReadAllText(_file));
     }
 
+    // A config that cannot be read or written is refused without the exception's text,
+    // which names the file's local path (#153).
+    [Fact]
+    public void AFileThatCannotBeRead_IsRefused_WithoutItsPath()
+    {
+        Directory.CreateDirectory(_file);
+
+        var read = ControllerTesting.RefusalOf(_controller.GetBasicConfig());
+        var tracks = ControllerTesting.RefusalOf(_controller.GetEventLoopTracks());
+        var write = ControllerTesting.RefusalOf(_controller.UpdateEventLoopTracks(new UpdateEventLoopTracksRequest(
+            "Evening",
+            [new EventLoopTrack { Track = "fields14" }])));
+
+        foreach (var message in new[] { read, tracks, write })
+        {
+            Assert.DoesNotContain(_folder, message, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.Contains("log has the details", read, StringComparison.Ordinal);
+        // A write says what to fix when it knows.
+        Assert.Contains("was not found", write, StringComparison.Ordinal);
+    }
+
     // The 409 names keys by ServerConfigPatch.KeyOf: every field the patch can set must map
     // to the key the file uses, or a present line would be reported missing.
     [Fact]

@@ -824,7 +824,7 @@ public class ServerManagerTests
 
         // Assert
         Assert.False(result.Success);
-        Assert.Contains("Failed to validate target process", result.Message);
+        Assert.Contains("Could not check process -1", result.Message);
     }
 
     [Fact]

@@ -182,7 +182,7 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error reading console hook pipe {PipeName}", pipeName);
-                PublishHookOutput(processId, $"Hook pipe error: {ex.Message}");
+                PublishHookOutput(processId, "Hook pipe error, retrying. The desktop app's log has the details.");
                 await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
             }
         }

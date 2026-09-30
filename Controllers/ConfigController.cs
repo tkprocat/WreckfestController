@@ -75,7 +75,7 @@ public class ConfigController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to read basic config");
-            return this.Refused($"Failed to read basic config: {ex.Message}");
+            return this.Refused("server_config.cfg could not be read. The desktop app's log has the details.");
         }
     }
 
@@ -97,7 +97,7 @@ public class ConfigController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to read basic config");
-            return this.Refused($"Failed to read basic config: {ex.Message}");
+            return this.Refused("server_config.cfg could not be read. The desktop app's log has the details.");
         }
 
         if (!ServerConfigPatch.TryApply(config, patch, out var error, out var applied))
@@ -122,7 +122,7 @@ public class ConfigController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update basic config");
-            return this.Refused($"Failed to update basic config: {ex.Message}");
+            return WriteRefused(ex);
         }
 
         _logger.LogInformation("{Caller} updated the basic config", this.Caller());
@@ -140,7 +140,7 @@ public class ConfigController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to read track collection name");
-            return this.Refused($"Failed to read track collection name: {ex.Message}");
+            return this.Refused("server_config.cfg could not be read. The desktop app's log has the details.");
         }
     }
 
@@ -156,7 +156,7 @@ public class ConfigController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to read event loop tracks");
-            return this.Refused($"Failed to read event loop tracks: {ex.Message}");
+            return this.Refused("server_config.cfg could not be read. The desktop app's log has the details.");
         }
     }
 
@@ -181,7 +181,7 @@ public class ConfigController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update event loop tracks");
-            return this.Refused($"Failed to update event loop tracks: {ex.Message}");
+            return WriteRefused(ex);
         }
 
         _logger.LogInformation("{Caller} replaced the event loop ({Count} tracks)", this.Caller(), request.Tracks.Count);
@@ -200,9 +200,15 @@ public class ConfigController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to retrieve server info");
-            return this.Refused($"Failed to retrieve server info: {ex.Message}");
+            return this.Refused("The server info could not be read. The desktop app's log has the details.");
         }
     }
+
+    /// <summary>A failed write: why, when the reason is known, else a fixed message. Never the exception's text.</summary>
+    private ActionResult WriteRefused(Exception ex) =>
+        ConfigWriteFailure.From(ex) is { } failure
+            ? this.Refused(failure.Message, ("reason", failure.Reason))
+            : this.Refused("server_config.cfg could not be written. The desktop app's log has the details.");
 }
 
 public sealed record CollectionNameResponse(string CollectionName);

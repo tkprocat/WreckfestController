@@ -305,7 +305,9 @@ public class ServerManager
 
                 if (string.IsNullOrEmpty(serverPath) || !File.Exists(serverPath))
                 {
-                    return (false, $"Server executable not found at: {serverPath}");
+                    // The path stays in the log: the web never sees local paths (#153).
+                    _logger.LogWarning("Server executable not found at {ServerPath}", serverPath);
+                    return (false, "The server executable was not found. Check the server path in the desktop app's settings.");
                 }
 
                 // Resolve config file path if it contains server_config reference
@@ -368,7 +370,7 @@ public class ServerManager
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to start server");
-                return (false, $"Failed to start server: {ex.Message}");
+                return (false, "The server could not be started. The desktop app's log has the details.");
             }
         }
 
@@ -624,7 +626,7 @@ public class ServerManager
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to stop server");
-            return (false, $"Failed to stop server: {ex.Message}");
+            return (false, "The server could not be stopped. The desktop app's log has the details.");
         }
     }
 
@@ -830,7 +832,7 @@ public class ServerManager
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to restart server via /restart command");
-            return (false, $"Failed to restart server: {ex.Message}");
+            return (false, "The server could not be restarted. The desktop app's log has the details.");
         }
     }
 
@@ -910,7 +912,8 @@ public class ServerManager
 
         if (string.IsNullOrEmpty(steamCmdPath) || !File.Exists(steamCmdPath))
         {
-            return (false, $"SteamCmd executable not found at: {steamCmdPath}. Please configure SteamCmd Path in settings.");
+            _logger.LogWarning("SteamCMD not found at {SteamCmdPath}", steamCmdPath);
+            return (false, "SteamCMD was not found. Check the SteamCMD path in the desktop app's settings.");
         }
 
         if (string.IsNullOrEmpty(appId))
@@ -1007,7 +1010,7 @@ public class ServerManager
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to update server via SteamCmd");
-            return (false, $"Failed to update server: {ex.Message}");
+            return (false, "The server could not be updated. The desktop app's log has the details.");
         }
     }
 
@@ -1066,7 +1069,7 @@ public class ServerManager
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error sending command: {Command}", command);
-            return (false, $"Error sending command: {ex.Message}");
+            return (false, "The command could not be sent. The desktop app's log has the details.");
         }
         finally
         {
@@ -1432,7 +1435,8 @@ public class ServerManager
 
         if (!File.Exists(logFilePath))
         {
-            return (false, $"Log file not found at: {logFilePath}", logFilePath, null);
+            _logger.LogWarning("Log file not found at {LogFilePath}", logFilePath);
+            return (false, "The log file was not found. Check the log file path in the desktop app's settings.", logFilePath, null);
         }
 
         try
@@ -1458,7 +1462,7 @@ public class ServerManager
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to read log file: {Path}", logFilePath);
-            return (false, $"Failed to read log file: {ex.Message}", logFilePath, null);
+            return (false, "The log file could not be read. The desktop app's log has the details.", logFilePath, null);
         }
     }
 
@@ -1894,7 +1898,7 @@ public class ServerManager
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to retrieve server info");
-            return (false, $"Failed to retrieve server info: {ex.Message}", null);
+            return (false, "The server info could not be read. The desktop app's log has the details.", null);
         }
     }
 
@@ -2176,7 +2180,7 @@ public class ServerManager
         catch (Exception ex)
         {
             _logger.LogError(ex, $"Failed to attach to process {processId}");
-            return (false, $"Failed to attach: {ex.Message}");
+            return (false, "Could not attach to the server. The desktop app's log has the details.");
         }
     }
 
@@ -2239,7 +2243,7 @@ public class ServerManager
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to validate target process {ProcessId}", processId);
-            return (false, $"Failed to validate target process {processId}: {ex.Message}");
+            return (false, $"Could not check process {processId}. The desktop app's log has the details.");
         }
 
         return await _injectedHookOutputReader.InjectAsync(processId);
