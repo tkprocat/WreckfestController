@@ -101,3 +101,14 @@ a { color: var(--accent); }
     scroll-behavior: auto !important;
   }
 }
+
+/* Application composition is separate from the component theme. */
+.app-main-admin { max-width: 1480px; padding: 32px; }
+.app-title { display: inline-flex; align-items: center; gap: 12px; font-size: 16px; line-height: 1.2; }
+.brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--accent); color: var(--surface); font-weight: 800; font-style: italic; }
+.brand-subtitle { display: block; margin-top: 3px; color: var(--text-muted); font-size: 10px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; }
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 10000; padding: 8px 16px; background: var(--surface); border: 2px solid var(--accent); border-radius: 8px; transform: translateY(-200%); }
+.skip-link:focus { transform: translateY(0); }
+@media (max-width: 959px) {
+  .app-main-admin { padding: 24px 16px; }
+}

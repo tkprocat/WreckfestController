@@ -15,6 +15,8 @@ const props = defineProps<{
   /** What the rows are, for messages: "tags". */
   what: string
   loading?: boolean
+  /** Preserve readable columns in dense tables; scroll inside the table on narrow screens. */
+  minTableWidth?: number
   error?: string | null
   /** For tables with an expand column: what its trigger shows (a button, for keyboard users). */
   renderExpandIcon?: DataTableProps['renderExpandIcon']
@@ -56,6 +58,7 @@ const empty = computed(() => (search.value.trim() ? `No ${props.what} match "${s
     <NDataTable
       :columns="columns"
       :data="shown"
+      :scroll-x="minTableWidth"
       :loading="loading"
       :render-expand-icon="renderExpandIcon"
       :row-key="(row: T) => row.id"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { NButton, NConfigProvider, NDialogProvider, NMessageProvider } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useAppearance } from '@/composables/useAppearance'
@@ -9,6 +9,8 @@ const { preference, theme, overrides, setPreference } = useAppearance()
 
 const auth = useAuthStore()
 const router = useRouter()
+const route = useRoute()
+const isAdmin = computed(() => route.matched.some(record => record.meta.requiresAuth))
 
 /** Shown when the server did not confirm the sign-out: the session may still be valid. */
 const signOutFailed = ref(false)
@@ -25,8 +27,9 @@ async function signOut() {
   <NConfigProvider :theme="theme" :theme-overrides="overrides">
     <NMessageProvider to="#messages">
       <NDialogProvider>
+        <a href="#main-content" class="skip-link">Skip to content</a>
         <header class="app-header">
-          <RouterLink to="/" class="app-title">Wreckfest Controller</RouterLink>
+          <RouterLink to="/" class="app-title" aria-label="Wreckfest Controller"><span class="brand-mark" aria-hidden="true">W</span><span>Wreckfest<span class="brand-subtitle">Controller</span></span></RouterLink>
           <nav class="app-user">
             <label class="appearance-control">
               <span>Theme</span>
@@ -47,7 +50,7 @@ async function signOut() {
             <RouterLink v-else to="/login">Sign in</RouterLink>
           </nav>
         </header>
-        <main class="app-main">
+        <main id="main-content" class="app-main" :class="{ 'app-main-admin': isAdmin }" tabindex="-1">
           <RouterView />
         </main>
       </NDialogProvider>

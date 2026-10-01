@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { h, onMounted, ref, shallowRef } from 'vue'
 import { NButton, NCard, NForm, NInput, NModal, NSpace, useMessage, type DataTableColumns } from 'naive-ui'
 import { api } from '@/api/client'
@@ -211,12 +212,14 @@ onMounted(() => {
 
 <template>
   <section>
-    <h1>Collections</h1>
-    <NCard title="Collections">
-      <p class="muted">
-        Named rotations: tracks in order, each with its game mode, laps and bots. Deploying one writes it to the server's config.
-      </p>
+    <PageHeader title="Collections" description="Build reusable track rotations with game mode, laps and bots, then deploy them to the server configuration.">
+      <template #actions>
+        <NButton type="primary" :disabled="!loaded || busy !== null" @click="editor.start(null)">Add collection</NButton>
+      </template>
+    </PageHeader>
+    <NCard>
       <ResourceTable
+        :min-table-width="760"
         :rows="collections"
         :columns="columns"
         :search-fields="['name']"
@@ -224,11 +227,7 @@ onMounted(() => {
         :loading="loading"
         :error="error"
         @retry="list.reload()"
-      >
-        <template #toolbar>
-          <NButton type="primary" :disabled="!loaded || busy !== null" @click="editor.start(null)">Add collection</NButton>
-        </template>
-      </ResourceTable>
+      />
     </NCard>
 
     <NModal
@@ -257,7 +256,7 @@ onMounted(() => {
         </FormField>
         <NSpace justify="end">
           <NButton :disabled="saving" @click="editor.close()">Cancel</NButton>
-          <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">
+        <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">
             {{ editor.isNew.value ? 'Add' : 'Save' }}
           </NButton>
         </NSpace>

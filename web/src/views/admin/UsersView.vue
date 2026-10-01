@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
   NAlert,
@@ -262,7 +263,7 @@ onMounted(() => void load())
 
 <template>
   <section>
-    <h1>Users</h1>
+    <PageHeader title="Users" description="Manage access to the controller." />
     <NAlert v-if="loadError" type="warning" :title="loadError" />
     <!-- A card renders its header, and so the Add button, only with a title. -->
     <NCard v-else title="Accounts">
@@ -316,7 +317,7 @@ onMounted(() => void load())
         </NFormItem>
         <NSpace justify="end">
           <NButton :disabled="saving" @click="editing = null">Cancel</NButton>
-          <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">
+        <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">
             {{ isNew ? 'Add' : 'Save' }}
           </NButton>
         </NSpace>
@@ -346,7 +347,7 @@ onMounted(() => void load())
         </NFormItem>
         <NSpace justify="end">
           <NButton :disabled="saving" @click="resetting = null">Cancel</NButton>
-          <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving || !newPassword">Reset password</NButton>
+        <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving || !newPassword">Reset password</NButton>
         </NSpace>
       </NForm>
     </NModal>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
   NAlert,
@@ -198,13 +199,13 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
 
 <template>
   <section>
-    <h1>
-      Server control
-      <!-- The last known state; the buttons wait for a current one (running). -->
-      <NTag :type="status?.isRunning ? 'success' : 'default'" round size="small">
+    <PageHeader title="Server control" description="Manage the server and follow its console output.">
+      <template #status>
+        <NTag :type="status?.isRunning ? 'success' : 'default'" round size="small">
         {{ status === null ? 'Unknown' : status.isRunning ? `Running (PID ${status.processId})` : 'Stopped' }}
-      </NTag>
-    </h1>
+        </NTag>
+      </template>
+    </PageHeader>
 
     <NAlert v-if="statusError" type="warning" :title="statusError" class="gap">
       The server's state is not known, so the actions are unavailable until it is.

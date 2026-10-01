@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NButton, NCard, NSpace, NTag, useMessage, type DataTableColumns } from 'naive-ui'
 import { api } from '@/api/client'
@@ -169,16 +170,18 @@ onBeforeUnmount(() => {
 
 <template>
   <section>
-    <h1>Cups</h1>
+    <PageHeader title="Cups" description="Schedule race sessions with their own rotation, scoring and server settings.">
+      <template #actions>
+        <NButton type="primary" :disabled="!loaded" @click="cupEditor?.start(null)">Add cup</NButton>
+      </template>
+    </PageHeader>
     <!-- The rotation as "the current cup": the same panel as the Rotation page, to compare. -->
     <NCard title="Now running" class="gap">
       <RotationPanel />
     </NCard>
-    <NCard title="Cups">
-      <p class="muted">
-        Scheduled events: at their time the server restarts with the cup's rotation, scoring and settings.
-      </p>
+    <NCard>
       <ResourceTable
+        :min-table-width="1050"
         :rows="cups"
         :columns="columns"
         :search-fields="['name', 'description', 'collectionName']"
@@ -186,11 +189,7 @@ onBeforeUnmount(() => {
         :loading="loading"
         :error="error"
         @retry="list.reload()"
-      >
-        <template #toolbar>
-          <NButton type="primary" :disabled="!loaded" @click="cupEditor?.start(null)">Add cup</NButton>
-        </template>
-      </ResourceTable>
+      />
     </NCard>
     <CupEditor ref="cupEditor" @saved="list.replace" />
   </section>
