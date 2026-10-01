@@ -401,10 +401,10 @@ defineExpose({ start })
   font: inherit;
   color: inherit;
   background: transparent;
-  border: 1px solid rgba(128, 128, 128, 0.4);
-  border-radius: 3px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-control);
   padding: 4px 8px;
-  color-scheme: light dark;
+  color-scheme: inherit;
 }
 .gap {
   margin-bottom: 16px;

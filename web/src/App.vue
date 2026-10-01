@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { darkTheme, NButton, NConfigProvider, NDialogProvider, NMessageProvider, useOsTheme } from 'naive-ui'
+import { NButton, NConfigProvider, NDialogProvider, NMessageProvider } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
+import { useAppearance } from '@/composables/useAppearance'
 
-// Follow the operating system's light or dark setting.
-const osTheme = useOsTheme()
-const theme = computed(() => (osTheme.value === 'dark' ? darkTheme : null))
+const { preference, theme, overrides, setPreference } = useAppearance()
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -23,12 +22,20 @@ async function signOut() {
 </script>
 
 <template>
-  <NConfigProvider :theme="theme">
+  <NConfigProvider :theme="theme" :theme-overrides="overrides">
     <NMessageProvider to="#messages">
       <NDialogProvider>
         <header class="app-header">
           <RouterLink to="/" class="app-title">Wreckfest Controller</RouterLink>
           <nav class="app-user">
+            <label class="appearance-control">
+              <span>Theme</span>
+              <select aria-label="Appearance" :value="preference" @change="setPreference(($event.target as HTMLSelectElement).value)">
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
             <template v-if="auth.authenticated">
               <RouterLink :to="{ name: 'admin-dashboard' }">Admin</RouterLink>
               <RouterLink :to="{ name: 'admin-profile' }" title="Your profile">
