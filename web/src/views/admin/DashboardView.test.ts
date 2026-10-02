@@ -47,4 +47,54 @@ describe('DashboardView', () => {
     expect(wrapper.text()).not.toContain('Stale')
     wrapper.unmount()
   })
+  it('distinguishes a pending roster from a confirmed empty roster', async () => {
+    const roster = deferred<unknown>()
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/server/players'
+        ? roster.promise
+        : Promise.resolve(answer({ isRunning: false, processId: null, uptimeSeconds: null, currentTrack: null })),
+    )
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+    expect(wrapper.findAll('.metric-card')[2].text()).toContain('Loading')
+    expect(wrapper.findAll('.metric-card')[2].text()).not.toContain('0')
+    roster.resolve(answer({ players: [], totalPlayers: 0, maxPlayers: 24, lastUpdated: '' }))
+    await flushPromises()
+    expect(wrapper.findAll('.metric-card')[2].text()).toContain('0')
+    expect(wrapper.text()).toContain('No players connected.')
+    expect(wrapper.text()).toContain('Server stopped')
+    wrapper.unmount()
+  })
+
+  it('shows an unknown player count when the roster request fails', async () => {
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/server/players'
+        ? Promise.resolve({ data: undefined, error: { title: 'Roster unavailable' }, response: new Response(null, { status: 503 }) })
+        : Promise.resolve(answer({ isRunning: true, processId: 42, uptimeSeconds: 60, currentTrack: null })),
+    )
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+    expect(wrapper.findAll('.metric-card')[2].text()).toContain('Unknown')
+    expect(wrapper.text()).toContain('Player roster unavailable.')
+    expect(wrapper.text()).toContain('Between races')
+    wrapper.unmount()
+  })
+
+  it('keeps a confirmed hub roster when the earlier request fails', async () => {
+    const roster = deferred<unknown>()
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/server/players'
+        ? roster.promise
+        : Promise.resolve(answer({ isRunning: true, processId: 42, uptimeSeconds: 60, currentTrack: 'Fields' })),
+    )
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+    hub.get('PlayersUpdated')!({ players: [player('From the hub')] })
+    roster.resolve({ data: undefined, error: { title: 'Old request failed' }, response: new Response(null, { status: 503 }) })
+    await flushPromises()
+    expect(wrapper.text()).toContain('From the hub')
+    expect(wrapper.text()).not.toContain('Old request failed')
+    wrapper.unmount()
+  })
+
 })
