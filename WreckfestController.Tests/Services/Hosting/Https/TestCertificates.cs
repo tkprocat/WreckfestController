@@ -6,8 +6,10 @@ namespace WreckfestController.Tests.Services.Hosting.Https;
 
 /// <summary>
 /// A throwaway CA hierarchy for the HTTPS tests: a root, an intermediate, and leaf
-/// certificates issued by the intermediate, as a real CA would. Nothing is installed in a
-/// store; files go to a temporary folder the test owns.
+/// certificates issued by the intermediate, as a real CA would. Files go to a temporary
+/// folder the test owns. The tests install nothing in a store, but on Windows .NET copies
+/// the intermediate of a certificate it serves into a CA store (CurrentUser\CA, or
+/// LocalMachine\CA when elevated); <see cref="Dispose"/> removes it again.
 /// </summary>
 internal sealed class TestCertificates : IDisposable
 {
@@ -17,8 +19,13 @@ internal sealed class TestCertificates : IDisposable
     public TestCertificates()
     {
         Directory.CreateDirectory(Folder);
-        Root = Authority("CN=WFC Test Root", issuer: null, DateTimeOffset.UtcNow.AddYears(-1), DateTimeOffset.UtcNow.AddYears(5));
-        Intermediate = Authority("CN=WFC Test Intermediate", Root, DateTimeOffset.UtcNow.AddYears(-1), DateTimeOffset.UtcNow.AddYears(4));
+        // Unique names, and Authority Key Identifiers below: on Windows, serving a certificate
+        // copies its intermediate into the CurrentUser\CA store, and Windows matches issuers in
+        // that store by name. With one fixed name and no AKI, every earlier run's intermediate
+        // matched too, and the server sent a stale one or could not build its chain at all.
+        var run = Guid.NewGuid().ToString("N")[..12];
+        Root = Authority($"CN=WFC Test Root {run}", issuer: null, DateTimeOffset.UtcNow.AddYears(-1), DateTimeOffset.UtcNow.AddYears(5));
+        Intermediate = Authority($"CN=WFC Test Intermediate {run}", Root, DateTimeOffset.UtcNow.AddYears(-1), DateTimeOffset.UtcNow.AddYears(4));
     }
 
     public string Folder { get; } = Path.Combine(Path.GetTempPath(), $"wfc-https-{Guid.NewGuid():N}");
@@ -44,6 +51,7 @@ internal sealed class TestCertificates : IDisposable
 
         request.CertificateExtensions.Add(san.Build());
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(false, false, 0, false));
+        request.CertificateExtensions.Add(X509AuthorityKeyIdentifierExtension.CreateFromCertificate(Intermediate, true, false));
         if (eku is not null)
         {
             request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid(eku)], false));
@@ -76,6 +84,7 @@ internal sealed class TestCertificates : IDisposable
             request.CertificateExtensions.Add(new X509Extension("2.5.29.37", garbage, false));
         }
 
+        request.CertificateExtensions.Add(X509AuthorityKeyIdentifierExtension.CreateFromCertificate(Intermediate, true, false));
         using var signed = request.Create(Intermediate, DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(60), RandomNumberGenerator.GetBytes(16));
         return signed.CopyWithPrivateKey(key);
     }
@@ -119,21 +128,62 @@ internal sealed class TestCertificates : IDisposable
             return request.CreateSelfSigned(from, until);
         }
 
+        request.CertificateExtensions.Add(X509AuthorityKeyIdentifierExtension.CreateFromCertificate(issuer, true, false));
         using var signed = request.Create(issuer, from, until, RandomNumberGenerator.GetBytes(16));
         return signed.CopyWithPrivateKey(key);
     }
 
     public void Dispose()
     {
-        Root.Dispose();
-        Intermediate.Dispose();
         try
         {
-            Directory.Delete(Folder, recursive: true);
+            // .NET tries LocalMachine\CA first (it succeeds when elevated), then CurrentUser\CA.
+            RemoveFromIntermediateStore(StoreLocation.LocalMachine);
+            RemoveFromIntermediateStore(StoreLocation.CurrentUser);
         }
-        catch (IOException)
+        finally
         {
-            // A watcher may still hold the folder for a moment; it is a temp folder.
+            Root.Dispose();
+            Intermediate.Dispose();
+            try
+            {
+                Directory.Delete(Folder, recursive: true);
+            }
+            catch (IOException)
+            {
+                // A watcher may still hold the folder for a moment; it is a temp folder.
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes this run's intermediate, and nothing else, if .NET added it to that CA store.
+    /// Best effort: the store may not exist, or not be writable without elevation, and then
+    /// .NET could not have added it there either.
+    /// </summary>
+    private void RemoveFromIntermediateStore(StoreLocation location)
+    {
+        try
+        {
+            using var store = new X509Store(StoreName.CertificateAuthority, location);
+            store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
+            var added = store.Certificates.Find(X509FindType.FindByThumbprint, Intermediate.Thumbprint, validOnly: false);
+            if (added.Count == 0)
+            {
+                return;
+            }
+
+            store.Close();
+            store.Open(OpenFlags.ReadWrite | OpenFlags.OpenExistingOnly);
+            store.RemoveRange(added);
+            foreach (var certificate in added)
+            {
+                certificate.Dispose();
+            }
+        }
+        catch (Exception ex) when (ex is CryptographicException or UnauthorizedAccessException)
+        {
+            // Not there, or not ours to change: nothing of this run's to remove.
         }
     }
 }
