@@ -8,8 +8,8 @@ namespace WreckfestController.Tests.Services.Hosting.Https;
 /// A throwaway CA hierarchy for the HTTPS tests: a root, an intermediate, and leaf
 /// certificates issued by the intermediate, as a real CA would. Files go to a temporary
 /// folder the test owns. The tests install nothing in a store, but on Windows .NET copies
-/// the intermediate of a certificate it serves into CurrentUser\CA; <see cref="Dispose"/>
-/// removes it again.
+/// the intermediate of a certificate it serves into a CA store (CurrentUser\CA, or
+/// LocalMachine\CA when elevated); <see cref="Dispose"/> removes it again.
 /// </summary>
 internal sealed class TestCertificates : IDisposable
 {
@@ -135,28 +135,55 @@ internal sealed class TestCertificates : IDisposable
 
     public void Dispose()
     {
-        RemoveFromIntermediateStore();
-        Root.Dispose();
-        Intermediate.Dispose();
         try
         {
-            Directory.Delete(Folder, recursive: true);
+            // .NET tries LocalMachine\CA first (it succeeds when elevated), then CurrentUser\CA.
+            RemoveFromIntermediateStore(StoreLocation.LocalMachine);
+            RemoveFromIntermediateStore(StoreLocation.CurrentUser);
         }
-        catch (IOException)
+        finally
         {
-            // A watcher may still hold the folder for a moment; it is a temp folder.
+            Root.Dispose();
+            Intermediate.Dispose();
+            try
+            {
+                Directory.Delete(Folder, recursive: true);
+            }
+            catch (IOException)
+            {
+                // A watcher may still hold the folder for a moment; it is a temp folder.
+            }
         }
     }
 
-    /// <summary>Removes this run's intermediate, and nothing else, if .NET added it to CurrentUser\CA.</summary>
-    private void RemoveFromIntermediateStore()
+    /// <summary>
+    /// Removes this run's intermediate, and nothing else, if .NET added it to that CA store.
+    /// Best effort: the store may not exist, or not be writable without elevation, and then
+    /// .NET could not have added it there either.
+    /// </summary>
+    private void RemoveFromIntermediateStore(StoreLocation location)
     {
-        using var store = new X509Store(StoreName.CertificateAuthority, StoreLocation.CurrentUser);
-        store.Open(OpenFlags.ReadWrite | OpenFlags.OpenExistingOnly);
-        foreach (var added in store.Certificates.Find(X509FindType.FindByThumbprint, Intermediate.Thumbprint, validOnly: false))
+        try
         {
-            store.Remove(added);
-            added.Dispose();
+            using var store = new X509Store(StoreName.CertificateAuthority, location);
+            store.Open(OpenFlags.ReadOnly | OpenFlags.OpenExistingOnly);
+            var added = store.Certificates.Find(X509FindType.FindByThumbprint, Intermediate.Thumbprint, validOnly: false);
+            if (added.Count == 0)
+            {
+                return;
+            }
+
+            store.Close();
+            store.Open(OpenFlags.ReadWrite | OpenFlags.OpenExistingOnly);
+            store.RemoveRange(added);
+            foreach (var certificate in added)
+            {
+                certificate.Dispose();
+            }
+        }
+        catch (Exception ex) when (ex is CryptographicException or UnauthorizedAccessException)
+        {
+            // Not there, or not ours to change: nothing of this run's to remove.
         }
     }
 }

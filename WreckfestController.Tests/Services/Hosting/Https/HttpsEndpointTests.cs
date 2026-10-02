@@ -43,13 +43,14 @@ public sealed class HttpsEndpointTests : IAsyncDisposable
         await StartAsync(_ca.Pfx(leaf));
 
         Assert.Equal(leaf.Thumbprint, await HandshakeAsync());
+
         // The intermediate is handed to TLS with the certificate: without it, clients that do
-        // not have it cannot build the chain. Checked here rather than on the wire, because
-        // Windows (SChannel) sends intermediates only for a chain that ends in a root this
-        // machine trusts, and the test root is not installed as one.
-        Assert.Contains(
-            _ca.Intermediate.Thumbprint,
-            _provider!.Current.Context.IntermediateCertificates.Select(c => c.Thumbprint));
+        // not have it cannot build the chain. Checked in the options each connection gets,
+        // not on the wire: Windows (SChannel) sends intermediates only for a chain that ends
+        // in a root this machine trusts, and the test root is not installed as one.
+        var context = HttpsEndpoint.ServerOptions(_provider!).ServerCertificateContext!;
+        Assert.Equal(leaf.Thumbprint, context.TargetCertificate.Thumbprint);
+        Assert.Contains(_ca.Intermediate.Thumbprint, context.IntermediateCertificates.Select(c => c.Thumbprint));
     }
 
     [Fact]
