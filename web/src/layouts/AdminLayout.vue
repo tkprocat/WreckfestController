@@ -31,17 +31,20 @@ const groups = [
   ]},
 ]
 
-const menu: MenuOption[] = groups.map(group => ({
+// The drawer's links close it; the sidebar's are plain links.
+const menuOptions = (inDrawer: boolean): MenuOption[] => groups.map(group => ({
   type: 'group', key: group.label, label: group.label,
   children: group.pages.map(page => ({
     key: page.name,
     label: () => h(RouterLink, {
       to: { name: page.name },
-      onClick: closeForNavigation,
+      onClick: inDrawer ? closeForNavigation : undefined,
     }, { default: () => page.label }),
     icon: () => h('svg', { viewBox: '0 0 24 24', width: 18, height: 18, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': true }, [h('path', { d: page.icon })]),
   })),
 }))
+const sidebarMenu = menuOptions(false)
+const drawerMenu = menuOptions(true)
 
 // Closing on a desktop resize prevents a hidden mobile drawer locking body scroll.
 let desktop: MediaQueryList | undefined
@@ -54,7 +57,9 @@ onBeforeUnmount(() => desktop?.removeEventListener('change', closeOnDesktop))
 
 // Set when a drawer link is chosen: resolves once that navigation has finished (or failed).
 let navigation: Promise<void> | undefined
-function closeForNavigation() {
+function closeForNavigation(event: MouseEvent) {
+  // RouterLink leaves modified and non-primary clicks (new tab or window) to the browser.
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
   navigation = new Promise(resolve => { const stop = router.afterEach(() => { stop(); resolve() }) })
   menuOpen.value = false
 }
@@ -83,7 +88,7 @@ async function afterDrawerClosed() {
   <div class="admin">
     <aside ref="sidebar" class="admin-sidebar">
       <div class="sidebar-heading">CONTROL ROOM</div>
-      <nav aria-label="Administration"><NMenu :options="menu" :value="active" :indent="20" /></nav>
+      <nav aria-label="Administration"><NMenu :options="sidebarMenu" :value="active" :indent="20" /></nav>
       <RouterLink to="/" class="public-link">View public server page <span aria-hidden="true">↗</span></RouterLink>
     </aside>
 
@@ -102,7 +107,7 @@ async function afterDrawerClosed() {
 
     <NDrawer v-model:show="menuOpen" placement="left" width="min(300px, calc(100vw - 24px))" @after-leave="afterDrawerClosed">
       <NDrawerContent title="Control room" closable :body-content-style="{ padding: '8px 0' }">
-        <nav id="admin-mobile-navigation" aria-label="Administration"><NMenu :options="menu" :value="active" :indent="20" /></nav>
+        <nav id="admin-mobile-navigation" aria-label="Administration"><NMenu :options="drawerMenu" :value="active" :indent="20" /></nav>
         <RouterLink to="/" class="public-link" @click="menuOpen = false">View public server page</RouterLink>
       </NDrawerContent>
     </NDrawer>
