@@ -5,7 +5,7 @@ import { NAlert, NButton, NDataTable, NInput, NSpace, type DataTableColumns, typ
 /**
  * A resource page's table: search across chosen fields, the list's states (loading, a
  * failed load with a retry, empty), and 25 rows a page. Row actions are columns the page
- * adds; toolbar buttons (Add) go in the `toolbar` slot.
+ * adds.
  */
 const props = defineProps<{
   rows: T[]
@@ -53,7 +53,6 @@ const empty = computed(() => (search.value.trim() ? `No ${props.what} match "${s
         :input-props="{ 'aria-label': `Search ${what}` }"
         class="search"
       />
-      <slot name="toolbar" />
     </NSpace>
     <NDataTable
       :columns="columns"

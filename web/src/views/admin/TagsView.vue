@@ -202,10 +202,6 @@ onMounted(() => void list.reload())
 </template>
 
 <style scoped>
-h1 {
-  margin-top: 0;
-}
-
 .muted {
   color: var(--text-muted);
   margin-top: 0;

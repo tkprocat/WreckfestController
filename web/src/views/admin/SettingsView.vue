@@ -294,10 +294,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-h1 {
-  margin-top: 0;
-}
-
 .gap {
   margin-bottom: 16px;
 }

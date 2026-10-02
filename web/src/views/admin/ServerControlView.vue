@@ -259,13 +259,6 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
 </template>
 
 <style scoped>
-h1 {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 0;
-}
-
 .gap {
   margin-bottom: 16px;
 }

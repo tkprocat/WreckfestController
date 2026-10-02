@@ -6,7 +6,8 @@ defineProps<{ title: string; description?: string }>()
   <header class="page-header">
     <div class="page-heading">
       <div class="page-title-row">
-        <h1>{{ title }}</h1>
+        <!-- Focusable from script: mobile navigation lands keyboard users on the new page's heading. -->
+        <h1 tabindex="-1">{{ title }}</h1>
         <slot name="status" />
       </div>
       <p v-if="description">{{ description }}</p>
