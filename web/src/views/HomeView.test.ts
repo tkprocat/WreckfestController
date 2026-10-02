@@ -4,13 +4,13 @@ import { mount } from '@vue/test-utils'
 import HomeView from './HomeView.vue'
 import type { PublicOverview } from '@/composables/usePublicOverview'
 
-const state = vi.hoisted(() => ({ overview: null as unknown, error: null as string | null }))
+const state = vi.hoisted(() => ({ overview: null as unknown, error: null as string | null, loading: false }))
 
 vi.mock('@/composables/usePublicOverview', () => ({
   usePublicOverview: () => ({
     overview: ref(state.overview),
     error: ref(state.error),
-    loading: ref(false),
+    loading: ref(state.loading),
     reload: vi.fn(),
   }),
 }))
@@ -28,6 +28,40 @@ const overview: PublicOverview = {
 } as unknown as PublicOverview
 
 describe('HomeView', () => {
+  it('shows a clear loading state before the first snapshot', () => {
+    state.overview = null
+    state.error = null
+    state.loading = true
+    expect(mount(HomeView).text()).toContain('Loading server overview')
+    state.loading = false
+  })
+
+  it('shows an offline state without claiming a stale track is racing or inventing capacity', () => {
+    state.overview = {
+      ...overview,
+      maxPlayers: null,
+      status: { isRunning: false, uptimeSeconds: null },
+      players: { humans: 0, bots: 1, list: [{ name: 'Practice AI', isBot: true }] },
+    }
+    state.error = null
+    state.loading = false
+    const text = mount(HomeView).text()
+    expect(text).toContain('Server offline')
+    expect(text).toContain('Practice AI')
+    expect(text).toContain('Bot')
+    expect(text).not.toContain('Racing now')
+    expect(text).not.toContain(' / 24')
+  })
+
+  it('offers a retry when there is no overview', () => {
+    state.overview = null
+    state.error = 'The controller cannot be reached.'
+    state.loading = false
+    const text = mount(HomeView).text()
+    expect(text).toContain('Overview unavailable')
+    expect(text).toContain('Try again')
+  })
+
   // A failed refresh must not leave stale data - "Online" included - looking current.
   it('says the data may be out of date when a refresh failed', () => {
     state.overview = overview
@@ -38,6 +72,8 @@ describe('HomeView', () => {
     expect(text).toContain('Test server')
     expect(text).toContain("The controller's database is unavailable.")
     expect(text).toContain('it may be out of date')
+    expect(text).toContain('Last known track')
+    expect(text).not.toContain('Racing now')
   })
 
   it('shows no warning when the data is current', () => {
