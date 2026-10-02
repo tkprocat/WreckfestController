@@ -7,6 +7,7 @@ import type { components } from '@/api/schema'
 import ConflictDialog from '@/crud/ConflictDialog.vue'
 import FormField from '@/crud/FormField.vue'
 import ResourceTable from '@/crud/ResourceTable.vue'
+import RowActionMenu from '@/crud/RowActionMenu.vue'
 import { NO_ANSWER, hasId, send, useConfirm } from '@/crud/outcome'
 import { useResourceEditor } from '@/crud/useResourceEditor'
 import { useResourceList } from '@/crud/useResourceList'
@@ -115,15 +116,17 @@ const columns: DataTableColumns<Tag> = [
   {
     title: 'Actions',
     key: 'actions',
-    width: 180,
+    width: 130,
     render: (tag) =>
-      h(NSpace, { size: 'small' }, () => [
+      h(NSpace, { size: 'small', wrap: false }, () => [
         h(NButton, { size: 'small', disabled: busy.value !== null, onClick: () => editor.start(tag) }, () => 'Edit'),
-        h(
-          NButton,
-          { size: 'small', type: 'error', ghost: true, loading: busy.value === tag.id, disabled: busy.value !== null, onClick: () => void remove(tag) },
-          () => 'Delete',
-        ),
+        h(RowActionMenu, {
+          label: tag.name,
+          actionId: 'tag-' + tag.id,
+          disabled: busy.value !== null,
+          options: [{ label: 'Delete', key: 'delete' }],
+          onSelect: () => void remove(tag),
+        }),
       ]),
   },
 ]

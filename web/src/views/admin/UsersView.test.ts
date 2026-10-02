@@ -42,7 +42,16 @@ function mountPage() {
 
 const body = () => new DOMWrapper(document.body)
 const rowOf = (name: string) => wrapper!.findAll('tr').find((row) => row.text().includes(name))!
-const buttonIn = (row: DOMWrapper<Element>, label: string) => row.findAll('button').find((b) => b.text().trim() === label)!
+const menuOption = (action: string) => body().findAll('.n-dropdown-option-body').filter((option) => option.text().trim() === action).slice(-1)[0]!
+async function openMenu(row: string) {
+  await body().find('[aria-label="More actions for ' + row + '"]').trigger('click')
+  await flushPromises()
+}
+async function menuAction(row: string, action: string) {
+  await openMenu(row)
+  await menuOption(action).trigger('click')
+  await flushPromises()
+}
 const bodyButton = (label: string) => body().findAll('button').find((b) => b.text().trim() === label)!
 
 beforeEach(() => {
@@ -64,9 +73,11 @@ describe('UsersView', () => {
     await flushPromises()
 
     expect(rowOf('admin').text()).toContain('you')
-    expect(buttonIn(rowOf('admin'), 'Lock').attributes('disabled')).toBeDefined()
-    expect(buttonIn(rowOf('admin'), 'Delete').attributes('disabled')).toBeDefined()
-    expect(buttonIn(rowOf('bob'), 'Delete').attributes('disabled')).toBeUndefined()
+    await openMenu('admin')
+    expect(menuOption('Lock').classes()).toContain('n-dropdown-option-body--disabled')
+    expect(menuOption('Delete').classes()).toContain('n-dropdown-option-body--disabled')
+    await openMenu('bob')
+    expect(menuOption('Delete').classes()).not.toContain('n-dropdown-option-body--disabled')
   })
 
   it('adds an account with a temporary password', async () => {
@@ -107,7 +118,7 @@ describe('UsersView', () => {
     mountPage()
     await flushPromises()
 
-    await buttonIn(rowOf('bob'), 'Delete').trigger('click')
+    await menuAction('bob', 'Delete')
     await flushPromises()
     expect(api.DELETE).not.toHaveBeenCalled()
     expect(body().text()).toContain('Delete bob?')
@@ -124,12 +135,13 @@ describe('UsersView', () => {
     mountPage()
     await flushPromises()
 
-    await buttonIn(rowOf('bob'), 'Lock').trigger('click')
+    await menuAction('bob', 'Lock')
     await flushPromises()
 
     expect(api.POST).toHaveBeenCalledWith('/api/users/{id}/lock', { params: { path: { id: '2' } } })
     expect(rowOf('bob').text()).toContain('Locked')
-    expect(buttonIn(rowOf('bob'), 'Unlock').exists()).toBe(true)
+    await openMenu('bob')
+    expect(menuOption('Unlock')).toBeDefined()
   })
 
   // Until the first load answers, a new row would be replaced by that older answer.
@@ -163,7 +175,7 @@ describe('UsersView', () => {
     mountPage()
     await flushPromises()
 
-    await buttonIn(rowOf('bob'), 'Reset password').trigger('click')
+    await menuAction('bob', 'Reset password')
     await flushPromises()
     await body().find('input[aria-label="New temporary password"]').setValue('another-temp-1')
     await body().findAll('.n-modal button').find((b) => b.text().trim() === 'Reset password')!.trigger('click')
@@ -176,4 +188,3 @@ describe('UsersView', () => {
     expect(body().text()).toContain('Password reset for bob.')
   })
 })
-

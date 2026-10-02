@@ -7,6 +7,7 @@ import type { components } from '@/api/schema'
 import ConflictDialog from '@/crud/ConflictDialog.vue'
 import FormField from '@/crud/FormField.vue'
 import ResourceTable from '@/crud/ResourceTable.vue'
+import RowActionMenu from '@/crud/RowActionMenu.vue'
 import TrackListEditor from '@/crud/TrackListEditor.vue'
 import { NO_ANSWER, hasId, send, useConfirm, type Outcome } from '@/crud/outcome'
 import { useResourceEditor } from '@/crud/useResourceEditor'
@@ -193,13 +194,18 @@ const columns: DataTableColumns<Summary> = [
   {
     title: 'Actions',
     key: 'actions',
-    width: 340,
+    width: 215,
     render: (c) =>
-      h(NSpace, { size: 'small' }, () => [
+      h(NSpace, { size: 'small', wrap: false }, () => [
         h(NButton, { size: 'small', loading: busy.value === c.id, disabled: busy.value !== null, onClick: () => void edit(c) }, () => 'Edit'),
-        h(NButton, { size: 'small', disabled: busy.value !== null, onClick: () => void duplicate(c) }, () => 'Duplicate'),
         h(NButton, { size: 'small', type: 'primary', ghost: true, disabled: busy.value !== null || c.trackCount === 0, onClick: () => void deploy(c) }, () => 'Deploy'),
-        h(NButton, { size: 'small', type: 'error', ghost: true, disabled: busy.value !== null, onClick: () => void remove(c) }, () => 'Delete'),
+        h(RowActionMenu, {
+          label: c.name,
+          actionId: 'collection-' + c.id,
+          disabled: busy.value !== null,
+          options: [{ label: 'Duplicate', key: 'duplicate' }, { label: 'Delete', key: 'delete' }],
+          onSelect: (key: string) => key === 'duplicate' ? void duplicate(c) : void remove(c),
+        }),
       ]),
   },
 ]
@@ -219,7 +225,7 @@ onMounted(() => {
     </PageHeader>
     <NCard>
       <ResourceTable
-        :min-table-width="760"
+        :min-table-width="660"
         :rows="collections"
         :columns="columns"
         :search-fields="['name']"

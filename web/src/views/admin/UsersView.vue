@@ -5,7 +5,6 @@ import {
   NAlert,
   NButton,
   NCard,
-  NDataTable,
   NForm,
   NFormItem,
   NInput,
@@ -23,6 +22,8 @@ import type { components } from '@/api/schema'
 import { useAuthStore } from '@/stores/auth'
 import { browserTimeZone, timeZoneOptions } from '@/utils/timeZones'
 import { vSelectFocus } from '@/crud/selectFocus'
+import ResourceTable from '@/crud/ResourceTable.vue'
+import RowActionMenu from '@/crud/RowActionMenu.vue'
 
 type User = components['schemas']['UserResponse']
 
@@ -222,7 +223,7 @@ const columns: DataTableColumns<User> = [
     title: 'User name',
     key: 'userName',
     sorter: (a, b) => a.userName.localeCompare(b.userName),
-    render: (user) => (self(user) ? [user.userName, ' ', h(NTag, { size: 'small', bordered: false }, { default: () => 'you' })] : user.userName),
+    render: (user) => h('span', { class: 'row-name' }, [user.userName, self(user) ? h(NTag, { size: 'small', bordered: false, class: 'flag' }, { default: () => 'you' }) : null]),
   },
   { title: 'Display name', key: 'displayName', render: (user) => user.displayName ?? '' },
   { title: 'Email', key: 'email', render: (user) => user.email ?? '' },
@@ -235,21 +236,25 @@ const columns: DataTableColumns<User> = [
   {
     title: 'Actions',
     key: 'actions',
+    width: 130,
     render: (user) =>
-      h(NSpace, { size: 'small' }, () => [
-        h(NButton, { size: 'small', disabled: !!busy.value, onClick: () => openEdit(user) }, () => 'Edit'),
-        h(NButton, { size: 'small', disabled: !!busy.value, onClick: () => openReset(user) }, () => 'Reset password'),
-        // Nobody locks or deletes themselves (the server refuses it too).
-        h(
-          NButton,
-          { size: 'small', disabled: !!busy.value || self(user), onClick: () => void setLocked(user, !user.isLockedOut) },
-          () => (user.isLockedOut ? 'Unlock' : 'Lock'),
-        ),
-        h(
-          NButton,
-          { size: 'small', type: 'error', ghost: true, disabled: !!busy.value || self(user), onClick: () => askDelete(user) },
-          () => 'Delete',
-        ),
+      h(NSpace, { size: 'small', wrap: false }, () => [
+        h(NButton, { size: 'small', disabled: !!busy.value, 'aria-label': 'Edit ' + user.userName, onClick: () => openEdit(user) }, () => 'Edit'),
+        h(RowActionMenu, {
+          label: user.userName,
+          actionId: 'user-' + user.id,
+          disabled: !!busy.value,
+          options: [
+            { label: 'Reset password', key: 'password' },
+            { label: user.isLockedOut ? 'Unlock' : 'Lock', key: 'lock', disabled: self(user) },
+            { label: 'Delete', key: 'delete', disabled: self(user) },
+          ],
+          onSelect: (key: string) => {
+            if (key === 'password') openReset(user)
+            else if (!self(user) && key === 'lock') void setLocked(user, !user.isLockedOut)
+            else if (!self(user) && key === 'delete') askDelete(user)
+          },
+        }),
       ]),
   },
 ]
@@ -263,15 +268,21 @@ onMounted(() => void load())
 
 <template>
   <section>
-    <PageHeader title="Users" description="Manage access to the controller." />
-    <NAlert v-if="loadError" type="warning" :title="loadError" />
-    <!-- A card renders its header, and so the Add button, only with a title. -->
-    <NCard v-else title="Accounts">
-      <template #header-extra>
-        <NButton type="primary" :disabled="!loaded" @click="openNew">Add account</NButton>
+    <PageHeader title="Users" description="Manage access to the controller.">
+      <template #actions>
+        <NButton type="primary" :disabled="!loaded || !!loadError" @click="openNew">Add account</NButton>
       </template>
+    </PageHeader>
+    <NAlert v-if="loadError" type="warning" :title="loadError" />
+    <NCard v-else>
       <p class="muted">Every account is an admin. Nobody can lock or delete their own account.</p>
-      <NDataTable :columns="columns" :data="users" :row-key="(u: User) => u.id" :bordered="false" size="small" />
+      <ResourceTable
+        :rows="users"
+        :columns="columns"
+        :search-fields="['userName', 'displayName', 'email']"
+        what="accounts"
+        :min-table-width="720"
+      />
     </NCard>
 
     <NModal
@@ -363,4 +374,5 @@ h1 {
   color: var(--text-muted);
   margin-top: 0;
 }
+:deep(.flag) { margin-left: 6px; }
 </style>

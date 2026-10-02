@@ -1,43 +1,43 @@
 <script setup lang="ts" generic="T extends { id: string | number }">
 import { computed, ref } from 'vue'
-import { NAlert, NButton, NDataTable, NInput, NSpace, type DataTableColumns, type DataTableProps } from 'naive-ui'
+import { NAlert, NButton, NDataTable, NInput, type DataTableColumns, type DataTableProps } from 'naive-ui'
 
-/**
- * A resource page's table: search across chosen fields, the list's states (loading, a
- * failed load with a retry, empty), and 25 rows a page. Row actions are columns the page
- * adds; toolbar buttons (Add) go in the `toolbar` slot.
- */
+/** Shared resource search, states and pagination. Pages supply their own row actions. */
 const props = defineProps<{
   rows: T[]
   columns: DataTableColumns<T>
-  /** The fields search looks in. */
   searchFields: (keyof T)[]
-  /** What the rows are, for messages: "tags". */
   what: string
   loading?: boolean
-  /** Preserve readable columns in dense tables; scroll inside the table on narrow screens. */
   minTableWidth?: number
   error?: string | null
-  /** For tables with an expand column: what its trigger shows (a button, for keyboard users). */
+  /** Count before page-specific filters were applied. */
+  totalRows?: number
+  filtersActive?: boolean
   renderExpandIcon?: DataTableProps['renderExpandIcon']
 }>()
 
-const emit = defineEmits<{ retry: [] }>()
-
+const emit = defineEmits<{ retry: []; resetFilters: [] }>()
 const search = ref('')
 
 const shown = computed(() => {
   const term = search.value.trim().toLowerCase()
-  if (!term) {
-    return props.rows
-  }
-
-  return props.rows.filter((row) =>
-    props.searchFields.some((field) => String(row[field] ?? '').toLowerCase().includes(term)),
-  )
+  return term
+    ? props.rows.filter((row) =>
+        props.searchFields.some((field) => String(row[field] ?? '').toLowerCase().includes(term)),
+      )
+    : props.rows
 })
+const hasFilters = computed(() => !!search.value.trim() || !!props.filtersActive)
+const total = computed(() => props.totalRows ?? props.rows.length)
+const empty = computed(() =>
+  hasFilters.value ? 'No ' + props.what + ' match the current filters.' : 'No ' + props.what + ' yet.',
+)
 
-const empty = computed(() => (search.value.trim() ? `No ${props.what} match "${search.value.trim()}".` : `No ${props.what} yet.`))
+function resetFilters() {
+  search.value = ''
+  emit('resetFilters')
+}
 </script>
 
 <template>
@@ -45,16 +45,21 @@ const empty = computed(() => (search.value.trim() ? `No ${props.what} match "${s
     <NAlert v-if="error" type="warning" :title="error" class="gap">
       <NButton size="small" @click="emit('retry')">Try again</NButton>
     </NAlert>
-    <NSpace justify="space-between" align="center" class="gap">
+    <div class="resource-toolbar">
       <NInput
         v-model:value="search"
-        :placeholder="`Search ${what}`"
+        :placeholder="'Search ' + what"
         clearable
-        :input-props="{ 'aria-label': `Search ${what}` }"
+        :input-props="{ 'aria-label': 'Search ' + what }"
         class="search"
       />
-      <slot name="toolbar" />
-    </NSpace>
+      <div class="toolbar-status">
+        <span role="status">{{ shown.length }}{{ hasFilters ? ' of ' + total : '' }} {{ what }}</span>
+        <NButton v-if="hasFilters" size="small" @click="resetFilters">Clear filters</NButton>
+        <slot name="toolbar" />
+      </div>
+      <div v-if="$slots.filters" class="toolbar-filters"><slot name="filters" /></div>
+    </div>
     <NDataTable
       :columns="columns"
       :data="shown"
@@ -63,7 +68,7 @@ const empty = computed(() => (search.value.trim() ? `No ${props.what} match "${s
       :render-expand-icon="renderExpandIcon"
       :row-key="(row: T) => row.id"
       :bordered="false"
-      size="small"
+      size="medium"
       :pagination="shown.length > 25 ? { pageSize: 25 } : false"
     >
       <template #empty>{{ empty }}</template>
@@ -72,11 +77,32 @@ const empty = computed(() => (search.value.trim() ? `No ${props.what} match "${s
 </template>
 
 <style scoped>
-.gap {
-  margin-bottom: 12px;
+.gap { margin-bottom: 12px; }
+.resource-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
 }
-
 .search {
-  min-width: 260px;
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: 440px;
+}
+.toolbar-status {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.toolbar-filters { flex-basis: 100%; }
+@media (max-width: 600px) {
+  .search { flex-basis: 100%; max-width: none; }
+  .toolbar-status { justify-content: space-between; }
 }
 </style>
