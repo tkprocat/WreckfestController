@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { h, onMounted, ref, watch } from 'vue'
 import { NButton, NCard, NForm, NInput, NModal, NSpace, NTag, useMessage, type DataTableColumns } from 'naive-ui'
 import { api } from '@/api/client'
@@ -132,8 +133,12 @@ onMounted(() => void list.reload())
 
 <template>
   <section>
-    <h1>Tags</h1>
-    <NCard title="Tags">
+    <PageHeader title="Tags" description="Organize track layouts with names and colors.">
+      <template #actions>
+          <NButton type="primary" :disabled="!loaded" @click="openNew">Add tag</NButton>
+      </template>
+    </PageHeader>
+    <NCard>
       <p class="muted">Tags group track layouts, for filtering and for collections. Deleting a tag removes it from every layout.</p>
       <ResourceTable
         :rows="tags"
@@ -143,11 +148,7 @@ onMounted(() => void list.reload())
         :loading="loading"
         :error="error"
         @retry="list.reload()"
-      >
-        <template #toolbar>
-          <NButton type="primary" :disabled="!loaded" @click="openNew">Add tag</NButton>
-        </template>
-      </ResourceTable>
+      />
     </NCard>
 
     <NModal
@@ -201,10 +202,6 @@ onMounted(() => void list.reload())
 </template>
 
 <style scoped>
-h1 {
-  margin-top: 0;
-}
-
 .muted {
   color: var(--text-muted);
   margin-top: 0;

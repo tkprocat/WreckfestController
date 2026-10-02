@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NAlert, NCard, NDataTable, NGi, NGrid, NStatistic, NTag, type DataTableColumns } from 'naive-ui'
 import { api } from '@/api/client'
@@ -90,7 +91,7 @@ const columns: DataTableColumns<PlayerSummary> = [
 
 <template>
   <section>
-    <h1>Dashboard</h1>
+    <PageHeader title="Dashboard" description="Your server at a glance." />
     <NAlert v-if="error" type="warning" :title="error" class="gap" />
 
     <NGrid cols="2 m:4" responsive="screen" :x-gap="16" :y-gap="16" class="gap">
@@ -125,16 +126,12 @@ const columns: DataTableColumns<PlayerSummary> = [
     </NGrid>
 
     <NCard title="Players">
-      <NDataTable :columns="columns" :data="players" :row-key="(p: PlayerSummary) => p.name" :bordered="false" size="small" />
+      <NDataTable :scroll-x="600" :columns="columns" :data="players" :row-key="(p: PlayerSummary) => p.name" :bordered="false" size="small" />
     </NCard>
   </section>
 </template>
 
 <style scoped>
-h1 {
-  margin-top: 0;
-}
-
 .gap {
   margin-bottom: 16px;
 }

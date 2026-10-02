@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, h, onMounted, ref } from 'vue'
 import {
   NButton,
@@ -315,11 +316,12 @@ onMounted(() => void list.reload())
 
 <template>
   <section>
-    <h1>Tracks</h1>
-    <NCard title="Tracks">
-      <p class="muted">
-        Every track the server knows, with its variants: the ids the game loads. Hidden ones stay out of votes and pickers.
-      </p>
+    <PageHeader title="Tracks" description="Browse and edit tracks and layouts. Hidden ones stay out of votes and pickers.">
+      <template #actions>
+        <NButton type="primary" :disabled="!loaded" @click="trackEditor?.start(null)">Add track</NButton>
+      </template>
+    </PageHeader>
+    <NCard>
       <NSpace class="filters" align="center">
         <NSelect
           v-model:value="origin"
@@ -364,6 +366,7 @@ onMounted(() => void list.reload())
         <NCheckbox v-model:checked="showHidden">Show hidden</NCheckbox>
       </NSpace>
       <ResourceTable
+        :min-table-width="1080"
         :rows="rows"
         :columns="columns"
         :search-fields="['name', 'key', 'find']"
@@ -372,11 +375,7 @@ onMounted(() => void list.reload())
         :error="error"
         :render-expand-icon="expandIcon"
         @retry="list.reload()"
-      >
-        <template #toolbar>
-          <NButton type="primary" :disabled="!loaded" @click="trackEditor?.start(null)">Add track</NButton>
-        </template>
-      </ResourceTable>
+      />
     </NCard>
     <TrackEditor ref="trackEditor" @saved="list.replace" />
     <VariantEditor ref="variantEditor" @saved="replaceVariant" />

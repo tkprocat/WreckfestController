@@ -404,7 +404,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
             filterable
             clearable
             placeholder="Deploy a collection..."
-            style="width: 280px"
+            style="width: min(280px, 100%)"
             v-select-focus="{ 'aria-label': 'Collection to deploy' }"
             :input-props="{ 'aria-label': 'Collection to deploy' }"
           />

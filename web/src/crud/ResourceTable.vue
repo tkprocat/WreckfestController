@@ -5,7 +5,7 @@ import { NAlert, NButton, NDataTable, NInput, NSpace, type DataTableColumns, typ
 /**
  * A resource page's table: search across chosen fields, the list's states (loading, a
  * failed load with a retry, empty), and 25 rows a page. Row actions are columns the page
- * adds; toolbar buttons (Add) go in the `toolbar` slot.
+ * adds.
  */
 const props = defineProps<{
   rows: T[]
@@ -15,6 +15,8 @@ const props = defineProps<{
   /** What the rows are, for messages: "tags". */
   what: string
   loading?: boolean
+  /** Preserve readable columns in dense tables; scroll inside the table on narrow screens. */
+  minTableWidth?: number
   error?: string | null
   /** For tables with an expand column: what its trigger shows (a button, for keyboard users). */
   renderExpandIcon?: DataTableProps['renderExpandIcon']
@@ -51,11 +53,11 @@ const empty = computed(() => (search.value.trim() ? `No ${props.what} match "${s
         :input-props="{ 'aria-label': `Search ${what}` }"
         class="search"
       />
-      <slot name="toolbar" />
     </NSpace>
     <NDataTable
       :columns="columns"
       :data="shown"
+      :scroll-x="minTableWidth"
       :loading="loading"
       :render-expand-icon="renderExpandIcon"
       :row-key="(row: T) => row.id"

@@ -237,4 +237,9 @@ function errorOf(index: number): string | undefined {
 .actions {
   flex-shrink: 0;
 }
+@media (max-width: 599px) {
+  .tracks .row { display: grid; grid-template-columns: 2ch minmax(0, 1fr); }
+  .tracks .main { width: 100%; overflow-wrap: anywhere; }
+  .tracks .actions { grid-column: 2; flex-wrap: wrap; }
+}
 </style>

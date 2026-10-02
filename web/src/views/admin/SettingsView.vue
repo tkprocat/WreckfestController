@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
   NAlert,
@@ -202,13 +203,13 @@ onMounted(() => {
 
 <template>
   <section>
-    <h1>Settings</h1>
+    <PageHeader title="Settings" description="Control how players vote and change tracks." />
 
     <NCard title="Voting" class="gap">
       <NAlert v-if="loadError" type="warning" :title="loadError" />
       <!-- Locked while saving: the answer replaces the form, so an edit made meanwhile
            would be lost. -->
-      <NForm v-else label-placement="left" label-width="auto" :disabled="!loaded || saving" @submit.prevent="save">
+      <NForm v-else label-placement="top" label-width="auto" :disabled="!loaded || saving" @submit.prevent="save">
         <NFormItem label="Track changes" :feedback="errors.mode" :validation-status="errors.mode ? 'error' : undefined">
           <NRadioGroup v-model:value="form.mode" name="mode" aria-label="Track changes">
             <NRadioButton value="Off">Off</NRadioButton>
@@ -293,10 +294,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-h1 {
-  margin-top: 0;
-}
-
 .gap {
   margin-bottom: 16px;
 }

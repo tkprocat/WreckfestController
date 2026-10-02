@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, reactive, ref, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSelect, NSpace, useMessage } from 'naive-ui'
@@ -128,7 +129,7 @@ function status(errors: Record<string, string>, field: string) {
 
 <template>
   <section>
-    <h1>Profile</h1>
+    <PageHeader title="Profile" description="Manage your account details and password." />
     <NAlert v-if="!auth.user" type="info" title="This sign-in has no profile">
       An API key is not an account. Sign in with a user name to edit a profile.
     </NAlert>
@@ -213,10 +214,6 @@ function status(errors: Record<string, string>, field: string) {
 </template>
 
 <style scoped>
-h1 {
-  margin-top: 0;
-}
-
 .gap {
   margin-bottom: 16px;
 }

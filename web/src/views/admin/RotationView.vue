@@ -1,13 +1,13 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { NCard } from 'naive-ui'
 import RotationPanel from './rotation/RotationPanel.vue'
 </script>
 
 <template>
   <section>
-    <h1>Rotation</h1>
-    <NCard title="Now running">
-      <p class="muted">The tracks in server_config.cfg: what the server runs from its next start.</p>
+    <PageHeader title="Rotation" description="Edit the configured track order for the next server start." />
+    <NCard title="Configured rotation">
       <RotationPanel />
     </NCard>
   </section>

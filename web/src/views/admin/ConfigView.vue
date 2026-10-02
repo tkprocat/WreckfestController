@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, onMounted, reactive, ref } from 'vue'
 import {
   NAlert,
@@ -178,7 +179,7 @@ onMounted(() => void load())
 
 <template>
   <section>
-    <h1>Server config</h1>
+    <PageHeader title="Server config" description="Configure the next server start." />
     <NAlert v-if="loadError" type="warning" :title="loadError" />
 
     <NTabs v-else type="line" animated>
@@ -261,10 +262,6 @@ onMounted(() => void load())
 </template>
 
 <style scoped>
-h1 {
-  margin-top: 0;
-}
-
 .gap {
   margin-bottom: 16px;
 }
