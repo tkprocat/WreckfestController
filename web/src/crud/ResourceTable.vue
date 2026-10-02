@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { NAlert, NButton, NDataTable, NInput, type DataTableColumns, type DataTableProps } from 'naive-ui'
 
-/** Shared resource search, states and pagination. Pages supply their own row actions. */
+/** Shared resource search, page filters, states and pagination. Pages supply their own row actions. */
 const props = defineProps<{
   rows: T[]
   columns: DataTableColumns<T>
@@ -56,7 +56,6 @@ function resetFilters() {
       <div class="toolbar-status">
         <span role="status">{{ shown.length }}{{ hasFilters ? ' of ' + total : '' }} {{ what }}</span>
         <NButton v-if="hasFilters" size="small" @click="resetFilters">Clear filters</NButton>
-        <slot name="toolbar" />
       </div>
       <div v-if="$slots.filters" class="toolbar-filters"><slot name="filters" /></div>
     </div>

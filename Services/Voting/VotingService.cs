@@ -257,6 +257,10 @@ public class VotingService
         {
             _ = BroadcastMessage($"Usage: !track <trackId> [laps] (laps must be between 1 and {MaxLapsAllowed})");
         }
+        else if (IsLapsCommand(lower))
+        {
+            HandleLapsCommand(playerName, lower);
+        }
         else if (IsLuckyCommand(lower))
         {
             StartLuckyVote(playerName);
@@ -297,13 +301,15 @@ public class VotingService
                lower == "!vote" ||
                lower == "!confirm" ||
                lower.StartsWith("!confirm ") ||
-               IsLuckyCommand(lower);
+               IsLuckyCommand(lower) ||
+               IsLapsCommand(lower);
     }
 
     private static bool IsVotingCommand(string lower)
     {
         return lower.StartsWith("!vote ") ||
                lower == "!vote" ||
+               IsLapsCommand(lower) ||
                lower == "!yes" ||
                lower == "!no" ||
                lower == "!confirm" ||
@@ -332,6 +338,40 @@ public class VotingService
     private static bool IsLuckyCommand(string lower)
     {
         return lower is "!lucky" or "!ifeellucky" or "!ifeeelucky";
+    }
+
+    private static bool IsLapsCommand(string lower)
+    {
+        return lower == "!laps" || lower.StartsWith("!laps ");
+    }
+
+    /// <summary>
+    /// !laps &lt;n&gt;: changes only the lap count of the next race, under the same rules
+    /// as a track change. The track is left alone, so only laps= is sent.
+    /// </summary>
+    private void HandleLapsCommand(string playerName, string lower)
+    {
+        // Before parsing, as for !vote: a running vote gets the same reply either way.
+        if (RefuseWhileVoteInProgress(playerName))
+        {
+            return;
+        }
+
+        var parts = lower["!laps".Length..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 1 || !int.TryParse(parts[0], out var laps))
+        {
+            _ = BroadcastMessage($"Usage: !laps <laps> (laps must be between 1 and {MaxLapsAllowed})");
+            return;
+        }
+
+        if (laps < 1 || laps > MaxLapsAllowed)
+        {
+            _ = BroadcastMessage($"Invalid laps: must be between 1 and {MaxLapsAllowed}.");
+            return;
+        }
+
+        ClearPendingVote();
+        StartLapsChange(playerName, laps);
     }
 
     /// <summary>
@@ -574,6 +614,7 @@ public class VotingService
             [
                 $"Help: max laps is {MaxLapsAllowed}.",
                 "Help: !track <trackId> [laps] - change the track now. Example: !track misc_bsv 6",
+                "Help: !laps <laps> - change only the laps now. Example: !laps 5",
                 $"Help: after a change, the next one waits {DirectCooldownSeconds}s (admins bypass).",
                 "Help: !search <text> - find track IDs. Example: !search tvtp misc",
                 "Help: !more - show the next search results.",
@@ -585,6 +626,7 @@ public class VotingService
         [
             $"Help: max laps is {MaxLapsAllowed}.",
             "Help: !track <trackId> [laps] - start a vote. Example: !track misc_bsv 6",
+            "Help: !laps <laps> - vote on the laps only. Example: !laps 5",
             "Help: !yes - vote yes on the active vote.",
             "Help: !no - vote no on the active vote.",
             "Help: !search <text> - find track IDs. Example: !search tvtp misc",
@@ -981,8 +1023,17 @@ public class VotingService
 
         var remaining = TimeSpan.FromSeconds(VoteTimeoutSeconds) - (DateTime.UtcNow - startedUtc);
         var seconds = Math.Max(1, (int)Math.Ceiling(remaining.TotalSeconds));
+
+        if (trackId is null)
+        {
+            // A laps-only vote (!laps): there is no track name to fit.
+            _ = BroadcastMessage(
+                $"{TruncateToFit(playerName, 40)}: vote in progress - {laps} laps, {seconds}s left. Type !yes or !no.");
+            return true;
+        }
+
         var lapsClause = laps is null ? string.Empty : $" for {laps} laps";
-        var trackName = GetTrackDisplayName(trackId ?? string.Empty);
+        var trackName = GetTrackDisplayName(trackId);
 
         var prefix = $"{playerName}: vote in progress - ";
         var suffix = $"{lapsClause}, {seconds}s left. Type !yes or !no.";
@@ -1031,6 +1082,34 @@ public class VotingService
         }
 
         _ = ApplyDirectTrackChangeAsync(playerName, trackId, laps);
+    }
+
+    /// <summary>
+    /// The laps-only counterpart of <see cref="StartTrackChange"/>: the same event-loop,
+    /// mode and vote guards, with no track to resolve or re-check.
+    /// </summary>
+    private void StartLapsChange(string playerName, int laps)
+    {
+        // The loop sets each entry's laps as it rotates, so a change here would not last.
+        if (ReadEventLoopBlocking() is { Enabled: true })
+        {
+            _ = BroadcastMessage(
+                "Track changes are disabled while the event loop is running.");
+            return;
+        }
+
+        if (!DirectModeEnabled)
+        {
+            StartVote(playerName, trackId: null, laps);
+            return;
+        }
+
+        if (VoteInProgress && RefuseWhileVoteInProgress(playerName))
+        {
+            return;
+        }
+
+        _ = ApplyDirectTrackChangeAsync(playerName, trackId: null, laps);
     }
 
     /// <summary>
@@ -1335,7 +1414,11 @@ public class VotingService
             string.Equals(p.Name, playerName, StringComparison.OrdinalIgnoreCase));
     }
 
-    private async Task ApplyDirectTrackChangeAsync(string playerName, string trackId, int? laps)
+    /// <summary>
+    /// Applies a change now. <paramref name="trackId"/> is null for a laps-only change
+    /// (!laps), which leaves the track alone.
+    /// </summary>
+    private async Task ApplyDirectTrackChangeAsync(string playerName, string? trackId, int? laps)
     {
         if (!TryReserveDirectChange(playerName, out var refusal, out var previousUtc, out var previousBy, out var reservationId))
         {
@@ -1343,24 +1426,35 @@ public class VotingService
             return;
         }
 
-        var trackDisplayName = GetTrackDisplayName(trackId);
-
         // Attribution only earns its place when somebody else is around to read it.
         // Alone, "(set by you)" is noise on a line whose only job is confirming the
         // server took the request.
         var attributed = _playerTracker.GetPlayerCount().online > 1;
 
-        var messages = new TrackChangeMessages(
-            (_, appliedLaps) =>
-            {
-                const string prefix = "Next race: ";
-                var lapsPart = appliedLaps is null ? string.Empty : $" ({appliedLaps} laps)";
-                var byPart = attributed ? $" - set by {playerName}" : string.Empty;
-                var budget = ChatMessageCharacterLimit - prefix.Length - lapsPart.Length - byPart.Length;
-                return $"{prefix}{TruncateToFit(trackDisplayName, budget)}{lapsPart}{byPart}";
-            },
-            "Failed to change track.",
-            "Track changed but failed to update laps.");
+        TrackChangeMessages messages;
+        if (trackId is null)
+        {
+            var byPart = attributed ? $" - set by {TruncateToFit(playerName, 60)}" : string.Empty;
+            messages = new TrackChangeMessages(
+                (_, appliedLaps) => $"Next race: {appliedLaps} laps, same track{byPart}",
+                "Failed to change laps.",
+                "Failed to change laps.");
+        }
+        else
+        {
+            var trackDisplayName = GetTrackDisplayName(trackId);
+            messages = new TrackChangeMessages(
+                (_, appliedLaps) =>
+                {
+                    const string prefix = "Next race: ";
+                    var lapsPart = appliedLaps is null ? string.Empty : $" ({appliedLaps} laps)";
+                    var byPart = attributed ? $" - set by {playerName}" : string.Empty;
+                    var budget = ChatMessageCharacterLimit - prefix.Length - lapsPart.Length - byPart.Length;
+                    return $"{prefix}{TruncateToFit(trackDisplayName, budget)}{lapsPart}{byPart}";
+                },
+                "Failed to change track.",
+                "Track changed but failed to update laps.");
+        }
 
         if (!await ApplyTrackChange(trackId, laps, messages))
         {
@@ -1369,7 +1463,8 @@ public class VotingService
         }
     }
 
-    private void StartVote(string initiator, string trackId, int? laps)
+    /// <summary>Starts a vote; <paramref name="trackId"/> is null for a laps-only vote.</summary>
+    private void StartVote(string initiator, string? trackId, int? laps)
     {
         if (RefreshPlayersFromHookIfAvailable() == VotePlayerRefreshResult.RefreshedNoHumans)
         {
@@ -1426,7 +1521,7 @@ public class VotingService
         _ = CompleteVoteStartAsync(initiator, trackId, laps, passedImmediately);
     }
 
-    private async Task CompleteVoteStartAsync(string initiator, string trackId, int? laps, bool passedImmediately)
+    private async Task CompleteVoteStartAsync(string initiator, string? trackId, int? laps, bool passedImmediately)
     {
         if (passedImmediately)
         {
@@ -1463,8 +1558,13 @@ public class VotingService
         }
     }
 
-    private List<string> FormatVoteStartedMessages(string initiator, string trackId, int? laps)
+    private List<string> FormatVoteStartedMessages(string initiator, string? trackId, int? laps)
     {
+        if (trackId is null)
+        {
+            return [$"Vote: {laps} laps, same track", FormatVoteStartedInstructionLine(initiator)];
+        }
+
         var trackDisplayName = GetTrackDisplayName(trackId);
         var suffix = laps is null ? string.Empty : $" - {laps} laps";
         var firstLine = $"Vote: {TruncateToFit(trackDisplayName, ChatMessageCharacterLimit - "Vote: ".Length - suffix.Length)}{suffix}";
@@ -1562,12 +1662,13 @@ public class VotingService
             else
                 _noVoters.Add(playerName);
 
-            trackId = _votedTrackId!;
+            trackId = _votedTrackId;
             laps = _votedLaps;
             var yesCount = _yesVoters.Count;
             var noCount = _noVoters.Count;
 
-            _ = BroadcastMessage($"Vote for {trackId}: {yesCount} yes, {noCount} no ({humanCount} players online).");
+            var subject = trackId ?? $"{laps} laps";
+            _ = BroadcastMessage($"Vote for {subject}: {yesCount} yes, {noCount} no ({humanCount} players online).");
 
             earlyResult = HasMajority(yesCount, humanCount) || HasMajority(noCount, humanCount);
             if (earlyResult)
@@ -1580,7 +1681,7 @@ public class VotingService
         if (earlyResult)
         {
             if (earlyPassed)
-                _ = ApplyVotedTrack(trackId!, laps);
+                _ = ApplyVotedTrack(trackId, laps);
             else
                 _ = BroadcastMessage($"Vote failed: majority voted no. Next race unchanged.");
         }
@@ -1654,7 +1755,7 @@ public class VotingService
             if (CancelVoteIfModeChanged())
                 return;
 
-            trackId = _votedTrackId!;
+            trackId = _votedTrackId;
             laps = _votedLaps;
             humanCount = PruneDepartedVoters();
             yesCount = _yesVoters.Count;
@@ -1665,11 +1766,11 @@ public class VotingService
             ResetVoteState();
         }
 
-        _logger.LogInformation("Vote tally for {TrackId}: {Result} ({YesVotes} yes, {NoVotes} no, {HumanCount} humans)",
-            trackId, passed ? "passed" : "failed", yesCount, noCount, humanCount);
+        _logger.LogInformation("Vote tally for {TrackId} laps={Laps}: {Result} ({YesVotes} yes, {NoVotes} no, {HumanCount} humans)",
+            trackId, laps, passed ? "passed" : "failed", yesCount, noCount, humanCount);
 
         if (passed)
-            _ = ApplyVotedTrack(trackId!, laps);
+            _ = ApplyVotedTrack(trackId, laps);
         else
             _ = BroadcastMessage("Vote timed out: not enough yes votes. Next race unchanged.");
     }
@@ -1690,30 +1791,39 @@ public class VotingService
         "Vote passed but failed to update track settings.",
         "Vote passed but failed to update lap settings.");
 
-    private Task ApplyVotedTrack(string trackId, int? laps) =>
-        ApplyTrackChange(trackId, laps, VotePassedMessages);
+    private static readonly TrackChangeMessages LapsVotePassedMessages = new(
+        (_, laps) => $"Vote passed! Next race: {laps} laps, same track.",
+        "Vote passed but failed to update lap settings.",
+        "Vote passed but failed to update lap settings.");
+
+    private Task ApplyVotedTrack(string? trackId, int? laps) =>
+        ApplyTrackChange(trackId, laps, trackId is null ? LapsVotePassedMessages : VotePassedMessages);
 
     /// <summary>
-    /// Sends the track (and optionally laps) to the server. Returns false when the
-    /// server rejected either command, so callers can avoid recording a change that
-    /// never happened.
+    /// Sends the track (and optionally laps) to the server; a null
+    /// <paramref name="trackId"/> sends the laps alone. Returns false when the server
+    /// rejected either command, so callers can avoid recording a change that never
+    /// happened.
     /// </summary>
-    private async Task<bool> ApplyTrackChange(string trackId, int? laps, TrackChangeMessages messages)
+    private async Task<bool> ApplyTrackChange(string? trackId, int? laps, TrackChangeMessages messages)
     {
         // A vote can outlast its track's place in the catalogue.
-        if (RefuseIfNoLongerVotable(trackId))
+        if (trackId is not null && RefuseIfNoLongerVotable(trackId))
         {
             return false;
         }
 
         try
         {
-            var trackResult = await _serverManager.SendCommandAsync($"track={trackId}");
-            if (!trackResult.Success)
+            if (trackId is not null)
             {
-                _logger.LogWarning("Failed to apply track {TrackId}: {Message}", trackId, trackResult.Message);
-                await BroadcastMessage(messages.TrackFailure);
-                return false;
+                var trackResult = await _serverManager.SendCommandAsync($"track={trackId}");
+                if (!trackResult.Success)
+                {
+                    _logger.LogWarning("Failed to apply track {TrackId}: {Message}", trackId, trackResult.Message);
+                    await BroadcastMessage(messages.TrackFailure);
+                    return false;
+                }
             }
 
             // Laps omitted: leave the server's current lap count alone.
@@ -1729,7 +1839,7 @@ public class VotingService
             }
 
             _logger.LogInformation("Track change applied: {TrackId} laps={Laps}", trackId, laps);
-            await BroadcastMessage(messages.Success(trackId, laps));
+            await BroadcastMessage(messages.Success(trackId ?? string.Empty, laps));
             return true;
         }
         catch (Exception ex)

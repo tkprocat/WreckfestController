@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { NButton, NDrawer, NDrawerContent, NMenu, type MenuOption } from 'naive-ui'
 
 const route = useRoute()
+const router = useRouter()
 const active = computed(() => String(route.name ?? ''))
 const menuOpen = ref(false)
 const menuButton = ref<InstanceType<typeof NButton> | null>(null)
+const sidebar = ref<HTMLElement | null>(null)
+const content = ref<HTMLElement | null>(null)
 
 const groups = [
   { label: 'Server', pages: [
@@ -28,17 +31,20 @@ const groups = [
   ]},
 ]
 
-const menu: MenuOption[] = groups.map(group => ({
+// The drawer's links close it; the sidebar's are plain links.
+const menuOptions = (inDrawer: boolean): MenuOption[] => groups.map(group => ({
   type: 'group', key: group.label, label: group.label,
   children: group.pages.map(page => ({
     key: page.name,
     label: () => h(RouterLink, {
       to: { name: page.name },
-      onClick: () => { menuOpen.value = false },
+      onClick: inDrawer ? closeForNavigation : undefined,
     }, { default: () => page.label }),
     icon: () => h('svg', { viewBox: '0 0 24 24', width: 18, height: 18, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': true }, [h('path', { d: page.icon })]),
   })),
 }))
+const sidebarMenu = menuOptions(false)
+const drawerMenu = menuOptions(true)
 
 // Closing on a desktop resize prevents a hidden mobile drawer locking body scroll.
 let desktop: MediaQueryList | undefined
@@ -48,16 +54,41 @@ onMounted(() => {
   desktop.addEventListener('change', closeOnDesktop)
 })
 onBeforeUnmount(() => desktop?.removeEventListener('change', closeOnDesktop))
-function restoreMenuFocus() {
-  if (!desktop?.matches) menuButton.value?.$el.focus()
+
+// Set when a drawer link is chosen: resolves once that navigation has finished (or failed).
+let navigation: Promise<void> | undefined
+function closeForNavigation(event: MouseEvent) {
+  // RouterLink leaves modified and non-primary clicks (new tab or window) to the browser.
+  if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+  navigation = new Promise(resolve => { const stop = router.afterEach(() => { stop(); resolve() }) })
+  menuOpen.value = false
+}
+
+/**
+ * Where focus goes once the drawer has gone: the new page's heading after choosing a page,
+ * the sidebar's current link when a resize to desktop closed it, otherwise the Menu button.
+ */
+async function afterDrawerClosed() {
+  const pending = navigation
+  navigation = undefined
+  if (pending) {
+    await pending
+    await nextTick()
+    const heading = content.value?.querySelector<HTMLElement>('h1')
+    ;(heading ?? document.getElementById('main-content'))?.focus()
+  } else if (desktop?.matches) {
+    sidebar.value?.querySelector<HTMLElement>(`a[href="${router.resolve({ name: active.value }).href}"]`)?.focus()
+  } else {
+    menuButton.value?.$el.focus()
+  }
 }
 </script>
 
 <template>
   <div class="admin">
-    <aside class="admin-sidebar">
+    <aside ref="sidebar" class="admin-sidebar">
       <div class="sidebar-heading">CONTROL ROOM</div>
-      <nav aria-label="Administration"><NMenu :options="menu" :value="active" :indent="20" /></nav>
+      <nav aria-label="Administration"><NMenu :options="sidebarMenu" :value="active" :indent="20" /></nav>
       <RouterLink to="/" class="public-link">View public server page <span aria-hidden="true">↗</span></RouterLink>
     </aside>
 
@@ -71,12 +102,12 @@ function restoreMenuFocus() {
         </NButton>
         <span>Control room</span>
       </div>
-      <div class="admin-content"><RouterView /></div>
+      <div ref="content" class="admin-content"><RouterView /></div>
     </div>
 
-    <NDrawer v-model:show="menuOpen" placement="left" width="min(300px, calc(100vw - 24px))" @after-leave="restoreMenuFocus">
+    <NDrawer v-model:show="menuOpen" placement="left" width="min(300px, calc(100vw - 24px))" @after-leave="afterDrawerClosed">
       <NDrawerContent title="Control room" closable :body-content-style="{ padding: '8px 0' }">
-        <nav id="admin-mobile-navigation" aria-label="Administration"><NMenu :options="menu" :value="active" :indent="20" /></nav>
+        <nav id="admin-mobile-navigation" aria-label="Administration"><NMenu :options="drawerMenu" :value="active" :indent="20" /></nav>
         <RouterLink to="/" class="public-link" @click="menuOpen = false">View public server page</RouterLink>
       </NDrawerContent>
     </NDrawer>
