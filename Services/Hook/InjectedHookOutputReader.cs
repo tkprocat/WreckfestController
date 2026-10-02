@@ -82,7 +82,7 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
     /// pass through untouched and are demuxed downstream; console text is normalised.
     /// </summary>
     public static string PrepareForFanout(string line) =>
-        HookChatRecord.LooksLikeRecord(line) ? line : NormalizeLine(line);
+        HookChatRecord.LooksLikeRecord(line) || HookRaceRecord.LooksLikeRecord(line) ? line : NormalizeLine(line);
 
     public static string NormalizeLine(string line)
     {
