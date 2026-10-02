@@ -232,7 +232,7 @@ function errorOf(index: number): string | undefined {
 }
 .error {
   display: block;
-  color: #d03050;
+  color: var(--error-color);
 }
 .actions {
   flex-shrink: 0;

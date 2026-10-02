@@ -403,6 +403,6 @@ onMounted(() => void list.reload())
   outline: 2px solid currentColor;
 }
 :deep(.muted) {
-  opacity: 0.65;
+  color: var(--text-muted);
 }
 </style>

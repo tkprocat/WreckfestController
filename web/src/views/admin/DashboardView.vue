@@ -140,7 +140,7 @@ h1 {
 }
 
 .muted {
-  opacity: 0.7;
+  color: var(--text-muted);
   font-size: 0.8em;
 }
 </style>

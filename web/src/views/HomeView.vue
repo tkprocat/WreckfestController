@@ -128,7 +128,7 @@ const players = computed(() =>
 }
 
 .muted {
-  opacity: 0.7;
+  color: var(--text-muted);
 }
 
 .plain-list {
