@@ -2191,4 +2191,234 @@ public class VotingServiceTests
         Assert.Contains(messages, m => m.StartsWith("Help:", StringComparison.Ordinal));
         Assert.DoesNotContain(messages, m => m.Contains("disabled during a race", StringComparison.Ordinal));
     }
+
+    // --- !laps ----------------------------------------------------------------
+
+    private static void VerifyNoTrackSent(Mock<ServerManager> serverMock) =>
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+
+    [Fact]
+    public async Task LapsCommand_InDirectMode_SendsOnlyLaps()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!laps 6");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        serverMock.Verify(m => m.SendCommandAsync("laps=6"), Times.Once);
+        VerifyNoTrackSent(serverMock);
+        Assert.Contains(messages, m => m == "Next race: 6 laps, same track - set by Alice");
+        Assert.DoesNotContain(messages, m => m.Contains("!yes", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LapsCommand_InDirectMode_ConsumesTheSharedCooldown()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        messages.Clear();
+
+        service.ProcessChatCommand("Bob", false, "!laps 6");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        Assert.StartsWith("Bob: track was just changed by Alice.", Assert.Single(messages));
+        serverMock.Verify(m => m.SendCommandAsync("laps=6"), Times.Never);
+    }
+
+    [Fact]
+    public async Task LapsCommand_InDirectMode_WhenServerRejects_ReportsFailureAndKeepsCooldownFree()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        serverMock
+            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
+            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .ReturnsAsync((string cmd) => cmd.StartsWith("laps=") ? (false, "rejected") : (true, "ok"));
+
+        service.ProcessChatCommand("Alice", false, "!laps 6");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        Assert.Contains(messages, m => m == "Failed to change laps.");
+        Assert.DoesNotContain(messages, m => m.StartsWith("Next race:", StringComparison.Ordinal));
+
+        // The rejected change did not use the window, so Bob is not told to wait.
+        messages.Clear();
+        service.ProcessChatCommand("Bob", false, "!laps 5");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        Assert.DoesNotContain(messages, m => m.Contains("Try again", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task LapsCommand_InVotingMode_StartsALapsOnlyVote_AndAPassedVoteSendsOnlyLaps()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+        Join(tracker, "Carol");
+
+        service.ProcessChatCommand("Alice", false, "!laps 7");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        Assert.Contains(messages, m => m == "Vote: 7 laps, same track");
+        Assert.Contains(messages, m => m == "By Alice. Type !yes or !no. Ends in 30s.");
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+
+        service.ProcessChatCommand("Bob", false, "!yes");
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+
+        Assert.Contains(messages, m => m == "Vote for 7 laps: 2 yes, 0 no (3 players online).");
+        Assert.Contains(messages, m => m == "Vote passed! Next race: 7 laps, same track.");
+        serverMock.Verify(m => m.SendCommandAsync("laps=7"), Times.Once);
+        VerifyNoTrackSent(serverMock);
+    }
+
+    [Fact]
+    public async Task LapsCommand_InVotingMode_WhenAlone_AppliesWithoutAVote()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!laps 3");
+        await Task.Delay(100, TestContext.Current.CancellationToken);
+
+        serverMock.Verify(m => m.SendCommandAsync("laps=3"), Times.Once);
+        VerifyNoTrackSent(serverMock);
+        Assert.Equal("Next race: 3 laps, same track", Assert.Single(messages));
+    }
+
+    [Fact]
+    public async Task LapsCommand_WhileAVoteIsRunning_IsRefused()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        messages.Clear();
+
+        // Even with an invalid count: the vote guard answers before parsing.
+        service.ProcessChatCommand("Bob", false, "!laps 99");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        var refusal = Assert.Single(messages);
+        Assert.StartsWith("Bob: vote in progress - Wrecknado for 4 laps", refusal);
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+    }
+
+    [Fact]
+    public async Task TrackVote_WhileALapsVoteIsRunning_IsRefusedWithTheLapsVote()
+    {
+        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Voting);
+        Join(tracker, "Alice");
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Alice", false, "!laps 5");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        messages.Clear();
+
+        service.ProcessChatCommand("Bob", false, "!track wrecknado_02");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        var refusal = Assert.Single(messages);
+        Assert.Matches(@"^Bob: vote in progress - 5 laps, \d+s left\. Type !yes or !no\.$", refusal);
+    }
+
+    [Fact]
+    public async Task LapsCommand_InOffMode_IsRefused()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Off);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!laps 5");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        Assert.Equal("Voting is currently disabled.", Assert.Single(messages));
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+    }
+
+    [Fact]
+    public async Task LapsCommand_IsRefused_WhileEventLoopIsRunning()
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        StubServerState(serverMock, count: 4, index: 0, racing: false);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!laps 5");
+        await Task.Delay(80, TestContext.Current.CancellationToken);
+
+        Assert.Contains(messages, m => m.Contains("event loop is running", StringComparison.Ordinal));
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("!laps 0")]
+    [InlineData("!laps 11")]
+    [InlineData("!laps -2")]
+    public async Task LapsCommand_OutOfRange_SendsInvalidLapsMessage(string command)
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, command);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        Assert.Equal("Invalid laps: must be between 1 and 10.", Assert.Single(messages));
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("!laps")]
+    [InlineData("!laps five")]
+    [InlineData("!laps 5 6")]
+    public async Task LapsCommand_MissingOrMalformed_SendsUsage(string command)
+    {
+        var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, command);
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        Assert.Equal("Usage: !laps <laps> (laps must be between 1 and 10)", Assert.Single(messages));
+        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(VoteModes.Direct, "Help: !laps <laps> - change only the laps now. Example: !laps 5")]
+    [InlineData(VoteModes.Voting, "Help: !laps <laps> - vote on the laps only. Example: !laps 5")]
+    public async Task HelpCommand_ListsLaps_WordedForTheMode(string mode, string expected)
+    {
+        var (service, tracker, messages, _, _) = CreateModeSetup(mode);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!help");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        Assert.Contains(expected, messages);
+        Assert.All(messages, m => Assert.True(m.Length < 127, m));
+    }
+
+    [Fact]
+    public async Task LapsReplies_StayUnderTheChatLimit_WithAVeryLongName()
+    {
+        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Voting);
+        var longName = new string('N', 120);
+        Join(tracker, longName);
+        Join(tracker, "Bob");
+
+        service.ProcessChatCommand("Bob", false, "!laps 5");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+        service.ProcessChatCommand(longName, false, "!laps 6");
+        await Task.Delay(50, TestContext.Current.CancellationToken);
+
+        Assert.Contains(messages, m => m.Contains("vote in progress", StringComparison.Ordinal));
+        Assert.All(messages, m => Assert.True(m.Length < 127, m));
+    }
 }
