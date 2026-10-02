@@ -42,11 +42,14 @@ public sealed class HttpsEndpointTests : IAsyncDisposable
         var leaf = _ca.Leaf([Host]);
         await StartAsync(_ca.Pfx(leaf));
 
-        var (presented, chain) = await HandshakeAsync();
-
-        Assert.Equal(leaf.Thumbprint, presented);
-        // The intermediate is sent: without it, clients that do not have it cannot build the chain.
-        Assert.Contains(_ca.Intermediate.Thumbprint, chain);
+        Assert.Equal(leaf.Thumbprint, await HandshakeAsync());
+        // The intermediate is handed to TLS with the certificate: without it, clients that do
+        // not have it cannot build the chain. Checked here rather than on the wire, because
+        // Windows (SChannel) sends intermediates only for a chain that ends in a root this
+        // machine trusts, and the test root is not installed as one.
+        Assert.Contains(
+            _ca.Intermediate.Thumbprint,
+            _provider!.Current.Context.IntermediateCertificates.Select(c => c.Thumbprint));
     }
 
     [Fact]
@@ -56,7 +59,7 @@ public sealed class HttpsEndpointTests : IAsyncDisposable
         var (certificate, key) = _ca.Pem(leaf);
         await StartAsync(new FileSourceSettings(certificate, key, null));
 
-        Assert.Equal(leaf.Thumbprint, (await HandshakeAsync()).Presented);
+        Assert.Equal(leaf.Thumbprint, await HandshakeAsync());
     }
 
     // A renewal replaces the file; the next new connection gets the new certificate, and
@@ -67,13 +70,13 @@ public sealed class HttpsEndpointTests : IAsyncDisposable
         var first = _ca.Leaf([Host]);
         var path = _ca.Pfx(first);
         await StartAsync(path);
-        Assert.Equal(first.Thumbprint, (await HandshakeAsync()).Presented);
+        Assert.Equal(first.Thumbprint, await HandshakeAsync());
 
         var renewed = _ca.Leaf([Host], notBefore: DateTimeOffset.UtcNow.AddMinutes(-1));
         _ca.Pfx(renewed);
         _provider!.Refresh();
 
-        Assert.Equal(renewed.Thumbprint, (await HandshakeAsync()).Presented);
+        Assert.Equal(renewed.Thumbprint, await HandshakeAsync());
     }
 
     // A broken renewal keeps the working certificate in service, and says why.
@@ -87,7 +90,7 @@ public sealed class HttpsEndpointTests : IAsyncDisposable
         File.WriteAllText(path, "not a certificate");
         _provider!.Refresh();
 
-        Assert.Equal(first.Thumbprint, (await HandshakeAsync()).Presented);
+        Assert.Equal(first.Thumbprint, await HandshakeAsync());
         Assert.NotNull(_provider.Status.Error);
     }
 
@@ -117,21 +120,19 @@ public sealed class HttpsEndpointTests : IAsyncDisposable
         await _app.StartAsync(Ct);
     }
 
-    /// <summary>A new connection (no pooling): the certificate presented, and the chain sent with it.</summary>
-    private async Task<(string Presented, IReadOnlyList<string> Chain)> HandshakeAsync()
+    /// <summary>A new connection (no pooling): the thumbprint of the certificate presented.</summary>
+    private async Task<string> HandshakeAsync()
     {
         string? presented = null;
-        var chain = new List<string>();
         using var handler = new SocketsHttpHandler
         {
             PooledConnectionLifetime = TimeSpan.Zero,
             SslOptions =
             {
                 TargetHost = Host,
-                RemoteCertificateValidationCallback = (_, certificate, x509Chain, _) =>
+                RemoteCertificateValidationCallback = (_, certificate, _, _) =>
                 {
                     presented = (certificate as X509Certificate2 ?? X509CertificateLoader.LoadCertificate(certificate!.GetRawCertData())).Thumbprint;
-                    chain.AddRange(x509Chain!.ChainPolicy.ExtraStore.Select(c => c.Thumbprint));
                     // The test root is not trusted by this machine: the test checks what is presented.
                     return true;
                 },
@@ -140,7 +141,7 @@ public sealed class HttpsEndpointTests : IAsyncDisposable
         using var client = new HttpClient(handler);
         var body = await client.GetStringAsync($"https://127.0.0.1:{_httpsPort}/", Ct);
         Assert.Equal("ok", body);
-        return (presented!, chain);
+        return presented!;
     }
 
     private static int FreePort()
