@@ -2402,23 +2402,29 @@ public class VotingServiceTests
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(expected, messages);
-        Assert.All(messages, m => Assert.True(m.Length < 127, m));
+        Assert.All(messages, m => Assert.True(m.Length <= 127, m));
     }
 
-    [Fact]
-    public async Task LapsReplies_StayUnderTheChatLimit_WithAVeryLongName()
+    // 127 is the longest message the game accepts (docs/finding-rvas.md), and the limit
+    // ChatMessageCharacterLimit enforces for every reply.
+    [Theory]
+    [InlineData(VoteModes.Voting)]
+    [InlineData(VoteModes.Direct)]
+    public async Task LapsReplies_FitTheChatLimit_WithAVeryLongName(string mode)
     {
-        var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Voting);
-        var longName = new string('N', 120);
+        var (service, tracker, messages, _, _) = CreateModeSetup(mode);
+        var longName = new string('N', 140);
         Join(tracker, longName);
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Bob", false, "!laps 5");
+        // The long name starts the change, then is refused while it is pending.
+        service.ProcessChatCommand(longName, false, "!laps 5");
         await Task.Delay(50, TestContext.Current.CancellationToken);
         service.ProcessChatCommand(longName, false, "!laps 6");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        Assert.Contains(messages, m => m.Contains("vote in progress", StringComparison.Ordinal));
-        Assert.All(messages, m => Assert.True(m.Length < 127, m));
+        Assert.Contains(messages, m => m.Contains(mode == VoteModes.Voting ? "vote in progress" : "Try again", StringComparison.Ordinal));
+        Assert.Contains(messages, m => m.StartsWith(mode == VoteModes.Voting ? "By NNN" : "Next race: 5 laps", StringComparison.Ordinal));
+        Assert.All(messages, m => Assert.True(m.Length <= 127, m));
     }
 }
