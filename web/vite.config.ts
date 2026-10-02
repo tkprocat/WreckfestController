@@ -24,5 +24,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // prePaint.test.ts reads styles.css as text; otherwise Vitest stubs every CSS import.
+    css: { include: [/styles\.css/] },
   },
 })

@@ -9,6 +9,16 @@
   --space-8: 32px;
   --radius-control: 8px;
   --radius-panel: 12px;
+  /* Pre-Vue fallbacks; useAppearance then sets every variable from theme/tokens.ts. */
+  --page-background: #f4f5f7;
+  --page-text: #202631;
+  color-scheme: light;
+}
+
+/* index.html sets data-theme before the first paint; without it, follow the OS. */
+:root[data-theme='dark'] { --page-background: #11151b; --page-text: #edf0f5; color-scheme: dark; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) { --page-background: #11151b; --page-text: #edf0f5; color-scheme: dark; }
 }
 
 body {
@@ -72,6 +82,12 @@ a { color: var(--accent); }
   min-height: 34px;
   padding: 4px 8px;
   cursor: pointer;
+}
+
+@media (max-width: 599px) {
+  .app-header { padding: var(--space-4); gap: var(--space-3); }
+  .app-user { width: 100%; gap: var(--space-3); font-size: 13px; }
+  .appearance-control { margin-right: auto; }
 }
 
 .app-error { color: var(--error-color); font-size: 0.875em; }

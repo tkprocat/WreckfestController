@@ -30,7 +30,7 @@ async function signOut() {
           <nav class="app-user">
             <label class="appearance-control">
               <span>Theme</span>
-              <select aria-label="Appearance" :value="preference" @change="setPreference(($event.target as HTMLSelectElement).value)">
+              <select :value="preference" @change="setPreference(($event.target as HTMLSelectElement).value)">
                 <option value="system">System</option>
                 <option value="light">Light</option>
                 <option value="dark">Dark</option>
