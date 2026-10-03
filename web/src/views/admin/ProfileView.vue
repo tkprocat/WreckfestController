@@ -2,7 +2,7 @@
 import PageHeader from '@/components/PageHeader.vue'
 import { computed, reactive, ref, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSelect, NSpace, useMessage } from 'naive-ui'
+import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSelect, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import { fieldErrors, problemMessage } from '@/api/problems'
 import { useAuthStore } from '@/stores/auth'
@@ -136,7 +136,7 @@ function status(errors: Record<string, string>, field: string) {
 
     <template v-else>
       <NCard :title="`Account: ${auth.user.userName}`" class="gap">
-        <NForm label-placement="left" label-width="auto" :disabled="savingProfile" @submit.prevent="saveProfile">
+        <NForm label-placement="top" class="form-page" :disabled="savingProfile" @submit.prevent="saveProfile">
           <NFormItem label="Email" :feedback="profileErrors.email" :validation-status="status(profileErrors, 'email')">
             <NInput v-model:value="profile.email" :input-props="{ 'aria-label': 'Email', type: 'email', autocomplete: 'email' }" />
           </NFormItem>
@@ -161,14 +161,16 @@ function status(errors: Record<string, string>, field: string) {
               :input-props="{ 'aria-label': 'Time zone' }"
             />
           </NFormItem>
-          <NButton type="primary" attr-type="submit" :loading="savingProfile" :disabled="!profileChanged || savingProfile">
-            Save
-          </NButton>
+          <div class="form-actions">
+            <NButton type="primary" attr-type="submit" :loading="savingProfile" :disabled="!profileChanged || savingProfile">
+              Save
+            </NButton>
+          </div>
         </NForm>
       </NCard>
 
       <NCard title="Change password">
-        <NForm label-placement="left" label-width="auto" :disabled="savingPassword" @submit.prevent="changePassword">
+        <NForm label-placement="top" class="form-page" :disabled="savingPassword" @submit.prevent="changePassword">
           <NFormItem
             label="Current password"
             :feedback="passwordErrors.currentPassword"
@@ -202,11 +204,11 @@ function status(errors: Record<string, string>, field: string) {
               :input-props="{ 'aria-label': 'New password again', autocomplete: 'new-password' }"
             />
           </NFormItem>
-          <NSpace>
+          <div class="form-actions">
             <NButton type="primary" attr-type="submit" :loading="savingPassword" :disabled="!canChangePassword || savingPassword">
               Change password
             </NButton>
-          </NSpace>
+          </div>
         </NForm>
       </NCard>
     </template>

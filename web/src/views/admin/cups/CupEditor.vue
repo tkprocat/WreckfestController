@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, shallowRef } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 import {
   NButton,
   NCheckbox,
@@ -20,6 +20,7 @@ import type { components } from '@/api/schema'
 import ConflictDialog from '@/crud/ConflictDialog.vue'
 import FormField from '@/crud/FormField.vue'
 import TrackListEditor from '@/crud/TrackListEditor.vue'
+import { modalSize } from '@/crud/modal'
 import { hasId, send, type Outcome } from '@/crud/outcome'
 import { vSelectFocus } from '@/crud/selectFocus'
 import { useResourceEditor } from '@/crud/useResourceEditor'
@@ -219,6 +220,14 @@ function invalid(field: string, text: string): Outcome<Cup> {
   return { kind: 'invalid', errors: { [field]: text }, message: text }
 }
 
+// Overrides start collapsed; a refused override opens them, or its message would be hidden.
+const expanded = ref<string[]>([])
+watch(errors, (now) => {
+  if (Object.keys(now).some((field) => field.startsWith('serverConfig')) && !expanded.value.includes('overrides')) {
+    expanded.value = [...expanded.value, 'overrides']
+  }
+})
+
 const collectionOptions = computed(() => collections.value.map((c) => ({ value: c.id, label: `${c.name} (${c.trackCount} tracks)` })))
 
 /** What a conflict compares: everything the form sets, as text. */
@@ -260,7 +269,7 @@ defineExpose({ start })
     preset="card"
     :title="editor.isNew.value ? 'Add cup' : 'Edit cup'"
     :aria-label="editor.isNew.value ? 'Add cup' : 'Edit cup'"
-    style="max-width: 860px"
+    v-bind="modalSize(860)"
     :mask-closable="!saving"
     @update:show="(show: boolean) => !show && editor.close()"
   >
@@ -273,80 +282,91 @@ defineExpose({ start })
       @mine="editor.keepMine()"
     />
     <NForm v-else label-placement="top" :disabled="saving" @submit.prevent="editor.save()">
-      <FormField v-slot="{ inputProps }" label="Name" field="name" :errors="errors">
-        <NInput v-model:value="draft.name" :maxlength="128" :input-props="inputProps" />
-      </FormField>
-      <FormField v-slot="{ inputProps }" label="Description" field="description" :errors="errors">
-        <NInput v-model:value="draft.description" type="textarea" :maxlength="2000" :autosize="{ minRows: 2, maxRows: 6 }" :input-props="inputProps" />
-      </FormField>
+      <section class="form-section" aria-labelledby="cup-identity">
+        <h3 id="cup-identity" class="form-section-title">Cup</h3>
+        <FormField v-slot="{ inputProps }" label="Name" field="name" :errors="errors">
+          <NInput v-model:value="draft.name" :maxlength="128" :input-props="inputProps" />
+        </FormField>
+        <FormField v-slot="{ inputProps }" label="Description" field="description" :errors="errors">
+          <NInput v-model:value="draft.description" type="textarea" :maxlength="2000" :autosize="{ minRows: 2, maxRows: 6 }" :input-props="inputProps" />
+        </FormField>
+      </section>
 
-      <NSpace :wrap="true" :size="24">
-        <FormField v-slot="{ inputProps }" label="Starts (your local time)" field="startTime" :errors="errors">
-          <input v-model="draft.start" type="datetime-local" class="native" :disabled="saving" v-bind="inputProps" />
+      <section class="form-section" aria-labelledby="cup-schedule">
+        <h3 id="cup-schedule" class="form-section-title">Schedule</h3>
+        <div class="form-grid">
+          <FormField v-slot="{ inputProps }" label="Starts (your local time)" field="startTime" :errors="errors">
+            <input v-model="draft.start" type="datetime-local" class="native-control" :disabled="saving" v-bind="inputProps" />
+          </FormField>
+          <FormField v-slot="{ inputProps }" label="Time zone" field="timeZone" :errors="errors" help="The repeat's time is in this zone.">
+            <NSelect v-model:value="draft.timeZone" :options="zones" filterable v-select-focus="inputProps" :input-props="inputProps" />
+          </FormField>
+        </div>
+        <FormField v-slot="{ controlProps }" label="Repeats" field="repeat.frequency" :errors="errors">
+          <NRadioGroup v-model:value="draft.repeat" name="cup-repeat" role="radiogroup" v-bind="controlProps">
+            <NRadioButton value="none">Once</NRadioButton>
+            <NRadioButton value="daily">Daily</NRadioButton>
+            <NRadioButton value="weekly">Weekly</NRadioButton>
+          </NRadioGroup>
         </FormField>
-        <FormField v-slot="{ inputProps }" label="Time zone" field="timeZone" :errors="errors" help="The repeat's time is in this zone.">
-          <NSelect v-model:value="draft.timeZone" :options="zones" filterable style="width: 260px" v-select-focus="inputProps" :input-props="inputProps" />
-        </FormField>
-      </NSpace>
+        <div v-if="draft.repeat !== 'none'" class="form-grid">
+          <FormField v-if="draft.repeat === 'weekly'" v-slot="{ controlProps }" class="form-wide" label="On" field="repeat.days" :errors="errors">
+            <NCheckboxGroup v-model:value="draft.days" v-bind="controlProps" role="group">
+              <NSpace>
+                <NCheckbox v-for="(day, i) in DAYS" :key="i" :value="i" :label="day.slice(0, 3)" :aria-label="day" />
+              </NSpace>
+            </NCheckboxGroup>
+          </FormField>
+          <FormField v-slot="{ inputProps }" label="At" field="repeat.time" :errors="errors">
+            <input v-model="draft.time" type="time" class="native-control" :disabled="saving" v-bind="inputProps" />
+          </FormField>
+        </div>
+      </section>
 
-      <FormField v-slot="{ controlProps }" label="Repeats" field="repeat.frequency" :errors="errors">
-        <NRadioGroup v-model:value="draft.repeat" name="cup-repeat" role="radiogroup" v-bind="controlProps">
-          <NRadioButton value="none">Once</NRadioButton>
-          <NRadioButton value="daily">Daily</NRadioButton>
-          <NRadioButton value="weekly">Weekly</NRadioButton>
-        </NRadioGroup>
-      </FormField>
-      <NSpace v-if="draft.repeat !== 'none'" :wrap="true" :size="24">
-        <FormField v-if="draft.repeat === 'weekly'" v-slot="{ controlProps }" label="On" field="repeat.days" :errors="errors">
-          <NCheckboxGroup v-model:value="draft.days" v-bind="controlProps" role="group">
-            <NSpace>
-              <NCheckbox v-for="(day, i) in DAYS" :key="i" :value="i" :label="day.slice(0, 3)" :aria-label="day" />
-            </NSpace>
-          </NCheckboxGroup>
+      <section class="form-section" aria-labelledby="cup-rotation">
+        <h3 id="cup-rotation" class="form-section-title">Rotation</h3>
+        <FormField v-slot="{ controlProps }" label="Tracks from" field="collectionId" :errors="errors">
+          <NRadioGroup v-model:value="draft.source" name="cup-rotation" role="radiogroup" v-bind="controlProps">
+            <NRadioButton value="collection">A collection</NRadioButton>
+            <NRadioButton value="own">Its own tracks</NRadioButton>
+            <NRadioButton value="server">Leave the server's</NRadioButton>
+          </NRadioGroup>
         </FormField>
-        <FormField v-slot="{ inputProps }" label="At" field="repeat.time" :errors="errors">
-          <input v-model="draft.time" type="time" class="native" :disabled="saving" v-bind="inputProps" />
+        <FormField v-if="draft.source === 'collection'" v-slot="{ inputProps }" label="Collection" field="collectionId" :errors="errors" help="Its tracks as they are when the cup starts.">
+          <NSelect v-model:value="draft.collectionId" :options="collectionOptions" filterable v-select-focus="inputProps" :input-props="inputProps" />
         </FormField>
-      </NSpace>
+        <template v-if="draft.source === 'own'">
+          <FormField v-slot="{ inputProps }" label="Rotation name (optional)" field="collectionName" :errors="errors" help='Shown to players; "Cup: <name>" when empty.'>
+            <NInput v-model:value="draft.collectionName" :maxlength="128" :input-props="inputProps" />
+          </FormField>
+          <FormField label="Tracks" field="tracks" :errors="errors">
+            <TrackListEditor v-model="draft.tracks" :variants="variants" :disabled="saving" :errors="errors" style="width: 100%" />
+          </FormField>
+        </template>
+      </section>
 
-      <FormField v-slot="{ controlProps }" label="Rotation" field="collectionId" :errors="errors">
-        <NRadioGroup v-model:value="draft.source" name="cup-rotation" role="radiogroup" v-bind="controlProps">
-          <NRadioButton value="collection">A collection</NRadioButton>
-          <NRadioButton value="own">Its own tracks</NRadioButton>
-          <NRadioButton value="server">Leave the server's</NRadioButton>
-        </NRadioGroup>
-      </FormField>
-      <FormField v-if="draft.source === 'collection'" v-slot="{ inputProps }" label="Collection" field="collectionId" :errors="errors" help="Its tracks as they are when the cup starts.">
-        <NSelect v-model:value="draft.collectionId" :options="collectionOptions" filterable v-select-focus="inputProps" :input-props="inputProps" />
-      </FormField>
-      <template v-if="draft.source === 'own'">
-        <FormField v-slot="{ inputProps }" label="Rotation name (optional)" field="collectionName" :errors="errors" help='Shown to players; "Cup: <name>" when empty.'>
-          <NInput v-model:value="draft.collectionName" :maxlength="128" :input-props="inputProps" />
-        </FormField>
-        <FormField label="Tracks" field="tracks" :errors="errors">
-          <TrackListEditor v-model="draft.tracks" :variants="variants" :disabled="saving" :errors="errors" style="width: 100%" />
-        </FormField>
-      </template>
+      <section class="form-section" aria-labelledby="cup-scoring">
+        <h3 id="cup-scoring" class="form-section-title">Scoring</h3>
+        <div class="form-grid">
+          <FormField v-slot="{ inputProps }" label="Session mode" field="sessionMode" :errors="errors" help="Empty keeps the server's.">
+            <NSelect v-model:value="draft.sessionMode" :options="[...SESSION_MODES]" clearable filterable v-select-focus="inputProps" :input-props="inputProps" />
+          </FormField>
+          <FormField v-slot="{ inputProps }" label="Grid order" field="gridOrder" :errors="errors" help="Empty keeps the server's.">
+            <NSelect v-model:value="draft.gridOrder" :options="[...GRID_ORDERS]" clearable filterable v-select-focus="inputProps" :input-props="inputProps" />
+          </FormField>
+        </div>
+      </section>
 
-      <NSpace :wrap="true" :size="24">
-        <FormField v-slot="{ inputProps }" label="Session mode" field="sessionMode" :errors="errors" help="Empty keeps the server's.">
-          <NSelect v-model:value="draft.sessionMode" :options="[...SESSION_MODES]" clearable filterable style="width: 260px" v-select-focus="inputProps" :input-props="inputProps" />
-        </FormField>
-        <FormField v-slot="{ inputProps }" label="Grid order" field="gridOrder" :errors="errors" help="Empty keeps the server's.">
-          <NSelect v-model:value="draft.gridOrder" :options="[...GRID_ORDERS]" clearable filterable style="width: 260px" v-select-focus="inputProps" :input-props="inputProps" />
-        </FormField>
-      </NSpace>
-
-      <NCollapse class="gap">
+      <NCollapse v-model:expanded-names="expanded" class="form-section">
         <NCollapseItem title="Server overrides (empty keeps the server's)" name="overrides">
-          <NSpace :wrap="true" :size="16">
+          <div class="form-grid">
             <FormField v-slot="{ inputProps }" label="Server name" field="serverConfig.serverName" :errors="errors">
-              <NInput v-model:value="draft.config.serverName" :maxlength="256" style="width: 260px" :input-props="inputProps" />
+              <NInput v-model:value="draft.config.serverName" :maxlength="256" :input-props="inputProps" />
             </FormField>
             <FormField v-slot="{ inputProps }" label="Welcome message" field="serverConfig.welcomeMessage" :errors="errors">
-              <NInput v-model:value="draft.config.welcomeMessage" :maxlength="256" style="width: 260px" :input-props="inputProps" />
+              <NInput v-model:value="draft.config.welcomeMessage" :maxlength="256" :input-props="inputProps" />
             </FormField>
-            <FormField v-slot="{ controlProps }" label="Password" field="serverConfig.password" :errors="errors">
+            <FormField v-slot="{ controlProps }" class="form-wide" label="Password" field="serverConfig.password" :errors="errors">
               <NSpace vertical :size="8">
                 <NRadioGroup v-model:value="draft.config.passwordMode" name="cup-password" role="radiogroup" v-bind="controlProps">
                   <NRadioButton value="inherit">Keep the server's</NRadioButton>
@@ -359,54 +379,43 @@ defineExpose({ start })
                   type="password"
                   show-password-on="click"
                   :maxlength="256"
-                  style="width: 220px"
+                  class="password"
                   :input-props="{ 'aria-label': 'Cup password', autocomplete: 'off' }"
                 />
               </NSpace>
             </FormField>
             <FormField v-slot="{ inputProps }" label="Max players" field="serverConfig" :errors="errors">
-              <NInputNumber v-model:value="draft.config.maxPlayers" :min="1" style="width: 120px" :input-props="inputProps" />
+              <NInputNumber v-model:value="draft.config.maxPlayers" :min="1" :input-props="inputProps" />
             </FormField>
             <FormField v-slot="{ inputProps }" label="AI bots" field="serverConfig" :errors="errors">
-              <NInputNumber v-model:value="draft.config.bots" :min="0" style="width: 120px" :input-props="inputProps" />
+              <NInputNumber v-model:value="draft.config.bots" :min="0" :input-props="inputProps" />
             </FormField>
             <FormField v-slot="{ inputProps }" label="Laps" field="serverConfig" :errors="errors">
-              <NInputNumber v-model:value="draft.config.laps" :min="1" style="width: 120px" :input-props="inputProps" />
+              <NInputNumber v-model:value="draft.config.laps" :min="1" :input-props="inputProps" />
             </FormField>
             <FormField v-slot="{ inputProps }" label="Lobby countdown (s)" field="serverConfig" :errors="errors">
-              <NInputNumber v-model:value="draft.config.lobbyCountdown" :min="0" style="width: 140px" :input-props="inputProps" />
+              <NInputNumber v-model:value="draft.config.lobbyCountdown" :min="0" :input-props="inputProps" />
             </FormField>
             <FormField v-slot="{ inputProps }" label="AI difficulty" field="serverConfig.aiDifficulty" :errors="errors">
-              <NSelect v-model:value="draft.config.aiDifficulty" :options="AI" clearable filterable style="width: 160px" v-select-focus="inputProps" :input-props="inputProps" />
+              <NSelect v-model:value="draft.config.aiDifficulty" :options="AI" clearable filterable v-select-focus="inputProps" :input-props="inputProps" />
             </FormField>
             <FormField v-slot="{ inputProps }" label="Vehicle damage" field="serverConfig.vehicleDamage" :errors="errors">
-              <NSelect v-model:value="draft.config.vehicleDamage" :options="DAMAGE" clearable filterable style="width: 160px" v-select-focus="inputProps" :input-props="inputProps" />
+              <NSelect v-model:value="draft.config.vehicleDamage" :options="DAMAGE" clearable filterable v-select-focus="inputProps" :input-props="inputProps" />
             </FormField>
-          </NSpace>
+          </div>
         </NCollapseItem>
       </NCollapse>
 
-      <NSpace justify="end">
+      <div class="form-actions">
         <NButton :disabled="saving" @click="editor.close()">Cancel</NButton>
         <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">
           {{ editor.isNew.value ? 'Add' : 'Save' }}
         </NButton>
-      </NSpace>
+      </div>
     </NForm>
   </NModal>
 </template>
 
 <style scoped>
-.native {
-  font: inherit;
-  color: inherit;
-  background: transparent;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-control);
-  padding: 4px 8px;
-  color-scheme: inherit;
-}
-.gap {
-  margin-bottom: 16px;
-}
+.password { max-width: 320px; }
 </style>

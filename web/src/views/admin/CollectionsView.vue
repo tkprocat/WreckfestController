@@ -14,6 +14,7 @@ import { useResourceEditor } from '@/crud/useResourceEditor'
 import { useResourceList } from '@/crud/useResourceList'
 import { formatWhen } from '@/utils/format'
 import { describeTrack as describe } from '@/utils/trackText'
+import { modalSize } from '@/crud/modal'
 
 type Summary = components['schemas']['CollectionSummaryResponse']
 type Collection = components['schemas']['CollectionResponse']
@@ -241,7 +242,7 @@ onMounted(() => {
       preset="card"
       :title="editor.isNew.value ? 'Add collection' : 'Edit collection'"
       :aria-label="editor.isNew.value ? 'Add collection' : 'Edit collection'"
-      style="max-width: 820px"
+      v-bind="modalSize(820)"
       :mask-closable="!saving"
       @update:show="(show: boolean) => !show && editor.close()"
     >
@@ -260,12 +261,12 @@ onMounted(() => {
         <FormField label="Tracks" field="tracks" :errors="errors">
           <TrackListEditor v-model="draft.tracks" :variants="variants" :disabled="saving" :errors="errors" style="width: 100%" />
         </FormField>
-        <NSpace justify="end">
+        <div class="form-actions">
           <NButton :disabled="saving" @click="editor.close()">Cancel</NButton>
         <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">
             {{ editor.isNew.value ? 'Add' : 'Save' }}
           </NButton>
-        </NSpace>
+        </div>
       </NForm>
     </NModal>
   </section>

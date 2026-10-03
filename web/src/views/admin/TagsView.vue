@@ -12,6 +12,7 @@ import { NO_ANSWER, hasId, send, useConfirm } from '@/crud/outcome'
 import { useResourceEditor } from '@/crud/useResourceEditor'
 import { useResourceList } from '@/crud/useResourceList'
 import { textOn } from '@/utils/color'
+import { modalSize } from '@/crud/modal'
 
 type Tag = components['schemas']['TagResponse']
 interface TagDraft {
@@ -159,7 +160,7 @@ onMounted(() => void list.reload())
       preset="card"
       :title="editor.isNew.value ? 'Add tag' : 'Edit tag'"
       :aria-label="editor.isNew.value ? 'Add tag' : 'Edit tag'"
-      style="max-width: 520px"
+      v-bind="modalSize(520)"
       :mask-closable="!saving"
       @update:show="(show: boolean) => !show && editor.close()"
     >
@@ -171,7 +172,7 @@ onMounted(() => void list.reload())
         @theirs="editor.useTheirs()"
         @mine="editor.keepMine()"
       />
-      <NForm v-else label-placement="left" label-width="auto" :disabled="saving" @submit.prevent="editor.save()">
+      <NForm v-else label-placement="top" :disabled="saving" @submit.prevent="editor.save()">
         <FormField v-slot="{ inputProps }" label="Name" field="name" :errors="errors">
           <NInput v-model:value="draft.name" :maxlength="64" :input-props="inputProps" :disabled="saving" />
         </FormField>
@@ -193,12 +194,12 @@ onMounted(() => void list.reload())
         <FormField v-slot="{ inputProps }" label="Colour" field="color" :errors="errors" help="#RRGGBB, or empty for none.">
           <NInput v-model:value="draft.color" placeholder="#3366ff" :input-props="inputProps" :disabled="saving" />
         </FormField>
-        <NSpace justify="end">
+        <div class="form-actions">
           <NButton :disabled="saving" @click="editor.close()">Cancel</NButton>
           <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">
             {{ editor.isNew.value ? 'Add' : 'Save' }}
           </NButton>
-        </NSpace>
+        </div>
       </NForm>
     </NModal>
   </section>

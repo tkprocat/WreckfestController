@@ -184,6 +184,20 @@ describe('CupsView', () => {
     expect(dialog().find('input[aria-label="Starts (your local time)"]').attributes('aria-invalid')).toBe('true')
   })
 
+  // The overrides start collapsed: a message inside them must not stay hidden.
+  it('opens the server overrides when one of them is refused', async () => {
+    api.POST.mockResolvedValue(refused({ title: 'One or more validation errors occurred.', status: 400, errors: { 'serverConfig.serverName': ['Too long.'] } }, 400))
+    await mountPage()
+
+    await click('Add cup')
+    expect(dialog().find('input[aria-label="Server name"]').exists()).toBe(false)
+    await dialog().find('input[aria-label="Name"]').setValue('Long name')
+    await click('Add', dialog())
+
+    expect(dialog().text()).toContain('Too long.')
+    expect(dialog().find('input[aria-label="Server name"]').attributes('aria-invalid')).toBe('true')
+  })
+
   it('shows what changed elsewhere when the save conflicts', async () => {
     api.PUT.mockResolvedValue(refused({ ...friday(), serverConfig: { serverName: 'Renamed server' }, version: 5 }, 409))
     await mountPage()
@@ -325,7 +339,7 @@ describe('CupsView', () => {
     await labelled('Edit Friday Derby').trigger('click')
     await flushPromises()
 
-    for (const [label, name] of [['Repeats', 'cup-repeat'], ['Rotation', 'cup-rotation']]) {
+    for (const [label, name] of [['Repeats', 'cup-repeat'], ['Tracks from', 'cup-rotation']]) {
       const group = dialog().find(`[aria-label="${label}"]`)
       expect(group.attributes('role')).toBe('radiogroup')
       expect(group.findAll('input[type="radio"]').every((r) => r.attributes('name') === name)).toBe(true)
