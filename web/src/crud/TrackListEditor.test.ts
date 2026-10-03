@@ -22,7 +22,7 @@ const variant = (id: number, variantId: string, trackName: string, name: string,
   tags: [],
 })
 
-const variants = [variant(1, 'loop', 'Fields', 'Loop'), variant(2, 'arena', 'Crash Arena', 'Bowl', 'Derby')]
+const variants = [variant(1, 'loop', 'Fields', 'Loop'), variant(2, 'arena', 'Crash Arena', 'Bowl', 'Derby'), { ...variant(3, 'quarry', 'Old Quarry', 'Pit'), isHidden: true }]
 
 let wrapper: VueWrapper | undefined
 afterEach(() => {
@@ -50,6 +50,19 @@ describe('TrackListEditor', () => {
 
     expect(wrapper!.text()).toContain('Fields - Loop')
     expect(wrapper!.text()).toContain('mystery_track (not in the catalogue)')
+  })
+
+  // A layout hidden since it was added stays in the rotation, marked, not dropped.
+  it('keeps a hidden layout and duplicate rows, each as its own row', () => {
+    editor([{ track: 'quarry' }, { track: 'loop' }, { track: 'loop', laps: 5 }])
+
+    const rows = wrapper!.findAll('li.row')
+    expect(rows).toHaveLength(3)
+    expect(rows[0]!.text()).toContain('Old Quarry - Pit')
+    expect(rows[0]!.text()).toContain('Hidden')
+    expect(rows[1]!.text()).not.toContain('Hidden')
+    expect(new Set(rows.map((r) => r.attributes('data-row'))).size).toBe(3)
+    expect(wrapper!.text()).toContain('3 tracks')
   })
 
   // Every field survives a move, including the ones the editor does not show.

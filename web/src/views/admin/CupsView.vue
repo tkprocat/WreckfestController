@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import PageHeader from '@/components/PageHeader.vue'
-import { h, onBeforeUnmount, onMounted, ref } from 'vue'
+import { h, onBeforeUnmount, onMounted, ref, useId } from 'vue'
 import { NButton, NCard, NSpace, NTag, useMessage, type DataTableColumns } from 'naive-ui'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
@@ -11,7 +11,7 @@ import { useResourceList } from '@/crud/useResourceList'
 import { formatWhen } from '@/utils/format'
 import { onHub } from '@/realtime/hub'
 import CupEditor from './cups/CupEditor.vue'
-import RotationPanel from './rotation/RotationPanel.vue'
+import RotationPanel, { type RotationState } from './rotation/RotationPanel.vue'
 
 type Cup = components['schemas']['CupResponse']
 
@@ -25,6 +25,11 @@ const list = useResourceList<Cup>(async () => {
 const { items: cups, loading, loaded, error } = list
 
 const cupEditor = ref<InstanceType<typeof CupEditor> | null>(null)
+
+/** The rotation editor starts collapsed; its header says what it holds and whether it needs a look. */
+const rotation = ref<RotationState | null>(null)
+const rotationOpen = ref(false)
+const rotationId = useId()
 
 /** One action at a time, on one cup. */
 const busy = ref<number | null>(null)
@@ -182,9 +187,24 @@ onBeforeUnmount(() => {
         <NButton type="primary" :disabled="!loaded" @click="cupEditor?.start(null)">Add cup</NButton>
       </template>
     </PageHeader>
-    <!-- The rotation as "the current cup": the same panel as the Rotation page, to compare. -->
-    <NCard title="Now running" class="gap">
-      <RotationPanel />
+    <!-- The same panel as the Rotation page, to compare with the cups. Collapsed with v-show,
+         so it stays mounted: its summary is live, and collapsing never drops unsaved edits. -->
+    <NCard class="gap" size="small">
+      <div class="rotation-head">
+        <NButton text :aria-expanded="rotationOpen" :aria-controls="rotationId" @click="rotationOpen = !rotationOpen">
+          <span class="chevron" :class="{ open: rotationOpen }" aria-hidden="true">›</span>
+          <span class="rotation-title">Configured rotation</span>
+        </NButton>
+        <span v-if="rotation" class="rotation-summary" role="status">
+          <NTag v-if="rotation.dirty" size="small" type="warning" :bordered="false">Unsaved changes</NTag>
+          <NTag v-else-if="rotation.attention" size="small" type="info" :bordered="false">Needs a look</NTag>
+          {{ rotation.tracks }} {{ rotation.tracks === 1 ? 'track' : 'tracks' }} ·
+          {{ rotation.cupName ? `set by ${rotation.cupName}` : "the server's own" }}
+        </span>
+      </div>
+      <div v-show="rotationOpen" :id="rotationId" class="rotation-body">
+        <RotationPanel @state="(state: RotationState) => (rotation = state)" />
+      </div>
     </NCard>
     <NCard>
       <ResourceTable
@@ -205,6 +225,35 @@ onBeforeUnmount(() => {
 <style scoped>
 .gap {
   margin-bottom: 16px;
+}
+.rotation-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+.rotation-title {
+  font-weight: 600;
+}
+.chevron {
+  display: inline-block;
+  margin-right: 8px;
+  transition: transform 0.15s;
+}
+.chevron.open {
+  transform: rotate(90deg);
+}
+.rotation-body {
+  margin-top: 16px;
+}
+.rotation-summary {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
 }
 :deep(.flag) {
   margin-left: 6px;

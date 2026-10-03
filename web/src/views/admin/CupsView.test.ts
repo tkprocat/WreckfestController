@@ -3,6 +3,7 @@ import { defineComponent, h } from 'vue'
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { NDialogProvider, NMessageProvider } from 'naive-ui'
 import CupsView from './CupsView.vue'
+import RotationPanel from './rotation/RotationPanel.vue'
 
 const api = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() }))
 vi.mock('@/api/client', () => ({ api }))
@@ -101,6 +102,28 @@ afterEach(() => {
 })
 
 describe('CupsView', () => {
+  // Collapsed, the rotation editor still says what it holds and that edits are waiting.
+  it('sums up the collapsed rotation editor from its state', async () => {
+    await mountPage()
+
+    const panel = wrapper!.findComponent(RotationPanel)
+    panel.vm.$emit('state', { tracks: 3, cupName: 'Friday Derby', dirty: true, attention: true })
+    await flushPromises()
+
+    expect(wrapper!.text()).toContain('Configured rotation')
+    expect(wrapper!.text()).toContain('3 tracks')
+    expect(wrapper!.text()).toContain('set by Friday Derby')
+    expect(wrapper!.text()).toContain('Unsaved changes')
+    expect(wrapper!.text()).not.toContain('Now running')
+
+    // Collapsed, but mounted: opening shows the same panel, edits and all.
+    const toggle = wrapper!.find('button[aria-expanded]')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper!.findComponent(RotationPanel).vm).toBe(panel.vm)
+  })
+
   it('lists cups with their schedule and rotation, and marks the active one', async () => {
     await mountPage()
 
