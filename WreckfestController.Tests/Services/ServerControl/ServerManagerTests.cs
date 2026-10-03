@@ -1616,4 +1616,46 @@ public class ServerManagerTests
             Directory.Delete(root, recursive: true);
         }
     }
+
+    [Fact]
+    public void A_race_record_is_reported_once_parsed()
+    {
+        HookRaceRecord? reported = null;
+        _serverManager.RaceFinished += record => reported = record;
+
+        Assert.True(_serverManager.TryProcessHookRaceRecord(
+            WreckfestController.Tests.Services.Hook.HookRaceRecordTests.LiveRecord,
+            _serverManager.CurrentAttachmentGeneration));
+
+        Assert.NotNull(reported);
+        Assert.Equal("speedway2_inner_oval", reported!.TrackId);
+    }
+
+    // A record read from the previous server, delivered after the attachment moved,
+    // must not be reported as a race on the server attached now.
+    [Fact]
+    public void A_race_record_from_a_previous_attachment_is_consumed_but_not_reported()
+    {
+        var reported = false;
+        _serverManager.RaceFinished += _ => reported = true;
+
+        Assert.True(_serverManager.TryProcessHookRaceRecord(
+            WreckfestController.Tests.Services.Hook.HookRaceRecordTests.LiveRecord,
+            _serverManager.CurrentAttachmentGeneration - 1));
+
+        Assert.False(reported);
+    }
+
+    [Fact]
+    public void A_malformed_race_record_is_consumed_but_not_reported()
+    {
+        var reported = false;
+        _serverManager.RaceFinished += _ => reported = true;
+
+        Assert.True(_serverManager.TryProcessHookRaceRecord(
+            HookRaceRecord.Marker + "\u001Fgarbage\u0013",
+            _serverManager.CurrentAttachmentGeneration));
+
+        Assert.False(reported);
+    }
 }

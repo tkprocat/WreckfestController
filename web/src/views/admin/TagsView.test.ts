@@ -24,6 +24,14 @@ function mountPage() {
 const body = () => new DOMWrapper(document.body)
 const button = (label: string, within = body()) => within.findAll('button').find((b) => b.text().trim() === label)!
 const rowOf = (name: string) => wrapper!.findAll('tr').find((row) => row.text().includes(name))!
+const menuOption = (action: string) => body().findAll('.n-dropdown-option-body').find((option) => option.text().trim() === action)!
+async function menuAction(row: string, action: string) {
+  await body().find('[aria-label="More actions for ' + row + '"]').trigger('click')
+  await flushPromises()
+  await menuOption(action).trigger('click')
+  await flushPromises()
+}
+
 
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset()
@@ -110,7 +118,7 @@ describe('TagsView', () => {
     mountPage()
     await flushPromises()
 
-    await button('Delete', rowOf('Night')).trigger('click')
+    await menuAction('Night', 'Delete')
     await flushPromises()
     expect(api.DELETE).not.toHaveBeenCalled()
     const dialog = body().find('.n-dialog[role="dialog"]')
@@ -130,7 +138,7 @@ describe('TagsView', () => {
     mountPage()
     await flushPromises()
 
-    await button('Delete', rowOf('Night')).trigger('click')
+    await menuAction('Night', 'Delete')
     await flushPromises()
     await button('Cancel', body().find('.n-dialog')).trigger('click')
     await flushPromises()
