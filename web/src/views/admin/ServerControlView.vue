@@ -6,7 +6,6 @@ import {
   NButton,
   NCard,
   NInput,
-  NInputGroup,
   NSpace,
   NTag,
   useDialog,
@@ -53,6 +52,7 @@ const command = ref('')
 /** The console: the log file's tail when the page opens, then live lines from the hub. */
 const MAX_LINES = 1000
 const lines = ref<string[]>([])
+const logLoading = ref(true)
 const consoleBox = ref<HTMLElement | null>(null)
 
 // Hub lines that arrive while the tail is loading go after it, not under it.
@@ -69,6 +69,7 @@ async function loadLogTail() {
   }
 
   tailLoaded = true
+  logLoading.value = false
   lines.value = capped([...head, ...pending])
   pending = []
   await scrollToEnd()
@@ -201,8 +202,10 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
   <section>
     <PageHeader title="Server control" description="Manage the server and follow its console output.">
       <template #status>
-        <NTag :type="status?.isRunning ? 'success' : 'default'" round size="small">
-        {{ status === null ? 'Unknown' : status.isRunning ? `Running (PID ${status.processId})` : 'Stopped' }}
+        <NTag :type="running === true ? 'success' : 'default'" round size="small">
+          {{ refreshing
+            ? (status ? 'Checking… (last known ' + (status.isRunning ? 'Running' : 'Stopped') + ')' : 'Checking…')
+            : status === null ? 'Unknown' : status.isRunning ? 'Running (PID ' + status.processId + ')' : 'Stopped' }}
         </NTag>
       </template>
     </PageHeader>
@@ -211,38 +214,42 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
       The server's state is not known, so the actions are unavailable until it is.
     </NAlert>
 
-    <!-- Every action needs a known state: Start and Update a stopped server (Update stops a
-         running one without asking), the rest a running one. -->
-    <NCard title="Actions" class="gap">
-      <NSpace>
-        <NButton type="primary" :loading="busy === 'start'" :disabled="!!busy || running !== false" @click="ask('start')">Start</NButton>
-        <NButton :loading="busy === 'stop'" :disabled="!!busy || running !== true" @click="ask('stop')">Stop</NButton>
-        <NButton :loading="busy === 'restart'" :disabled="!!busy || running !== true" @click="ask('restart')">Restart</NButton>
-        <NButton :loading="busy === 'inject'" :disabled="!!busy || running !== true" @click="ask('inject')">Inject hook</NButton>
-        <NButton :loading="busy === 'update'" :disabled="!!busy || running !== false" @click="ask('update')">Update</NButton>
-        <NButton :loading="busy === 'bot'" :disabled="!!busy || running !== true" @click="addBot">Add AI bot</NButton>
-      </NSpace>
-      <NSpace class="danger">
-        <NButton type="error" ghost :loading="busy === 'forcestop'" :disabled="!!busy || running !== true" @click="ask('forcestop')">
-          Force stop
-        </NButton>
-        <!-- Like Force stop, only for a running server: stopped, it would just start it,
-             under a confirmation that talks about killing a process. -->
-        <NButton
-          type="error"
-          ghost
-          :loading="busy === 'forcerestart'"
-          :disabled="!!busy || running !== true"
-          @click="ask('forcerestart')"
-        >
-          Force restart
-        </NButton>
-      </NSpace>
+    <NCard title="Server actions" class="gap">
+      <p v-if="running === null" class="state-note">Actions become available when the current server state is confirmed.</p>
+      <div class="action-groups">
+        <section class="action-group">
+          <h3>Run the server</h3>
+          <p>Start a stopped server, or stop and restart one that is running. Stop and restart ask before disconnecting players.</p>
+          <NSpace>
+            <NButton type="primary" :loading="busy === 'start'" :disabled="!!busy || running !== false" @click="ask('start')">Start</NButton>
+            <NButton :loading="busy === 'stop'" :disabled="!!busy || running !== true" @click="ask('stop')">Stop</NButton>
+            <NButton :loading="busy === 'restart'" :disabled="!!busy || running !== true" @click="ask('restart')">Restart</NButton>
+          </NSpace>
+        </section>
+        <section class="action-group">
+          <h3>Maintenance</h3>
+          <p>Inject the hook or add a bot while running. Update the server only after it has stopped.</p>
+          <NSpace>
+            <NButton :loading="busy === 'inject'" :disabled="!!busy || running !== true" @click="ask('inject')">Inject hook</NButton>
+            <NButton :loading="busy === 'bot'" :disabled="!!busy || running !== true" @click="addBot">Add AI bot</NButton>
+            <NButton :loading="busy === 'update'" :disabled="!!busy || running !== false" @click="ask('update')">Update</NButton>
+          </NSpace>
+        </section>
+        <section class="action-group recovery">
+          <h3>Recovery</h3>
+          <p>Use these only when the normal stop or restart cannot recover the server process.</p>
+          <NSpace>
+            <NButton type="error" ghost :loading="busy === 'forcestop'" :disabled="!!busy || running !== true" @click="ask('forcestop')">Force stop</NButton>
+            <NButton type="error" ghost :loading="busy === 'forcerestart'" :disabled="!!busy || running !== true" @click="ask('forcerestart')">Force restart</NButton>
+          </NSpace>
+        </section>
+      </div>
     </NCard>
 
     <NCard title="Console">
-      <pre ref="consoleBox" class="console">{{ lines.join('\n') }}</pre>
-      <NInputGroup>
+      <p class="console-intro">Recent log lines. New lines appear when the controller is connected.</p>
+      <pre ref="consoleBox" class="console" role="log" aria-label="Server console" aria-live="off" tabindex="0">{{ logLoading ? 'Loading console…' : lines.length ? lines.join('\n') : 'No console output yet.' }}</pre>
+      <div class="command-bar">
         <NInput
           v-model:value="command"
           placeholder="A console command, such as /message Hello everyone"
@@ -253,31 +260,42 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
         <NButton type="primary" :loading="busy === 'command'" :disabled="!!busy || running !== true || !command.trim()" @click="send">
           Send
         </NButton>
-      </NInputGroup>
+      </div>
     </NCard>
   </section>
 </template>
 
 <style scoped>
-.gap {
-  margin-bottom: 16px;
-}
-
-.danger {
-  margin-top: 12px;
-}
-
+.gap { margin-bottom: 16px; }
+.state-note { margin: 0 0 16px; color: var(--text-muted); }
+.action-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 28px; }
+.action-group { min-width: 0; }
+.action-group h3 { margin: 0 0 6px; font-size: 15px; }
+.action-group p { min-height: 3.2em; margin: 0 0 14px; color: var(--text-muted); font-size: 13px; }
+.recovery { grid-column: 1 / -1; padding-top: 20px; border-top: 1px solid var(--border-color); }
+.recovery p { min-height: 0; }
+.console-intro { margin: 0 0 12px; color: var(--text-muted); font-size: 13px; }
 .console {
-  height: 360px;
+  box-sizing: border-box;
+  width: 100%;
+  height: clamp(240px, 42vh, 520px);
   overflow: auto;
+  overscroll-behavior: contain;
   margin: 0 0 12px;
-  padding: 10px 12px;
-  border-radius: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-control);
   background: #111317;
-  color: #d5d8dc;
-  font-size: 12px;
-  line-height: 1.45;
+  color: #e5e9ee;
+  font: 12px/1.55 var(--font-family-mono, Consolas, monospace);
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.command-bar { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.command-bar :deep(.n-input) { flex: 1 1 260px; min-width: 0; }
+@media (max-width: 650px) {
+  .action-groups { grid-template-columns: 1fr; }
+  .action-group p { min-height: 0; }
+  .recovery { grid-column: auto; }
 }
 </style>

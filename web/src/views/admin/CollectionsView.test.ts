@@ -47,6 +47,14 @@ function mountPage() {
 const body = () => new DOMWrapper(document.body)
 const button = (label: string, within = body()) => within.findAll('button').find((b) => b.text().trim() === label)!
 const rowOf = (name: string) => wrapper!.findAll('tr').find((row) => row.text().includes(name))!
+const menuOption = (action: string) => body().findAll('.n-dropdown-option-body').find((option) => option.text().trim() === action)!
+async function menuAction(row: string, action: string) {
+  await body().find('[aria-label="More actions for ' + row + '"]').trigger('click')
+  await flushPromises()
+  await menuOption(action).trigger('click')
+  await flushPromises()
+}
+
 
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset()
@@ -156,7 +164,7 @@ describe('CollectionsView', () => {
     mountPage()
     await flushPromises()
 
-    await button('Duplicate', rowOf('Evening')).trigger('click')
+    await menuAction('Evening', 'Duplicate')
     await flushPromises()
 
     expect(api.POST).toHaveBeenCalledWith('/api/collections/{id}/duplicate', { params: { path: { id: 1 } } })
@@ -199,7 +207,7 @@ describe('CollectionsView', () => {
     mountPage()
     await flushPromises()
 
-    await button('Delete', rowOf('Empty')).trigger('click')
+    await menuAction('Empty', 'Delete')
     await flushPromises()
     expect(body().find('.n-dialog').text()).toContain('Cups that use it keep its tracks')
     await button('Delete', body().find('.n-dialog')).trigger('click')
