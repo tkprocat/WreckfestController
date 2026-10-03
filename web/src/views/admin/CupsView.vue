@@ -196,10 +196,19 @@ onBeforeUnmount(() => {
           <span class="rotation-title">Configured rotation</span>
         </NButton>
         <span v-if="rotation" class="rotation-summary" role="status">
-          <NTag v-if="rotation.dirty" size="small" type="warning" :bordered="false">Unsaved changes</NTag>
-          <NTag v-else-if="rotation.attention" size="small" type="info" :bordered="false">Needs a look</NTag>
-          {{ rotation.tracks }} {{ rotation.tracks === 1 ? 'track' : 'tracks' }} ·
-          {{ rotation.cupName ? `set by ${rotation.cupName}` : "the server's own" }}
+          <template v-if="rotation.status === 'failed'">
+            <NTag size="small" type="warning" :bordered="false">Could not be read</NTag>
+            Open it to try again.
+          </template>
+          <template v-else-if="rotation.status === 'loading'">Loading…</template>
+          <template v-else>
+            <NTag v-if="rotation.notice === 'conflict'" size="small" type="error" :bordered="false">Changed elsewhere</NTag>
+            <NTag v-else-if="rotation.notice === 'stale'" size="small" type="info" :bordered="false">Changed on the server</NTag>
+            <NTag v-else-if="rotation.notice === 'offer'" size="small" type="info" :bordered="false">Save to the cup too?</NTag>
+            <NTag v-if="rotation.dirty" size="small" type="warning" :bordered="false">Unsaved changes</NTag>
+            {{ rotation.tracks }} {{ rotation.tracks === 1 ? 'track' : 'tracks' }} ·
+            {{ rotation.cupName ? `set by ${rotation.cupName}` : "the server's own" }}
+          </template>
         </span>
       </div>
       <div v-show="rotationOpen" :id="rotationId" class="rotation-body">

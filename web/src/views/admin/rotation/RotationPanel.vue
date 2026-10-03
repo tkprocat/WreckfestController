@@ -25,15 +25,16 @@ type Summary = components['schemas']['CollectionSummaryResponse']
 type Collection = components['schemas']['CollectionResponse']
 
 /**
- * What a page holding the panel collapsed needs to show: the size of the rotation, the cup
- * that set it, and whether something here waits for the admin (unsaved edits, a change on
- * the server, a conflict, or the offer to save to the cup).
+ * What a page holding the panel collapsed needs to show: whether the rotation could be read,
+ * its size, the cup that set it, unsaved edits, and the notice waiting inside, most urgent
+ * first (a save that conflicted, a change on the server, the offer to save to the cup).
  */
 export interface RotationState {
+  status: 'loading' | 'failed' | 'ready'
   tracks: number
   cupName: string | null
   dirty: boolean
-  attention: boolean
+  notice: 'conflict' | 'stale' | 'offer' | null
 }
 const emit = defineEmits<{ state: [state: RotationState] }>()
 
@@ -344,11 +345,12 @@ async function saveCollectionTracks(saved: { name: string; tracks: Track[] }): P
 }
 
 watch(
-  () => ({
+  (): RotationState => ({
+    status: loadError.value ? 'failed' : loop.value ? 'ready' : 'loading',
     tracks: tracks.value.length,
     cupName: cup.value?.name ?? null,
     dirty: dirty.value,
-    attention: dirty.value || staleNotice.value || conflict.value !== null || savedForCup.value !== null,
+    notice: conflict.value ? 'conflict' : staleNotice.value ? 'stale' : savedForCup.value ? 'offer' : null,
   }),
   (state) => emit('state', state),
   { immediate: true },

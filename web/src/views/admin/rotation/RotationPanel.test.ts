@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { NDialogProvider, NMessageProvider } from 'naive-ui'
-import RotationPanel from './RotationPanel.vue'
+import RotationPanel, { type RotationState } from './RotationPanel.vue'
 
 const api = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() }))
 vi.mock('@/api/client', () => ({ api }))
@@ -50,9 +50,14 @@ let current: unknown = null
 let rotation = loop([{ track: 'loop', laps: 3, weather: 'rain' }, { track: 'arena' }])
 
 let wrapper: VueWrapper | undefined
+/** Every state the panel reports, latest last: what a page holding it collapsed shows. */
+let states: RotationState[] = []
 async function mountPanel() {
+  states = []
   wrapper = mount(
-    defineComponent({ render: () => h(NMessageProvider, () => h(NDialogProvider, () => h(RotationPanel))) }),
+    defineComponent({
+      render: () => h(NMessageProvider, () => h(NDialogProvider, () => h(RotationPanel, { onState: (s: RotationState) => states.push(s) }))),
+    }),
     { attachTo: document.body },
   )
   await flushPromises()
@@ -87,6 +92,27 @@ afterEach(() => {
 })
 
 describe('RotationPanel', () => {
+  // The Cups page shows these on its collapsed card.
+  it('reports its state as it loads, is edited, conflicts and fails', async () => {
+    current = cup()
+    api.PUT.mockResolvedValue(refused(loop([{ track: 'fields14' }], 'v9', 'Theirs'), 409))
+    await mountPanel()
+
+    expect(states[0]!.status).toBe('loading')
+    expect(states.at(-1)).toEqual({ status: 'ready', tracks: 2, cupName: 'Friday Derby', dirty: false, notice: null })
+
+    await labelled('Move loop (not in the catalogue) down').trigger('click')
+    expect(states.at(-1)).toMatchObject({ dirty: true, notice: null })
+
+    await click('Save rotation')
+    expect(states.at(-1)).toMatchObject({ dirty: true, notice: 'conflict' })
+
+    api.GET.mockImplementation(() => Promise.reject(new Error('offline')))
+    await click('Keep mine')
+    await click('Discard changes')
+    expect(states.at(-1)).toMatchObject({ status: 'failed' })
+  })
+
   it('says when no cup set the rotation', async () => {
     await mountPanel()
 

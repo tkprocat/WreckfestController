@@ -107,13 +107,15 @@ describe('CupsView', () => {
     await mountPage()
 
     const panel = wrapper!.findComponent(RotationPanel)
-    panel.vm.$emit('state', { tracks: 3, cupName: 'Friday Derby', dirty: true, attention: true })
+    panel.vm.$emit('state', { status: 'ready', tracks: 3, cupName: 'Friday Derby', dirty: true, notice: 'stale' })
     await flushPromises()
 
     expect(wrapper!.text()).toContain('Configured rotation')
     expect(wrapper!.text()).toContain('3 tracks')
     expect(wrapper!.text()).toContain('set by Friday Derby')
     expect(wrapper!.text()).toContain('Unsaved changes')
+    // Unsaved edits do not hide a notice waiting inside.
+    expect(wrapper!.text()).toContain('Changed on the server')
     expect(wrapper!.text()).not.toContain('Now running')
 
     // Collapsed, but mounted: opening shows the same panel, edits and all.
@@ -122,6 +124,12 @@ describe('CupsView', () => {
     await toggle.trigger('click')
     expect(toggle.attributes('aria-expanded')).toBe('true')
     expect(wrapper!.findComponent(RotationPanel).vm).toBe(panel.vm)
+
+    // A rotation that could not be read says so, instead of "0 tracks".
+    panel.vm.$emit('state', { status: 'failed', tracks: 0, cupName: null, dirty: false, notice: null })
+    await flushPromises()
+    expect(wrapper!.text()).toContain('Could not be read')
+    expect(wrapper!.text()).not.toContain('0 tracks')
   })
 
   it('lists cups with their schedule and rotation, and marks the active one', async () => {
