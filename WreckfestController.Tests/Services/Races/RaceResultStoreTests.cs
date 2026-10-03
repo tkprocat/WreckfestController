@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using WreckfestController.Data.Races;
+using WreckfestController.Services.Cups;
 using WreckfestController.Services.Hook;
 using WreckfestController.Services.Publishing;
 using WreckfestController.Services.Races;
@@ -95,11 +96,11 @@ public sealed class RaceResultStoreTests : IDisposable
     private static readonly DateTime BeforeTheRace = LiveRace.EndedAt.UtcDateTime.AddHours(-1);
 
     [Fact]
-    public async Task Links_the_cup_that_is_active()
+    public async Task Links_the_cup_the_race_ended_under()
     {
         var cupId = await ActivateCupAsync("Monday Night Wrecking", BeforeTheRace);
 
-        await _store.SaveAsync(LiveRace);
+        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Monday Night Wrecking", BeforeTheRace));
 
         var race = Assert.Single(await AllRacesAsync());
         Assert.Equal(cupId, race.CupId);
@@ -107,30 +108,23 @@ public sealed class RaceResultStoreTests : IDisposable
         Assert.Equal(BeforeTheRace, race.CupActivatedAt);
     }
 
-    // A race that waited in the recorder's queue while an admin switched cups ended
-    // under the old one. The new cup must not be credited with it.
+    // The race ended under a cup that was deleted before the save: the link cannot be
+    // kept, but the race still happened under that cup on that evening.
     [Fact]
-    public async Task Does_not_credit_a_cup_activated_after_the_race_ended()
+    public async Task Keeps_the_cup_name_when_the_cup_was_deleted_before_the_save()
     {
-        await ActivateCupAsync("Switched To Later", LiveRace.EndedAt.UtcDateTime.AddSeconds(5));
+        var cupId = await ActivateCupAsync("Gone Cup", BeforeTheRace);
+        await using (var db = await _database.Contexts.CreateDbContextAsync())
+        {
+            await db.Cups.Where(c => c.Id == cupId).ExecuteDeleteAsync();
+        }
 
-        await _store.SaveAsync(LiveRace);
+        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Gone Cup", BeforeTheRace));
 
         var race = Assert.Single(await AllRacesAsync());
         Assert.Null(race.CupId);
-        Assert.Equal(string.Empty, race.CupName);
-    }
-
-    // SQLite has no unsigned integer; the ID is stored bit for bit so it stays an identity.
-    [Fact]
-    public async Task Keeps_a_steam_id_above_the_signed_range()
-    {
-        var human = LiveRace.Cars.Single(car => !car.IsBot) with { SteamId = 9223372036854775808UL };
-
-        await _store.SaveAsync(LiveRace with { Cars = [human] });
-
-        var stored = (await AllRacesAsync()).Single().Entries.Single().SteamId;
-        Assert.Equal(9223372036854775808UL, unchecked((ulong)stored!.Value));
+        Assert.Equal("Gone Cup", race.CupName);
+        Assert.Equal(BeforeTheRace, race.CupActivatedAt);
     }
 
     // History outlives the cup: the race stays, readable by the name copied at the time.
@@ -138,7 +132,7 @@ public sealed class RaceResultStoreTests : IDisposable
     public async Task Keeps_the_race_and_the_cup_name_when_the_cup_is_deleted()
     {
         var cupId = await ActivateCupAsync("Monday Night Wrecking", BeforeTheRace);
-        await _store.SaveAsync(LiveRace);
+        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Monday Night Wrecking", BeforeTheRace));
 
         await using (var db = await _database.Contexts.CreateDbContextAsync())
         {
@@ -194,7 +188,7 @@ public sealed class RaceResultStoreTests : IDisposable
             tracks,
             new ServerInfoTracker(NullLogger<ServerInfoTracker>.Instance),
             events);
-        using var recorder = new RaceResultRecorder(serverManager, _store, tracks, NullLogger<RaceResultRecorder>.Instance);
+        using var recorder = new RaceResultRecorder(serverManager, _store, _database.Store, tracks, NullLogger<RaceResultRecorder>.Instance);
         await recorder.StartAsync(CancellationToken.None);
 
         Assert.True(serverManager.TryProcessHookRaceRecord(InjectedHookOutputReader.PrepareForFanout(HookRaceRecordTests.LiveRecord), serverManager.CurrentAttachmentGeneration));
@@ -219,7 +213,7 @@ public sealed class RaceResultStoreTests : IDisposable
             tracks,
             new ServerInfoTracker(NullLogger<ServerInfoTracker>.Instance),
             events);
-        using var recorder = new RaceResultRecorder(serverManager, _store, tracks, NullLogger<RaceResultRecorder>.Instance);
+        using var recorder = new RaceResultRecorder(serverManager, _store, _database.Store, tracks, NullLogger<RaceResultRecorder>.Instance);
         await recorder.StartAsync(CancellationToken.None);
 
         Assert.True(serverManager.TryProcessHookRaceRecord(HookRaceRecord.Marker + "\u001Fgarbage\u0013", serverManager.CurrentAttachmentGeneration));

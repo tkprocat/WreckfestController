@@ -40,7 +40,7 @@ public sealed class RaceResultRecorderTests : IDisposable
     public void Dispose() => _database.Dispose();
 
     private RaceResultRecorder Recorder(IDbContextFactory<ControllerDbContext> contexts) =>
-        new(_serverManager, new RaceResultStore(contexts), _tracks, _logger.Object)
+        new(_serverManager, new RaceResultStore(contexts), _database.Store, _tracks, _logger.Object)
         {
             RetryDelays = [TimeSpan.Zero, TimeSpan.Zero],
         };
@@ -100,20 +100,95 @@ public sealed class RaceResultRecorderTests : IDisposable
         using var recorder = Recorder(gate);
         await recorder.StartAsync(CancellationToken.None);
 
-        ReportRace();
-        await gate.Entered.Task;
-
-        // One race is held in the save; the queue takes 64 more, and refuses two.
-        for (var i = 0; i < 66; i++)
+        try
         {
             ReportRace();
+            await gate.Entered.Task;
+
+            // One race is held in the save; the queue takes 64 more, and refuses two.
+            for (var i = 0; i < 66; i++)
+            {
+                ReportRace();
+            }
+
+            VerifyErrorLogged("the results queue is full", Times.Exactly(2));
+        }
+        finally
+        {
+            gate.Release();
         }
 
-        VerifyErrorLogged("the results queue is full", Times.Exactly(2));
-
-        gate.Release();
         await recorder.FlushAsync();
         Assert.Equal(65, await RaceCountAsync());
+    }
+
+    private async Task<int?> SavedCupIdAsync()
+    {
+        await using var db = await _database.Contexts.CreateDbContextAsync();
+        return await db.Races.Select(r => r.CupId).SingleAsync();
+    }
+
+    private async Task<int> CreateCupAsync(string name) =>
+        (await _database.CreateAsync(CupTestDatabase.Definition(name, new DateTime(2026, 10, 9, 19, 0, 0, DateTimeKind.Utc)))).Id;
+
+    // The race belongs to the cup it ended under. An admin switching cups while it
+    // waits in the queue must neither move it to the new cup nor drop the link.
+    [Fact]
+    public async Task Credits_the_cup_active_when_the_race_ended_even_if_it_changes_before_the_save()
+    {
+        var cupA = await CreateCupAsync("Cup A");
+        var cupB = await CreateCupAsync("Cup B");
+        await _database.Store.SetActiveAsync(cupA);
+
+        var gate = new BlockingFactory(_database.Contexts);
+        using var recorder = Recorder(gate);
+        await recorder.StartAsync(CancellationToken.None);
+        try
+        {
+            ReportRace();
+            await gate.Entered.Task;
+            await _database.Store.SetActiveAsync(cupB);
+        }
+        finally
+        {
+            gate.Release();
+        }
+
+        await recorder.FlushAsync();
+        Assert.Equal(cupA, await SavedCupIdAsync());
+    }
+
+    [Fact]
+    public async Task Does_not_credit_a_cup_activated_after_the_race_ended()
+    {
+        var cup = await CreateCupAsync("Too Late");
+        _database.Clock.Now = HookRaceRecord.TryParse(HookRaceRecordTests.LiveRecord)!.EndedAt.AddSeconds(5);
+        await _database.Store.SetActiveAsync(cup);
+
+        using var recorder = Recorder(_database.Contexts);
+        await recorder.StartAsync(CancellationToken.None);
+        ReportRace();
+        await recorder.FlushAsync();
+
+        Assert.Null(await SavedCupIdAsync());
+    }
+
+    // The cache is what races are credited from, so it must come from the database at
+    // start, not wait for the next activation.
+    [Fact]
+    public async Task Credits_a_cup_that_was_active_before_the_recorder_started()
+    {
+        var cup = await CreateCupAsync("Already Running");
+        await _database.Store.SetActiveAsync(cup);
+        var freshStore = new WreckfestController.Services.Cups.CupStore(_database.Contexts, _database.Clock);
+
+        using var recorder = new RaceResultRecorder(
+            _serverManager, new RaceResultStore(_database.Contexts), freshStore, _tracks, _logger.Object);
+        await recorder.StartAsync(CancellationToken.None);
+        ReportRace();
+        await recorder.FlushAsync();
+
+        Assert.Equal(cup, await SavedCupIdAsync());
     }
 
     [Fact]
@@ -158,7 +233,9 @@ public sealed class RaceResultRecorderTests : IDisposable
             if (Interlocked.Increment(ref _calls) == 1)
             {
                 Entered.SetResult();
-                _released.Wait(TimeSpan.FromSeconds(30));
+                // No timeout: an early release would let the queue drain mid-test.
+                // Every test that blocks releases in a finally.
+                _released.Wait();
             }
 
             return inner.CreateDbContext();

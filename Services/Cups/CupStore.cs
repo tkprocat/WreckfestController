@@ -27,6 +27,9 @@ public sealed record CupSummary(
     RepeatSchedule? Repeat,
     DateTime? ActivatedAt);
 
+/// <summary>Which cup is active, and since when (UTC).</summary>
+public sealed record ActiveCupSnapshot(int Id, string Name, DateTime ActivatedAt);
+
 public enum CupWriteStatus
 {
     Saved,
@@ -63,6 +66,26 @@ public sealed class CupStore
     }
 
     private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
+
+    private volatile ActiveCupSnapshot? _activeCup;
+
+    /// <summary>
+    /// The active cup as of its last change through this store, or as loaded by
+    /// <see cref="LoadActiveCupAsync"/>. For callers that must not wait on the database,
+    /// such as the hook pipe thread noting which cup a race ended under.
+    /// </summary>
+    public ActiveCupSnapshot? CachedActiveCup => _activeCup;
+
+    /// <summary>Loads <see cref="CachedActiveCup"/> from the database.</summary>
+    public async Task LoadActiveCupAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
+        _activeCup = await db.Cups
+            .AsNoTracking()
+            .Where(e => e.IsActive && e.ActivatedAt != null)
+            .Select(e => new ActiveCupSnapshot(e.Id, e.Name, e.ActivatedAt!.Value))
+            .FirstOrDefaultAsync(cancellationToken);
+    }
 
     /// <summary>
     /// The active cup and the next <paramref name="upcoming"/>, as the public page shows
@@ -207,6 +230,11 @@ public sealed class CupStore
             .ExecuteDeleteAsync(cancellationToken);
         if (deleted > 0)
         {
+            if (_activeCup?.Id == id)
+            {
+                _activeCup = null;
+            }
+
             return (CupWriteStatus.Saved, null);
         }
 
@@ -252,7 +280,9 @@ public sealed class CupStore
             return false;
         }
 
+        var name = await db.Cups.Where(e => e.Id == id).Select(e => e.Name).FirstAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        _activeCup = new ActiveCupSnapshot(id, name, now);
         return true;
     }
 

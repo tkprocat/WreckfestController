@@ -146,6 +146,16 @@ public class HookRaceRecordTests
         Assert.Null(HookRaceRecord.TryParse(Record(bot))!.Cars.Single().SteamId);
     }
 
+    // SQLite has no unsigned integer, and a real SteamID64 is far inside a long. A value
+    // beyond it is not an ID, so it is dropped rather than stored as a negative number.
+    [Fact]
+    public void A_steam_id_beyond_the_signed_range_is_not_an_id()
+    {
+        var human = Car(0, 0x32, 9223372036854775808UL, "Big", 0, 0x41, 1, 1, 1, 0, 1, 0, "k", "v");
+
+        Assert.Null(HookRaceRecord.TryParse(Record(human))!.Cars.Single().SteamId);
+    }
+
     // A human's name may start with '*'; only a bot's star is the game's marker.
     [Fact]
     public void Keeps_a_star_in_a_human_name()

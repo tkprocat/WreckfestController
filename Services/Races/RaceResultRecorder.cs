@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using WreckfestController.Services.Cups;
 using WreckfestController.Services.Hook;
 using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Tracking;
@@ -23,12 +24,13 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
 
     private readonly ServerManager _serverManager;
     private readonly RaceResultStore _store;
+    private readonly CupStore _cups;
     private readonly TrackChangeTracker _tracks;
     private readonly ILogger<RaceResultRecorder> _logger;
     // Wait, not a Drop mode: only Wait makes TryWrite return false when the queue is
     // full. The Drop modes report success while discarding a race.
-    private readonly Channel<(HookRaceRecord Record, string? FallbackTrackId)> _queue =
-        Channel.CreateBounded<(HookRaceRecord, string?)>(new BoundedChannelOptions(QueueCapacity)
+    private readonly Channel<(HookRaceRecord Record, ActiveCupSnapshot? Cup, string? FallbackTrackId)> _queue =
+        Channel.CreateBounded<(HookRaceRecord, ActiveCupSnapshot?, string?)>(new BoundedChannelOptions(QueueCapacity)
         {
             SingleReader = true,
             FullMode = BoundedChannelFullMode.Wait,
@@ -48,20 +50,24 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
     public RaceResultRecorder(
         ServerManager serverManager,
         RaceResultStore store,
+        CupStore cups,
         TrackChangeTracker tracks,
         ILogger<RaceResultRecorder> logger)
     {
         _serverManager = serverManager;
         _store = store;
+        _cups = cups;
         _tracks = tracks;
         _logger = logger;
     }
 
-    public Task StartAsync(CancellationToken cancellationToken)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
+        // Races note the active cup from this cache, so it must be current before the
+        // first one can arrive.
+        await _cups.LoadActiveCupAsync(cancellationToken);
         _worker = Task.Run(() => DrainAsync(_stopping.Token));
         _serverManager.RaceFinished += OnRaceFinished;
-        return Task.CompletedTask;
     }
 
     public async Task StopAsync(CancellationToken cancellationToken)
@@ -95,7 +101,17 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
     {
         // The text tracker is only a fallback for a track the hook could not read.
         var fallback = string.IsNullOrEmpty(record.TrackId) ? _tracks.GetCurrentTrack() : null;
-        if (!_queue.Writer.TryWrite((record, fallback)))
+
+        // Noted now, not when the worker saves: the race belongs to the cup it ended
+        // under, even if an admin switches cups while it waits in the queue. A cup
+        // activated after the race ended does not count.
+        var cup = _cups.CachedActiveCup;
+        if (cup != null && cup.ActivatedAt > record.EndedAt.UtcDateTime)
+        {
+            cup = null;
+        }
+
+        if (!_queue.Writer.TryWrite((record, cup, fallback)))
         {
             _logger.LogError(
                 "Race on {Track} ending {EndedAt} was not recorded: {Reason}",
@@ -107,13 +123,13 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
 
     private async Task DrainAsync(CancellationToken cancellationToken)
     {
-        await foreach (var (record, fallback) in _queue.Reader.ReadAllAsync(cancellationToken))
+        await foreach (var (record, cup, fallback) in _queue.Reader.ReadAllAsync(cancellationToken))
         {
             for (var attempt = 0; ; attempt++)
             {
                 try
                 {
-                    var race = await _store.SaveAsync(record, fallback, cancellationToken);
+                    var race = await _store.SaveAsync(record, cup, fallback, cancellationToken);
                     _logger.LogInformation(
                         "Recorded race {RaceId} on {Track} with {Cars} cars{Cup}",
                         race.Id,

@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
 using WreckfestController.Data.Races;
+using WreckfestController.Services.Cups;
 using WreckfestController.Services.Hook;
 
 namespace WreckfestController.Services.Races;
@@ -16,25 +17,22 @@ public sealed class RaceResultStore
     }
 
     /// <summary>
-    /// Saves <paramref name="record"/>, linked to whichever cup is active now.
+    /// Saves <paramref name="record"/>, linked to <paramref name="cup"/>: the cup that was
+    /// active when the race ended, which the caller notes at that moment rather than here,
+    /// since the race may have waited in a queue while an admin switched cups.
     /// <paramref name="fallbackTrackId"/> is used only when the hook could not read the track.
     /// </summary>
     public async Task<Race> SaveAsync(
         HookRaceRecord record,
+        ActiveCupSnapshot? cup = null,
         string? fallbackTrackId = null,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
 
-        // The cup active now, but only if it was already active when the race ended: a
-        // race that waited in the recorder's queue while an admin switched cups must not
-        // be credited to the new one. Better no link than a wrong one.
-        var endedAt = record.EndedAt.UtcDateTime;
-        var cup = await db.Cups
-            .AsNoTracking()
-            .Where(c => c.IsActive && c.ActivatedAt != null && c.ActivatedAt <= endedAt)
-            .Select(c => new { c.Id, c.Name, c.ActivatedAt })
-            .FirstOrDefaultAsync(cancellationToken);
+        // A cup deleted since the race ended cannot be referenced, but the race still
+        // happened under it, so it keeps the name and the evening.
+        var cupExists = cup != null && await db.Cups.AnyAsync(c => c.Id == cup.Id, cancellationToken);
 
         var trackId = string.IsNullOrEmpty(record.TrackId) ? fallbackTrackId ?? string.Empty : record.TrackId;
 
@@ -46,7 +44,7 @@ public sealed class RaceResultStore
             Laps = record.Laps,
             GameMode = record.GameMode,
             EventCounter = record.EventCounter,
-            CupId = cup?.Id,
+            CupId = cupExists ? cup!.Id : null,
             CupName = cup?.Name ?? string.Empty,
             CupActivatedAt = cup?.ActivatedAt,
             Entries = record.Cars.Select(ToEntry).ToList(),
@@ -75,9 +73,8 @@ public sealed class RaceResultStore
         Position = car.Position,
         Name = Truncate(car.Name, RaceEntry.NameMaxLength),
         IsBot = car.IsBot,
-        // SQLite has no unsigned integer. Real Steam IDs fit in a long anyway; the
-        // unchecked cast keeps every bit, so any ID the hook sends keeps its identity.
-        SteamId = car.SteamId is { } id ? unchecked((long)id) : null,
+        // SQLite has no unsigned integer; HookRaceCar only passes IDs that fit a long.
+        SteamId = car.SteamId is { } id ? (long)id : null,
         VehicleKey = Truncate(car.VehicleKey, RaceEntry.VehicleMaxLength),
         VehicleName = Truncate(car.VehicleName, RaceEntry.VehicleMaxLength),
         Outcome = car.Outcome,
