@@ -29,8 +29,15 @@ timestamp `0x6509731D`).
 | --- | --- | --- |
 | `RvaEventLoopCount` | `0x01857630` | int32, number of `el_add` entries |
 | `RvaEventLoopIndex` | `0x0122B270` | int32, current rotation entry; `-1` when the loop is off |
-| `RvaSessionLobby` | `0x019146E0` | byte, `1` in lobby, `0` while racing |
-| `RvaSessionRacing` | `0x019146EC` | byte, `1` while racing or on the post-race vote screen |
+| `RvaSessionLobby` | `0x019146E0` | byte, `1` in lobby, `0` while racing - **wrong, see below** |
+| `RvaSessionRacing` | `0x019146EC` | byte, `1` while racing or on the post-race vote screen - **wrong, see below** |
+
+**Both session descriptions are wrong** (issue #189). `0x19146EC` is an event counter:
+the `Event started!` branch of the session state machine increments it, so it read `01`
+while racing only in the first race after boot. `0x19146E0` flickers between `00` and
+`01` every few seconds while the server sits in the lobby. `VotingService` still uses
+both, so its racing check is unreliable until #189 is fixed. See "Race results" below
+for `0x19146E8`, which is confirmed.
 
 Everything else the project needs is reached through the command dispatcher, on
 purpose: one offset buys every console command, so each extra one is recurring
@@ -142,6 +149,73 @@ The decompiled chat handler walks `serverObject + 0x30` -> player table, stride
 sources agree, so `param_3` is the SERVER object. The hook additionally uses
 `+0xA6` status, `+0x82` flags, `+0xA8` ping.
 
+## Race results
+
+Found and confirmed live on 2026-10-02 against **Wreckfest 1.308438**: four races were
+checked row by row against the in-game results screen. The hook's race watcher
+(`RaceWatcherThread`) uses these, and `HookRaceRecord` interprets what it sends.
+
+### Registry objects
+
+Reached with the same lookup as SERVER (`RegistryLookupRva`), each with its own tag:
+
+| Constant | Tag RVA | Object |
+| --- | --- | --- |
+| `GameplayRuleDataTagRva` | `0x065E6278` | `gameplay_rule_data`: the game's `pRuleData` |
+| `EventSettingsTagRva` | `0x065E6890` | `event_settings`: the current event |
+| `RacePositionsDataTagRva` | `0x065E6224` | `race_positions_data`: diagnostic dump only |
+
+`event_settings`: `+0x38` game mode (int), `+0xB0` track id (`char*`, the string the
+server prints in `Current track loaded! (%s)`), `+0x108` laps (int).
+
+### Car records
+
+`pRuleData->cars` is a block at the head of `gameplay_rule_data`: pointer at `+0x00`,
+count at `+0x08` (24), heading at `+0x10`. The heading's type records the element size
+at `+0x08`, which reads `0x110`, so a moved structure is caught before it is trusted.
+
+**Car record *i* belongs to player-table slot *i*.** The server tick (`FUN_140392bd0`)
+advances a car pointer (`+0x110`) and a player pointer (`+0x138`) in the same loop, and
+a live `__hook_players` listed the same 11 names in the same order, bots included.
+
+| Offset | Field | Evidence |
+| --- | --- | --- |
+| `+0x20` | flags: `0x01` finished, `0x10` DNF, `0x40` crossed the line | `0x01`/`0x40` live; `0x10` from the decompile's debug print |
+| `+0x24` | position, 0-based byte; `0xFF` unplaced | live, 4 races |
+| `+0x25` | current lap (2 after one completed lap) | live |
+| `+0x40` | best lap, ms | live |
+| `+0x44` | finish time, ms; 0 for a projected bot | live |
+| `+0x50` | class index: 0 A, 1 B, 2 C | live, all rows |
+| `+0x54` | performance rating | live, all rows |
+| `+0x68` | vehicle object pointer | live |
+| `+0x88` | name, `char*`, with colour codes (`^2*^0eRacer` is bot eRacer) | live |
+| `+0x90` | race time, ms | live |
+| `+0xEC` | cup points, cumulative over the session (read as `u16`) | live: 30 then 60 |
+
+Vehicle object: `+0x08` localisation key (`VEHICLE_NAME_2244970999_13`), `+0x18`
+display name (`Sunrise Super`). Two bots in the same model share the key, which is what
+ruled out per-car fields. The car model is not in the car record itself: every offset
+was tested against the screen's car column and none matched.
+
+Player record (`0x138`, already used for `__hook_players`): `+0x100` Steam ID (`u64`, the
+value the server prints in `Player %s (%llu) disconnected.`), and flag `0x08` at `+0x82`
+marks a bot (the game tests the same bit).
+
+### When to read them
+
+`0x19146E8` rises to 1 in the `Event ended!` branch of the session state machine
+(`FUN_140394cf0`), which runs when the server tick finds **no connected human still
+driving**. Bots do not hold it open. At that moment the game simulates the remaining laps
+of every bot still on track and gives each a finishing time, flags `0x01` without `0x40`,
+and `+0x44` 0: `HookRaceRecord` calls these *projected*. About 20 s later the server
+returns to the lobby and the records are reset.
+
+`0x19146EC` increments at every `Event started!`; the watcher uses it to time the start.
+
+Still open: the DNF flag has not been seen live, and no race yet had a bot cross the line
+ahead of the last human, which would show whether `0x40` marks every real finish or only a
+human's.
+
 ## Tooling
 
 - **`search-decompiled.ps1`** - parallel search of the Ghidra export. It is ~42k
@@ -154,6 +228,12 @@ sources agree, so `param_3` is the SERVER object. The hook additionally uses
   injected hook, with no debugger attached. Bounded by `SizeOfImage` and
   read-only. Reachable through `POST /api/server/command`.
 - **`__hook_info`** - reports the live module base, image size and layout status.
+- **`__hook_results`** - dumps the race state for diagnosis: the session globals, the
+  `gameplay_rule_data` header, every car record with the fields above parsed, and each
+  car's vehicle object one pointer level deep, with the bytes shown as text. It answers
+  over the input pipe only; `POST /api/server/command` returns just the first line.
+- **`F:\Ghidra\Wreckfest_x64.exe.c`** - the same decompile as one 60 MB file. `rg` over
+  it takes well under a second, against minutes for the per-function export.
 
 ## Method
 
