@@ -3,6 +3,7 @@ import { defineComponent, h } from 'vue'
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { NDialogProvider, NMessageProvider } from 'naive-ui'
 import CupsView from './CupsView.vue'
+import RotationPanel from './rotation/RotationPanel.vue'
 
 const api = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() }))
 vi.mock('@/api/client', () => ({ api }))
@@ -101,6 +102,44 @@ afterEach(() => {
 })
 
 describe('CupsView', () => {
+  // Collapsed, the rotation editor still says what it holds and that edits are waiting.
+  it('sums up the collapsed rotation editor from its state', async () => {
+    await mountPage()
+
+    const panel = wrapper!.findComponent(RotationPanel)
+    panel.vm.$emit('state', { status: 'ready', loaded: true, tracks: 3, cupName: 'Friday Derby', dirty: true, notice: 'stale' })
+    await flushPromises()
+
+    expect(wrapper!.text()).toContain('Configured rotation')
+    expect(wrapper!.text()).toContain('3 tracks')
+    expect(wrapper!.text()).toContain('set by Friday Derby')
+    expect(wrapper!.text()).toContain('Unsaved changes')
+    // Unsaved edits do not hide a notice waiting inside.
+    expect(wrapper!.text()).toContain('Changed on the server')
+    expect(wrapper!.text()).not.toContain('Now running')
+
+    // Collapsed, but mounted: opening shows the same panel, edits and all.
+    const toggle = wrapper!.find('button[aria-expanded]')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper!.findComponent(RotationPanel).vm).toBe(panel.vm)
+
+    // A rotation that could not be read says so, instead of "0 tracks".
+    panel.vm.$emit('state', { status: 'failed', loaded: false, tracks: 0, cupName: null, dirty: false, notice: null })
+    await flushPromises()
+    expect(wrapper!.text()).toContain('Could not be read')
+    expect(wrapper!.text()).not.toContain('0 tracks')
+
+    // A reload that fails after a load keeps the draft: its notices stay on the card.
+    panel.vm.$emit('state', { status: 'failed', loaded: true, tracks: 3, cupName: null, dirty: true, notice: 'stale' })
+    await flushPromises()
+    expect(wrapper!.text()).toContain('Could not be read')
+    expect(wrapper!.text()).toContain('Changed on the server')
+    expect(wrapper!.text()).toContain('Unsaved changes')
+    expect(wrapper!.text()).toContain('3 tracks')
+  })
+
   it('lists cups with their schedule and rotation, and marks the active one', async () => {
     await mountPage()
 

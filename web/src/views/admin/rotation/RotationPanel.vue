@@ -24,6 +24,22 @@ type Variant = components['schemas']['VariantResponse']
 type Summary = components['schemas']['CollectionSummaryResponse']
 type Collection = components['schemas']['CollectionResponse']
 
+/**
+ * What a page holding the panel collapsed needs to show: whether the rotation could be read,
+ * its size, the cup that set it, unsaved edits, and the notice waiting inside, most urgent
+ * first (a save that conflicted, a change on the server, the offer to save to the cup).
+ */
+export interface RotationState {
+  /** `failed` can come after a successful load: `loaded` says a rotation is still shown. */
+  status: 'loading' | 'failed' | 'ready'
+  loaded: boolean
+  tracks: number
+  cupName: string | null
+  dirty: boolean
+  notice: 'conflict' | 'stale' | 'offer' | null
+}
+const emit = defineEmits<{ state: [state: RotationState] }>()
+
 const message = useMessage()
 const confirm = useConfirm()
 
@@ -49,6 +65,8 @@ const savedForCup = shallowRef<{ name: string; tracks: Track[] } | null>(null)
 const followed = shallowRef<Collection | null>(null)
 const root = ref<HTMLElement | null>(null)
 const nameHintId = useId()
+const editId = useId()
+const deployHeadingId = useId()
 /** A change on the server while the draft had unsaved edits: say so, do not overwrite. */
 const staleNotice = ref(false)
 const deployId = ref<number | null>(null)
@@ -233,7 +251,7 @@ async function deploy() {
       'The collection was not deployed.',
     )
     if (outcome.kind === 'ok') {
-      message.success(`Deployed "${chosen.name}".`)
+      message.success(`Deployed "${chosen.name}". The server uses it from its next start.`)
       deployId.value = null
       await load()
     } else {
@@ -328,6 +346,19 @@ async function saveCollectionTracks(saved: { name: string; tracks: Track[] }): P
   )
 }
 
+watch(
+  (): RotationState => ({
+    status: loadError.value ? 'failed' : loop.value ? 'ready' : 'loading',
+    loaded: loop.value !== null,
+    tracks: tracks.value.length,
+    cupName: cup.value?.name ?? null,
+    dirty: dirty.value,
+    notice: conflict.value ? 'conflict' : staleNotice.value ? 'stale' : savedForCup.value ? 'offer' : null,
+  }),
+  (state) => emit('state', state),
+  { immediate: true },
+)
+
 const collectionOptions = computed(() => collections.value.filter((c) => c.trackCount > 0).map((c) => ({ value: c.id, label: `${c.name} (${c.trackCount} tracks)` })))
 
 const stops: (() => void)[] = []
@@ -349,16 +380,22 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
     </NAlert>
     <NSkeleton v-if="!loop && !loadError" text :repeat="4" aria-label="Loading the rotation" />
     <template v-if="loop">
-      <p class="source">
-        <template v-if="cup">
-          <NTag type="success" size="small">Cup</NTag>
-          Set by <strong>{{ cup.name }}</strong><template v-if="cup.activatedAt">, active since {{ formatWhen(cup.activatedAt) }}</template>.
-        </template>
-        <template v-else>
-          <NTag size="small">No cup</NTag>
-          The server's own rotation.
-        </template>
-      </p>
+      <div class="summary">
+        <p class="source">
+          <template v-if="cup">
+            <NTag type="success" size="small">Cup</NTag>
+            <span>Set by <strong>{{ cup.name }}</strong><template v-if="cup.activatedAt">, active since {{ formatWhen(cup.activatedAt) }}</template>.</span>
+          </template>
+          <template v-else>
+            <NTag size="small">No cup</NTag>
+            <span>The server's own rotation.</span>
+          </template>
+        </p>
+        <p class="muted next-start">
+          This is server_config.cfg's rotation: the server uses it from its next start. Saving or deploying here does not
+          change a race that is already running.
+        </p>
+      </div>
 
       <NAlert v-if="staleNotice" type="info" class="gap" title="The rotation changed on the server">
         You have unsaved changes, so they are kept. Saving now asks what to do.
@@ -374,42 +411,52 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
         @mine="keepMine"
       />
       <template v-else>
-        <NInput
-          v-model:value="name"
-          :maxlength="128"
-          :disabled="busy !== null"
-          placeholder="Rotation name"
-          :status="name.trim() ? undefined : 'warning'"
-          :input-props="{ 'aria-label': 'Rotation name', 'aria-describedby': name.trim() ? undefined : nameHintId, 'aria-invalid': name.trim() ? undefined : 'true' }"
-          style="max-width: 360px"
-        />
-        <p :id="nameHintId" class="hint" :class="{ hidden: name.trim() }">A name is needed: the server shows it to players.</p>
-        <TrackListEditor v-model="tracks" :variants="variants" :disabled="busy !== null" />
-        <NSpace class="actions" align="center">
-          <NButton type="primary" data-save :loading="busy === 'save'" :disabled="busy !== null || !dirty || !name.trim()" @click="save">Save rotation</NButton>
-          <NButton :disabled="busy !== null || tracks.length < 2" @click="shuffle">Shuffle</NButton>
-          <NButton :disabled="busy !== null" :loading="loading" @click="load()">{{ dirty ? 'Discard changes' : 'Reload' }}</NButton>
-        </NSpace>
-        <NAlert v-if="savedForCup && cupTarget" type="info" class="gap">
-          The rotation is saved. {{ cup?.name }} still has its own list for its next run.
-          <NSpace class="offer">
-            <NButton size="small" type="primary" :loading="busy === 'cup'" :disabled="busy !== null" @click="saveToCup">Also save to {{ cupTarget.label }}</NButton>
-            <NButton size="small" :disabled="busy !== null" @click="savedForCup = null">Only this session</NButton>
-          </NSpace>
-        </NAlert>
-        <NSpace align="center" class="deploy">
-          <NSelect
-            v-model:value="deployId"
-            :options="collectionOptions"
-            filterable
-            clearable
-            placeholder="Deploy a collection..."
-            style="width: min(280px, 100%)"
-            v-select-focus="{ 'aria-label': 'Collection to deploy' }"
-            :input-props="{ 'aria-label': 'Collection to deploy' }"
-          />
-          <NButton :loading="busy === 'deploy'" :disabled="busy !== null || deployId === null" @click="deploy">Deploy</NButton>
-        </NSpace>
+        <section class="form-section" :aria-labelledby="editId">
+          <h3 :id="editId" class="form-section-title">Tracks</h3>
+          <label class="name">
+            <span class="name-label" aria-hidden="true">Rotation name</span>
+            <NInput
+              v-model:value="name"
+              :maxlength="128"
+              :disabled="busy !== null"
+              placeholder="Rotation name"
+              :status="name.trim() ? undefined : 'warning'"
+              :input-props="{ 'aria-label': 'Rotation name', 'aria-describedby': name.trim() ? undefined : nameHintId, 'aria-invalid': name.trim() ? undefined : 'true' }"
+            />
+          </label>
+          <p :id="nameHintId" class="hint" :class="{ hidden: name.trim() }">A name is needed: the server shows it to players.</p>
+          <TrackListEditor v-model="tracks" :variants="variants" :disabled="busy !== null" />
+          <div class="form-actions">
+            <span class="form-actions-note" role="status">{{ dirty ? 'Unsaved changes.' : 'Matches server_config.cfg.' }}</span>
+            <NButton :disabled="busy !== null || tracks.length < 2" @click="shuffle">Shuffle</NButton>
+            <NButton :disabled="busy !== null" :loading="loading" @click="load()">{{ dirty ? 'Discard changes' : 'Reload' }}</NButton>
+            <NButton type="primary" data-save :loading="busy === 'save'" :disabled="busy !== null || !dirty || !name.trim()" @click="save">Save rotation</NButton>
+          </div>
+          <NAlert v-if="savedForCup && cupTarget" type="info" class="gap" title="Saved to server_config.cfg">
+            {{ cup?.name }} still has its own list for its next run. Save the same tracks to {{ cupTarget.label }} as well?
+            <NSpace class="offer">
+              <NButton size="small" type="primary" :loading="busy === 'cup'" :disabled="busy !== null" @click="saveToCup">Also save to {{ cupTarget.label }}</NButton>
+              <NButton size="small" :disabled="busy !== null" @click="savedForCup = null">Only this session</NButton>
+            </NSpace>
+          </NAlert>
+        </section>
+
+        <section class="form-section" :aria-labelledby="deployHeadingId">
+          <h3 :id="deployHeadingId" class="form-section-title">Deploy a collection</h3>
+          <p class="form-section-help">Replaces the rotation above with a collection's tracks, from the next start.</p>
+          <div class="deploy">
+            <NSelect
+              v-model:value="deployId"
+              :options="collectionOptions"
+              filterable
+              clearable
+              placeholder="Choose a collection..."
+              v-select-focus="{ 'aria-label': 'Collection to deploy' }"
+              :input-props="{ 'aria-label': 'Collection to deploy' }"
+            />
+            <NButton :loading="busy === 'deploy'" :disabled="busy !== null || deployId === null" @click="deploy">Deploy</NButton>
+          </div>
+        </section>
       </template>
     </template>
   </div>
@@ -417,17 +464,30 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
 
 <style scoped>
 .gap {
-  margin-bottom: 12px;
+  margin: 12px 0;
+}
+.summary {
+  margin-bottom: 16px;
 }
 .source {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  margin: 0 0 12px;
+  margin: 0;
 }
-.actions,
-.deploy {
-  margin: 12px 0;
+.next-start {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+.name {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 360px;
+}
+.name-label {
+  font-size: 13px;
 }
 .offer {
   margin-top: 8px;
@@ -439,5 +499,15 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
 }
 .hint.hidden {
   visibility: hidden;
+}
+.deploy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.deploy > :first-child {
+  flex: 1 1 220px;
+  max-width: 360px;
 }
 </style>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, toRaw } from 'vue'
-import { NButton, NInputNumber, NSelect, NSpace } from 'naive-ui'
+import { NButton, NInputNumber, NSelect, NTag } from 'naive-ui'
 import type { components } from '@/api/schema'
 import { vSelectFocus } from './selectFocus'
 
@@ -113,6 +113,16 @@ function add(variantId: string | null) {
   adding.value = null
 }
 
+/** Whether the catalogue knows the row's layout; an unknown id is kept as it is. */
+function known(track: Track): boolean {
+  return byId.value.has((track.track ?? '').toLowerCase())
+}
+
+/** A layout hidden in the catalogue: still in this rotation, never dropped for it. */
+function hiddenIn(track: Track): boolean {
+  return byId.value.get((track.track ?? '').toLowerCase())?.isHidden === true
+}
+
 function errorOf(index: number): string | undefined {
   const errors = props.errors ?? {}
   return errors[`tracks[${index}].track`] ?? errors[`tracks[${index}]`]
@@ -120,48 +130,58 @@ function errorOf(index: number): string | undefined {
 </script>
 
 <template>
-  <div>
+  <div class="track-list">
     <ol ref="list" class="tracks" aria-label="Tracks, in rotation order">
-      <li v-for="(track, index) in tracks" :key="keyOf(track)" :data-row="keyOf(track)" class="row">
+      <li v-for="(track, index) in tracks" :key="keyOf(track)" :data-row="keyOf(track)" class="row" :class="{ invalid: errorOf(index) }">
         <span class="position" aria-hidden="true">{{ index + 1 }}</span>
-        <div class="main">
-          <strong>{{ nameOf(track) }}</strong>
+        <div class="identity">
+          <span class="row-name">{{ nameOf(track) }}</span>
+          <span v-if="known(track)" class="row-id">{{ track.track }}</span>
+          <NTag v-if="hiddenIn(track)" size="small" :bordered="false" class="flag">Hidden</NTag>
           <span v-if="errorOf(index)" class="error" role="alert">{{ errorOf(index) }}</span>
-          <NSpace size="small" align="center" class="fields">
+        </div>
+        <div class="settings">
+          <label class="setting">
+            <span class="setting-label" aria-hidden="true">Mode</span>
             <NSelect
               :value="track.gamemode ?? ''"
               :options="modeOptions"
               size="small"
               filterable
-              style="width: 170px"
               :disabled="disabled"
               v-select-focus="{ 'aria-label': `Game mode for ${nameOf(track)}` }"
               :input-props="{ 'aria-label': `Game mode for ${nameOf(track)}` }"
               @update:value="(value: string) => update(index, { gamemode: value || null })"
             />
+          </label>
+          <label class="setting">
+            <span class="setting-label" aria-hidden="true">Laps</span>
             <NInputNumber
               :value="track.laps ?? null"
               size="small"
               :min="0"
-              placeholder="Laps"
-              style="width: 110px"
+              placeholder="Default"
+              :show-button="false"
               :disabled="disabled"
               :input-props="{ 'aria-label': `Laps for ${nameOf(track)}` }"
               @update:value="(value: number | null) => update(index, { laps: value })"
             />
+          </label>
+          <label class="setting">
+            <span class="setting-label" aria-hidden="true">Bots</span>
             <NInputNumber
               :value="track.bots ?? null"
               size="small"
               :min="0"
-              placeholder="Bots"
-              style="width: 110px"
+              placeholder="Default"
+              :show-button="false"
               :disabled="disabled"
               :input-props="{ 'aria-label': `AI bots for ${nameOf(track)}` }"
               @update:value="(value: number | null) => update(index, { bots: value })"
             />
-          </NSpace>
+          </label>
         </div>
-        <NSpace size="small" class="actions">
+        <div class="actions" role="group" :aria-label="`Order of ${nameOf(track)}`">
           <NButton
             size="small"
             data-move="up"
@@ -180,14 +200,14 @@ function errorOf(index: number): string | undefined {
           >
             Down
           </NButton>
-          <NButton size="small" type="error" ghost data-remove :disabled="disabled" :aria-label="`Remove ${nameOf(track)}`" @click="remove(index)">
+          <NButton size="small" type="error" quaternary data-remove :disabled="disabled" :aria-label="`Remove ${nameOf(track)}`" @click="remove(index)">
             Remove
           </NButton>
-        </NSpace>
+        </div>
       </li>
     </ol>
-    <p v-if="!tracks.length" class="muted">No tracks yet.</p>
-    <div ref="picker">
+    <p v-if="!tracks.length" class="empty muted">No tracks yet. Add a layout below.</p>
+    <div ref="picker" class="picker">
       <NSelect
         v-model:value="adding"
         :options="pickOptions"
@@ -199,47 +219,91 @@ function errorOf(index: number): string | undefined {
         :input-props="{ 'aria-label': 'Add a track layout' }"
         @update:value="add"
       />
+      <span v-if="tracks.length" class="count muted">{{ tracks.length }} {{ tracks.length === 1 ? 'track' : 'tracks' }}</span>
     </div>
   </div>
 </template>
 
 <style scoped>
+/* Sized by where it sits (a page card or a dialog), not by the screen. */
+.track-list { container-type: inline-size; }
 .tracks {
   list-style: none;
   padding: 0;
   margin: 0 0 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-control);
 }
+.tracks:empty { display: none; }
+/* One row: position, what it is, its settings, its order controls. */
 .row {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: 32px minmax(180px, 1fr) minmax(0, 340px) auto;
   gap: 12px;
-  align-items: flex-start;
-  padding: 8px 0;
-  border-bottom: 1px solid var(--n-border-color, rgba(128, 128, 128, 0.2));
+  align-items: center;
+  padding: 10px 12px;
 }
+.row + .row { border-top: 1px solid var(--border-color); }
+.row.invalid { box-shadow: inset 3px 0 0 var(--error-color); }
 .position {
-  width: 2ch;
-  text-align: right;
-  opacity: 0.6;
-  padding-top: 2px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--border-color);
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
 }
-.main {
-  flex: 1;
+.identity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   min-width: 0;
 }
-.fields {
-  margin-top: 6px;
+.flag { margin-top: 2px; }
+.settings {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
 }
-.error {
-  display: block;
-  color: var(--error-color);
+.setting {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.setting-label {
+  color: var(--text-muted);
+  font-size: 11px;
 }
 .actions {
-  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
 }
-@media (max-width: 599px) {
-  .tracks .row { display: grid; grid-template-columns: 2ch minmax(0, 1fr); }
-  .tracks .main { width: 100%; overflow-wrap: anywhere; }
-  .tracks .actions { grid-column: 2; flex-wrap: wrap; }
+.error {
+  color: var(--error-color);
+  font-size: 13px;
+}
+.empty { margin: 0 0 12px; }
+.picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.picker > :first-child { flex: 1 1 auto; min-width: 0; max-width: 480px; }
+.count { margin-left: auto; font-size: 13px; white-space: nowrap; }
+/* Narrower: settings under the name, controls under them. */
+@container (max-width: 760px) {
+  .row { grid-template-columns: 32px minmax(0, 1fr); align-items: start; }
+  .settings, .actions { grid-column: 2; }
+  .actions { justify-content: flex-start; flex-wrap: wrap; }
+}
+@container (max-width: 380px) {
+  .settings { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .settings > :first-child { grid-column: 1 / -1; }
 }
 </style>
