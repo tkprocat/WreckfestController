@@ -218,4 +218,28 @@ describe('ServerControlView', () => {
 
     expect(document.body.textContent).toContain('it is not known whether this happened')
   })
+  it('keeps recovery actions distinct and confirms a force stop', async () => {
+    serve({ '/api/server/status': running, '/api/server/logfile': tail() })
+    wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('Recovery')
+    await button(wrapper, 'Force stop').trigger('click')
+    await flushPromises()
+    expect(api.POST).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Kill the server process?')
+  })
+
+  it('labels a pending console and keeps its scroll region keyboard accessible', async () => {
+    const log = deferred<unknown>()
+    serve({ '/api/server/status': running, '/api/server/logfile': log.promise })
+    wrapper = mountPage()
+    await flushPromises()
+    expect(wrapper.find('pre').attributes('aria-label')).toBe('Server console')
+    expect(wrapper.find('pre').attributes('tabindex')).toBe('0')
+    expect(wrapper.find('pre').text()).toContain('Loading console')
+    log.resolve(tail('first log line'))
+    await flushPromises()
+    expect(wrapper.find('pre').text()).toContain('first log line')
+  })
+
 })
