@@ -147,6 +147,9 @@ public sealed class RaceResultRecorderTests : IDisposable
         {
             ReportRace();
             await gate.Entered.Task;
+
+            // The admin switches after the race ended, while it waits to be saved.
+            _database.Clock.Now = HookRaceRecord.TryParse(HookRaceRecordTests.LiveRecord)!.EndedAt.AddSeconds(5);
             await _database.Store.SetActiveAsync(cupB);
         }
         finally
@@ -189,6 +192,22 @@ public sealed class RaceResultRecorderTests : IDisposable
         await recorder.FlushAsync();
 
         Assert.Equal(cup, await SavedCupIdAsync());
+    }
+
+    // The cache is only a note; failing to load it must not keep races from being saved.
+    [Fact]
+    public async Task Records_races_when_the_active_cup_cannot_be_loaded()
+    {
+        var cups = new WreckfestController.Services.Cups.CupStore(
+            new FailingFactory(_database.Contexts, failures: 1), _database.Clock);
+
+        using var recorder = new RaceResultRecorder(
+            _serverManager, new RaceResultStore(_database.Contexts), cups, _tracks, _logger.Object);
+        await recorder.StartAsync(CancellationToken.None);
+        ReportRace();
+        await recorder.FlushAsync();
+
+        Assert.Equal(1, await RaceCountAsync());
     }
 
     [Fact]

@@ -67,24 +67,61 @@ public sealed class CupStore
 
     private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
 
-    private volatile ActiveCupSnapshot? _activeCup;
+    private readonly object _activeCupLock = new();
+    private ActiveCupSnapshot? _activeCup;
+
+    // Bumped by every change to the active cup, so a load that read the database before
+    // a change cannot overwrite what the change wrote.
+    private long _activeCupVersion;
 
     /// <summary>
     /// The active cup as of its last change through this store, or as loaded by
-    /// <see cref="LoadActiveCupAsync"/>. For callers that must not wait on the database,
-    /// such as the hook pipe thread noting which cup a race ended under.
+    /// <see cref="LoadActiveCupAsync"/>. A best-effort note for callers that must not wait
+    /// on the database, such as the hook pipe thread; the database stays the authority.
     /// </summary>
-    public ActiveCupSnapshot? CachedActiveCup => _activeCup;
+    public ActiveCupSnapshot? CachedActiveCup
+    {
+        get
+        {
+            lock (_activeCupLock)
+            {
+                return _activeCup;
+            }
+        }
+    }
 
     /// <summary>Loads <see cref="CachedActiveCup"/> from the database.</summary>
     public async Task LoadActiveCupAsync(CancellationToken cancellationToken = default)
     {
+        long version;
+        lock (_activeCupLock)
+        {
+            version = _activeCupVersion;
+        }
+
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
-        _activeCup = await db.Cups
+        var loaded = await db.Cups
             .AsNoTracking()
             .Where(e => e.IsActive && e.ActivatedAt != null)
             .Select(e => new ActiveCupSnapshot(e.Id, e.Name, e.ActivatedAt!.Value))
             .FirstOrDefaultAsync(cancellationToken);
+
+        lock (_activeCupLock)
+        {
+            if (_activeCupVersion == version)
+            {
+                _activeCup = loaded;
+            }
+        }
+    }
+
+    private void SetCachedActiveCup(ActiveCupSnapshot? cup)
+    {
+        lock (_activeCupLock)
+        {
+            _activeCup = cup;
+            _activeCupVersion++;
+        }
     }
 
     /// <summary>
@@ -230,9 +267,9 @@ public sealed class CupStore
             .ExecuteDeleteAsync(cancellationToken);
         if (deleted > 0)
         {
-            if (_activeCup?.Id == id)
+            if (CachedActiveCup?.Id == id)
             {
-                _activeCup = null;
+                SetCachedActiveCup(null);
             }
 
             return (CupWriteStatus.Saved, null);
@@ -282,7 +319,7 @@ public sealed class CupStore
 
         var name = await db.Cups.Where(e => e.Id == id).Select(e => e.Name).FirstAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        _activeCup = new ActiveCupSnapshot(id, name, now);
+        SetCachedActiveCup(new ActiveCupSnapshot(id, name, now));
         return true;
     }
 

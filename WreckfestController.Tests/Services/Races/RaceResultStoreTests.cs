@@ -127,6 +127,46 @@ public sealed class RaceResultStoreTests : IDisposable
         Assert.Equal(BeforeTheRace, race.CupActivatedAt);
     }
 
+    // A cup renamed before the race was saved is saved under its name now.
+    [Fact]
+    public async Task Saves_a_linked_cup_under_its_current_name()
+    {
+        var cupId = await ActivateCupAsync("Renamed Since", BeforeTheRace);
+
+        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Old Name", BeforeTheRace));
+
+        Assert.Equal("Renamed Since", Assert.Single(await AllRacesAsync()).CupName);
+    }
+
+    private static readonly DateTime End = new(2026, 10, 2, 16, 0, 0, DateTimeKind.Utc);
+    private static readonly ActiveCupSnapshot CupA = new(1, "A", End.AddHours(-2));
+    private static readonly ActiveCupSnapshot CupBBefore = new(2, "B", End.AddMinutes(-1));
+    private static readonly ActiveCupSnapshot CupBAfter = new(2, "B", End.AddMinutes(1));
+
+    // The note was taken between B's activation committing and the cache catching up:
+    // the database knows better, and B was active when the race ended.
+    [Fact]
+    public void The_database_wins_when_its_cup_was_active_at_the_end() =>
+        Assert.Equal(CupBBefore, RaceResultStore.CupAtEnd(active: CupBBefore, noted: CupA, End));
+
+    // B was activated while the race waited in the queue: the note says A.
+    [Fact]
+    public void The_note_wins_when_the_active_cup_came_after_the_end() =>
+        Assert.Equal(CupA, RaceResultStore.CupAtEnd(active: CupBAfter, noted: CupA, End));
+
+    [Fact]
+    public void No_cup_when_both_came_after_the_end() =>
+        Assert.Null(RaceResultStore.CupAtEnd(active: CupBAfter, noted: CupBAfter, End));
+
+    [Fact]
+    public void No_cup_when_none_was_active() =>
+        Assert.Null(RaceResultStore.CupAtEnd(active: null, noted: null, End));
+
+    // A cup deleted after the race ended leaves only the note.
+    [Fact]
+    public void The_note_stands_when_no_cup_is_active_now() =>
+        Assert.Equal(CupA, RaceResultStore.CupAtEnd(active: null, noted: CupA, End));
+
     // History outlives the cup: the race stays, readable by the name copied at the time.
     [Fact]
     public async Task Keeps_the_race_and_the_cup_name_when_the_cup_is_deleted()

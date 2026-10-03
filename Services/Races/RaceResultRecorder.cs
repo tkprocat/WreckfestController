@@ -63,9 +63,18 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        // Races note the active cup from this cache, so it must be current before the
-        // first one can arrive.
-        await _cups.LoadActiveCupAsync(cancellationToken);
+        // Races note the active cup from this cache. The database decides at save time
+        // whenever it can, so a cache that failed to load costs only the rare case the
+        // note exists for, and must not keep the recorder from subscribing.
+        try
+        {
+            await _cups.LoadActiveCupAsync(cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogWarning(ex, "Could not load the active cup; races will be linked from the database alone");
+        }
+
         _worker = Task.Run(() => DrainAsync(_stopping.Token));
         _serverManager.RaceFinished += OnRaceFinished;
     }
@@ -102,14 +111,10 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
         // The text tracker is only a fallback for a track the hook could not read.
         var fallback = string.IsNullOrEmpty(record.TrackId) ? _tracks.GetCurrentTrack() : null;
 
-        // Noted now, not when the worker saves: the race belongs to the cup it ended
-        // under, even if an admin switches cups while it waits in the queue. A cup
-        // activated after the race ended does not count.
+        // Noted now, not when the worker saves, for the case where an admin switches cups
+        // while the race waits in the queue. RaceResultStore.CupAtEnd decides how far to
+        // trust it.
         var cup = _cups.CachedActiveCup;
-        if (cup != null && cup.ActivatedAt > record.EndedAt.UtcDateTime)
-        {
-            cup = null;
-        }
 
         if (!_queue.Writer.TryWrite((record, cup, fallback)))
         {

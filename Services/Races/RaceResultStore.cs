@@ -17,22 +17,33 @@ public sealed class RaceResultStore
     }
 
     /// <summary>
-    /// Saves <paramref name="record"/>, linked to <paramref name="cup"/>: the cup that was
-    /// active when the race ended, which the caller notes at that moment rather than here,
-    /// since the race may have waited in a queue while an admin switched cups.
+    /// Saves <paramref name="record"/>, linked to the cup that was active when the race
+    /// ended. <paramref name="notedCup"/> is the active cup as the caller noted it at that
+    /// moment; it decides only when the database no longer can (see <see cref="CupAtEnd"/>).
     /// <paramref name="fallbackTrackId"/> is used only when the hook could not read the track.
     /// </summary>
     public async Task<Race> SaveAsync(
         HookRaceRecord record,
-        ActiveCupSnapshot? cup = null,
+        ActiveCupSnapshot? notedCup = null,
         string? fallbackTrackId = null,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
 
-        // A cup deleted since the race ended cannot be referenced, but the race still
-        // happened under it, so it keeps the name and the evening.
-        var cupExists = cup != null && await db.Cups.AnyAsync(c => c.Id == cup.Id, cancellationToken);
+        var endedAt = record.EndedAt.UtcDateTime;
+        var active = await db.Cups
+            .AsNoTracking()
+            .Where(c => c.IsActive && c.ActivatedAt != null)
+            .Select(c => new ActiveCupSnapshot(c.Id, c.Name, c.ActivatedAt!.Value))
+            .FirstOrDefaultAsync(cancellationToken);
+
+        var cup = CupAtEnd(active, notedCup, endedAt);
+
+        // Linked only while the cup exists, under its name now. A cup deleted since the
+        // race ended keeps the name it had: the race still happened under it.
+        var current = cup == null
+            ? null
+            : await db.Cups.Where(c => c.Id == cup.Id).Select(c => c.Name).FirstOrDefaultAsync(cancellationToken);
 
         var trackId = string.IsNullOrEmpty(record.TrackId) ? fallbackTrackId ?? string.Empty : record.TrackId;
 
@@ -44,8 +55,8 @@ public sealed class RaceResultStore
             Laps = record.Laps,
             GameMode = record.GameMode,
             EventCounter = record.EventCounter,
-            CupId = cupExists ? cup!.Id : null,
-            CupName = cup?.Name ?? string.Empty,
+            CupId = current != null ? cup!.Id : null,
+            CupName = current ?? cup?.Name ?? string.Empty,
             CupActivatedAt = cup?.ActivatedAt,
             Entries = record.Cars.Select(ToEntry).ToList(),
         };
@@ -53,6 +64,27 @@ public sealed class RaceResultStore
         db.Races.Add(race);
         await db.SaveChangesAsync(cancellationToken);
         return race;
+    }
+
+    /// <summary>
+    /// Which cup a race that ended at <paramref name="endedAt"/> belongs to.
+    /// </summary>
+    /// <remarks>
+    /// The database decides when it can. One cup is active at a time, and activating a cup
+    /// resets its <c>ActivatedAt</c>, so a cup active now that was activated before the race
+    /// ended was the active cup when it ended - even if the caller's note was taken in the
+    /// moment between that activation committing and the note catching up. The note
+    /// decides only when the active cup was activated after the race ended, which is the
+    /// case it exists for: an admin switched cups while the race waited to be saved.
+    /// </remarks>
+    internal static ActiveCupSnapshot? CupAtEnd(ActiveCupSnapshot? active, ActiveCupSnapshot? noted, DateTime endedAt)
+    {
+        if (active != null && active.ActivatedAt <= endedAt)
+        {
+            return active;
+        }
+
+        return noted != null && noted.ActivatedAt <= endedAt ? noted : null;
     }
 
     /// <summary>The latest races with their entries, newest first.</summary>
