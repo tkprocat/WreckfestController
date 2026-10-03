@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { NDataTable } from 'naive-ui'
 import DashboardView from './DashboardView.vue'
 
 const api = vi.hoisted(() => ({ GET: vi.fn() }))
@@ -45,6 +46,21 @@ describe('DashboardView', () => {
 
     expect(wrapper.text()).toContain('From the hub')
     expect(wrapper.text()).not.toContain('Stale')
+    wrapper.unmount()
+  })
+  // A player id and another player's slot can be the same number: the rows must still differ.
+  it('keys roster rows so an id never collides with a slot or a name', async () => {
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/server/players'
+        ? Promise.resolve(answer({ players: [], totalPlayers: 0, maxPlayers: 24, lastUpdated: '' }))
+        : Promise.resolve(answer({ isRunning: true, processId: 42, uptimeSeconds: 60, currentTrack: null })),
+    )
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+
+    const rowKey = wrapper.findComponent(NDataTable).props('rowKey') as (p: unknown) => unknown
+    const keys = [{ ...player('Alice'), playerId: 3 }, { ...player('Bob'), slot: 3 }, player('3')].map(rowKey)
+    expect(new Set(keys).size).toBe(3)
     wrapper.unmount()
   })
   it('distinguishes a pending roster from a confirmed empty roster', async () => {

@@ -13,6 +13,9 @@ const players = ref<PlayerSummary[]>([])
 const playersError = ref<string | null>(null)
 const playersLoaded = ref(false)
 const playersLoading = ref(true)
+/** A row key that says what it is, so player id 3 and slot 3 never share one. */
+const rosterKey = (p: PlayerSummary) =>
+  p.playerId != null ? `id:${p.playerId}` : p.slot != null ? `slot:${p.slot}` : `name:${p.name}`
 
 // A roster from the hub is newer than a load that was on its way when it arrived: the
 // load's answer must not put the older roster back. A failed load keeps what is shown.
@@ -150,7 +153,7 @@ const columns: DataTableColumns<PlayerSummary> = [
         :columns="columns"
         :data="players"
         :loading="playersLoading && !playersLoaded"
-        :row-key="(p: PlayerSummary) => p.playerId ?? p.slot ?? p.name"
+        :row-key="rosterKey"
         :bordered="false"
         :pagination="players.length > 10 ? { pageSize: 10 } : false"
         size="medium"
