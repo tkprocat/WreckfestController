@@ -179,4 +179,5 @@ a { color: var(--accent); }
 .native-control:disabled { opacity: 0.5; cursor: not-allowed; }
 .native-control[aria-invalid='true'] { border-color: var(--error-color); }
 /* A row of radio buttons wraps on a narrow screen instead of pushing the form sideways. */
-.n-form .n-radio-group { display: inline-flex; flex-wrap: wrap; max-width: 100%; }
+/* Naive UI gives a button group one row's height; auto lets the wrapped row take space. */
+.n-form .n-radio-group { display: inline-flex; flex-wrap: wrap; row-gap: var(--space-1); max-width: 100%; height: auto; }

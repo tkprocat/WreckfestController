@@ -196,6 +196,11 @@ describe('CupsView', () => {
 
     expect(dialog().text()).toContain('Too long.')
     expect(dialog().find('input[aria-label="Server name"]').attributes('aria-invalid')).toBe('true')
+
+    // The next cup starts collapsed again.
+    await click('Cancel', dialog())
+    await click('Add cup')
+    expect(dialog().find('input[aria-label="Server name"]').exists()).toBe(false)
   })
 
   it('shows what changed elsewhere when the save conflicts', async () => {

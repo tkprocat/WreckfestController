@@ -256,6 +256,7 @@ async function start(cup: Cup | null) {
   const ticket = ++opening
   await loadPickers()
   if (ticket === opening && !editor.open.value) {
+    expanded.value = []
     editor.start(cup)
   }
 }
