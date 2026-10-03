@@ -15,6 +15,9 @@ public partial class CreateAccountDialogView : UserControl
 
     private readonly AccountService _accounts;
 
+    /// <summary>This dialog's own session on the shared host, so closing never ends another dialog.</summary>
+    private DialogSession? _session;
+
     public CreateAccountDialogView(AccountService accounts, string intro)
     {
         InitializeComponent();
@@ -26,7 +29,8 @@ public partial class CreateAccountDialogView : UserControl
     /// <summary>Shows the dialog. Returns the new username, or null when cancelled.</summary>
     public static async Task<string?> ShowAsync(AccountService accounts, string intro)
     {
-        var result = await DialogHost.Show(new CreateAccountDialogView(accounts, intro), DialogIdentifier);
+        var view = new CreateAccountDialogView(accounts, intro);
+        var result = await DialogHost.Show(view, DialogIdentifier, new DialogOpenedEventHandler((_, args) => view._session = args.Session));
         return result as string;
     }
 
@@ -47,9 +51,10 @@ public partial class CreateAccountDialogView : UserControl
             return;
         }
 
-        // Cancel is disabled too: closing mid-request would report "cancelled" for an
-        // account that is then created anyway.
-        SetButtonsEnabled(false);
+        // LATER stays enabled: a request that never answers must not trap the user. If they
+        // leave meanwhile and the account is still created, the account list shows it once
+        // it next refreshes.
+        CreateButton.IsEnabled = false;
         try
         {
             var result = await _accounts.CreateAccountAsync(userName, email, PasswordBox.Password);
@@ -67,28 +72,23 @@ public partial class CreateAccountDialogView : UserControl
         }
         finally
         {
-            SetButtonsEnabled(true);
+            CreateButton.IsEnabled = true;
         }
     }
 
     private void OnCancelClicked(object sender, RoutedEventArgs e) => CloseDialog(null);
 
     /// <summary>
-    /// Closes the dialog unless it is already closed. A second click can arrive after the
-    /// first one closed it, and DialogHost.Close then throws, which crashed the app (#190).
+    /// Closes this dialog unless it has already closed. A second click can arrive after the
+    /// first one closed it, and DialogHost.Close then threw, which crashed the app (#190) -
+    /// or, with another dialog open on the same host by then, would have closed that one.
     /// </summary>
-    private static void CloseDialog(string? result)
+    private void CloseDialog(string? result)
     {
-        if (DialogHost.IsDialogOpen(DialogIdentifier))
+        if (_session is { IsEnded: false })
         {
-            DialogHost.Close(DialogIdentifier, result);
+            _session.Close(result);
         }
-    }
-
-    private void SetButtonsEnabled(bool enabled)
-    {
-        CreateButton.IsEnabled = enabled;
-        CancelButton.IsEnabled = enabled;
     }
 
     private void ShowError(string message)

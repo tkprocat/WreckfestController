@@ -81,6 +81,7 @@
                     <Button x:Name="CancelButton"
                             Content="LATER"
                             Click="OnCancelClicked"
+                            IsCancel="True"
                             Background="{StaticResource BackgroundDark}"
                             Foreground="{StaticResource TextPrimary}"
                             BorderBrush="{StaticResource BorderColor}"
