@@ -195,20 +195,19 @@ onBeforeUnmount(() => {
           <span class="chevron" :class="{ open: rotationOpen }" aria-hidden="true">›</span>
           <span class="rotation-title">Configured rotation</span>
         </NButton>
+        <!-- A failed reload keeps the draft and its notices: show them beside the failure. -->
         <span v-if="rotation" class="rotation-summary" role="status">
-          <template v-if="rotation.status === 'failed'">
-            <NTag size="small" type="warning" :bordered="false">Could not be read</NTag>
-            Open it to try again.
-          </template>
-          <template v-else-if="rotation.status === 'loading'">Loading…</template>
-          <template v-else>
-            <NTag v-if="rotation.notice === 'conflict'" size="small" type="error" :bordered="false">Changed elsewhere</NTag>
-            <NTag v-else-if="rotation.notice === 'stale'" size="small" type="info" :bordered="false">Changed on the server</NTag>
-            <NTag v-else-if="rotation.notice === 'offer'" size="small" type="info" :bordered="false">Save to the cup too?</NTag>
-            <NTag v-if="rotation.dirty" size="small" type="warning" :bordered="false">Unsaved changes</NTag>
+          <NTag v-if="rotation.status === 'failed'" size="small" type="warning" :bordered="false">Could not be read</NTag>
+          <NTag v-if="rotation.notice === 'conflict'" size="small" type="error" :bordered="false">Changed elsewhere</NTag>
+          <NTag v-else-if="rotation.notice === 'stale'" size="small" type="info" :bordered="false">Changed on the server</NTag>
+          <NTag v-else-if="rotation.notice === 'offer'" size="small" type="info" :bordered="false">Save to the cup too?</NTag>
+          <NTag v-if="rotation.dirty" size="small" type="warning" :bordered="false">Unsaved changes</NTag>
+          <template v-if="rotation.loaded">
             {{ rotation.tracks }} {{ rotation.tracks === 1 ? 'track' : 'tracks' }} ·
             {{ rotation.cupName ? `set by ${rotation.cupName}` : "the server's own" }}
           </template>
+          <template v-else-if="rotation.status === 'failed'">Open it to try again.</template>
+          <template v-else>Loading…</template>
         </span>
       </div>
       <div v-show="rotationOpen" :id="rotationId" class="rotation-body">

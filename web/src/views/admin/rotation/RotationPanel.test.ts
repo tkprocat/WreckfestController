@@ -99,7 +99,7 @@ describe('RotationPanel', () => {
     await mountPanel()
 
     expect(states[0]!.status).toBe('loading')
-    expect(states.at(-1)).toEqual({ status: 'ready', tracks: 2, cupName: 'Friday Derby', dirty: false, notice: null })
+    expect(states.at(-1)).toEqual({ status: 'ready', loaded: true, tracks: 2, cupName: 'Friday Derby', dirty: false, notice: null })
 
     await labelled('Move loop (not in the catalogue) down').trigger('click')
     expect(states.at(-1)).toMatchObject({ dirty: true, notice: null })
@@ -110,7 +110,8 @@ describe('RotationPanel', () => {
     api.GET.mockImplementation(() => Promise.reject(new Error('offline')))
     await click('Keep mine')
     await click('Discard changes')
-    expect(states.at(-1)).toMatchObject({ status: 'failed' })
+    // The failed reload keeps the draft, and says so.
+    expect(states.at(-1)).toMatchObject({ status: 'failed', loaded: true, dirty: true })
   })
 
   it('says when no cup set the rotation', async () => {

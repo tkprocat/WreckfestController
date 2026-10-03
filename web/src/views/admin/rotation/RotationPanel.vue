@@ -30,7 +30,9 @@ type Collection = components['schemas']['CollectionResponse']
  * first (a save that conflicted, a change on the server, the offer to save to the cup).
  */
 export interface RotationState {
+  /** `failed` can come after a successful load: `loaded` says a rotation is still shown. */
   status: 'loading' | 'failed' | 'ready'
+  loaded: boolean
   tracks: number
   cupName: string | null
   dirty: boolean
@@ -347,6 +349,7 @@ async function saveCollectionTracks(saved: { name: string; tracks: Track[] }): P
 watch(
   (): RotationState => ({
     status: loadError.value ? 'failed' : loop.value ? 'ready' : 'loading',
+    loaded: loop.value !== null,
     tracks: tracks.value.length,
     cupName: cup.value?.name ?? null,
     dirty: dirty.value,

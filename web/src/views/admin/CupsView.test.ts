@@ -107,7 +107,7 @@ describe('CupsView', () => {
     await mountPage()
 
     const panel = wrapper!.findComponent(RotationPanel)
-    panel.vm.$emit('state', { status: 'ready', tracks: 3, cupName: 'Friday Derby', dirty: true, notice: 'stale' })
+    panel.vm.$emit('state', { status: 'ready', loaded: true, tracks: 3, cupName: 'Friday Derby', dirty: true, notice: 'stale' })
     await flushPromises()
 
     expect(wrapper!.text()).toContain('Configured rotation')
@@ -126,10 +126,18 @@ describe('CupsView', () => {
     expect(wrapper!.findComponent(RotationPanel).vm).toBe(panel.vm)
 
     // A rotation that could not be read says so, instead of "0 tracks".
-    panel.vm.$emit('state', { status: 'failed', tracks: 0, cupName: null, dirty: false, notice: null })
+    panel.vm.$emit('state', { status: 'failed', loaded: false, tracks: 0, cupName: null, dirty: false, notice: null })
     await flushPromises()
     expect(wrapper!.text()).toContain('Could not be read')
     expect(wrapper!.text()).not.toContain('0 tracks')
+
+    // A reload that fails after a load keeps the draft: its notices stay on the card.
+    panel.vm.$emit('state', { status: 'failed', loaded: true, tracks: 3, cupName: null, dirty: true, notice: 'stale' })
+    await flushPromises()
+    expect(wrapper!.text()).toContain('Could not be read')
+    expect(wrapper!.text()).toContain('Changed on the server')
+    expect(wrapper!.text()).toContain('Unsaved changes')
+    expect(wrapper!.text()).toContain('3 tracks')
   })
 
   it('lists cups with their schedule and rotation, and marks the active one', async () => {
