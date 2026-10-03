@@ -76,6 +76,20 @@ public sealed class RaceResultStore
     /// moment between that activation committing and the note catching up. The note
     /// decides only when the active cup was activated after the race ended, which is the
     /// case it exists for: an admin switched cups while the race waited to be saved.
+    /// <para>
+    /// Known gaps, left deliberately (PR #192): each needs an admin to change cups in the
+    /// same moment a race ends, and closing them would mean sharing a lock or transaction
+    /// between cup activation and race recording.
+    /// </para>
+    /// <list type="bullet">
+    /// <item><c>ActivatedAt</c> is stamped just before the switch commits, so a race ending
+    /// in between is credited to the new cup.</item>
+    /// <item>Deleting the active cup as a race ends can leave the note naming the deleted
+    /// cup, which is then credited; likewise if the startup load reads the cup just before
+    /// it is deleted.</item>
+    /// <item>A cup renamed, then a race, then the cup deleted before the save, keeps the
+    /// old name.</item>
+    /// </list>
     /// </remarks>
     internal static ActiveCupSnapshot? CupAtEnd(ActiveCupSnapshot? active, ActiveCupSnapshot? noted, DateTime endedAt)
     {
