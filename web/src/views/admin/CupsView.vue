@@ -5,6 +5,7 @@ import { NButton, NCard, NSpace, NTag, useMessage, type DataTableColumns } from 
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
 import ResourceTable from '@/crud/ResourceTable.vue'
+import RowActionMenu from '@/crud/RowActionMenu.vue'
 import { NO_ANSWER, hasId, send, useConfirm, type Outcome } from '@/crud/outcome'
 import { useResourceList } from '@/crud/useResourceList'
 import { formatWhen } from '@/utils/format'
@@ -124,16 +125,22 @@ const columns: DataTableColumns<Cup> = [
   {
     title: 'Actions',
     key: 'actions',
-    width: 260,
+    width: 205,
     render: (c) =>
-      h(NSpace, { size: 'small' }, () => [
-        h(NButton, { size: 'small', disabled: busy.value !== null, 'aria-label': `Edit ${c.name}`, onClick: () => void cupEditor.value?.start(c) }, () => 'Edit'),
-        h(
-          NButton,
-          { size: 'small', type: 'primary', ghost: true, loading: busy.value === c.id, disabled: busy.value !== null || c.isActive, 'aria-label': `Activate ${c.name}`, onClick: () => void activate(c) },
-          () => 'Activate',
-        ),
-        h(NButton, { size: 'small', type: 'error', ghost: true, disabled: busy.value !== null, 'aria-label': `Delete ${c.name}`, onClick: () => void remove(c) }, () => 'Delete'),
+      h(NSpace, { size: 'small', wrap: false }, () => [
+        h(NButton, { size: 'small', disabled: busy.value !== null, 'aria-label': 'Edit ' + c.name, onClick: () => void cupEditor.value?.start(c) }, () => 'Edit'),
+        h(NButton, {
+          size: 'small', type: 'primary', ghost: true, loading: busy.value === c.id,
+          disabled: busy.value !== null || c.isActive, 'aria-label': 'Activate ' + c.name,
+          onClick: () => void activate(c),
+        }, () => 'Activate'),
+        h(RowActionMenu, {
+          label: c.name,
+          actionId: 'cup-' + c.id,
+          disabled: busy.value !== null,
+          options: [{ label: 'Delete', key: 'delete' }],
+          onSelect: () => void remove(c),
+        }),
       ]),
   },
 ]
@@ -181,7 +188,7 @@ onBeforeUnmount(() => {
     </NCard>
     <NCard>
       <ResourceTable
-        :min-table-width="1050"
+        :min-table-width="980"
         :rows="cups"
         :columns="columns"
         :search-fields="['name', 'description', 'collectionName']"

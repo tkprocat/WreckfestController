@@ -41,21 +41,25 @@ public static class HttpsEndpoint
 
         options.Listen(endpoints.Address, endpoints.HttpsPort, listen => listen.UseHttps(new TlsHandshakeCallbackOptions
         {
-            // Reads the provider's snapshot and nothing else: no store or file access, and
-            // no chain building, during a handshake.
-            OnConnection = _ =>
-            {
-                if (!provider.IsServable)
-                {
-                    throw new AuthenticationException("The HTTPS certificate has expired and no usable replacement has been found.");
-                }
-
-                return ValueTask.FromResult(new SslServerAuthenticationOptions
-                {
-                    ServerCertificateContext = provider.Current.Context,
-                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
-                });
-            },
+            OnConnection = _ => ValueTask.FromResult(ServerOptions(provider)),
         }));
+    }
+
+    /// <summary>
+    /// The TLS options for one connection. Reads the provider's snapshot and nothing else:
+    /// no store or file access, and no chain building, during a handshake.
+    /// </summary>
+    internal static SslServerAuthenticationOptions ServerOptions(CertificateProvider provider)
+    {
+        if (!provider.IsServable)
+        {
+            throw new AuthenticationException("The HTTPS certificate has expired and no usable replacement has been found.");
+        }
+
+        return new SslServerAuthenticationOptions
+        {
+            ServerCertificateContext = provider.Current.Context,
+            EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+        };
     }
 }

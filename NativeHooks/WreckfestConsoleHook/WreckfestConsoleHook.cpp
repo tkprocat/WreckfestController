@@ -15,6 +15,23 @@ constexpr uintptr_t CommandDispatcherRva = 0x00F18B30;
 constexpr uintptr_t RegistryLookupRva = 0x00E37140;
 constexpr uintptr_t RegistryTablePtrRva = 0x0127E7F8;
 constexpr uintptr_t ServerNamespaceTagRva = 0x065E6308;
+// Race results. Registry tags reached through the same lookup as SERVER, and the
+// session globals that time a race. Confirmed live against an in-game results
+// screen; see docs/finding-rvas.md.
+constexpr uintptr_t GameplayRuleDataTagRva = 0x065E6278;
+constexpr uintptr_t RacePositionsDataTagRva = 0x065E6224;
+constexpr uintptr_t EventSettingsTagRva = 0x065E6890;
+// Byte: set to 1 when the last human is done ("Event ended!"), cleared about 20 s
+// later when the server returns to the lobby and the car records are reset.
+constexpr uintptr_t EventEndedFlagRva = 0x019146E8;
+// Int: incremented at every "Event started!". Not a racing flag (issue #189).
+constexpr uintptr_t EventCounterRva = 0x019146EC;
+// pRuleData->cars: a block of 0x110 byte car records at the head of the object.
+// Car record i belongs to player-table slot i.
+constexpr size_t RaceCarRecordSize = 0x110;
+constexpr int MaxRaceCars = 32;
+constexpr size_t PlayerRecordSize = 0x138;
+constexpr int PlayerSlots = 24;
 // FUN_14038fc10(int ringIndex, char* text, void* serverObject): the unified input
 // handler for the server console and for player chat. See docs/finding-rvas.md.
 constexpr uintptr_t ChatHandlerRva = 0x0038FC10;
@@ -182,7 +199,9 @@ LayoutStatus ValidateModuleLayoutNoThrow(uintptr_t moduleBase)
         g_observedImageSize = nt->OptionalHeader.SizeOfImage;
 
         const uintptr_t codeRvas[] = { ConsolePrintRva, CommandDispatcherRva, RegistryLookupRva, ChatHandlerRva };
-        const uintptr_t dataRvas[] = { RegistryTablePtrRva, ServerNamespaceTagRva };
+        const uintptr_t dataRvas[] = {
+            RegistryTablePtrRva, ServerNamespaceTagRva, GameplayRuleDataTagRva, RacePositionsDataTagRva,
+            EventSettingsTagRva, EventEndedFlagRva, EventCounterRva };
 
         for (auto rva : codeRvas)
         {
@@ -321,6 +340,245 @@ bool ReadPlayersNoThrow(std::string& response)
     __except (EXCEPTION_EXECUTE_HANDLER)
     {
         response = "ERR player snapshot raised an exception\n";
+        return false;
+    }
+}
+
+// Appends "<label> <offset>: <hex>" lines, 32 bytes each. Faults propagate to the
+// caller's __try.
+void AppendHexDump(std::string& response, const char* label, uintptr_t address, size_t size)
+{
+    static const char Digits[] = "0123456789abcdef";
+    char prefix[64] = {};
+    for (size_t offset = 0; offset < size; offset += 32)
+    {
+        std::snprintf(prefix, sizeof(prefix), "%s +%03zX:", label, offset);
+        response += prefix;
+        for (size_t i = offset; i < offset + 32 && i < size; i++)
+        {
+            auto value = *reinterpret_cast<const unsigned char*>(address + i);
+            if (i % 4 == 0)
+            {
+                response += ' ';
+            }
+            response += Digits[value >> 4];
+            response += Digits[value & 0xF];
+        }
+        response += '\n';
+    }
+}
+
+bool SafeCopy(uintptr_t address, unsigned char* buffer, size_t size)
+{
+    __try
+    {
+        std::memcpy(buffer, reinterpret_cast<const void*>(address), size);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
+
+// Like AppendHexDump, but each line also shows the bytes as text and an unreadable
+// address is reported instead of faulting.
+void AppendGuardedDump(std::string& response, const char* label, uintptr_t address, size_t size)
+{
+    static const char Digits[] = "0123456789abcdef";
+    unsigned char bytes[0x100] = {};
+    size = size > sizeof(bytes) ? sizeof(bytes) : size;
+    char prefix[96] = {};
+    if (!SafeCopy(address, bytes, size))
+    {
+        std::snprintf(prefix, sizeof(prefix), "%s unreadable 0x%llX\n", label, static_cast<unsigned long long>(address));
+        response += prefix;
+        return;
+    }
+
+    for (size_t offset = 0; offset < size; offset += 32)
+    {
+        std::snprintf(prefix, sizeof(prefix), "%s +%03zX:", label, offset);
+        response += prefix;
+        size_t end = offset + 32 < size ? offset + 32 : size;
+        for (size_t i = offset; i < end; i++)
+        {
+            if (i % 4 == 0)
+            {
+                response += ' ';
+            }
+            response += Digits[bytes[i] >> 4];
+            response += Digits[bytes[i] & 0xF];
+        }
+        response += "  |";
+        for (size_t i = offset; i < end; i++)
+        {
+            response += bytes[i] >= 0x20 && bytes[i] < 0x7F ? static_cast<char>(bytes[i]) : '.';
+        }
+        response += "|\n";
+    }
+}
+
+bool LooksLikePointer(uintptr_t value)
+{
+    return value >= 0x10000 && value < 0x00007FFFFFFFFFFFull && (value & 7) == 0;
+}
+
+// Dumps the object at address, then one level of the pointers it contains.
+void AppendPointerTree(std::string& response, const char* label, uintptr_t address, size_t size)
+{
+    AppendGuardedDump(response, label, address, size);
+
+    unsigned char bytes[0x100] = {};
+    size = size > sizeof(bytes) ? sizeof(bytes) : size;
+    if (!SafeCopy(address, bytes, size))
+    {
+        return;
+    }
+
+    char childLabel[64] = {};
+    for (size_t offset = 0; offset + 8 <= size; offset += 8)
+    {
+        uintptr_t child = 0;
+        std::memcpy(&child, bytes + offset, sizeof(child));
+        if (!LooksLikePointer(child))
+        {
+            continue;
+        }
+
+        std::snprintf(childLabel, sizeof(childLabel), "%s.%02zX", label, offset);
+        AppendGuardedDump(response, childLabel, child, 0x60);
+    }
+}
+
+uintptr_t LookupRegistryObject(uintptr_t moduleBase, const char* name, uintptr_t tagRva)
+{
+    auto lookup = reinterpret_cast<RegistryLookupFn>(moduleBase + RegistryLookupRva);
+    auto registryTable = *reinterpret_cast<uintptr_t*>(moduleBase + RegistryTablePtrRva);
+    auto tag = *reinterpret_cast<uintptr_t*>(moduleBase + tagRva);
+    if (registryTable == 0)
+    {
+        return 0;
+    }
+
+    int index = lookup(name, tag);
+    if (index < 0)
+    {
+        return 0;
+    }
+
+    return *reinterpret_cast<uintptr_t*>(registryTable + static_cast<uintptr_t>(index) * 0x138 + 0x406040);
+}
+
+// Diagnostic for the race-results research: dumps pRuleData->cars from the
+// gameplay_rule_data registry object, with the fields the decompiled
+// SimulateFinishRace debug print reads, plus the raw record so unknown fields can
+// be matched against the in-game results screen. Unconfirmed layout:
+// +0x20 flags (1 finished, 2 wrecked, 8 ?, 0x10 DNF, 0x20 ?), +0x24 position
+// (0-based), +0x25 laps, +0x40 best lap ms, +0x88 name, +0x90 race time ms.
+bool ReadRaceResultsNoThrow(std::string& response)
+{
+    if (g_layoutStatus != LayoutStatus::Ok)
+    {
+        response = "ERR results module layout not validated\n";
+        return false;
+    }
+
+    __try
+    {
+        auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        response.clear();
+        response.reserve(32768);
+        char line[512] = {};
+
+        // Session globals around the lobby flag (0x19146E0) and the event counter
+        // (0x19146EC), so state can be correlated with each snapshot.
+        AppendHexDump(response, "SESSION 19146D0", moduleBase + 0x19146D0, 0x20);
+
+        auto positions = LookupRegistryObject(moduleBase, "race_positions_data", RacePositionsDataTagRva);
+        std::snprintf(line, sizeof(line), "POSITIONS object=%s\n", positions == 0 ? "null" : "ok");
+        response += line;
+        if (positions != 0)
+        {
+            AppendHexDump(response, "POSITIONS", positions, 0x80);
+        }
+
+        auto ruleData = LookupRegistryObject(moduleBase, "gameplay_rule_data", GameplayRuleDataTagRva);
+        if (ruleData == 0)
+        {
+            response += "ERR results gameplay_rule_data unavailable\n";
+            return false;
+        }
+
+        AppendHexDump(response, "RULEDATA", ruleData, 0x200);
+
+        auto cars = *reinterpret_cast<uintptr_t*>(ruleData);
+        auto count = *reinterpret_cast<int*>(ruleData + 8);
+        auto heading = *reinterpret_cast<uintptr_t*>(ruleData + 0x10);
+        int elementSize = -1;
+        if (heading != 0)
+        {
+            auto type = *reinterpret_cast<uintptr_t*>(heading);
+            if (type != 0)
+            {
+                elementSize = *reinterpret_cast<int*>(type + 8);
+            }
+        }
+
+        std::snprintf(line, sizeof(line), "CARS count=%d elementSize=0x%X expected=0x%zX\n",
+            count, static_cast<unsigned int>(elementSize), RaceCarRecordSize);
+        response += line;
+
+        if (cars == 0 || count < 0 || count > MaxRaceCars)
+        {
+            response += "ERR results car block implausible\n";
+            return false;
+        }
+
+        if (elementSize != -1 && elementSize != static_cast<int>(RaceCarRecordSize))
+        {
+            response += "ERR results car record size mismatch\n";
+            return false;
+        }
+
+        for (int i = 0; i < count; i++)
+        {
+            auto car = cars + static_cast<uintptr_t>(i) * RaceCarRecordSize;
+            auto flags = *reinterpret_cast<unsigned int*>(car + 0x20);
+            auto position = *reinterpret_cast<unsigned char*>(car + 0x24);
+            auto laps = *reinterpret_cast<unsigned char*>(car + 0x25);
+            auto bestLap = *reinterpret_cast<int*>(car + 0x40);
+            auto time = *reinterpret_cast<int*>(car + 0x90);
+            auto namePtr = *reinterpret_cast<const char**>(car + 0x88);
+            const char* name = namePtr == nullptr || namePtr[0] == '\0' ? "<none>" : namePtr;
+
+            std::snprintf(line, sizeof(line),
+                "CAR index=%d pos=%u laps=%u flags=0x%X time=%d bestLap=%d name=%.*s\n",
+                i, static_cast<unsigned int>(position), static_cast<unsigned int>(laps),
+                flags, time, bestLap, 64, name);
+            response += line;
+
+            char label[16] = {};
+            std::snprintf(label, sizeof(label), "CAR%02d", i);
+            AppendHexDump(response, label, car, RaceCarRecordSize);
+
+            // +0x68 is a distinct heap pointer per car; the car model is not in the
+            // record itself, so follow it looking for the vehicle.
+            auto vehicle = *reinterpret_cast<uintptr_t*>(car + 0x68);
+            if (LooksLikePointer(vehicle))
+            {
+                std::snprintf(label, sizeof(label), "VEH%02d", i);
+                AppendPointerTree(response, label, vehicle, 0x80);
+            }
+        }
+
+        std::snprintf(line, sizeof(line), "OK results count=%d\n", count);
+        response += line;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        response += "ERR results raised an exception\n";
         return false;
     }
 }
@@ -1099,6 +1357,13 @@ std::string HandleInputCommand(const char* buffer)
         return response;
     }
 
+    if (commandLine == "__hook_results")
+    {
+        std::string response;
+        ReadRaceResultsNoThrow(response);
+        return response;
+    }
+
     std::string tokenEcho;
     bool dispatched = DispatchConsoleCommand(commandLine, &tokenEcho);
     if (!dispatched)
@@ -1167,6 +1432,301 @@ DWORD WINAPI InputPipeThread(void*)
     }
 }
 
+// ---- Race results ----------------------------------------------------------
+//
+// When the race-ended flag rises, every car's result is still in memory for about
+// 20 s. The watcher snapshots it once and ships it as a RACE record:
+//
+//   \x12RACE \x1f <header fields> { \x1f <car fields> } \x13
+//
+// Header, in order: version, eventCounter, trackId, laps, gameMode, startedUnixMs
+// (0 when the start was not seen), endedUnixMs, carCount.
+// Each car, in order: slot, playerStatus, playerFlags, steamId, name, position,
+// lap, carFlags, timeMs, bestLapMs, finishMs, classIndex, rating, cupPoints,
+// vehicleKey, vehicleName.
+//
+// Like CHAT, every field is something observed in memory. What counts as a bot, a
+// DNF or a projected finish is decided in HookRaceRecord, where it is unit tested.
+
+constexpr int RaceRecordVersion = 1;
+constexpr size_t MaxRaceStringLength = 96;
+
+bool g_raceWatcherStarted = false;
+
+uintptr_t LookupRegistryObjectNoThrow(uintptr_t moduleBase, const char* name, uintptr_t tagRva)
+{
+    __try
+    {
+        return LookupRegistryObject(moduleBase, name, tagRva);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return 0;
+    }
+}
+
+template <typename T>
+T ReadAt(const unsigned char* buffer, size_t offset)
+{
+    T value{};
+    std::memcpy(&value, buffer + offset, sizeof(T));
+    return value;
+}
+
+unsigned long long UnixTimeMs()
+{
+    FILETIME fileTime = {};
+    GetSystemTimeAsFileTime(&fileTime);
+    ULARGE_INTEGER ticks = {};
+    ticks.LowPart = fileTime.dwLowDateTime;
+    ticks.HighPart = fileTime.dwHighDateTime;
+    // FILETIME counts 100 ns intervals from 1601-01-01.
+    return (ticks.QuadPart - 116444736000000000ull) / 10000ull;
+}
+
+void AppendField(std::string& record, const std::string& value)
+{
+    record.push_back(FieldSeparator);
+    record += value;
+}
+
+void AppendField(std::string& record, unsigned long long value)
+{
+    char text[32] = {};
+    std::snprintf(text, sizeof(text), "%llu", value);
+    AppendField(record, std::string(text));
+}
+
+void AppendSignedField(std::string& record, long long value)
+{
+    char text[32] = {};
+    std::snprintf(text, sizeof(text), "%lld", value);
+    AppendField(record, std::string(text));
+}
+
+std::string ReadGameString(uintptr_t pointer)
+{
+    std::string value;
+    if (!LooksLikePointer(pointer) ||
+        !CopyGameStringNoThrow(reinterpret_cast<const char*>(pointer), MaxRaceStringLength, value))
+    {
+        return std::string();
+    }
+
+    return SanitizeRecordField(value, MaxRaceStringLength);
+}
+
+// Returns false with a reason when the race state cannot be read. Every read is
+// guarded: a stale offset after a game patch must cost the record, not the game.
+bool BuildRaceRecord(std::string& record, int eventCounter, unsigned long long startedMs,
+    unsigned long long endedMs, std::string& error)
+{
+    auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+
+    auto eventSettings = LookupRegistryObjectNoThrow(moduleBase, "event_settings", EventSettingsTagRva);
+    auto ruleData = LookupRegistryObjectNoThrow(moduleBase, "gameplay_rule_data", GameplayRuleDataTagRva);
+    auto server = LookupRegistryObjectNoThrow(moduleBase, "SERVER", ServerNamespaceTagRva);
+    if (eventSettings == 0 || ruleData == 0 || server == 0)
+    {
+        error = "registry lookup failed";
+        return false;
+    }
+
+    unsigned char settings[0x110] = {};
+    if (!SafeCopy(eventSettings, settings, sizeof(settings)))
+    {
+        error = "event_settings unreadable";
+        return false;
+    }
+
+    // pRuleData->cars is a block: pointer, count, then a heading whose type records
+    // the element size. Checking that size catches a moved structure.
+    unsigned char block[0x18] = {};
+    uintptr_t type = 0;
+    int elementSize = 0;
+    if (!SafeCopy(ruleData, block, sizeof(block)) ||
+        !SafeCopy(ReadAt<uintptr_t>(block, 0x10), reinterpret_cast<unsigned char*>(&type), sizeof(type)) ||
+        !SafeCopy(type + 8, reinterpret_cast<unsigned char*>(&elementSize), sizeof(elementSize)))
+    {
+        error = "car block unreadable";
+        return false;
+    }
+
+    auto cars = ReadAt<uintptr_t>(block, 0);
+    auto count = ReadAt<int>(block, 8);
+    if (elementSize != static_cast<int>(RaceCarRecordSize) || !LooksLikePointer(cars) ||
+        count < 0 || count > MaxRaceCars)
+    {
+        error = "car block implausible";
+        return false;
+    }
+
+    uintptr_t players = 0;
+    if (!SafeCopy(server + 0x30, reinterpret_cast<unsigned char*>(&players), sizeof(players)) ||
+        !LooksLikePointer(players))
+    {
+        error = "player table unreadable";
+        return false;
+    }
+
+    std::string body;
+    int included = 0;
+    int slots = count < PlayerSlots ? count : PlayerSlots;
+    for (int slot = 0; slot < slots; slot++)
+    {
+        unsigned char car[RaceCarRecordSize] = {};
+        unsigned char player[PlayerRecordSize] = {};
+        if (!SafeCopy(cars + static_cast<uintptr_t>(slot) * RaceCarRecordSize, car, sizeof(car)) ||
+            !SafeCopy(players + static_cast<uintptr_t>(slot) * PlayerRecordSize, player, sizeof(player)))
+        {
+            error = "car or player record unreadable";
+            return false;
+        }
+
+        // Unused slots carry no name; they were never in this race.
+        auto name = ReadGameString(ReadAt<uintptr_t>(car, 0x88));
+        if (name.empty())
+        {
+            continue;
+        }
+
+        std::string vehicleKey;
+        std::string vehicleName;
+        unsigned char vehicle[0x20] = {};
+        auto vehiclePointer = ReadAt<uintptr_t>(car, 0x68);
+        if (LooksLikePointer(vehiclePointer) && SafeCopy(vehiclePointer, vehicle, sizeof(vehicle)))
+        {
+            vehicleKey = ReadGameString(ReadAt<uintptr_t>(vehicle, 0x08));
+            vehicleName = ReadGameString(ReadAt<uintptr_t>(vehicle, 0x18));
+        }
+
+        AppendSignedField(body, slot);
+        AppendField(body, ReadAt<unsigned char>(player, 0xA6));
+        AppendField(body, ReadAt<unsigned short>(player, 0x82));
+        AppendField(body, ReadAt<unsigned long long>(player, 0x100));
+        AppendField(body, name);
+        AppendField(body, ReadAt<unsigned char>(car, 0x24));
+        AppendField(body, ReadAt<unsigned char>(car, 0x25));
+        AppendField(body, ReadAt<unsigned int>(car, 0x20));
+        AppendSignedField(body, ReadAt<int>(car, 0x90));
+        AppendSignedField(body, ReadAt<int>(car, 0x40));
+        AppendSignedField(body, ReadAt<int>(car, 0x44));
+        AppendSignedField(body, ReadAt<int>(car, 0x50));
+        AppendSignedField(body, ReadAt<int>(car, 0x54));
+        AppendField(body, ReadAt<unsigned short>(car, 0xEC));
+        AppendField(body, vehicleKey);
+        AppendField(body, vehicleName);
+        included++;
+    }
+
+    record.clear();
+    record.push_back(RecordStart);
+    record += "RACE";
+    AppendSignedField(record, RaceRecordVersion);
+    AppendSignedField(record, eventCounter);
+    AppendField(record, ReadGameString(ReadAt<uintptr_t>(settings, 0xB0)));
+    AppendSignedField(record, ReadAt<int>(settings, 0x108));
+    AppendSignedField(record, ReadAt<int>(settings, 0x38));
+    AppendField(record, startedMs);
+    AppendField(record, endedMs);
+    AppendSignedField(record, included);
+    record += body;
+    record.push_back(RecordEnd);
+    return true;
+}
+
+bool ReadRaceStateNoThrow(uintptr_t moduleBase, unsigned char& ended, int& counter)
+{
+    return SafeCopy(moduleBase + EventEndedFlagRva, &ended, sizeof(ended)) &&
+        SafeCopy(moduleBase + EventCounterRva, reinterpret_cast<unsigned char*>(&counter), sizeof(counter));
+}
+
+DWORD WINAPI RaceWatcherThread(void*)
+{
+    constexpr DWORD PollMs = 250;
+    // The ended flag rises in the same handler that finalises the results; waiting
+    // a moment keeps the snapshot clear of anything still being written that frame.
+    constexpr DWORD SettleMs = 1000;
+
+    auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    unsigned char lastEnded = 0;
+    int lastCounter = 0;
+    unsigned long long startedMs = 0;
+
+    // Prime the counter only. The ended flag starts as "not ended", so a hook that
+    // arrives while a results screen is up still reports that race, with its start
+    // unknown. Nothing can report a race twice: a reconnect into the same process
+    // never starts a second watcher, and this one never primes again.
+    unsigned char primedEnded = 0;
+    while (!ReadRaceStateNoThrow(moduleBase, primedEnded, lastCounter))
+    {
+        Sleep(PollMs);
+    }
+
+    for (;;)
+    {
+        Sleep(PollMs);
+
+        unsigned char ended = 0;
+        int counter = 0;
+        if (!ReadRaceStateNoThrow(moduleBase, ended, counter))
+        {
+            continue;
+        }
+
+        if (counter != lastCounter)
+        {
+            startedMs = counter > lastCounter ? UnixTimeMs() : 0;
+            lastCounter = counter;
+        }
+
+        if (ended != 0 && lastEnded == 0)
+        {
+            auto endedMs = UnixTimeMs();
+            Sleep(SettleMs);
+
+            std::string record;
+            std::string error;
+            if (!ReadRaceStateNoThrow(moduleBase, ended, counter) || ended == 0)
+            {
+                WriteHookLine("WreckfestConsoleHook race results skipped: the results were gone before the snapshot.");
+            }
+            else if (BuildRaceRecord(record, counter, startedMs, endedMs, error))
+            {
+                WriteHookLine(record.c_str());
+            }
+            else
+            {
+                std::string line = "WreckfestConsoleHook race results unreadable: " + error;
+                WriteHookLine(line.c_str());
+            }
+
+            startedMs = 0;
+        }
+
+        lastEnded = ended;
+    }
+}
+
+void StartRaceWatcher()
+{
+    if (g_raceWatcherStarted)
+    {
+        return;
+    }
+
+    HANDLE thread = CreateThread(nullptr, 0, RaceWatcherThread, nullptr, 0, nullptr);
+    if (thread == nullptr)
+    {
+        WriteHookLine("WreckfestConsoleHook failed to start the race results watcher.");
+        return;
+    }
+
+    g_raceWatcherStarted = true;
+    CloseHandle(thread);
+    WriteHookLine("WreckfestConsoleHook race results watcher started.");
+}
+
 DWORD WINAPI HookThread(void*)
 {
     InitializeFallbackLogPath();
@@ -1176,6 +1736,9 @@ DWORD WINAPI HookThread(void*)
     if (g_hookInstalled)
     {
         WriteHookLine("WreckfestConsoleHook hook already installed; output reconnected.");
+        // Retried here because a failed start would otherwise last until the game
+        // restarts; it does nothing once the watcher is running.
+        StartRaceWatcher();
         LeaveCriticalSection(&g_hookLock);
         return 0;
     }
@@ -1233,6 +1796,9 @@ DWORD WINAPI HookThread(void*)
         WriteHookLine("WreckfestConsoleHook failed to install chat handler hook; chat stays on console text.");
         g_chatTarget = nullptr;
     }
+
+    // Reads memory only and patches nothing, so it runs whatever happened above.
+    StartRaceWatcher();
     LeaveCriticalSection(&g_hookLock);
 
     return 0;

@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import PageHeader from '@/components/PageHeader.vue'
+import ResourceTable from '@/crud/ResourceTable.vue'
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
   NAlert,
   NButton,
   NCard,
-  NDataTable,
   NForm,
   NFormItem,
-  NInput,
   NInputNumber,
   NRadioButton,
   NRadioGroup,
@@ -116,15 +115,9 @@ function revert() {
 // Votable tracks: which catalogue variants players can vote for, one switch each.
 const variants = ref<Variant[]>([])
 const variantsError = ref<string | null>(null)
-const search = ref('')
+/** Until the first answer the table shows loading, not "No tracks and layouts yet". */
+const variantsLoaded = ref(false)
 const pending = ref(new Set<number>())
-
-const shown = computed(() => {
-  const term = search.value.trim().toLowerCase()
-  return term
-    ? variants.value.filter((v) => [v.trackName, v.name, v.variantId].some((text) => text.toLowerCase().includes(term)))
-    : variants.value
-})
 const votable = computed(() => variants.value.filter((v) => v.allowedForVoting).length)
 
 async function loadVariants() {
@@ -133,6 +126,7 @@ async function loadVariants() {
     if (data) {
       variants.value = data
       variantsError.value = null
+      variantsLoaded.value = true
     } else {
       variantsError.value = problemMessage(error, 'The tracks could not be loaded.')
     }
@@ -177,8 +171,8 @@ async function setVoting(variant: Variant, allowed: boolean) {
 }
 
 const columns: DataTableColumns<Variant> = [
-  { title: 'Track', key: 'trackName', sorter: (a, b) => a.trackName.localeCompare(b.trackName) },
-  { title: 'Layout', key: 'name' },
+  { title: 'Track', key: 'trackName', sorter: (a, b) => a.trackName.localeCompare(b.trackName), render: (v) => h('strong', { class: 'row-name' }, v.trackName) },
+  { title: 'Layout', key: 'name', render: (v) => h('div', { class: 'row-identity' }, [h('span', { class: 'row-name' }, v.name), h('code', { class: 'row-id' }, v.variantId)]) },
   { title: 'Mode', key: 'gameMode', width: 100 },
   {
     title: 'Votable',
@@ -286,8 +280,14 @@ onMounted(() => {
       </template>
       <NAlert v-if="variantsError" type="warning" :title="variantsError" />
       <template v-else>
-        <NInput v-model:value="search" placeholder="Search tracks and layouts" clearable class="gap" />
-        <NDataTable :columns="columns" :data="shown" :row-key="(v: Variant) => v.id" :bordered="false" size="small" :pagination="{ pageSize: 25 }" />
+        <ResourceTable
+          :rows="variants"
+          :columns="columns"
+          :search-fields="['trackName', 'name', 'variantId']"
+          what="tracks and layouts"
+          :loading="!variantsLoaded"
+          :min-table-width="650"
+        />
       </template>
     </NCard>
   </section>

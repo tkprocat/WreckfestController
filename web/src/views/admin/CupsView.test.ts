@@ -68,6 +68,14 @@ async function mountPage() {
 
 const body = () => new DOMWrapper(document.body)
 const labelled = (label: string) => body().find(`[aria-label="${label}"]`)
+const menuOption = (action: string) => body().findAll('.n-dropdown-option-body').find((option) => option.text().trim() === action)!
+async function menuAction(row: string, action: string) {
+  await body().find('[aria-label="More actions for ' + row + '"]').trigger('click')
+  await flushPromises()
+  await menuOption(action).trigger('click')
+  await flushPromises()
+}
+
 const dialog = () => body().find('.n-modal')
 const confirmDialog = () => body().find('.n-dialog')
 const click = async (label: string, within: DOMWrapper<Element> = body()) => {
@@ -218,7 +226,7 @@ describe('CupsView', () => {
     api.DELETE.mockResolvedValue(answer(undefined, 204))
     await mountPage()
 
-    await labelled('Delete Friday Derby').trigger('click')
+    await menuAction('Friday Derby', 'Delete')
     await flushPromises()
     await click('Delete', confirmDialog())
 
@@ -231,7 +239,7 @@ describe('CupsView', () => {
     api.DELETE.mockResolvedValue(refused({ ...friday(), name: 'Friday Derby (moved)', version: 4 }, 409))
     await mountPage()
 
-    await labelled('Delete Friday Derby').trigger('click')
+    await menuAction('Friday Derby', 'Delete')
     await flushPromises()
     await click('Delete', confirmDialog())
 

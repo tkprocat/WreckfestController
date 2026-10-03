@@ -60,6 +60,14 @@ async function mountPage() {
 
 const body = () => new DOMWrapper(document.body)
 const labelled = (label: string) => body().find(`[aria-label="${label}"]`)
+const menuOption = (action: string) => body().findAll('.n-dropdown-option-body').find((option) => option.text().trim() === action)!
+async function menuAction(row: string, action: string) {
+  await body().find('[aria-label="More actions for ' + row + '"]').trigger('click')
+  await flushPromises()
+  await menuOption(action).trigger('click')
+  await flushPromises()
+}
+
 const trackNames = () => wrapper!.findAll('tbody tr').map((r) => r.text())
 
 async function expand(name: string) {
@@ -96,6 +104,25 @@ describe('TracksView', () => {
     expect(wrapper!.text()).toContain('Old Quarry')
   })
 
+  // Hidden tracks are left out by default, so they are not part of the total either.
+  it('counts only the tracks the table can show', async () => {
+    await mountPage()
+
+    await labelled('Search tracks').setValue('nothing like this')
+
+    expect(wrapper!.text()).toContain('0 of 2 tracks')
+  })
+
+  it('says so when every track is hidden, instead of claiming there are none', async () => {
+    api.GET.mockImplementation((path: string) =>
+      Promise.resolve(answer(path === '/api/catalogue/tracks' ? [hiddenTrack()] : [])),
+    )
+    await mountPage()
+
+    expect(wrapper!.text()).toContain('Every track is hidden')
+    expect(wrapper!.text()).not.toContain('No tracks yet.')
+  })
+
   it('finds a track by the name of one of its variants', async () => {
     await mountPage()
 
@@ -119,7 +146,7 @@ describe('TracksView', () => {
     api.POST.mockResolvedValue(answer({ ...fields(), isHidden: true, version: 2 }))
     await mountPage()
 
-    await labelled('Hide Fields').trigger('click')
+    await menuAction('Fields', 'Hide')
     await flushPromises()
 
     expect(api.POST).toHaveBeenCalledWith('/api/catalogue/tracks/{id}/hide', { params: { path: { id: 1 } } })
@@ -143,7 +170,7 @@ describe('TracksView', () => {
     api.POST.mockResolvedValue(answer(fields()))
     await mountPage()
 
-    await labelled('Reset Fields').trigger('click')
+    await menuAction('Fields', 'Reset')
     await flushPromises()
     expect(api.POST).not.toHaveBeenCalled()
     expect(body().find('.n-dialog').text()).toContain('Its variants are left alone.')
@@ -157,9 +184,11 @@ describe('TracksView', () => {
   it('says why a delete was refused', async () => {
     api.DELETE.mockResolvedValue(refused({ title: 'Collection "Evening" uses bowl.', status: 409 }, 409))
     await mountPage()
-    expect(labelled('Delete Fields').exists()).toBe(false)
+    await labelled('More actions for Fields').trigger('click')
+    await flushPromises()
+    expect(body().findAll('.n-dropdown-option-body').some((option) => option.text().trim() === 'Delete')).toBe(false)
 
-    await labelled('Delete Crash Arena').trigger('click')
+    await menuAction('Crash Arena', 'Delete')
     await flushPromises()
     await body().find('.n-dialog').findAll('button').find((b) => b.text() === 'Delete')!.trigger('click')
     await flushPromises()
@@ -196,7 +225,7 @@ describe('TracksView', () => {
     api.POST.mockResolvedValue(refused({ ...fields(), name: 'Fields (renamed)', version: 3 }, 409))
     await mountPage()
 
-    await labelled('Hide Fields').trigger('click')
+    await menuAction('Fields', 'Hide')
     await flushPromises()
 
     expect(wrapper!.text()).toContain('Fields (renamed)')
