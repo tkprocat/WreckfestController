@@ -75,11 +75,16 @@ function variantsOf(track: Track): Variant[] {
   )
 }
 
+/** The tracks before the other filters: hidden ones only when asked for. This is the table's total. */
+const visibleTracks = computed(() => tracks.value.filter((t) => showHidden.value || !t.isHidden))
+const emptyText = computed(() =>
+  tracks.value.length > 0 && visibleTracks.value.length === 0 ? 'Every track is hidden. Tick "Show hidden" to see them.' : undefined,
+)
+
 const rows = computed<Row[]>(() =>
-  tracks.value
+  visibleTracks.value
     .filter(
       (t) =>
-        (showHidden.value || !t.isHidden) &&
         (!origin.value || t.origin === origin.value) &&
         (!weather.value || t.weather.includes(weather.value)) &&
         (!(mode.value || tag.value) || variantsOf(t).length > 0),
@@ -354,7 +359,8 @@ onMounted(() => void list.reload())
       <ResourceTable
         :min-table-width="1080"
         :rows="rows"
-        :total-rows="tracks.length"
+        :total-rows="visibleTracks.length"
+        :empty-text="emptyText"
         :filters-active="filtersActive"
         :columns="columns"
         :search-fields="['name', 'key', 'find']"

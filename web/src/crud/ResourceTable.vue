@@ -14,6 +14,8 @@ const props = defineProps<{
   /** Count before page-specific filters were applied. */
   totalRows?: number
   filtersActive?: boolean
+  /** Replaces "No <what> yet." when nothing is filtered, for pages whose baseline already leaves rows out. */
+  emptyText?: string
   renderExpandIcon?: DataTableProps['renderExpandIcon']
 }>()
 
@@ -30,8 +32,15 @@ const shown = computed(() => {
 })
 const hasFilters = computed(() => !!search.value.trim() || !!props.filtersActive)
 const total = computed(() => props.totalRows ?? props.rows.length)
+/** Loading with nothing to show yet: a reload keeps its rows and count on screen. */
+const firstLoad = computed(() => !!props.loading && props.rows.length === 0)
+// Naive UI draws the empty slot under its loading spinner, so it must not claim "none" yet.
 const empty = computed(() =>
-  hasFilters.value ? 'No ' + props.what + ' match the current filters.' : 'No ' + props.what + ' yet.',
+  firstLoad.value
+    ? 'Loading ' + props.what + '…'
+    : hasFilters.value
+    ? 'No ' + props.what + ' match the current filters.'
+    : (props.emptyText ?? 'No ' + props.what + ' yet.'),
 )
 
 function resetFilters() {
@@ -54,7 +63,7 @@ function resetFilters() {
         class="search"
       />
       <div class="toolbar-status">
-        <span role="status">{{ shown.length }}{{ hasFilters ? ' of ' + total : '' }} {{ what }}</span>
+        <span role="status">{{ firstLoad ? 'Loading ' + what + '…' : shown.length + (hasFilters ? ' of ' + total : '') + ' ' + what }}</span>
         <NButton v-if="hasFilters" size="small" @click="resetFilters">Clear filters</NButton>
       </div>
       <div v-if="$slots.filters" class="toolbar-filters"><slot name="filters" /></div>

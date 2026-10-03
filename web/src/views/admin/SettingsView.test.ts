@@ -200,6 +200,17 @@ describe('SettingsView', () => {
     expect(wrapper!.find('[aria-label="Track changes"]').exists()).toBe(true)
   })
 
+  it('shows the tracks loading, not empty, until they answer', async () => {
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/settings/vote' ? Promise.resolve(answer(vote())) : new Promise(() => {}),
+    )
+    mountPage()
+    await flushPromises()
+
+    expect(wrapper!.text()).not.toContain('No tracks and layouts yet.')
+    expect(wrapper!.find('.n-data-table .n-base-loading').exists()).toBe(true)
+  })
+
   it('filters the tracks by search', async () => {
     serve()
     mountPage()

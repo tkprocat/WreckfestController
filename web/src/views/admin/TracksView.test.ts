@@ -104,6 +104,25 @@ describe('TracksView', () => {
     expect(wrapper!.text()).toContain('Old Quarry')
   })
 
+  // Hidden tracks are left out by default, so they are not part of the total either.
+  it('counts only the tracks the table can show', async () => {
+    await mountPage()
+
+    await labelled('Search tracks').setValue('nothing like this')
+
+    expect(wrapper!.text()).toContain('0 of 2 tracks')
+  })
+
+  it('says so when every track is hidden, instead of claiming there are none', async () => {
+    api.GET.mockImplementation((path: string) =>
+      Promise.resolve(answer(path === '/api/catalogue/tracks' ? [hiddenTrack()] : [])),
+    )
+    await mountPage()
+
+    expect(wrapper!.text()).toContain('Every track is hidden')
+    expect(wrapper!.text()).not.toContain('No tracks yet.')
+  })
+
   it('finds a track by the name of one of its variants', async () => {
     await mountPage()
 

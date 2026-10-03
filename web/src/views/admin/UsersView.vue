@@ -281,6 +281,7 @@ onMounted(() => void load())
         :columns="columns"
         :search-fields="['userName', 'displayName', 'email']"
         what="accounts"
+        :loading="!loaded"
         :min-table-width="720"
       />
     </NCard>

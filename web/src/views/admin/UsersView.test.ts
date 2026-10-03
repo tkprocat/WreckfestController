@@ -158,6 +158,15 @@ describe('UsersView', () => {
     expect(bodyButton('Add account').attributes('disabled')).toBeUndefined()
   })
 
+  it('shows the table loading, not empty, until the list answers', async () => {
+    api.GET.mockReturnValue(new Promise(() => {}))
+    mountPage()
+    await flushPromises()
+
+    expect(wrapper!.text()).not.toContain('No accounts yet.')
+    expect(wrapper!.find('.n-data-table .n-base-loading').exists()).toBe(true)
+  })
+
   // A dialog is named for screen readers, and its time zone input where focus lands.
   it('names the account dialog and its time zone input', async () => {
     mountPage()

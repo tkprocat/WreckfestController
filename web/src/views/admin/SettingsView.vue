@@ -115,6 +115,8 @@ function revert() {
 // Votable tracks: which catalogue variants players can vote for, one switch each.
 const variants = ref<Variant[]>([])
 const variantsError = ref<string | null>(null)
+/** Until the first answer the table shows loading, not "No tracks and layouts yet". */
+const variantsLoaded = ref(false)
 const pending = ref(new Set<number>())
 const votable = computed(() => variants.value.filter((v) => v.allowedForVoting).length)
 
@@ -124,6 +126,7 @@ async function loadVariants() {
     if (data) {
       variants.value = data
       variantsError.value = null
+      variantsLoaded.value = true
     } else {
       variantsError.value = problemMessage(error, 'The tracks could not be loaded.')
     }
@@ -282,6 +285,7 @@ onMounted(() => {
           :columns="columns"
           :search-fields="['trackName', 'name', 'variantId']"
           what="tracks and layouts"
+          :loading="!variantsLoaded"
           :min-table-width="650"
         />
       </template>
