@@ -22,7 +22,6 @@ const messages: Record<LoginFailure, string> = {
   unavailable: 'Signing in is not possible right now.',
 }
 
-
 async function submit() {
   busy.value = true
   failure.value = null
@@ -38,47 +37,82 @@ async function submit() {
 </script>
 
 <template>
-  <NCard title="Sign in" class="login-card">
-    <NAlert v-if="auth.unreachable && !auth.loaded" type="error" title="The controller cannot be reached">
-      <p>Check that it is running, then try again.</p>
-      <NButton size="small" @click="auth.load()">Try again</NButton>
-    </NAlert>
-    <NAlert v-else-if="auth.degraded" type="error" title="The controller's database is unavailable">
-      Sign-in is not possible until it is fixed. See the controller window for details.
-    </NAlert>
-    <NAlert v-else-if="auth.setupRequired" type="info" title="No accounts yet">
-      Create the first admin account in the controller window.
-    </NAlert>
-    <NForm v-else @submit.prevent="submit">
-      <NFormItem label="Username or email">
-        <NInput v-model:value="login" autocomplete="username" :input-props="{ name: 'login' }" />
-      </NFormItem>
-      <NFormItem label="Password">
-        <NInput
-          v-model:value="password"
-          type="password"
-          show-password-on="click"
-          autocomplete="current-password"
-          :input-props="{ name: 'password' }"
-        />
-      </NFormItem>
-      <NCheckbox v-model:checked="remember">Keep me signed in</NCheckbox>
-      <NAlert v-if="failure" type="warning" class="login-failure">{{ messages[failure] }}</NAlert>
-      <NButton type="primary" attr-type="submit" block :loading="busy" :disabled="!login || !password" class="login-submit">
-        Sign in
-      </NButton>
-    </NForm>
-  </NCard>
+  <section class="login-page">
+    <div class="login-intro">
+      <span class="intro-mark" aria-hidden="true">W</span>
+      <p class="eyebrow">Controller access</p>
+      <h1>Take the controls.</h1>
+      <p>Sign in to manage races, rotations, cups, and the people keeping the server running.</p>
+    </div>
+    <NCard class="login-card">
+      <p class="eyebrow">Administration</p>
+      <h2>Sign in</h2>
+      <NAlert v-if="auth.unreachable && !auth.loaded" type="error" title="The controller cannot be reached">
+        <p>Check that it is running, then try again.</p>
+        <NButton size="small" @click="auth.load()">Try again</NButton>
+      </NAlert>
+      <NAlert v-else-if="auth.degraded" type="error" title="The controller's database is unavailable">
+        Sign-in is not possible until it is fixed. See the controller window for details.
+      </NAlert>
+      <NAlert v-else-if="auth.setupRequired" type="info" title="No accounts yet">
+        Create the first admin account in the controller window.
+      </NAlert>
+      <NForm v-else label-placement="top" :disabled="busy" @submit.prevent="submit">
+        <NFormItem label="Username or email">
+          <NInput v-model:value="login" autocomplete="username" :input-props="{ name: 'login' }" />
+        </NFormItem>
+        <NFormItem label="Password">
+          <NInput
+            v-model:value="password"
+            type="password"
+            show-password-on="click"
+            autocomplete="current-password"
+            :input-props="{ name: 'password' }"
+          />
+        </NFormItem>
+        <NCheckbox v-model:checked="remember">Keep me signed in</NCheckbox>
+        <NAlert v-if="failure" type="warning" class="login-failure">{{ messages[failure] }}</NAlert>
+        <NButton type="primary" attr-type="submit" block :loading="busy" :disabled="busy || !login || !password" class="login-submit">
+          Sign in
+        </NButton>
+      </NForm>
+    </NCard>
+  </section>
 </template>
 
 <style scoped>
-.login-card {
-  max-width: 420px;
-  margin: 48px auto;
+.login-page {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+  align-items: center;
+  gap: clamp(28px, 6vw, 96px);
+  max-width: 950px;
+  margin: clamp(32px, 8vh, 96px) auto;
 }
-
-.login-failure,
-.login-submit {
-  margin-top: 16px;
+.login-intro { min-width: 0; }
+.intro-mark {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 15px;
+  background: var(--accent);
+  color: var(--surface);
+  font-size: 32px;
+  font-weight: 800;
+  font-style: italic;
+}
+.eyebrow { margin: 0 0 8px; color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.login-intro .eyebrow { margin-top: 28px; }
+.login-intro h1 { margin: 0; font-size: clamp(32px, 4vw, 52px); line-height: 1.05; letter-spacing: -.04em; }
+.login-intro > p:last-child { max-width: 36ch; margin-top: 20px; color: var(--text-secondary); font-size: 16px; }
+.login-card { min-width: 0; }
+.login-card h2 { margin: 0 0 24px; font-size: 25px; letter-spacing: -.025em; }
+.login-failure, .login-submit { margin-top: 16px; }
+@media (max-width: 700px) {
+  .login-page { grid-template-columns: 1fr; gap: 28px; margin: 28px auto; }
+  .login-intro .eyebrow { margin-top: 18px; }
+  .login-intro h1 { font-size: 36px; }
+  .login-intro > p:last-child { margin: 10px 0 0; font-size: 14px; }
 }
 </style>
