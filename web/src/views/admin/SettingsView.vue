@@ -11,7 +11,6 @@ import {
   NInputNumber,
   NRadioButton,
   NRadioGroup,
-  NSpace,
   NSwitch,
   useMessage,
   type DataTableColumns,
@@ -203,7 +202,7 @@ onMounted(() => {
       <NAlert v-if="loadError" type="warning" :title="loadError" />
       <!-- Locked while saving: the answer replaces the form, so an edit made meanwhile
            would be lost. -->
-      <NForm v-else label-placement="top" label-width="auto" :disabled="!loaded || saving" @submit.prevent="save">
+      <NForm v-else label-placement="top" class="form-page" :disabled="!loaded || saving" @submit.prevent="save">
         <NFormItem label="Track changes" :feedback="errors.mode" :validation-status="errors.mode ? 'error' : undefined">
           <NRadioGroup v-model:value="form.mode" name="mode" aria-label="Track changes">
             <NRadioButton value="Off">Off</NRadioButton>
@@ -211,66 +210,69 @@ onMounted(() => {
             <NRadioButton value="Direct">Direct</NRadioButton>
           </NRadioGroup>
         </NFormItem>
-        <NFormItem
-          label="Vote time (seconds)"
-          :feedback="errors.voteTimeoutSeconds"
-          :validation-status="errors.voteTimeoutSeconds ? 'error' : undefined"
-        >
-          <NInputNumber
-            v-model:value="form.voteTimeoutSeconds"
-            :min="1"
-            :max="3600"
-            :precision="0"
-            :input-props="{ 'aria-label': 'Vote time (seconds)' }"
-          />
-        </NFormItem>
-        <NFormItem
-          label="Direct change cooldown (seconds)"
-          :feedback="errors.directCooldownSeconds"
-          :validation-status="errors.directCooldownSeconds ? 'error' : undefined"
-        >
-          <NInputNumber
-            v-model:value="form.directCooldownSeconds"
-            :min="0"
-            :max="3600"
-            :precision="0"
-            :input-props="{ 'aria-label': 'Direct change cooldown (seconds)' }"
-          />
-        </NFormItem>
-        <NFormItem
-          label="Most laps a player may ask for"
-          :feedback="errors.maxLapsAllowed"
-          :validation-status="errors.maxLapsAllowed ? 'error' : undefined"
-        >
-          <NInputNumber
-            v-model:value="form.maxLapsAllowed"
-            :min="1"
-            :max="999"
-            :precision="0"
-            :input-props="{ 'aria-label': 'Most laps a player may ask for' }"
-          />
-        </NFormItem>
-        <NFormItem
-          label="Pause between chat lines (ms)"
-          :feedback="errors.messageDelayMs"
-          :validation-status="errors.messageDelayMs ? 'error' : undefined"
-        >
-          <NInputNumber
-            v-model:value="form.messageDelayMs"
-            :min="0"
-            :max="5000"
-            :step="50"
-            :precision="0"
-            :input-props="{ 'aria-label': 'Pause between chat lines (ms)' }"
-          />
-        </NFormItem>
+        <div class="form-grid">
+          <NFormItem
+            label="Vote time (seconds)"
+            :feedback="errors.voteTimeoutSeconds"
+            :validation-status="errors.voteTimeoutSeconds ? 'error' : undefined"
+          >
+            <NInputNumber
+              v-model:value="form.voteTimeoutSeconds"
+              :min="1"
+              :max="3600"
+              :precision="0"
+              :input-props="{ 'aria-label': 'Vote time (seconds)' }"
+            />
+          </NFormItem>
+          <NFormItem
+            label="Direct change cooldown (seconds)"
+            :feedback="errors.directCooldownSeconds"
+            :validation-status="errors.directCooldownSeconds ? 'error' : undefined"
+          >
+            <NInputNumber
+              v-model:value="form.directCooldownSeconds"
+              :min="0"
+              :max="3600"
+              :precision="0"
+              :input-props="{ 'aria-label': 'Direct change cooldown (seconds)' }"
+            />
+          </NFormItem>
+          <NFormItem
+            label="Most laps a player may ask for"
+            :feedback="errors.maxLapsAllowed"
+            :validation-status="errors.maxLapsAllowed ? 'error' : undefined"
+          >
+            <NInputNumber
+              v-model:value="form.maxLapsAllowed"
+              :min="1"
+              :max="999"
+              :precision="0"
+              :input-props="{ 'aria-label': 'Most laps a player may ask for' }"
+            />
+          </NFormItem>
+          <NFormItem
+            label="Pause between chat lines (ms)"
+            :feedback="errors.messageDelayMs"
+            :validation-status="errors.messageDelayMs ? 'error' : undefined"
+          >
+            <NInputNumber
+              v-model:value="form.messageDelayMs"
+              :min="0"
+              :max="5000"
+              :step="50"
+              :precision="0"
+              :input-props="{ 'aria-label': 'Pause between chat lines (ms)' }"
+            />
+          </NFormItem>
+        </div>
         <NFormItem label="Ignore chat commands during a race">
           <NSwitch v-model:value="form.suppressCommandsDuringRace" aria-label="Ignore chat commands during a race" />
         </NFormItem>
-        <NSpace>
-          <NButton type="primary" attr-type="submit" :loading="saving" :disabled="!dirty || saving">Save</NButton>
+        <div class="form-actions">
+          <span class="form-actions-note">{{ dirty ? 'Unsaved changes.' : 'No unsaved changes.' }}</span>
           <NButton :disabled="!dirty || saving" @click="revert">Revert</NButton>
-        </NSpace>
+          <NButton type="primary" attr-type="submit" :loading="saving" :disabled="!dirty || saving">Save</NButton>
+        </div>
       </NForm>
     </NCard>
 

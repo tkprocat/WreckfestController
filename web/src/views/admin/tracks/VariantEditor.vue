@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, shallowRef } from 'vue'
-import { NButton, NCheckbox, NForm, NInput, NModal, NSelect, NSpace, useMessage } from 'naive-ui'
+import { NButton, NCheckbox, NForm, NInput, NModal, NSelect, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
 import ConflictDialog from '@/crud/ConflictDialog.vue'
@@ -8,6 +8,7 @@ import FormField from '@/crud/FormField.vue'
 import { NO_ANSWER, hasId, send, type Outcome } from '@/crud/outcome'
 import { useResourceEditor } from '@/crud/useResourceEditor'
 import { vSelectFocus } from '@/crud/selectFocus'
+import { modalSize } from '@/crud/modal'
 
 /**
  * Adds a variant under a track, or edits one: its id (what the game loads), name, game mode
@@ -131,7 +132,7 @@ defineExpose({ start })
     preset="card"
     :title="title"
     :aria-label="title"
-    style="max-width: 560px"
+    v-bind="modalSize(560)"
     :mask-closable="!saving"
     @update:show="(show: boolean) => !show && editor.close()"
   >
@@ -163,12 +164,12 @@ defineExpose({ start })
         <NSelect v-model:value="draft.tags" :options="tagOptions" multiple filterable v-select-focus="inputProps" :input-props="inputProps" />
       </FormField>
       <NCheckbox v-if="editor.isNew.value" v-model:checked="draft.allowedForVoting" class="gap">Players can vote for it</NCheckbox>
-      <NSpace justify="end">
+      <div class="form-actions">
         <NButton :disabled="saving" @click="editor.close()">Cancel</NButton>
         <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">
           {{ editor.isNew.value ? 'Add' : 'Save' }}
         </NButton>
-      </NSpace>
+      </div>
     </NForm>
   </NModal>
 </template>

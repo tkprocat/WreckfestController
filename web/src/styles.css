@@ -117,3 +117,67 @@ a { color: var(--accent); }
 .row-identity { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
 .row-name { font-weight: 600; overflow-wrap: anywhere; }
 .row-id { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+
+/*
+ * Forms, on pages and in dialogs. Labels sit above their control everywhere, so a form
+ * reads the same at any width. Sections group fields under a short heading; a grid lets
+ * short fields share a row and stack on a phone. Actions end the form, Save last.
+ */
+.form-page { max-width: 760px; }
+.form-page-wide { max-width: 1040px; }
+.form-section + .form-section {
+  margin-top: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-color);
+}
+/* Styled apart from field labels, so a section reads as a group, not as one more field. */
+.form-section-title {
+  margin: 0 0 var(--space-3);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.form-section-help { margin: 0 0 var(--space-3); color: var(--text-muted); font-size: 13px; }
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+  column-gap: var(--space-4);
+}
+.form-grid > .form-wide { grid-column: 1 / -1; }
+/* Sticky, so Save stays in reach on a long form; it sits after the fields, never over them. */
+.form-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  padding: var(--space-3) 0;
+  /* The card's own background: a page card's --n-color; a dialog paints --n-color-modal. */
+  background: var(--n-color, var(--surface));
+  border-top: 1px solid var(--border-color);
+}
+.n-modal .form-actions { background: var(--n-color-modal, var(--n-color, var(--surface))); }
+.form-actions .form-actions-note { margin-right: auto; align-self: center; color: var(--text-muted); font-size: 13px; }
+/* Native date and time inputs, in the theme's colours (color-scheme follows the theme). */
+.native-control {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 10px;
+  font: inherit;
+  color: var(--page-text);
+  background: var(--surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-control);
+  color-scheme: inherit;
+}
+.native-control:disabled { opacity: 0.5; cursor: not-allowed; }
+.native-control[aria-invalid='true'] { border-color: var(--error-color); }
+/* A row of radio buttons wraps on a narrow screen instead of pushing the form sideways. */
+/* Naive UI gives a button group one row's height; auto lets the wrapped row take space. */
+.n-form .n-radio-group { display: inline-flex; flex-wrap: wrap; row-gap: var(--space-1); max-width: 100%; height: auto; }

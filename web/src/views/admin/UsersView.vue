@@ -24,6 +24,7 @@ import { browserTimeZone, timeZoneOptions } from '@/utils/timeZones'
 import { vSelectFocus } from '@/crud/selectFocus'
 import ResourceTable from '@/crud/ResourceTable.vue'
 import RowActionMenu from '@/crud/RowActionMenu.vue'
+import { modalSize } from '@/crud/modal'
 
 type User = components['schemas']['UserResponse']
 
@@ -291,11 +292,11 @@ onMounted(() => void load())
       preset="card"
       :title="isNew ? 'Add account' : 'Edit account'"
       :aria-label="isNew ? 'Add account' : 'Edit account'"
-      style="max-width: 520px"
+      v-bind="modalSize(520)"
       :mask-closable="!saving"
       @update:show="(show: boolean) => !show && !saving && (editing = null)"
     >
-      <NForm label-placement="left" label-width="auto" :disabled="saving" @submit.prevent="saveForm">
+      <NForm label-placement="top" :disabled="saving" @submit.prevent="saveForm">
         <NFormItem label="User name" :feedback="formErrors.userName" :validation-status="status('userName')">
           <NInput v-model:value="form.userName" :input-props="{ 'aria-label': 'User name', autocomplete: 'off' }" />
         </NFormItem>
@@ -327,12 +328,12 @@ onMounted(() => void load())
             :input-props="{ 'aria-label': 'Temporary password', autocomplete: 'new-password' }"
           />
         </NFormItem>
-        <NSpace justify="end">
+        <div class="form-actions">
           <NButton :disabled="saving" @click="editing = null">Cancel</NButton>
         <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">
             {{ isNew ? 'Add' : 'Save' }}
           </NButton>
-        </NSpace>
+        </div>
       </NForm>
     </NModal>
 
@@ -341,7 +342,7 @@ onMounted(() => void load())
       preset="card"
       :title="`Reset password: ${resetting?.userName ?? ''}`"
       :aria-label="`Reset password: ${resetting?.userName ?? ''}`"
-      style="max-width: 480px"
+      v-bind="modalSize(480)"
       :mask-closable="!saving"
       @update:show="(show: boolean) => !show && !saving && (resetting = null)"
     >
@@ -357,10 +358,10 @@ onMounted(() => void load())
             :input-props="{ 'aria-label': 'New temporary password', autocomplete: 'new-password' }"
           />
         </NFormItem>
-        <NSpace justify="end">
+        <div class="form-actions">
           <NButton :disabled="saving" @click="resetting = null">Cancel</NButton>
         <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving || !newPassword">Reset password</NButton>
-        </NSpace>
+        </div>
       </NForm>
     </NModal>
   </section>

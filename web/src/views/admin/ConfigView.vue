@@ -192,57 +192,60 @@ onMounted(() => void load())
           changed: a setting the file does not have yet is added. A greyed-out setting is set again below the event
           loop, where that later value wins; the note under it says what to change there.
         </NAlert>
-        <NForm label-placement="left" label-width="auto" :disabled="!loaded || saving" @submit.prevent="save">
+        <NForm label-placement="top" class="form-page-wide" :disabled="!loaded || saving" @submit.prevent="save">
           <NCard v-for="section in SECTIONS" :key="section.title" :title="section.title" class="gap" size="small">
-            <NFormItem
-              v-for="def in section.fields"
-              :key="def.field"
-              :label="def.label"
-              :feedback="feedback(def)"
-              :validation-status="status(def)"
-            >
-              <NInput
-                v-if="def.kind === 'text'"
-                v-model:value="(form as Record<string, string>)[def.field]"
-                :maxlength="def.max"
-                :show-count="!!def.max"
-                :disabled="locked(def.field)"
-                :input-props="{ 'aria-label': def.label }"
-              />
-              <NInputNumber
-                v-else-if="def.kind === 'number'"
-                v-model:value="(form as Record<string, number>)[def.field]"
-                :min="def.min"
-                :max="def.max"
-                :precision="0"
-                :disabled="locked(def.field)"
-                :input-props="{ 'aria-label': def.label }"
-              />
-              <!-- Filterable, so keyboard focus lands on an input, which carries the name. -->
-              <NSelect
-                v-else-if="def.kind === 'select'"
-                v-model:value="(form as Record<string, string | number>)[def.field]"
-                :options="[...def.options]"
-                :disabled="locked(def.field)"
-                filterable
-                v-select-focus="{ 'aria-label': def.label }"
-                :input-props="{ 'aria-label': def.label }"
-              />
-              <NSpace v-else align="center">
-                <NSwitch
-                  :value="flag(def.field)"
+            <div class="form-grid">
+              <NFormItem
+                v-for="def in section.fields"
+                :key="def.field"
+                :label="def.label"
+                :feedback="feedback(def)"
+                :validation-status="status(def)"
+              >
+                <NInput
+                  v-if="def.kind === 'text'"
+                  v-model:value="(form as Record<string, string>)[def.field]"
+                  :maxlength="def.max"
+                  :show-count="!!def.max"
                   :disabled="locked(def.field)"
-                  :aria-label="def.label"
-                  @update:value="(on: boolean) => setFlag(def.field, on)"
+                  :input-props="{ 'aria-label': def.label }"
                 />
-                <span>{{ flag(def.field) ? def.on : '' }}</span>
-              </NSpace>
-            </NFormItem>
+                <NInputNumber
+                  v-else-if="def.kind === 'number'"
+                  v-model:value="(form as Record<string, number>)[def.field]"
+                  :min="def.min"
+                  :max="def.max"
+                  :precision="0"
+                  :disabled="locked(def.field)"
+                  :input-props="{ 'aria-label': def.label }"
+                />
+                <!-- Filterable, so keyboard focus lands on an input, which carries the name. -->
+                <NSelect
+                  v-else-if="def.kind === 'select'"
+                  v-model:value="(form as Record<string, string | number>)[def.field]"
+                  :options="[...def.options]"
+                  :disabled="locked(def.field)"
+                  filterable
+                  v-select-focus="{ 'aria-label': def.label }"
+                  :input-props="{ 'aria-label': def.label }"
+                />
+                <NSpace v-else align="center">
+                  <NSwitch
+                    :value="flag(def.field)"
+                    :disabled="locked(def.field)"
+                    :aria-label="def.label"
+                    @update:value="(on: boolean) => setFlag(def.field, on)"
+                  />
+                  <span>{{ flag(def.field) ? def.on : '' }}</span>
+                </NSpace>
+              </NFormItem>
+            </div>
           </NCard>
-          <NSpace>
-            <NButton type="primary" attr-type="submit" :loading="saving" :disabled="!dirty || saving">Save</NButton>
+          <div class="form-actions">
+            <span class="form-actions-note">{{ dirty ? 'Unsaved changes. They apply when the server restarts.' : 'No unsaved changes.' }}</span>
             <NButton :disabled="!dirty || saving" @click="revert">Revert</NButton>
-          </NSpace>
+            <NButton type="primary" attr-type="submit" :loading="saving" :disabled="!dirty || saving">Save</NButton>
+          </div>
         </NForm>
       </NTabPane>
 
