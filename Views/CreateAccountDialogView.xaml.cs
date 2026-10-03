@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using MaterialDesignThemes.Wpf;
+using Microsoft.AspNetCore.Identity;
 using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Views;
@@ -18,6 +19,9 @@ public partial class CreateAccountDialogView : UserControl
     /// <summary>This dialog's own session on the shared host, so closing never ends another dialog.</summary>
     private DialogSession? _session;
 
+    /// <summary>The create request in flight, and the username it is for.</summary>
+    private (Task<IdentityResult> Request, string UserName)? _pending;
+
     public CreateAccountDialogView(AccountService accounts, string intro)
     {
         InitializeComponent();
@@ -26,12 +30,34 @@ public partial class CreateAccountDialogView : UserControl
         Loaded += (_, _) => UserNameTextBox.Focus();
     }
 
-    /// <summary>Shows the dialog. Returns the new username, or null when cancelled.</summary>
+    /// <summary>
+    /// Shows the dialog. Returns the new username, or null when no account was created.
+    /// Left with LATER while a create is still running, it waits for that request, so the
+    /// caller confirms and refreshes an account that was created after all.
+    /// </summary>
     public static async Task<string?> ShowAsync(AccountService accounts, string intro)
     {
         var view = new CreateAccountDialogView(accounts, intro);
         var result = await DialogHost.Show(view, DialogIdentifier, new DialogOpenedEventHandler((_, args) => view._session = args.Session));
-        return result as string;
+        if (result is string userName)
+        {
+            return userName;
+        }
+
+        if (view._pending is not { } pending)
+        {
+            return null;
+        }
+
+        try
+        {
+            return (await pending.Request).Succeeded ? pending.UserName : null;
+        }
+        catch
+        {
+            // Nothing was created; the error was the dialog's to show, and it is closed.
+            return null;
+        }
     }
 
     private async void OnCreateClicked(object sender, RoutedEventArgs e)
@@ -52,12 +78,13 @@ public partial class CreateAccountDialogView : UserControl
         }
 
         // LATER stays enabled: a request that never answers must not trap the user. If they
-        // leave meanwhile and the account is still created, the account list shows it once
-        // it next refreshes.
+        // leave meanwhile, ShowAsync reports what the request did.
         CreateButton.IsEnabled = false;
         try
         {
-            var result = await _accounts.CreateAccountAsync(userName, email, PasswordBox.Password);
+            var request = _accounts.CreateAccountAsync(userName, email, PasswordBox.Password);
+            _pending = (request, userName);
+            var result = await request;
             if (result.Succeeded)
             {
                 CloseDialog(userName);
