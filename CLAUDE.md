@@ -85,6 +85,11 @@ interprets it. Console text is never parsed for chat — a line that looks like 
 command but arrived without a record is logged, not acted on. Prefer structured sources
 over new regexes.
 
+Race results come from the hook as well: when the results screen opens, its race watcher
+reads every car from the game's memory and sends one `RACE` record, which
+`Services/Hook/HookRaceRecord.cs` interprets and `ServerManager.RaceFinished` raises. The
+layout is in `docs/finding-rvas.md` under "Race results".
+
 The one deliberate exception is `GET /api/server/logfile`
 (`ServerManager.GetLogFileContent`), which tails the server's log file from disk for
 WreckfestWeb's log viewer. It is a read-only view of history — it answers with no hook
