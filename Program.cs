@@ -14,6 +14,7 @@ using WreckfestController.Services.Desktop;
 using WreckfestController.Services.Hook;
 using WreckfestController.Services.Hosting;
 using WreckfestController.Services.Publishing;
+using WreckfestController.Services.Races;
 using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Tracking;
 using WreckfestController.Services.Voting;
@@ -226,6 +227,12 @@ public class Program
                 // The scheduler waits while the database is unavailable (recovery mode).
                 services.AddSingleton<CupSchedulerService>();
                 services.AddHostedService<DatabaseGatedHostedService<CupSchedulerService>>();
+
+                // Race results are saved as the hook reports them; nothing is recorded
+                // while the database is unavailable.
+                services.AddSingleton<RaceResultStore>();
+                services.AddSingleton<RaceResultRecorder>();
+                services.AddHostedService<DatabaseGatedHostedService<RaceResultRecorder>>();
             });
 
     /// <summary>Exposes a settings section as <see cref="IOptionsMonitor{TOptions}"/>, backed by the store.</summary>
