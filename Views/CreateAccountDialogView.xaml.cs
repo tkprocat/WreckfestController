@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using MaterialDesignThemes.Wpf;
+using Microsoft.AspNetCore.Identity;
 using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Views;
@@ -15,6 +16,12 @@ public partial class CreateAccountDialogView : UserControl
 
     private readonly AccountService _accounts;
 
+    /// <summary>This dialog's own session on the shared host, so closing never ends another dialog.</summary>
+    private DialogSession? _session;
+
+    /// <summary>The create request in flight, and the username it is for.</summary>
+    private (Task<IdentityResult> Request, string UserName)? _pending;
+
     public CreateAccountDialogView(AccountService accounts, string intro)
     {
         InitializeComponent();
@@ -23,11 +30,34 @@ public partial class CreateAccountDialogView : UserControl
         Loaded += (_, _) => UserNameTextBox.Focus();
     }
 
-    /// <summary>Shows the dialog. Returns the new username, or null when cancelled.</summary>
+    /// <summary>
+    /// Shows the dialog. Returns the new username, or null when no account was created.
+    /// Left with LATER while a create is still running, it waits for that request, so the
+    /// caller confirms and refreshes an account that was created after all.
+    /// </summary>
     public static async Task<string?> ShowAsync(AccountService accounts, string intro)
     {
-        var result = await DialogHost.Show(new CreateAccountDialogView(accounts, intro), DialogIdentifier);
-        return result as string;
+        var view = new CreateAccountDialogView(accounts, intro);
+        var result = await DialogHost.Show(view, DialogIdentifier, new DialogOpenedEventHandler((_, args) => view._session = args.Session));
+        if (result is string userName)
+        {
+            return userName;
+        }
+
+        if (view._pending is not { } pending)
+        {
+            return null;
+        }
+
+        try
+        {
+            return (await pending.Request).Succeeded ? pending.UserName : null;
+        }
+        catch
+        {
+            // Nothing was created; the error was the dialog's to show, and it is closed.
+            return null;
+        }
     }
 
     private async void OnCreateClicked(object sender, RoutedEventArgs e)
@@ -47,13 +77,17 @@ public partial class CreateAccountDialogView : UserControl
             return;
         }
 
+        // LATER stays enabled: a request that never answers must not trap the user. If they
+        // leave meanwhile, ShowAsync reports what the request did.
         CreateButton.IsEnabled = false;
         try
         {
-            var result = await _accounts.CreateAccountAsync(userName, email, PasswordBox.Password);
+            var request = _accounts.CreateAccountAsync(userName, email, PasswordBox.Password);
+            _pending = (request, userName);
+            var result = await request;
             if (result.Succeeded)
             {
-                DialogHost.Close(DialogIdentifier, userName);
+                CloseDialog(userName);
                 return;
             }
 
@@ -69,8 +103,20 @@ public partial class CreateAccountDialogView : UserControl
         }
     }
 
-    private void OnCancelClicked(object sender, RoutedEventArgs e) =>
-        DialogHost.Close(DialogIdentifier, null);
+    private void OnCancelClicked(object sender, RoutedEventArgs e) => CloseDialog(null);
+
+    /// <summary>
+    /// Closes this dialog unless it has already closed. A second click can arrive after the
+    /// first one closed it, and DialogHost.Close then threw, which crashed the app (#190) -
+    /// or, with another dialog open on the same host by then, would have closed that one.
+    /// </summary>
+    private void CloseDialog(string? result)
+    {
+        if (_session is { IsEnded: false })
+        {
+            _session.Close(result);
+        }
+    }
 
     private void ShowError(string message)
     {
