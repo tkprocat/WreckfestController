@@ -76,6 +76,26 @@ describe('HomeView', () => {
     expect(text).not.toContain('Racing now')
   })
 
+  it('labels the player counts and uptime as last known when a refresh failed', () => {
+    state.overview = { ...overview, players: { humans: 2, bots: 1, list: [] } }
+    state.error = 'The controller cannot be reached.'
+
+    const text = mount(HomeView).text()
+
+    expect(text).toContain('human players at last check')
+    expect(text).toContain('1 bot at last check')
+    expect(text).toContain('Was up 1m at last check')
+    expect(text).not.toContain('on the server')
+  })
+
+  // The overview can still name an active cup while the server is stopped.
+  it('shows the active cup while the server is offline', () => {
+    state.overview = { ...overview, status: { isRunning: false, uptimeSeconds: null }, activeCup: { name: 'Sunday Cup' } }
+    state.error = null
+
+    expect(mount(HomeView).text()).toContain('Active cup · Sunday Cup')
+  })
+
   it('shows no warning when the data is current', () => {
     state.overview = overview
     state.error = null

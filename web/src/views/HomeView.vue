@@ -53,7 +53,7 @@ const statusLabel = computed(() =>
             <h2 v-if="overview.status.isRunning && overview.currentTrack">{{ overview.currentTrack.name }}</h2>
             <h2 v-else-if="overview.status.isRunning">Between races</h2>
             <h2 v-else>Server offline</h2>
-            <p v-if="overview.status.isRunning && overview.activeCup" class="cup-name">
+            <p v-if="overview.activeCup" class="cup-name">
               {{ error ? 'Last known cup' : 'Active cup' }} · {{ overview.activeCup.name }}
             </p>
           </div>
@@ -61,11 +61,11 @@ const statusLabel = computed(() =>
         <div class="hero-details">
           <div class="occupancy">
             <span class="metric">{{ overview.players.humans }}<small v-if="overview.maxPlayers != null"> / {{ overview.maxPlayers }}</small></span>
-            <span>human players{{ overview.maxPlayers != null ? ' / capacity' : '' }}</span>
+            <span>{{ error ? 'human players at last check' : 'human players' }}{{ overview.maxPlayers != null ? ' / capacity' : '' }}</span>
           </div>
-          <p v-if="overview.players.bots" class="detail-line">{{ overview.players.bots }} {{ overview.players.bots === 1 ? 'bot' : 'bots' }} on the server</p>
+          <p v-if="overview.players.bots" class="detail-line">{{ overview.players.bots }} {{ overview.players.bots === 1 ? 'bot' : 'bots' }} {{ error ? 'at last check' : 'on the server' }}</p>
           <p v-if="overview.status.isRunning && overview.status.uptimeSeconds != null" class="detail-line">
-            Up {{ formatUptime(overview.status.uptimeSeconds) }}
+            {{ error ? 'Was up' : 'Up' }} {{ formatUptime(overview.status.uptimeSeconds) }}{{ error ? ' at last check' : '' }}
           </p>
           <p class="snapshot-time">
             Last confirmed <time :datetime="overview.updatedAt">{{ formatWhen(overview.updatedAt) }}</time>
