@@ -47,13 +47,15 @@ public partial class CreateAccountDialogView : UserControl
             return;
         }
 
-        CreateButton.IsEnabled = false;
+        // Cancel is disabled too: closing mid-request would report "cancelled" for an
+        // account that is then created anyway.
+        SetButtonsEnabled(false);
         try
         {
             var result = await _accounts.CreateAccountAsync(userName, email, PasswordBox.Password);
             if (result.Succeeded)
             {
-                DialogHost.Close(DialogIdentifier, userName);
+                CloseDialog(userName);
                 return;
             }
 
@@ -65,12 +67,29 @@ public partial class CreateAccountDialogView : UserControl
         }
         finally
         {
-            CreateButton.IsEnabled = true;
+            SetButtonsEnabled(true);
         }
     }
 
-    private void OnCancelClicked(object sender, RoutedEventArgs e) =>
-        DialogHost.Close(DialogIdentifier, null);
+    private void OnCancelClicked(object sender, RoutedEventArgs e) => CloseDialog(null);
+
+    /// <summary>
+    /// Closes the dialog unless it is already closed. A second click can arrive after the
+    /// first one closed it, and DialogHost.Close then throws, which crashed the app (#190).
+    /// </summary>
+    private static void CloseDialog(string? result)
+    {
+        if (DialogHost.IsDialogOpen(DialogIdentifier))
+        {
+            DialogHost.Close(DialogIdentifier, result);
+        }
+    }
+
+    private void SetButtonsEnabled(bool enabled)
+    {
+        CreateButton.IsEnabled = enabled;
+        CancelButton.IsEnabled = enabled;
+    }
 
     private void ShowError(string message)
     {
