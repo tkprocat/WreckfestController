@@ -16,6 +16,7 @@ import {
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
 import ResourceTable from '@/crud/ResourceTable.vue'
+import RowActionMenu from '@/crud/RowActionMenu.vue'
 import { NO_ANSWER, hasId, send, useConfirm, type Outcome } from '@/crud/outcome'
 import { useResourceList } from '@/crud/useResourceList'
 import { textOn } from '@/utils/color'
@@ -48,6 +49,15 @@ const mode = ref<Mode | null>(null)
 const tag = ref<string | null>(null)
 const weather = ref<string | null>(null)
 const showHidden = ref(false)
+const filtersActive = computed(() => !!(origin.value || mode.value || tag.value || weather.value || showHidden.value))
+
+function resetFilters() {
+  origin.value = null
+  mode.value = null
+  tag.value = null
+  weather.value = null
+  showHidden.value = false
+}
 
 const tagOptions = computed(() => {
   const tags = new Map<string, string>()
@@ -65,11 +75,16 @@ function variantsOf(track: Track): Variant[] {
   )
 }
 
+/** The tracks before the other filters: hidden ones only when asked for. This is the table's total. */
+const visibleTracks = computed(() => tracks.value.filter((t) => showHidden.value || !t.isHidden))
+const emptyText = computed(() =>
+  tracks.value.length > 0 && visibleTracks.value.length === 0 ? 'Every track is hidden. Tick "Show hidden" to see them.' : undefined,
+)
+
 const rows = computed<Row[]>(() =>
-  tracks.value
+  visibleTracks.value
     .filter(
       (t) =>
-        (showHidden.value || !t.isHidden) &&
         (!origin.value || t.origin === origin.value) &&
         (!weather.value || t.weather.includes(weather.value)) &&
         (!(mode.value || tag.value) || variantsOf(t).length > 0),
@@ -226,7 +241,10 @@ const variantColumns = (track: Track): DataTableColumns<Variant> => [
   {
     title: 'Variant',
     key: 'name',
-    render: (v) => h('span', [v.name, ' ', h('code', { class: 'muted' }, v.variantId), v.isHidden ? h(NTag, { size: 'small', class: 'flag' }, () => 'Hidden') : null]),
+    render: (v) => h('div', { class: 'row-identity' }, [
+      h('span', { class: 'row-name' }, [v.name, v.isHidden ? h(NTag, { size: 'small', class: 'flag' }, () => 'Hidden') : null]),
+      h('code', { class: 'row-id' }, v.variantId),
+    ]),
   },
   { title: 'Mode', key: 'gameMode', width: 90 },
   {
@@ -257,16 +275,21 @@ const variantColumns = (track: Track): DataTableColumns<Variant> => [
   {
     title: 'Actions',
     key: 'actions',
-    width: 260,
+    width: 200,
     render: (v) =>
-      h(NSpace, { size: 'small' }, () => [
-        h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Edit ${v.name}`, onClick: () => void variantEditor.value?.start(track, v) }, () => 'Edit'),
-        v.isHidden
-          ? h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Unhide ${v.name}`, onClick: () => void variantAction(v, 'unhide', `"${v.name}" is shown again.`) }, () => 'Unhide')
-          : h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Hide ${v.name}`, onClick: () => void variantAction(v, 'hide', `"${v.name}" hidden.`) }, () => 'Hide'),
-        v.isBuiltIn
-          ? h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Reset ${v.name}`, onClick: () => void resetVariant(v) }, () => 'Reset')
-          : h(NButton, { size: 'small', type: 'error', ghost: true, disabled: disabled(), 'aria-label': `Delete ${v.name}`, onClick: () => void deleteVariant(v) }, () => 'Delete'),
+      h(NSpace, { size: 'small', wrap: false }, () => [
+        h(NButton, { size: 'small', disabled: disabled(), 'aria-label': 'Edit ' + v.name, onClick: () => void variantEditor.value?.start(track, v) }, () => 'Edit'),
+        h(NButton, {
+          size: 'small', disabled: disabled(), 'aria-label': (v.isHidden ? 'Unhide ' : 'Hide ') + v.name,
+          onClick: () => void variantAction(v, v.isHidden ? 'unhide' : 'hide', '"' + v.name + '" ' + (v.isHidden ? 'is shown again.' : 'hidden.')),
+        }, () => v.isHidden ? 'Unhide' : 'Hide'),
+        h(RowActionMenu, {
+          label: v.name,
+          actionId: 'variant-' + v.id,
+          disabled: disabled(),
+          options: [{ label: v.isBuiltIn ? 'Reset' : 'Delete', key: v.isBuiltIn ? 'reset' : 'delete' }],
+          onSelect: (key: string) => key === 'reset' ? void resetVariant(v) : void deleteVariant(v),
+        }),
       ]),
   },
 ]
@@ -281,7 +304,10 @@ const columns: DataTableColumns<Row> = [
     title: 'Track',
     key: 'name',
     sorter: (a, b) => a.name.localeCompare(b.name),
-    render: (t) => h('span', [t.name, ' ', h('code', { class: 'muted' }, t.key), t.isHidden ? h(NTag, { size: 'small', class: 'flag' }, () => 'Hidden') : null]),
+    render: (t) => h('div', { class: 'row-identity' }, [
+      h('span', { class: 'row-name' }, [t.name, t.isHidden ? h(NTag, { size: 'small', class: 'flag' }, () => 'Hidden') : null]),
+      h('code', { class: 'row-id' }, t.key),
+    ]),
   },
   { title: 'Origin', key: 'origin', width: 120, render: (t) => (t.origin === 'Dlc' && t.dlcName ? `DLC: ${t.dlcName}` : t.mod ? `Workshop: ${t.mod.name}` : ORIGINS[t.origin]) },
   { title: 'Variants', key: 'variants', width: 90, render: (t) => String(variantsOf(t).length) },
@@ -289,17 +315,25 @@ const columns: DataTableColumns<Row> = [
   {
     title: 'Actions',
     key: 'actions',
-    width: 360,
+    width: 215,
     render: (t) =>
-      h(NSpace, { size: 'small' }, () => [
-        h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Edit ${t.name}`, onClick: () => void trackEditor.value?.start(t) }, () => 'Edit'),
-        h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Add a variant to ${t.name}`, onClick: () => void variantEditor.value?.start(t, null) }, () => 'Add variant'),
-        t.isHidden
-          ? h(NButton, { size: 'small', loading: busy.value === `t${t.id}`, disabled: disabled(), 'aria-label': `Unhide ${t.name}`, onClick: () => void trackAction(t, 'unhide', `"${t.name}" is shown again.`) }, () => 'Unhide')
-          : h(NButton, { size: 'small', loading: busy.value === `t${t.id}`, disabled: disabled(), 'aria-label': `Hide ${t.name}`, onClick: () => void trackAction(t, 'hide', `"${t.name}" hidden.`) }, () => 'Hide'),
-        t.isBuiltIn
-          ? h(NButton, { size: 'small', disabled: disabled(), 'aria-label': `Reset ${t.name}`, onClick: () => void resetTrack(t) }, () => 'Reset')
-          : h(NButton, { size: 'small', type: 'error', ghost: true, disabled: disabled(), 'aria-label': `Delete ${t.name}`, onClick: () => void deleteTrack(t) }, () => 'Delete'),
+      h(NSpace, { size: 'small', wrap: false }, () => [
+        h(NButton, { size: 'small', disabled: disabled(), 'aria-label': 'Edit ' + t.name, onClick: () => void trackEditor.value?.start(t) }, () => 'Edit'),
+        h(NButton, { size: 'small', disabled: disabled(), 'aria-label': 'Add a variant to ' + t.name, onClick: () => void variantEditor.value?.start(t, null) }, () => 'Add variant'),
+        h(RowActionMenu, {
+          label: t.name,
+          actionId: 'track-' + t.id,
+          disabled: disabled(),
+          options: [
+            { label: t.isHidden ? 'Unhide' : 'Hide', key: 'visibility' },
+            { label: t.isBuiltIn ? 'Reset' : 'Delete', key: t.isBuiltIn ? 'reset' : 'delete' },
+          ],
+          onSelect: (key: string) => {
+            if (key === 'visibility') void trackAction(t, t.isHidden ? 'unhide' : 'hide', '"' + t.name + '" ' + (t.isHidden ? 'is shown again.' : 'hidden.'))
+            else if (key === 'reset') void resetTrack(t)
+            else void deleteTrack(t)
+          },
+        }),
       ]),
   },
 ]
@@ -322,52 +356,12 @@ onMounted(() => void list.reload())
       </template>
     </PageHeader>
     <NCard>
-      <NSpace class="filters" align="center">
-        <NSelect
-          v-model:value="origin"
-          :options="Object.entries(ORIGINS).map(([value, label]) => ({ value, label }))"
-          clearable
-          filterable
-          placeholder="Any origin"
-          style="width: 150px"
-          v-select-focus="{ 'aria-label': 'Origin' }"
-          :input-props="{ 'aria-label': 'Origin' }"
-        />
-        <NSelect
-          v-model:value="mode"
-          :options="[{ value: 'Racing', label: 'Racing' }, { value: 'Derby', label: 'Derby' }]"
-          clearable
-          filterable
-          placeholder="Any mode"
-          style="width: 130px"
-          v-select-focus="{ 'aria-label': 'Game mode' }"
-          :input-props="{ 'aria-label': 'Game mode' }"
-        />
-        <NSelect
-          v-model:value="tag"
-          :options="tagOptions"
-          clearable
-          filterable
-          placeholder="Any tag"
-          style="width: 170px"
-          v-select-focus="{ 'aria-label': 'Tag' }"
-          :input-props="{ 'aria-label': 'Tag' }"
-        />
-        <NSelect
-          v-model:value="weather"
-          :options="weatherOptions"
-          clearable
-          filterable
-          placeholder="Any weather"
-          style="width: 150px"
-          v-select-focus="{ 'aria-label': 'Weather' }"
-          :input-props="{ 'aria-label': 'Weather' }"
-        />
-        <NCheckbox v-model:checked="showHidden">Show hidden</NCheckbox>
-      </NSpace>
       <ResourceTable
         :min-table-width="1080"
         :rows="rows"
+        :total-rows="visibleTracks.length"
+        :empty-text="emptyText"
+        :filters-active="filtersActive"
         :columns="columns"
         :search-fields="['name', 'key', 'find']"
         what="tracks"
@@ -375,7 +369,54 @@ onMounted(() => void list.reload())
         :error="error"
         :render-expand-icon="expandIcon"
         @retry="list.reload()"
-      />
+        @reset-filters="resetFilters"
+      >
+        <template #filters>
+          <NSpace class="filters" align="center">
+            <NSelect
+              v-model:value="origin"
+              :options="Object.entries(ORIGINS).map(([value, label]) => ({ value, label }))"
+              clearable
+              filterable
+              placeholder="Any origin"
+              style="width: 150px"
+              v-select-focus="{ 'aria-label': 'Origin' }"
+              :input-props="{ 'aria-label': 'Origin' }"
+            />
+            <NSelect
+              v-model:value="mode"
+              :options="[{ value: 'Racing', label: 'Racing' }, { value: 'Derby', label: 'Derby' }]"
+              clearable
+              filterable
+              placeholder="Any mode"
+              style="width: 130px"
+              v-select-focus="{ 'aria-label': 'Game mode' }"
+              :input-props="{ 'aria-label': 'Game mode' }"
+            />
+            <NSelect
+              v-model:value="tag"
+              :options="tagOptions"
+              clearable
+              filterable
+              placeholder="Any tag"
+              style="width: 170px"
+              v-select-focus="{ 'aria-label': 'Tag' }"
+              :input-props="{ 'aria-label': 'Tag' }"
+            />
+            <NSelect
+              v-model:value="weather"
+              :options="weatherOptions"
+              clearable
+              filterable
+              placeholder="Any weather"
+              style="width: 150px"
+              v-select-focus="{ 'aria-label': 'Weather' }"
+              :input-props="{ 'aria-label': 'Weather' }"
+            />
+            <NCheckbox v-model:checked="showHidden">Show hidden</NCheckbox>
+          </NSpace>
+        </template>
+      </ResourceTable>
     </NCard>
     <TrackEditor ref="trackEditor" @saved="list.replace" />
     <VariantEditor ref="variantEditor" @saved="replaceVariant" />
@@ -384,7 +425,7 @@ onMounted(() => void list.reload())
 
 <style scoped>
 .filters {
-  margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 :deep(.flag) {
   margin-left: 6px;
@@ -400,8 +441,5 @@ onMounted(() => void list.reload())
 }
 :deep(.expander:focus-visible) {
   outline: 2px solid currentColor;
-}
-:deep(.muted) {
-  color: var(--text-muted);
 }
 </style>
