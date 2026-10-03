@@ -26,9 +26,13 @@ public sealed class RaceResultStore
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
 
+        // The cup active now, but only if it was already active when the race ended: a
+        // race that waited in the recorder's queue while an admin switched cups must not
+        // be credited to the new one. Better no link than a wrong one.
+        var endedAt = record.EndedAt.UtcDateTime;
         var cup = await db.Cups
             .AsNoTracking()
-            .Where(c => c.IsActive)
+            .Where(c => c.IsActive && c.ActivatedAt != null && c.ActivatedAt <= endedAt)
             .Select(c => new { c.Id, c.Name, c.ActivatedAt })
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -71,8 +75,9 @@ public sealed class RaceResultStore
         Position = car.Position,
         Name = Truncate(car.Name, RaceEntry.NameMaxLength),
         IsBot = car.IsBot,
-        // Steam IDs are 64-bit but well inside long's range; SQLite has no unsigned integer.
-        SteamId = car.SteamId is { } id && id <= long.MaxValue ? (long)id : null,
+        // SQLite has no unsigned integer. Real Steam IDs fit in a long anyway; the
+        // unchecked cast keeps every bit, so any ID the hook sends keeps its identity.
+        SteamId = car.SteamId is { } id ? unchecked((long)id) : null,
         VehicleKey = Truncate(car.VehicleKey, RaceEntry.VehicleMaxLength),
         VehicleName = Truncate(car.VehicleName, RaceEntry.VehicleMaxLength),
         Outcome = car.Outcome,

@@ -25,15 +25,25 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
     private readonly RaceResultStore _store;
     private readonly TrackChangeTracker _tracks;
     private readonly ILogger<RaceResultRecorder> _logger;
+    // Wait, not a Drop mode: only Wait makes TryWrite return false when the queue is
+    // full. The Drop modes report success while discarding a race.
     private readonly Channel<(HookRaceRecord Record, string? FallbackTrackId)> _queue =
         Channel.CreateBounded<(HookRaceRecord, string?)>(new BoundedChannelOptions(QueueCapacity)
         {
             SingleReader = true,
-            FullMode = BoundedChannelFullMode.DropWrite,
+            FullMode = BoundedChannelFullMode.Wait,
         });
 
     private readonly CancellationTokenSource _stopping = new();
     private Task? _worker;
+    private volatile bool _closed;
+
+    /// <summary>
+    /// Waits between attempts to save one race. A locked or briefly unavailable
+    /// database should cost a delay, not the race.
+    /// </summary>
+    internal IReadOnlyList<TimeSpan> RetryDelays { get; init; } =
+        [TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(15)];
 
     public RaceResultRecorder(
         ServerManager serverManager,
@@ -59,6 +69,8 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
         _serverManager.RaceFinished -= OnRaceFinished;
 
         // Let queued races finish writing; a shutdown that times out abandons the rest.
+        // A race reported while this runs can still arrive, and is logged as lost.
+        _closed = true;
         _queue.Writer.TryComplete();
         if (_worker != null)
         {
@@ -71,6 +83,7 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
     /// <summary>Waits until every race queued so far is saved. For tests.</summary>
     internal async Task FlushAsync()
     {
+        _closed = true;
         _queue.Writer.TryComplete();
         if (_worker != null)
         {
@@ -85,9 +98,10 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
         if (!_queue.Writer.TryWrite((record, fallback)))
         {
             _logger.LogError(
-                "Race on {Track} ending {EndedAt} was not recorded: the results queue is full",
+                "Race on {Track} ending {EndedAt} was not recorded: {Reason}",
                 record.TrackId,
-                record.EndedAt);
+                record.EndedAt,
+                _closed ? "the recorder is shutting down" : "the results queue is full");
         }
     }
 
@@ -95,23 +109,40 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
     {
         await foreach (var (record, fallback) in _queue.Reader.ReadAllAsync(cancellationToken))
         {
-            try
+            for (var attempt = 0; ; attempt++)
             {
-                var race = await _store.SaveAsync(record, fallback, cancellationToken);
-                _logger.LogInformation(
-                    "Recorded race {RaceId} on {Track} with {Cars} cars{Cup}",
-                    race.Id,
-                    race.TrackId,
-                    race.Entries.Count,
-                    race.CupId == null ? string.Empty : $" for cup {race.CupName}");
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Race on {Track} ending {EndedAt} could not be saved", record.TrackId, record.EndedAt);
+                try
+                {
+                    var race = await _store.SaveAsync(record, fallback, cancellationToken);
+                    _logger.LogInformation(
+                        "Recorded race {RaceId} on {Track} with {Cars} cars{Cup}",
+                        race.Id,
+                        race.TrackId,
+                        race.Entries.Count,
+                        race.CupId == null ? string.Empty : $" for cup {race.CupName}");
+                    break;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex) when (attempt < RetryDelays.Count)
+                {
+                    _logger.LogWarning(ex, "Saving the race on {Track} failed; retrying", record.TrackId);
+                    try
+                    {
+                        await Task.Delay(RetryDelays[attempt], cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Race on {Track} ending {EndedAt} could not be saved", record.TrackId, record.EndedAt);
+                    break;
+                }
             }
         }
     }

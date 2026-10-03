@@ -92,25 +92,52 @@ public sealed class RaceResultStoreTests : IDisposable
         Assert.Equal(2, bot.Position);
     }
 
+    private static readonly DateTime BeforeTheRace = LiveRace.EndedAt.UtcDateTime.AddHours(-1);
+
     [Fact]
     public async Task Links_the_cup_that_is_active()
     {
-        var activatedAt = new DateTime(2026, 10, 2, 18, 0, 0, DateTimeKind.Utc);
-        var cupId = await ActivateCupAsync("Monday Night Wrecking", activatedAt);
+        var cupId = await ActivateCupAsync("Monday Night Wrecking", BeforeTheRace);
 
         await _store.SaveAsync(LiveRace);
 
         var race = Assert.Single(await AllRacesAsync());
         Assert.Equal(cupId, race.CupId);
         Assert.Equal("Monday Night Wrecking", race.CupName);
-        Assert.Equal(activatedAt, race.CupActivatedAt);
+        Assert.Equal(BeforeTheRace, race.CupActivatedAt);
+    }
+
+    // A race that waited in the recorder's queue while an admin switched cups ended
+    // under the old one. The new cup must not be credited with it.
+    [Fact]
+    public async Task Does_not_credit_a_cup_activated_after_the_race_ended()
+    {
+        await ActivateCupAsync("Switched To Later", LiveRace.EndedAt.UtcDateTime.AddSeconds(5));
+
+        await _store.SaveAsync(LiveRace);
+
+        var race = Assert.Single(await AllRacesAsync());
+        Assert.Null(race.CupId);
+        Assert.Equal(string.Empty, race.CupName);
+    }
+
+    // SQLite has no unsigned integer; the ID is stored bit for bit so it stays an identity.
+    [Fact]
+    public async Task Keeps_a_steam_id_above_the_signed_range()
+    {
+        var human = LiveRace.Cars.Single(car => !car.IsBot) with { SteamId = 9223372036854775808UL };
+
+        await _store.SaveAsync(LiveRace with { Cars = [human] });
+
+        var stored = (await AllRacesAsync()).Single().Entries.Single().SteamId;
+        Assert.Equal(9223372036854775808UL, unchecked((ulong)stored!.Value));
     }
 
     // History outlives the cup: the race stays, readable by the name copied at the time.
     [Fact]
     public async Task Keeps_the_race_and_the_cup_name_when_the_cup_is_deleted()
     {
-        var cupId = await ActivateCupAsync("Monday Night Wrecking", DateTime.UtcNow);
+        var cupId = await ActivateCupAsync("Monday Night Wrecking", BeforeTheRace);
         await _store.SaveAsync(LiveRace);
 
         await using (var db = await _database.Contexts.CreateDbContextAsync())
