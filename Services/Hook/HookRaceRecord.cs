@@ -36,6 +36,12 @@ public sealed record HookRaceRecord(
     public const int HeaderFieldCount = 8;
     public const int CarFieldCount = 16;
 
+    /// <summary>The game has 24 slots; the hook caps at 32. Anything larger is not a record.</summary>
+    public const int MaxCars = 64;
+
+    /// <summary>The last millisecond <see cref="DateTimeOffset"/> can hold.</summary>
+    private const ulong MaxUnixMs = 253402300799999;
+
     private const string Prefix = Marker + "\u001F";
 
     public static bool LooksLikeRecord(string? line) =>
@@ -63,9 +69,9 @@ public sealed record HookRaceRecord(
             !TryInt(fields[1], out var eventCounter) ||
             !TryInt(fields[3], out var laps) ||
             !TryInt(fields[4], out var gameMode) ||
-            !TryULong(fields[5], out var startedMs) ||
-            !TryULong(fields[6], out var endedMs) || endedMs == 0 ||
-            !TryInt(fields[7], out var carCount) || carCount < 0 ||
+            !TryULong(fields[5], out var startedMs) || startedMs > MaxUnixMs ||
+            !TryULong(fields[6], out var endedMs) || endedMs == 0 || endedMs > MaxUnixMs ||
+            !TryInt(fields[7], out var carCount) || carCount is < 0 or > MaxCars ||
             fields.Length != HeaderFieldCount + carCount * CarFieldCount)
         {
             return null;
@@ -99,8 +105,9 @@ public sealed record HookRaceRecord(
     internal static bool TryULong(string text, out ulong value) =>
         ulong.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out value);
 
+    /// <summary>Only called with values already checked against <see cref="MaxUnixMs"/>.</summary>
     private static DateTimeOffset FromUnixMs(ulong ms) =>
-        DateTimeOffset.FromUnixTimeMilliseconds((long)Math.Min(ms, (ulong)long.MaxValue));
+        DateTimeOffset.FromUnixTimeMilliseconds((long)ms);
 }
 
 /// <summary>How a car's race ended, as far as the game's flags tell us.</summary>

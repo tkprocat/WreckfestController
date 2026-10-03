@@ -36,7 +36,7 @@ public class HookRaceRecordTests
 
     // The record exactly as the hook sent it after a live race on 2026-10-02, a one-lap
     // Banger Race on Speedway 2's inner oval, with the in-game results screen alongside.
-    private const string LiveRecord =
+    internal const string LiveRecord =
         "\u0012RACE\u001F1\u001F1\u001Fspeedway2_inner_oval\u001F1\u001F1\u001F1790957073896\u001F1790957099708\u001F11" +
         "\u001F0\u001F9\u001F10\u001F0\u001F^2*^0eRacer\u001F8\u001F2\u001F1\u001F26264\u001F26264\u001F0\u001F1\u001F195\u001F16\u001FVEHICLE_NAME_0834068683_9\u001FSpeedbird" +
         "\u001F1\u001F9\u001F10\u001F0\u001F^2*^0Djkevino\u001F1\u001F2\u001F1\u001F22089\u001F22089\u001F0\u001F1\u001F209\u001F27\u001FVEHICLE_NAME_3154256208_9\u001FKillerBee" +
@@ -223,6 +223,27 @@ public class HookRaceRecordTests
         var oneCarMissing = record[..record.LastIndexOf(S + Djkevino, StringComparison.Ordinal)] + E;
 
         Assert.Null(HookRaceRecord.TryParse(oneCarMissing));
+    }
+
+    // 268435456 * 16 overflows int to 0, which would match a header-only record and
+    // then ask for a list of 268 million cars. TryParse must never throw.
+    [Fact]
+    public void Rejects_a_car_count_that_would_overflow()
+    {
+        var header = $"{HookRaceRecord.Marker}{S}{string.Join(S, 1, 2, "t", 1, 1, 1, 1, 268435456)}{E}";
+
+        Assert.Null(HookRaceRecord.TryParse(header));
+    }
+
+    [Theory]
+    [InlineData(253402300800000UL, 1UL)]
+    [InlineData(1UL, 253402300800000UL)]
+    [InlineData(1UL, ulong.MaxValue)]
+    public void Rejects_a_time_past_what_a_date_can_hold(ulong startedMs, ulong endedMs)
+    {
+        var record = $"{HookRaceRecord.Marker}{S}{string.Join(S, 1, 2, "t", 1, 1, startedMs, endedMs, 0)}{E}";
+
+        Assert.Null(HookRaceRecord.TryParse(record));
     }
 
     [Fact]

@@ -1653,9 +1653,12 @@ DWORD WINAPI RaceWatcherThread(void*)
     int lastCounter = 0;
     unsigned long long startedMs = 0;
 
-    // Prime from the current state, so attaching during a results screen does not
-    // report a race whose start was never seen as if it had just ended.
-    while (!ReadRaceStateNoThrow(moduleBase, lastEnded, lastCounter))
+    // Prime the counter only. The ended flag starts as "not ended", so a hook that
+    // arrives while a results screen is up still reports that race, with its start
+    // unknown. Nothing can report a race twice: a reconnect into the same process
+    // never starts a second watcher, and this one never primes again.
+    unsigned char primedEnded = 0;
+    while (!ReadRaceStateNoThrow(moduleBase, primedEnded, lastCounter))
     {
         Sleep(PollMs);
     }
@@ -1733,6 +1736,9 @@ DWORD WINAPI HookThread(void*)
     if (g_hookInstalled)
     {
         WriteHookLine("WreckfestConsoleHook hook already installed; output reconnected.");
+        // Retried here because a failed start would otherwise last until the game
+        // restarts; it does nothing once the watcher is running.
+        StartRaceWatcher();
         LeaveCriticalSection(&g_hookLock);
         return 0;
     }

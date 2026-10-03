@@ -35,8 +35,14 @@ public class ServerManager
 
     /// <summary>
     /// Raised once per finished race, with every car's result as the injected hook read
-    /// it when the results screen opened. Raised on the thread draining the hook pipe.
+    /// it when the results screen opened.
     /// </summary>
+    /// <remarks>
+    /// Raised on the thread draining the hook pipe, so a handler must only hand the
+    /// record on, as to a queue, and return. Anything that waits - on the database, or
+    /// on server output - stalls every hook line behind it, and the hook drops lines
+    /// once its own queue fills.
+    /// </remarks>
     public event Action<HookRaceRecord>? RaceFinished;
 
     private readonly object _lock = new();
@@ -1524,7 +1530,7 @@ public class ServerManager
     // Attachment and polling share one counter: every attachment switch stops
     // polling, so retiring the generation covers both, and a single value avoids
     // two counters that could disagree about which process is current.
-    private int CurrentAttachmentGeneration => Volatile.Read(ref _serverEventGeneration);
+    internal int CurrentAttachmentGeneration => Volatile.Read(ref _serverEventGeneration);
 
     private bool IsCurrentAttachmentGeneration(int generation) =>
         Volatile.Read(ref _serverEventGeneration) == generation;
@@ -1785,7 +1791,7 @@ public class ServerManager
         // Demuxed ahead of the text fanout. A structured record is not console
         // output: it must not reach the output buffer, the web UI console or the
         // chat regex, and it is consumed whether or not it parsed.
-        if (TryProcessHookChatRecord(output, generation, attachmentId) || TryProcessHookRaceRecord(output))
+        if (TryProcessHookChatRecord(output, generation, attachmentId) || TryProcessHookRaceRecord(output, generation))
         {
             return;
         }
@@ -1865,7 +1871,7 @@ public class ServerManager
     /// line was a record, including a malformed one, which is dropped rather than leaked
     /// into the console output fanout.
     /// </summary>
-    private bool TryProcessHookRaceRecord(string output)
+    internal bool TryProcessHookRaceRecord(string output, int generation)
     {
         if (!HookRaceRecord.LooksLikeRecord(output))
         {
@@ -1888,6 +1894,14 @@ public class ServerManager
             winner?.Name,
             winner?.TimeMs,
             winner?.VehicleName);
+
+        // Checked as late as possible, as chat does: a record read from the previous
+        // server must not be reported as a race on the one attached now.
+        if (!IsCurrentAttachmentGeneration(generation))
+        {
+            _logger.LogInformation("Discarded a race result from the injected hook; attachment moved before it was reported");
+            return true;
+        }
 
         try
         {
