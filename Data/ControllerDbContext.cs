@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using WreckfestController.Data.Catalogue;
 using WreckfestController.Data.Collections;
 using WreckfestController.Data.Cups;
+using WreckfestController.Data.Races;
 using WreckfestController.Data.Settings;
 
 namespace WreckfestController.Data;
@@ -42,6 +43,10 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
     public DbSet<CupOccurrenceRecord> CupOccurrences => Set<CupOccurrenceRecord>();
 
     public DbSet<SettingsSection> SettingsSections => Set<SettingsSection>();
+
+    public DbSet<Race> Races => Set<Race>();
+
+    public DbSet<RaceEntry> RaceEntries => Set<RaceEntry>();
 
     /// <summary>
     /// Points <paramref name="options"/> at the SQLite file at <paramref name="databasePath"/>.
@@ -87,6 +92,7 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
         ConfigureCatalogue(builder);
         ConfigureCollections(builder);
         ConfigureCups(builder);
+        ConfigureRaces(builder);
 
         builder.Entity<SettingsSection>(section =>
         {
@@ -287,6 +293,48 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
             record.HasOne(r => r.Cup)
                 .WithMany()
                 .HasForeignKey(r => r.CupId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+    }
+
+    private static void ConfigureRaces(ModelBuilder builder)
+    {
+        builder.Entity<Race>(race =>
+        {
+            race.Property(r => r.TrackId).HasMaxLength(Race.TrackIdMaxLength);
+            race.Property(r => r.CupName).HasMaxLength(Cup.NameMaxLength);
+
+            // SQLite keeps no DateTimeKind: these are UTC in, and marked UTC out.
+            race.Property(r => r.StartedAt).HasConversion(UtcConverter);
+            race.Property(r => r.EndedAt).HasConversion(UtcConverter);
+            race.Property(r => r.CupActivatedAt).HasConversion(UtcConverter);
+
+            // Latest races first, overall and per track.
+            race.HasIndex(r => r.EndedAt);
+            race.HasIndex(r => new { r.TrackId, r.EndedAt });
+            race.HasIndex(r => new { r.CupId, r.CupActivatedAt });
+
+            // Results outlive their cup; the copied name keeps them readable.
+            race.HasOne(r => r.Cup)
+                .WithMany()
+                .HasForeignKey(r => r.CupId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        builder.Entity<RaceEntry>(entry =>
+        {
+            entry.Property(e => e.Name).HasMaxLength(RaceEntry.NameMaxLength);
+            entry.Property(e => e.VehicleKey).HasMaxLength(RaceEntry.VehicleMaxLength);
+            entry.Property(e => e.VehicleName).HasMaxLength(RaceEntry.VehicleMaxLength);
+            entry.Property(e => e.Outcome).HasConversion<string>().HasMaxLength(16);
+
+            // Per-player and per-car statistics.
+            entry.HasIndex(e => e.SteamId);
+            entry.HasIndex(e => e.VehicleKey);
+
+            entry.HasOne(e => e.Race)
+                .WithMany(r => r.Entries)
+                .HasForeignKey(e => e.RaceId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }

@@ -9,8 +9,8 @@ public class HookRaceRecordTests
     private const char E = HookRaceRecord.RecordEnd;
 
     // Values from a live race on 2026-10-02, checked against the in-game results screen:
-    // a one-lap Banger Race on speedway1_figure_8 that Procat won in 26.418 s.
-    private const ulong ProcatSteamId = 76561197985810610;
+    // a one-lap Banger Race on speedway1_figure_8 that the one human won in 26.418 s.
+    private const ulong HumanSteamId = 76561190000000042;
 
     private static string Car(
         int slot, int playerFlags, ulong steamId, string name, int position, uint carFlags,
@@ -19,7 +19,7 @@ public class HookRaceRecordTests
         string.Join(S, slot, playerStatus, playerFlags, steamId, name, position, lap, carFlags,
             timeMs, bestLapMs, finishMs, classIndex, rating, cupPoints, vehicleKey, vehicleName);
 
-    private static readonly string Procat = Car(10, 0x32, ProcatSteamId, "Procat", 0, 0x41,
+    private static readonly string Human = Car(10, 0x32, HumanSteamId, "Driver", 0, 0x41,
         26418, 26418, 26418, 0, 346, 60, "VEHICLE_NAME_2244970999_13", "Sunrise Super", playerStatus: 2);
 
     private static readonly string Djkevino = Car(1, 0x0A, 0, "^2*^0Djkevino", 1, 0x01,
@@ -48,7 +48,7 @@ public class HookRaceRecordTests
         "\u001F7\u001F9\u001F10\u001F0\u001F^2*^0hazy33\u001F6\u001F2\u001F1\u001F25135\u001F25135\u001F0\u001F2\u001F103\u001F18\u001FVEHICLE_NAME_1549136679_8\u001FNexus RX" +
         "\u001F8\u001F9\u001F10\u001F0\u001F^2*^0gl3nyd\u001F4\u001F2\u001F1\u001F24348\u001F24348\u001F0\u001F1\u001F181\u001F20\u001FVEHICLE_NAME_3180232497_10\u001FRoadcutter" +
         "\u001F9\u001F9\u001F10\u001F0\u001F^2*^0Nykaa\u001F2\u001F2\u001F1\u001F23744\u001F23744\u001F0\u001F2\u001F110\u001F25\u001FVEHICLE_NAME_4156104396_8\u001FWarwagon" +
-        "\u001F10\u001F6\u001F50\u001F76561197985810610\u001FProcat\u001F0\u001F2\u001F65\u001F21292\u001F21292\u001F21292\u001F0\u001F346\u001F30\u001FVEHICLE_NAME_2244970999_13\u001FSunrise Super\u0013";
+        "\u001F10\u001F6\u001F50\u001F76561190000000042\u001FDriver\u001F0\u001F2\u001F65\u001F21292\u001F21292\u001F21292\u001F0\u001F346\u001F30\u001FVEHICLE_NAME_2244970999_13\u001FSunrise Super\u0013";
 
     [Fact]
     public void Parses_a_record_captured_live_as_the_results_screen_showed_it()
@@ -66,7 +66,7 @@ public class HookRaceRecordTests
         Assert.Equal(
             new (int?, string, string, int, string, int, int?)[]
             {
-                (1, "Procat", "A", 346, "Sunrise Super", 30, 21292),
+                (1, "Driver", "A", 346, "Sunrise Super", 30, 21292),
                 (2, "Djkevino", "B", 209, "KillerBee", 27, 22089),
                 (3, "Nykaa", "C", 110, "Warwagon", 25, 23744),
             },
@@ -76,14 +76,14 @@ public class HookRaceRecordTests
         var warwagons = race.Cars.Where(car => car.VehicleName == "Warwagon").Select(car => car.VehicleKey).Distinct();
         Assert.Single(warwagons);
 
-        Assert.Equal(ProcatSteamId, race.Cars.Single(car => !car.IsBot).SteamId);
+        Assert.Equal(HumanSteamId, race.Cars.Single(car => !car.IsBot).SteamId);
         Assert.Equal(10, race.Cars.Count(car => car.Outcome == RaceOutcome.Projected));
     }
 
     [Fact]
     public void Parses_the_race_header()
     {
-        var race = HookRaceRecord.TryParse(Record(Procat, Djkevino));
+        var race = HookRaceRecord.TryParse(Record(Human, Djkevino));
 
         Assert.NotNull(race);
         Assert.Equal(2, race!.EventCounter);
@@ -98,11 +98,11 @@ public class HookRaceRecordTests
     [Fact]
     public void Parses_a_human_who_crossed_the_line()
     {
-        var car = HookRaceRecord.TryParse(Record(Procat))!.Cars.Single();
+        var car = HookRaceRecord.TryParse(Record(Human))!.Cars.Single();
 
-        Assert.Equal("Procat", car.Name);
+        Assert.Equal("Driver", car.Name);
         Assert.False(car.IsBot);
-        Assert.Equal(ProcatSteamId, car.SteamId);
+        Assert.Equal(HumanSteamId, car.SteamId);
         Assert.Equal(1, car.Position);
         Assert.Equal(26418, car.TimeMs);
         Assert.Equal(26418, car.BestLapMs);
@@ -144,6 +144,16 @@ public class HookRaceRecordTests
         var bot = Car(3, 0x0A, 12345, "^2*^0Nzo_009", 3, 0x01, 30146, 30146, 0, 2, 146, 40, "k", "Firefly");
 
         Assert.Null(HookRaceRecord.TryParse(Record(bot))!.Cars.Single().SteamId);
+    }
+
+    // SQLite has no unsigned integer, and a real SteamID64 is far inside a long. A value
+    // beyond it is not an ID, so it is dropped rather than stored as a negative number.
+    [Fact]
+    public void A_steam_id_beyond_the_signed_range_is_not_an_id()
+    {
+        var human = Car(0, 0x32, 9223372036854775808UL, "Big", 0, 0x41, 1, 1, 1, 0, 1, 0, "k", "v");
+
+        Assert.Null(HookRaceRecord.TryParse(Record(human))!.Cars.Single().SteamId);
     }
 
     // A human's name may start with '*'; only a bot's star is the game's marker.
@@ -189,7 +199,7 @@ public class HookRaceRecordTests
     [Fact]
     public void An_unseen_start_is_null()
     {
-        Assert.Null(HookRaceRecord.TryParse(RecordWith(1, "t", 0, Procat))!.StartedAt);
+        Assert.Null(HookRaceRecord.TryParse(RecordWith(1, "t", 0, Human))!.StartedAt);
     }
 
     // A vehicle the hook could not follow arrives as two empty strings.
@@ -213,13 +223,13 @@ public class HookRaceRecordTests
     [Fact]
     public void Rejects_an_unsupported_version()
     {
-        Assert.Null(HookRaceRecord.TryParse(RecordWith(2, "t", 1, Procat)));
+        Assert.Null(HookRaceRecord.TryParse(RecordWith(2, "t", 1, Human)));
     }
 
     [Fact]
     public void Rejects_a_car_count_that_does_not_match_the_fields()
     {
-        var record = Record(Procat, Djkevino);
+        var record = Record(Human, Djkevino);
         var oneCarMissing = record[..record.LastIndexOf(S + Djkevino, StringComparison.Ordinal)] + E;
 
         Assert.Null(HookRaceRecord.TryParse(oneCarMissing));
@@ -249,13 +259,13 @@ public class HookRaceRecordTests
     [Fact]
     public void Rejects_a_truncated_record()
     {
-        Assert.Null(HookRaceRecord.TryParse(Record(Procat)[..^1]));
+        Assert.Null(HookRaceRecord.TryParse(Record(Human)[..^1]));
     }
 
     [Fact]
     public void Rejects_a_non_numeric_field()
     {
-        Assert.Null(HookRaceRecord.TryParse(Record(Procat.Replace("26418", "fast"))));
+        Assert.Null(HookRaceRecord.TryParse(Record(Human.Replace("26418", "fast"))));
     }
 
     [Theory]

@@ -205,7 +205,9 @@ public sealed record HookRaceCar(
             slot,
             playerStatus,
             playerFlags,
-            isBot || steamId == 0 ? null : steamId,
+            // A SteamID64 keeps its top byte for the universe (1 today), so a real one is
+            // far inside a long; anything beyond is not an ID and must not be stored as one.
+            isBot || steamId == 0 || steamId > long.MaxValue ? null : steamId,
             name,
             isBot,
             position == UnsetPosition ? null : position + 1,
