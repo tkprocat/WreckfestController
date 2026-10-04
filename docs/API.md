@@ -4,11 +4,14 @@ WreckfestController hosts a REST API alongside the desktop application. Browsers
 in with a cookie; scripts send an API key. There is no assumption about what is on the
 other end.
 
-All routes are prefixed `api/` and return JSON.
+All routes are prefixed `api/` and return JSON. The OpenAPI description is at
+`/openapi/v1.json` (signed in or with the key); the web app's TypeScript types are
+generated from it.
 
 ## Authentication
 
-Every endpoint requires an authenticated caller, in one of two ways:
+Every endpoint requires an authenticated caller, except the few
+[anonymous ones](#anonymous-endpoints) below. A caller authenticates in one of two ways:
 
 - **API key** (scripts, live testing): send the configured key.
 
@@ -30,10 +33,13 @@ if a valid cookie is also sent.
 
 A missing or rejected credential returns **401** with no body, never a redirect.
 
+### Anonymous endpoints
+
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
-(`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`, and
-the [live-update hub](#live-updates--hubsserver)), so one cannot appear by accident. Requests to paths that match no
+(`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`,
+`GET public/overview`, and the [live-update hub](#live-updates--hubsserver)), so one
+cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
 
 ### CSRF
@@ -228,8 +234,8 @@ what keeps those to the server. `processes` lists exactly the processes that pas
 desktop app's Process Manager may still pick another install's server, after asking.
 
 `logfile` is the only endpoint that reads server output from disk rather than from the
-injected hook. It is kept on purpose: WreckfestWeb's log viewer depends on it, and it is
-the only way to see output from before attachment. Nothing else in the app consumes it —
+injected hook. It is kept on purpose: the web app's Server Control page shows it, and it
+is the only way to see output from before attachment. Nothing else in the app consumes it —
 no tracker, roster or chat path is fed from the file — so the hook-only contract still
 holds for everything that drives state. Treat what it returns as history, not live state:
 it answers even when no hook is injected, and its content can predate the current
@@ -506,13 +512,18 @@ await connection.start();
 
 While the database is unavailable (recovery mode) the hub answers 503, like the API.
 
-## ⚠️ Breaking change
+## Changes from 1.x
 
-Authentication was introduced after the API had been in use unauthenticated. Any
-existing client calling `api/*` without an `X-Api-Key` header now receives **401** —
-including server control, configuration updates, track rotation and player list.
+Clients written for 1.x need updating:
 
-With `AllowRemote: false`, a client must also run on the same host.
-
-Existing integrations must be updated to send the header, and `Api:Enabled` must
-be set to `true` — the API no longer starts by default.
+- The API is off until `Api:Enabled` is `true`, and every `api/*` request apart from
+  the [anonymous endpoints](#anonymous-endpoints) needs credentials: `X-Api-Key` for
+  scripts. With `AllowRemote: false` a client must also run
+  on the same PC.
+- The webhooks are gone; the [live-update hub](#live-updates--hubsserver) replaces them.
+  So are the `/ws/*` WebSockets and Swagger UI.
+- Scheduled events are now [cups](#cups--apicups), stored in the database. `POST
+  schedule` is gone.
+- Voting picks from the [catalogue](#catalogue--apicatalogue), not `Vote:AllowedTracks`.
+- The launch settings (server path, arguments, SteamCMD) cannot be read or set over the
+  API; see [What the web can reach](#what-the-web-can-reach).

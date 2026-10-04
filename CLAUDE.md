@@ -92,7 +92,7 @@ layout is in `docs/finding-rvas.md` under "Race results".
 
 The one deliberate exception is `GET /api/server/logfile`
 (`ServerManager.GetLogFileContent`), which tails the server's log file from disk for
-WreckfestWeb's log viewer. It is a read-only view of history — it answers with no hook
+the web app's Server Control page. It is a read-only view of history — it answers with no hook
 injected, and can return lines from before attachment. Nothing else reads it: no
 tracker, roster or chat path is fed from the file. Do not add a second one.
 

@@ -1,248 +1,249 @@
-# WreckfestController Installation Guide
+# Installing WreckfestController
 
-This guide will walk you through setting up the WreckfestController API to manage your Wreckfest Dedicated Server.
+This guide covers installing WreckfestController 2.0, connecting it to a Wreckfest
+dedicated server, and opening its web site to admins and players.
 
-## Prerequisites
+**Upgrading from 1.x?** 2.0 starts with an empty database and does not import 1.x
+settings, cups or WreckfestWeb data. The 2.0 release notes list what to set up again.
+1.x's files are left as they are, so you can go back by reinstalling `v1-final`.
 
-### Required Software
-- **Windows Server** or Windows 10/11
-- **.NET 10.0 Runtime** - [Download](https://dotnet.microsoft.com/download/dotnet/10.0)
-- **Wreckfest Dedicated Server** - Installed via SteamCmd or Steam
-- **SteamCmd** (optional, for automatic updates) - [Download](https://developer.valvesoftware.com/wiki/SteamCMD)
+## Requirements
 
-### WreckfestWeb
-- **WreckfestWeb** ([https://github.com/tkprocat/WreckfestWeb](https://github.com/tkprocat/WreckfestWeb)) works only with WreckfestController 1.x (`v1-final`).
-  - 2.0 no longer sends webhooks; its live updates come from the SignalR hub described in [docs/API.md](docs/API.md#live-updates--hubsserver).
+- Windows 10 or 11, or Windows Server. The controller is a desktop app and runs in a
+  signed-in session; it cannot run as a Windows service yet.
+- The **x64** versions of the **.NET 10 Desktop Runtime** and the **ASP.NET Core 10
+  Runtime**, from [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/10.0).
+  The x64 .NET 10 SDK includes both. The x86 runtimes are not enough.
+- The **Wreckfest dedicated server**, at the build the controller supports (see
+  [The hook](#the-hook)).
+- **SteamCMD** (optional), for updating the server from the controller.
 
-## Installation Steps
+Building from source needs more: see [README.md](README.md#building-from-source).
 
-### 1. Download WreckfestController
+## 1. Install
 
-**Recommended:** Download the latest pre-compiled release from the [Releases page](https://github.com/tkprocat/WreckfestController/releases).
+Extract the release ZIP to a folder of its own, such as `C:\WreckfestController\`, and
+run `WreckfestController.exe`. Keep the files together: the controller needs the hook DLL
+and the `wwwroot` folder next to the exe.
 
-Extract the ZIP file to a directory of your choice, e.g., `C:\WreckfestController\`
+On first start it creates its data folder, `%LocalAppData%\WreckfestController\`, with:
 
-**Alternative - Build from Source:**
-If you want to build from source:
-```bash
-git clone https://github.com/tkprocat/WreckfestController.git
-cd WreckfestController
-dotnet build -c Release
-```
+| File | Contents |
+| --- | --- |
+| `controller.db` | Settings, web accounts, the track catalogue, collections, cups and race results |
+| `keys\` | The keys that protect sign-in cookies, encrypted for this Windows user. Deleting the folder signs everyone out. |
+| `user-settings.json` | Startup settings that you write by hand (see step 3). The controller never writes this file. |
 
-### 2. Configure the Application
+If the database cannot be opened, the controller starts in **recovery mode**: the
+desktop app shows why in a banner. Sign-in is unavailable and the API answers 503
+(apart from `GET /api/auth/state`, which reports the state). Once the cause is fixed,
+click **RETRY** in the banner, or restart the controller.
 
-Copy the example configuration file:
-```bash
-copy appsettings.example.json appsettings.json
-```
+To keep the database somewhere else, set `Database:Path` in `user-settings.json` (step
+3). The `keys` folder follows it.
 
-Edit `appsettings.json` and update the following settings:
+## 2. Connect the dedicated server
 
-#### Wreckfest Server Configuration
+Open the **Configuration** tab in the desktop app and set:
+
+- **Working Directory**: the dedicated server's folder.
+- **Server Executable**: usually `Wreckfest_x64.exe`.
+- **Log File Name** (optional): the log file shown on the web site's Server Control
+  page when `server_config.cfg` has no usable `log=` line. The `log=` line wins whenever
+  it names a file inside the server folder.
+- **Server Arguments**: usually `-s server_config=server_config.cfg`.
+- **SteamCMD Executable Path** (optional): `steamcmd.exe`, for the Update button.
+
+These are saved in the database. They decide which program the controller runs and
+which files it reads, so they can be changed only here, never from the web site.
+
+The controller edits the server's `server_config.cfg`: the web site's Server Config page,
+the rotation and cups all write to it. A setting can be changed from the web only when
+the file already has an active `key=value` line for it, and the rotation and cups need
+the file's `# Event Loop` heading. The file the dedicated server ships with has both.
+
+### The hook
+
+Everything the controller knows about a running server (console output, chat, players,
+race results) comes from a hook DLL injected into the server process. Commands are sent
+through the hook too. Nothing works until it is injected.
+
+**Inject the hook after every start or restart:** in the desktop app's Process Manager
+tab, select the server and click **INJECT**, or use **Inject hook** on the web site's
+Server Control page. A restart, including a cup's scheduled restart, starts a new
+process without the hook.
+
+The hook reads the game's memory at fixed offsets, which belong to one game build. The
+supported build is `WreckfestServer:SupportedBuild` in `appsettings.json`, and the
+controller refuses to inject into any other. After a Wreckfest update, wait for a
+controller release that supports the new build.
+
+## 3. Enable the web site
+
+The web site and API are off by default. To turn them on, create
+`%LocalAppData%\WreckfestController\user-settings.json`:
+
 ```json
-"WreckfestServer": {
-  "ServerPath": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Wreckfest Dedicated Server\\Wreckfest_x64.exe",
-  "ServerArguments": "-s server_config=server_config.cfg",
-  "WorkingDirectory": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Wreckfest Dedicated Server",
-  "LogFilePath": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Wreckfest Dedicated Server\\log.txt"
+{
+  "Api": {
+    "Enabled": true,
+    "Key": "",
+    "AllowRemote": false,
+    "TrustedProxies": [],
+    "HttpPort": 5100,
+    "HttpsPort": 5101
+  }
 }
 ```
 
-**Update these paths to match your Wreckfest installation location.**
+Startup settings are read from `appsettings.json` next to the exe, then
+`appsettings.{Environment}.json` if there is one, then `user-settings.json`; a later file
+wins. Keep yours in `user-settings.json`, because installing a new release replaces
+`appsettings.json`. Restart the controller after any change to the file.
 
-#### SteamCmd Configuration (Optional)
-```json
-"SteamCmd": {
-  "SteamCmdPath": "C:\\steamcmd\\steamcmd.exe",
-  "WreckfestAppId": "361580",
-  "InstallDirectory": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Wreckfest Dedicated Server"
-}
-```
+Only the startup settings come from these files: `Api`, `Database`, `Logging` and
+`WreckfestServer:SupportedBuild`. The server paths, SteamCMD and voting settings are in
+the database, and the `WreckfestServer`, `SteamCmd` and `Vote` sections of
+`user-settings.json` are ignored. On the very first start the database takes its voting
+defaults from the shipped `appsettings.json` and `appsettings.{Environment}.json`.
 
-Only needed if you want automatic server updates via the API.
+| Setting | Meaning |
+| --- | --- |
+| `Enabled` | `true` starts the web site and API. Anything else, including `"yes"` or a typo, leaves it off and opens no port. |
+| `Key` | An API key for scripts, sent as the `X-Api-Key` header. Leave it empty if nothing but browsers will use the API. |
+| `AllowRemote` | `false` listens on `127.0.0.1` only, so only this PC can connect. `true` listens on every network interface. |
+| `TrustedProxies` | The address of a reverse proxy in front of the controller (see step 5). An entry that is not an address or range is logged and skipped. |
+| `HttpPort`, `HttpsPort` | Default 5100 and 5101, also when left empty. |
+| `Https` | A certificate, to serve HTTPS directly: see [docs/https.md](docs/https.md). |
 
-#### Network Configuration
-```json
-"Api": {
-  "Key": "replace-with-a-long-random-secret",
-  "AllowRemote": false,
-  "TrustedProxies": [],
-  "HttpPort": 5100,
-  "HttpsPort": 5101
-}
-```
+The Configuration tab shows under **WEB API** whether the API is running and where, or
+why it failed to start. A port that is not 1-65535, an `AllowRemote` that is not
+`true` or `false`, and, when `Https` is set, the same port for HTTP and HTTPS or an
+`Https` section that is incomplete or unusable stop the API rather than falling back to
+a default or to plain HTTP.
 
-Every `/api/*` request needs credentials: either this `Key`, sent as the `X-Api-Key` header, or a signed-in web UI session. The key is optional and only needed by scripts; if it is empty, no key is accepted. Web accounts are created in the desktop app: when the API is enabled and no account exists, it offers a "Create admin account" dialog at startup, and the Configuration tab has the same button. The web UI itself is still to come, so tools that use the API today should keep using the key. See [docs/API.md](docs/API.md#authentication).
+### Several servers on one PC
 
-With `AllowRemote` set to `false` (the default), the API binds to `127.0.0.1`. Set it to `true` to bind to all network interfaces.
+Each controller manages one dedicated server. To run several, install each controller
+in its own folder, and give each its own settings, database and ports. By default, every
+controller run by the same Windows user shares `%LocalAppData%\WreckfestController`,
+which would give them the same server paths, accounts and cups.
 
-If a reverse proxy (for example HAProxy on OPNsense) terminates HTTPS in front of the controller, add its address to `TrustedProxies`, such as `["192.168.1.1"]`. The controller then sees each browser's real IP for the login rate limit, and knows the connection was HTTPS. Forwarded headers from any other address are ignored. See [docs/API.md](docs/API.md#behind-a-reverse-proxy).
+1. In each install's `appsettings.json`, point `UserSettingsPath` at a file of its own,
+   such as `%LocalAppData%\WreckfestController\server2\user-settings.json`. Check this
+   again after installing a new release, since the release replaces `appsettings.json`.
+2. In that `user-settings.json`, set `Database:Path` to a database of its own, such as
+   `%LocalAppData%\WreckfestController\server2\controller.db`, and give `Api` its own
+   `HttpPort` and `HttpsPort`.
 
-`HttpPort` and `HttpsPort` default to 5100 and 5101. Give each instance its own pair when running several controllers on one Windows host, otherwise the second instance fails to bind. A value that is not a port (1-65535) stops the API, with the reason in the desktop app's log; it is not replaced by a default.
+## 4. Create the first admin account
 
-### 3. Configure Wreckfest Server
+There is no sign-up page. When the web site is enabled and no account exists, the
+desktop app offers a **Create admin account** dialog at startup. The Configuration tab
+has the same button under **WEB ACCOUNTS**, which also works for recovery if every
+admin is locked out or has lost their password.
 
-The WreckfestController manages the Wreckfest server's `server_config.cfg` file. This file should exist in your Wreckfest server's working directory.
+Then open `http://127.0.0.1:5100/` and sign in. Admins add further accounts on the web
+site's Users page. Every account is an admin.
 
-If you don't have one yet, create `server_config.cfg` in your Wreckfest server directory with basic settings:
-```ini
-game_mode=derby
-server_name=My Wreckfest Server
-max_players=24
-password=
-```
+- Passwords need at least 10 characters.
+- Five failed sign-ins lock an account for 15 minutes. An admin can unlock it sooner.
+- Sign-in also allows 10 attempts per minute from each IP address.
 
-The API provides endpoints to read and modify this configuration.
+## 5. Open the web site to others
 
-### 4. Run the Application
+Players see the public home page; admins sign in to manage the server. Either way,
+anyone connecting from another computer should use **HTTPS**, since sign-in sends a
+password and a session cookie. There are two ways to provide it.
 
-Navigate to the extracted directory (or `bin/Release/net10.0-windows` if you built from source) and run:
+### Behind a reverse proxy
+
+A reverse proxy (such as HAProxy on OPNsense, nginx or Caddy) handles HTTPS and passes
+requests to the controller over HTTP.
+
+1. Set `AllowRemote` to `true`, unless the proxy runs on the same PC.
+2. Point the proxy at `http://<controller PC>:5100`. It must pass WebSocket upgrades on
+   `/hubs/server`, which the live updates use.
+3. Have the proxy send `X-Forwarded-For` and `X-Forwarded-Proto`, and list its address in
+   `TrustedProxies`:
+
+   ```json
+   "TrustedProxies": ["192.168.1.1"]
+   ```
+
+   CIDR ranges work too (`"10.0.0.0/24"`). The controller then sees each visitor's real
+   IP address, for the sign-in limit and the logs, and knows the visitor used HTTPS, so
+   the sign-in cookie is marked `Secure`. It ignores these headers from every other
+   address.
+
+   Without this, every visitor shares the proxy's sign-in limit of 10 attempts a
+   minute.
+
+4. Open port 5100 in Windows Firewall only to the proxy:
+
+   ```
+   netsh advfirewall firewall add rule name="WreckfestController" dir=in action=allow protocol=TCP localport=5100 remoteip=192.168.1.1
+   ```
+
+### HTTPS directly
+
+The controller can serve HTTPS itself with a certificate from the Windows certificate
+store or a file, and reload it when it is renewed. See [docs/https.md](docs/https.md), and
+[docs/LetsEncrypt.md](docs/LetsEncrypt.md) for a free Let's Encrypt certificate. Set
+`AllowRemote` to `true` and open `HttpsPort` in Windows Firewall.
+
+## 6. Check your settings
+
+On the web site, as an admin:
+
+- **Settings**: the voting mode and its limits.
+- **Tracks**: which tracks players can pick with `!track` and `!vote`.
+- **Server Config**, **Rotation**, **Collections** and **Cups**: as you need them.
+
+## Scripts and the API
+
+Scripts call the same API as the web site and authenticate with the `Key` from step 3:
 
 ```bash
-WreckfestController.exe
+curl -H "X-Api-Key: <key>" http://127.0.0.1:5100/api/server/status
 ```
 
-**Or if running from source:**
-```bash
-dotnet run --configuration Release
-```
-
-### 5. Verify Installation
-
-Once running, the API will be available at:
-- **HTTP:** http://localhost:5100
-- **HTTPS:** https://localhost:5101, once HTTPS is set up: see [docs/https.md](docs/https.md)
-- **Swagger UI:** http://localhost:5100/swagger
-
-Open the Swagger UI to explore the API endpoints.
-
-## Running as a Windows Service (Optional)
-
-To run WreckfestController as a Windows Service, use the Windows Service Control tool:
-
-```bash
-sc create WreckfestController binPath="C:\path\to\WreckfestController.exe"
-sc start WreckfestController
-```
-
-To remove the service:
-```bash
-sc stop WreckfestController
-sc delete WreckfestController
-```
-
-## API Endpoints Overview
-
-Once installed, you can manage your server using these endpoints:
-
-### Server Control
-- `POST /api/server/start` - Start the server
-- `POST /api/server/stop` - Stop the server
-- `POST /api/server/restart` - Restart the server
-- `POST /api/server/update` - Update server via SteamCmd
-- `GET /api/server/status` - Get server status
-- `POST /api/server/command` - Send console command (e.g., `/bot`)
-
-### Configuration Management
-- `GET /api/config` - Get current server_config.cfg
-- `PUT /api/config` - Update server_config.cfg
-
-### Player Tracking
-- `GET /api/server/players` - Get current player list
-- WebSocket: `ws://localhost:5100/ws/players` - Real-time player updates
-
-### Cups
-- `GET /api/cups` - List cups
-- `POST /api/cups` - Create a cup (see `docs/API.md`)
-- A cup applies its rotation, settings and scoring through a smart restart at its scheduled time
-
-### WebSocket Endpoints
-- `ws://localhost:5100/ws/console` - Real-time server console output
-- `ws://localhost:5100/ws/players` - Real-time player tracking
-- `ws://localhost:5100/ws/track-changes` - Real-time track change notifications
-
-## Firewall Configuration
-
-If accessing the API from another machine, open these ports:
-```bash
-# Windows Firewall
-netsh advfirewall firewall add rule name="WreckfestController HTTP" dir=in action=allow protocol=TCP localport=5100
-netsh advfirewall firewall add rule name="WreckfestController HTTPS" dir=in action=allow protocol=TCP localport=5101
-```
-
-## Troubleshooting
-
-### Server Won't Start
-- Verify `ServerPath` in `appsettings.json` points to `Wreckfest_x64.exe`
-- Verify `WorkingDirectory` exists and is correct
-- Check file permissions - the API needs read/write access to the Wreckfest directory
-
-### Configuration Changes Not Saving
-- Ensure the API has write permissions to `server_config.cfg`
-- Check the API logs for error messages
-
-### SteamCmd Updates Fail
-- Verify `SteamCmdPath` points to `steamcmd.exe`
-- Ensure SteamCmd is installed and working
-- Check if SteamCmd requires authentication (use anonymous login for Wreckfest)
-
-### WebSockets Not Working
-- Check firewall settings
-- Verify WebSocket protocol is allowed by your proxy/reverse proxy if using one
+The full reference is [docs/API.md](docs/API.md). The OpenAPI description is at
+`/openapi/v1.json`, for signed-in callers and API-key requests.
 
 ## Logging
 
-Logs are written to the console by default. Configure logging in `appsettings.json`:
+The desktop app's **Controller Log** tab shows the log. Log levels can be set in
+`user-settings.json`:
 
 ```json
 "Logging": {
   "LogLevel": {
     "Default": "Information",
-    "Microsoft.AspNetCore": "Warning",
     "WreckfestController.Services.ServerControl.ServerManager": "Debug"
   }
 }
 ```
 
-## Live Updates
+## Troubleshooting
 
-The controller pushes player, track, event and server notifications to connected
-web clients through a SignalR hub at `/hubs/server`, on the same port as the API.
-There is nothing to configure beyond enabling the API. See
-[docs/API.md](docs/API.md#live-updates--hubsserver) for the messages.
+**The server does not start.** Check that the working directory and executable on the
+Configuration tab are right, and that the controller can write to the server folder.
 
-## File Locations
+**No console output, chat or players.** The hook is not injected, or was lost when the
+server restarted. Inject it again (see [The hook](#the-hook)). If injecting is refused,
+the server's build may not match the supported build.
 
-After installation, these files will be created/managed:
+**A setting cannot be saved from the web.** The error names the key. Add an active
+`key=value` line for it to `server_config.cfg`, or remove a later duplicate below
+`# Event Loop`, which would override it.
 
-- **controller.db** - In `%LocalAppData%\WreckfestController` (`Database:Path` moves it)
-  - Holds web accounts, the track catalogue, collections and cups
+**The web site does not load.** Check the **WEB API** line on the Configuration tab. A
+wrong `Api` setting or a port already in use stops the API, and the reason is shown
+there.
 
-## Next Steps
+**Signed out after every restart.** The controller cannot keep its `keys` folder.
+Check that `%LocalAppData%\WreckfestController\keys` is writable.
 
-1. **Test the API** - Use Swagger UI to test endpoints
-2. **Start Your Server** - `POST /api/server/start`
-3. **Configure Cups** - Set up cups via `/api/cups`
-4. **Monitor Players** - Connect to WebSocket endpoints for real-time updates
-
-## Support
-
-- **Documentation:** See [CLAUDE_GUIDE.md](./CLAUDE_GUIDE.md) for detailed API documentation
-- **Issues:** Report bugs on the GitHub Issues page
-
-## Security Considerations
-
-⚠️ **Important Security Notes:**
-
-1. **No Authentication** - This API currently has no built-in authentication. Do not expose it to the public internet without adding authentication or using a reverse proxy with auth.
-
-2. **Local Network Only** - By default, configure to listen only on your local network.
-
-3. **Firewall** - Use Windows Firewall to restrict access to trusted IPs only.
-
-4. **HTTPS** - Anything reachable from another computer should use HTTPS, directly ([docs/https.md](docs/https.md), with a free Let's Encrypt certificate via [docs/LetsEncrypt.md](docs/LetsEncrypt.md)) or through a reverse proxy.
-
-## License
-
-See [LICENSE.txt](./LICENSE.txt) for license information.
+**Live updates do not arrive through the proxy.** The proxy must allow WebSocket
+upgrades on `/hubs/server`.
