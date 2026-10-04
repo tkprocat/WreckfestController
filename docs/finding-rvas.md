@@ -29,15 +29,60 @@ timestamp `0x6509731D`).
 | --- | --- | --- |
 | `RvaEventLoopCount` | `0x01857630` | int32, number of `el_add` entries |
 | `RvaEventLoopIndex` | `0x0122B270` | int32, current rotation entry; `-1` when the loop is off |
-| `RvaSessionLobby` | `0x019146E0` | byte, `1` in lobby, `0` while racing - **wrong, see below** |
-| `RvaSessionRacing` | `0x019146EC` | byte, `1` while racing or on the post-race vote screen - **wrong, see below** |
 
-**Both session descriptions are wrong** (issue #189). `0x19146EC` is an event counter:
-the `Event started!` branch of the session state machine increments it, so it read `01`
-while racing only in the first race after boot. `0x19146E0` flickers between `00` and
-`01` every few seconds while the server sits in the lobby. `VotingService` still uses
-both, so its racing check is unreliable until #189 is fixed. See "Race results" below
-for `0x19146E8`, which is confirmed.
+Whether the server is racing comes from the session state below, through the hook's
+`__hook_session`.
+
+### Session state
+
+The SERVER object (the registry object `ServerNamespaceTagRva` reaches) holds the
+session state machine: an int at `+0x4`, and a timer in ms at `+0x10` that counts down
+in the states that have one and reads `-100000` when idle.
+
+| `+0x4` | State | Set by | Timer |
+| --- | --- | --- | --- |
+| 0 | lobby | `Countdown canceled.`, and after the results | `-100000`; a short countdown (3000) on the way out of the results |
+| 1 | countdown | `Event starting in %d seconds...` | from `dedicated.ddst +0xA0`; cut to 3000 when everyone is ready |
+| 2 | racing | the `Event started!` branch of `machine_code_server` (`0x140394D20`) | `-100000` |
+| 3 | results screen | the `Event ended!` branch | at most 20000; it ends early when the humans move on |
+| 4 | handover to the next event, event loop on | `FUN_140390650` calling `FUN_140394b70` | 15000 |
+
+Confirmed live on 2026-10-04 (Wreckfest 1.308438), polling `__hook_session` every
+second through two races with the event loop on. Each state held steady, with no
+flicker, and changed exactly at the matching server line:
+
+| Time | State | Counter | Ended | Timer | Server log |
+| --- | --- | --- | --- | --- | --- |
+| 22:16:40 | 0 | 0 | 0 | -100000 | lobby |
+| 22:18:50 | 1 | 0 | 0 | 2808 | `Event starting in 30 seconds...` |
+| 22:18:54 | 2 | 1 | 0 | -100000 | `Event started!` |
+| 22:19:37 | 3 | 1 | 1 | 19168 | `Event ended!` |
+| 22:19:56 | 4 | 1 | 0 | 14760 | |
+| 22:20:06 | 0 | 1 | 0 | -100000 | lobby |
+| 22:21:02 | 2 | 2 | 0 | -100000 | `Event started!`, second race |
+| 22:21:32 | 3 | 2 | 1 | 19984 | `Event ended!` |
+| 22:21:39 | 4 | 2 | 0 | 14440 | |
+| 22:21:54 | 0 | 2 | 0 | 2392 | `Changing to next event in the loop...` |
+
+With `SuppressCommandsDuringRace` on, `!help` was refused during the second race (the
+case the old check got wrong) and answered in the lobby after it.
+
+The game groups them itself: `FUN_1402cd250(state)` is true for 0, 1 and 4. The race
+end check and the idle-car kicker both test `state == 2`, and `Changing to next event
+in the loop...` runs only when `state != 2`. `VotingService` treats 2 as racing and
+every other value, or a failed read, as not racing.
+
+SERVER is on the heap, out of `__hook_read`'s module-relative reach, so the hook
+resolves it per call: `__hook_session` answers `OK session state=2 timer=-100000
+counter=3 ended=0`, with the two globals below alongside.
+
+**Two globals that were mistaken for this state** (issue #189):
+
+- `0x19146E0` is a parity bit. The server tick (`FUN_140392bd0`) flips it with
+  `e0 = (e0 - 1) & 1` and uses it to pick between two packet ids for car state, so it
+  flickers in every state.
+- `0x19146EC` is the event counter, incremented in the `Event started!` branch. It read
+  `01` while racing only in the first race after boot.
 
 Everything else the project needs is reached through the command dispatcher, on
 purpose: one offset buys every console command, so each extra one is recurring
@@ -204,7 +249,7 @@ marks a bot (the game tests the same bit).
 ### When to read them
 
 `0x19146E8` rises to 1 in the `Event ended!` branch of the session state machine
-(`FUN_140394cf0`), which runs when the server tick finds **no connected human still
+(`machine_code_server`, which also sets SERVER `+0x4` to 3), which runs when the server tick finds **no connected human still
 driving**. Bots do not hold it open. At that moment the game simulates the remaining laps
 of every bot still on track and gives each a finishing time, flags `0x01` without `0x40`,
 and `+0x44` 0: `HookRaceRecord` calls these *projected*. About 20 s later the server
@@ -228,6 +273,8 @@ human's.
   injected hook, with no debugger attached. Bounded by `SizeOfImage` and
   read-only. Reachable through `POST /api/server/command`.
 - **`__hook_info`** - reports the live module base, image size and layout status.
+- **`__hook_session`** - the session state, its timer, the event counter and the ended
+  flag, as in "Session state" above.
 - **`__hook_results`** - dumps the race state for diagnosis: the session globals, the
   `gameplay_rule_data` header, every car record with the fields above parsed, and each
   car's vehicle object one pointer level deep, with the bytes shown as text. It answers
@@ -286,7 +333,9 @@ So `enabled = A > 0 && B > -1`, which then gets confirmed by experiment.
 Inference was wrong twice during this work. `FUN_1404477a0` was assumed to write
 to chat because of where it was called; it is actually a colour-code stripper.
 `DAT_1419146d0` was assumed to be the in-lobby flag; it is a startup mode flag
-that never changes.
+that never changes. Then `0x19146E0` and `0x19146EC` were taken for lobby and racing
+flags from one race's readings; they are a packet parity bit and an event counter
+(issue #189).
 
 Read a value, change the state, read again:
 
@@ -296,10 +345,12 @@ __hook_read 122B270 4      -> 00000000  (0, enabled)
 /eventloop
 __hook_read 122B270 4      -> ffffffff  (-1, disabled)
 
-# session state, lobby vs race
-__hook_read 19146E0 1      -> 01 in lobby, 00 while racing
-__hook_read 19146EC 1      -> 00 in lobby, 01 while racing
+# session state, through a lobby, a race and its results
+__hook_session             -> state=0 in lobby, 1 counting down, 2 racing, 3 on results
 ```
+
+Read more than once per state, and across more than one cycle: a single reading per
+state is how the parity bit passed for a lobby flag.
 
 Cross-check against a second source wherever one exists. Privilege flags were
 confirmed three ways: toggling with `/op` and `/demote`, the `A`/`M` marker in
@@ -307,17 +358,9 @@ confirmed three ways: toggling with `/op` and `/demote`, the `A`/`M` marker in
 
 ### 5. Watch for state machines, not booleans
 
-Two bytes gave three observed states, not two:
-
-| `0x19146E0` | `0x19146EC` | state |
-| --- | --- | --- |
-| `01` | `00` | lobby, idle |
-| `00` | `01` | racing |
-| `01` | `01` | post-race track vote |
-
-There are likely more (loading, countdown, results). Code that gates on this
-should test for the state it positively recognises and fall through otherwise,
-rather than trying to enumerate every case.
+The session has five states, not two (see "Session state"), and the game may add more.
+Code that gates on it should test for the state it positively recognises and fall
+through otherwise, rather than trying to enumerate every case.
 
 ## Redoing this after an update
 

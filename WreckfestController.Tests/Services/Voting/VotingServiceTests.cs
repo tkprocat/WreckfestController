@@ -1787,20 +1787,58 @@ public class VotingServiceTests
 
     private const uint RvaEventLoopCount = 0x1857630;
     private const uint RvaEventLoopIndex = 0x122B270;
-    private const uint RvaSessionLobby = 0x19146E0;
-    private const uint RvaSessionRacing = 0x19146EC;
 
     /// <summary>
-    /// Stubs the hook memory reads. Values match what a live server returns:
-    /// index -1 means the event loop is off; lobby/racing are the byte pair
-    /// observed while driving.
+    /// Stubs the hook reads. Values match what a live server returns: index -1 means
+    /// the event loop is off; the session state is SERVER+0x4, 2 while racing.
     /// </summary>
-    private static void StubServerState(Mock<ServerManager> server, int count, int index, bool racing)
+    private static void StubServerState(Mock<ServerManager> server, int count, int index, bool racing) =>
+        StubServerState(server, count, index, (int)(racing ? ServerSessionPhase.Racing : ServerSessionPhase.Lobby));
+
+    private static void StubServerState(Mock<ServerManager> server, int count, int index, int sessionState)
     {
         server.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopCount, 4)).ReturnsAsync(BitConverter.GetBytes(count));
         server.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopIndex, 4)).ReturnsAsync(BitConverter.GetBytes(index));
-        server.Setup(m => m.ReadHookMemoryAsync(RvaSessionLobby, 1)).ReturnsAsync([(byte)(racing ? 0 : 1)]);
-        server.Setup(m => m.ReadHookMemoryAsync(RvaSessionRacing, 1)).ReturnsAsync([(byte)(racing ? 1 : 0)]);
+        server.Setup(m => m.ReadHookSessionAsync())
+            .ReturnsAsync(new HookSessionState(sessionState, -100000, EventCounter: 1, Ended: false));
+    }
+
+    // Issue #189: only the game's racing state silences chat. The countdown, the
+    // results screen, the handover and any unknown value all fall open.
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, false)]
+    [InlineData(2, true)]
+    [InlineData(3, false)]
+    [InlineData(4, false)]
+    [InlineData(7, false)]
+    [InlineData(-1, false)]
+    public async Task ChatCommands_AreSuppressedOnlyInTheRacingState(int sessionState, bool suppressed)
+    {
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Direct);
+        config["Vote:SuppressCommandsDuringRace"] = "true";
+        StubServerState(serverMock, count: 4, index: -1, sessionState);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!help");
+        await Task.Delay(80, TestContext.Current.CancellationToken);
+
+        Assert.Equal(!suppressed, messages.Any(m => m.StartsWith("Help:", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task ChatCommands_WorkWhenTheSessionStateCannotBeRead()
+    {
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Direct);
+        config["Vote:SuppressCommandsDuringRace"] = "true";
+        StubServerState(serverMock, count: 4, index: -1, racing: true);
+        serverMock.Setup(m => m.ReadHookSessionAsync()).ReturnsAsync((HookSessionState?)null);
+        Join(tracker, "Alice");
+
+        service.ProcessChatCommand("Alice", false, "!help");
+        await Task.Delay(80, TestContext.Current.CancellationToken);
+
+        Assert.Contains(messages, m => m.StartsWith("Help:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -2129,8 +2167,8 @@ public class VotingServiceTests
         serverMock.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopCount, 4)).ReturnsAsync(BitConverter.GetBytes(4));
         serverMock.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopIndex, 4))
             .ReturnsAsync(() => BitConverter.GetBytes(index));
-        serverMock.Setup(m => m.ReadHookMemoryAsync(RvaSessionLobby, 1)).ReturnsAsync([(byte)1]);
-        serverMock.Setup(m => m.ReadHookMemoryAsync(RvaSessionRacing, 1)).ReturnsAsync([(byte)0]);
+        serverMock.Setup(m => m.ReadHookSessionAsync())
+            .ReturnsAsync(new HookSessionState((int)ServerSessionPhase.Lobby, -100000, EventCounter: 0, Ended: false));
 
         serverMock.Setup(m => m.SendCommandAsync("/eventloop"))
             .Callback(() => _ = Task.Run(async () => { await Task.Delay(400); index = -1; }))
