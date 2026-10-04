@@ -11,9 +11,9 @@ settings, cups or WreckfestWeb data. The 2.0 release notes list what to set up a
 
 - Windows 10 or 11, or Windows Server. The controller is a desktop app and runs in a
   signed-in session; it cannot run as a Windows service yet.
-- The **.NET 10 Desktop Runtime** and the **ASP.NET Core 10 Runtime**, from
-  [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/10.0). The .NET 10
-  SDK includes both.
+- The **x64** versions of the **.NET 10 Desktop Runtime** and the **ASP.NET Core 10
+  Runtime**, from [dotnet.microsoft.com](https://dotnet.microsoft.com/download/dotnet/10.0).
+  The x64 .NET 10 SDK includes both. The x86 runtimes are not enough.
 - The **Wreckfest dedicated server**, at the build the controller supports (see
   [The hook](#the-hook)).
 - **SteamCMD** (optional), for updating the server from the controller.
@@ -35,8 +35,9 @@ On first start it creates its data folder, `%LocalAppData%\WreckfestController\`
 | `user-settings.json` | Startup settings that you write by hand (see step 3). The controller never writes this file. |
 
 If the database cannot be opened, the controller starts in **recovery mode**: the
-desktop app shows why, sign-in is unavailable and the API answers 503 until it is fixed
-and the controller restarted.
+desktop app shows why in a banner. Sign-in is unavailable and the API answers 503
+(apart from `GET /api/auth/state`, which reports the state). Once the cause is fixed,
+click **RETRY** in the banner, or restart the controller.
 
 To keep the database somewhere else, set `Database:Path` in `user-settings.json` (step
 3). The `keys` folder follows it.
@@ -47,8 +48,9 @@ Open the **Configuration** tab in the desktop app and set:
 
 - **Working Directory**: the dedicated server's folder.
 - **Server Executable**: usually `Wreckfest_x64.exe`.
-- **Log File Name** (optional): leave it empty to use the `log=` setting in
-  `server_config.cfg`.
+- **Log File Name** (optional): the log file shown on the web site's Server Control
+  page when `server_config.cfg` has no usable `log=` line. The `log=` line wins whenever
+  it names a file inside the server folder.
 - **Server Arguments**: usually `-s server_config=server_config.cfg`.
 - **SteamCMD Executable Path** (optional): `steamcmd.exe`, for the Update button.
 
@@ -94,22 +96,44 @@ The web site and API are off by default. To turn them on, create
 }
 ```
 
-Settings in `user-settings.json` override the ones in `appsettings.json`. Keep yours in
-`user-settings.json`, because installing a new release replaces `appsettings.json`.
-Restart the controller after any change to the file.
+Startup settings are read from `appsettings.json` next to the exe, then
+`appsettings.{Environment}.json` if there is one, then `user-settings.json`; a later file
+wins. Keep yours in `user-settings.json`, because installing a new release replaces
+`appsettings.json`. Restart the controller after any change to the file.
+
+Only the startup settings come from these files: `Api`, `Database`, `Logging` and
+`WreckfestServer:SupportedBuild`. The server paths, SteamCMD and voting settings are in
+the database, and the `WreckfestServer`, `SteamCmd` and `Vote` sections of
+`user-settings.json` are ignored. On the very first start the database takes its voting
+defaults from the shipped `appsettings.json`.
 
 | Setting | Meaning |
 | --- | --- |
-| `Enabled` | `true` starts the web site and API. With `false` no port is opened. |
+| `Enabled` | `true` starts the web site and API. Anything else, including `"yes"` or a typo, leaves it off and opens no port. |
 | `Key` | An API key for scripts, sent as the `X-Api-Key` header. Leave it empty if nothing but browsers will use the API. |
 | `AllowRemote` | `false` listens on `127.0.0.1` only, so only this PC can connect. `true` listens on every network interface. |
-| `TrustedProxies` | The address of a reverse proxy in front of the controller (see step 5). |
-| `HttpPort`, `HttpsPort` | Default 5100 and 5101. Give each controller its own ports when one PC runs several. |
+| `TrustedProxies` | The address of a reverse proxy in front of the controller (see step 5). An entry that is not an address or range is logged and skipped. |
+| `HttpPort`, `HttpsPort` | Default 5100 and 5101, also when left empty. |
 | `Https` | A certificate, to serve HTTPS directly: see [docs/https.md](docs/https.md). |
 
 The Configuration tab shows under **WEB API** whether the API is running and where, or
-why it failed to start. A wrong setting stops the API rather than falling back to a
-default.
+why it failed to start. A port that is not 1-65535, the same port for HTTP and HTTPS,
+or an `Https` section that is incomplete or unusable stops the API rather than falling
+back to a default or to plain HTTP.
+
+### Several servers on one PC
+
+Each controller manages one dedicated server. To run several, install each controller
+in its own folder, and give each its own settings, database and ports. By default, every
+controller run by the same Windows user shares `%LocalAppData%\WreckfestController`,
+which would give them the same server paths, accounts and cups.
+
+1. In each install's `appsettings.json`, point `UserSettingsPath` at a file of its own,
+   such as `%LocalAppData%\WreckfestController\server2\user-settings.json`. Check this
+   again after installing a new release, since the release replaces `appsettings.json`.
+2. In that `user-settings.json`, set `Database:Path` to a database of its own, such as
+   `%LocalAppData%\WreckfestController\server2\controller.db`, and give `Api` its own
+   `HttpPort` and `HttpsPort`.
 
 ## 4. Create the first admin account
 

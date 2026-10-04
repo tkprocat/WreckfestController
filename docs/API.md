@@ -10,7 +10,8 @@ generated from it.
 
 ## Authentication
 
-Every endpoint requires an authenticated caller, in one of two ways:
+Every endpoint requires an authenticated caller, except the few
+[anonymous ones](#anonymous-endpoints) below. A caller authenticates in one of two ways:
 
 - **API key** (scripts, live testing): send the configured key.
 
@@ -32,10 +33,13 @@ if a valid cookie is also sent.
 
 A missing or rejected credential returns **401** with no body, never a redirect.
 
+### Anonymous endpoints
+
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
-(`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`, and
-the [live-update hub](#live-updates--hubsserver)), so one cannot appear by accident. Requests to paths that match no
+(`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`,
+`GET public/overview`, and the [live-update hub](#live-updates--hubsserver)), so one
+cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
 
 ### CSRF
@@ -512,8 +516,9 @@ While the database is unavailable (recovery mode) the hub answers 503, like the 
 
 Clients written for 1.x need updating:
 
-- The API is off until `Api:Enabled` is `true`, and every `api/*` request needs
-  credentials: `X-Api-Key` for scripts. With `AllowRemote: false` a client must also run
+- The API is off until `Api:Enabled` is `true`, and every `api/*` request apart from
+  the [anonymous endpoints](#anonymous-endpoints) needs credentials: `X-Api-Key` for
+  scripts. With `AllowRemote: false` a client must also run
   on the same PC.
 - The webhooks are gone; the [live-update hub](#live-updates--hubsserver) replaces them.
   So are the `/ws/*` WebSockets and Swagger UI.

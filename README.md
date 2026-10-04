@@ -57,10 +57,18 @@ Players can pick only tracks the catalogue allows for voting (the web Tracks pag
 to the maximum number of laps. In direct mode a change starts a cooldown, which admins
 bypass.
 
-Admins and moderators can use `!voting on` to switch to voting mode, or `!voting off` to
-switch to direct changes and cancel an active vote. This lasts until the controller
-restarts or the voting settings are saved. These commands are hidden from `!help` and
-ignored for other players.
+Track and lap changes are refused in both modes while the server's event loop is on,
+since the loop picks the tracks; players are told so in chat. Turn the loop off to let
+players choose.
+
+Admins and moderators have two more commands, hidden from `!help` and ignored for other
+players:
+
+- `!eventloop` shows whether the event loop is on; `!eventloop on` and `!eventloop off`
+  switch it.
+- `!voting on` switches to voting mode, and `!voting off` to direct changes, cancelling
+  an active vote. This lasts until the controller restarts or the voting settings are
+  saved.
 
 When the vote timer ends, only votes from players still on the server count: more yes
 than no passes, and ties or no votes fail. The player who started the vote votes yes
