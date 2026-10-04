@@ -44,6 +44,7 @@ public class HookSessionStateTests
     [InlineData("OK session state=2 timer=0 counter=1")]
     [InlineData("OK session state=two timer=0 counter=1 ended=0")]
     [InlineData("OK session state=2 timer= counter=1 ended=0")]
+    [InlineData("OK session state=0 timer=0 counter=1 ended=0 state=2")]
     public void RejectsAnythingElse(string? line)
     {
         Assert.False(HookSessionState.TryParse(line, out var session));

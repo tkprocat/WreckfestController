@@ -49,7 +49,12 @@ public sealed record HookSessionState(int State, int TimerMs, int EventCounter, 
                 return false;
             }
 
-            fields[pair[..equals]] = value;
+            // A repeated key is malformed, not "the last one wins": failing here is what
+            // keeps a garbled answer from reading as racing.
+            if (!fields.TryAdd(pair[..equals], value))
+            {
+                return false;
+            }
         }
 
         if (!fields.TryGetValue("state", out var state) ||
