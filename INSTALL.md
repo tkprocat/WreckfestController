@@ -105,7 +105,7 @@ Only the startup settings come from these files: `Api`, `Database`, `Logging` an
 `WreckfestServer:SupportedBuild`. The server paths, SteamCMD and voting settings are in
 the database, and the `WreckfestServer`, `SteamCmd` and `Vote` sections of
 `user-settings.json` are ignored. On the very first start the database takes its voting
-defaults from the shipped `appsettings.json`.
+defaults from the shipped `appsettings.json` and `appsettings.{Environment}.json`.
 
 | Setting | Meaning |
 | --- | --- |
@@ -117,9 +117,10 @@ defaults from the shipped `appsettings.json`.
 | `Https` | A certificate, to serve HTTPS directly: see [docs/https.md](docs/https.md). |
 
 The Configuration tab shows under **WEB API** whether the API is running and where, or
-why it failed to start. A port that is not 1-65535, the same port for HTTP and HTTPS,
-or an `Https` section that is incomplete or unusable stops the API rather than falling
-back to a default or to plain HTTP.
+why it failed to start. A port that is not 1-65535, an `AllowRemote` that is not
+`true` or `false`, and, when `Https` is set, the same port for HTTP and HTTPS or an
+`Https` section that is incomplete or unusable stop the API rather than falling back to
+a default or to plain HTTP.
 
 ### Several servers on one PC
 
