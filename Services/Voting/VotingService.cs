@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using WreckfestController.Models;
 using WreckfestController.Services.Config;
+using WreckfestController.Services.Hook;
 using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Tracking;
 
@@ -1201,8 +1202,6 @@ public class VotingService
     // shift them, which is why every read is sanity-checked and falls open.
     private const uint RvaEventLoopCount = 0x1857630;   // int32: number of el_add entries
     private const uint RvaEventLoopIndex = 0x122B270;   // int32: current entry, -1 when off
-    private const uint RvaSessionLobby = 0x19146E0;     // byte: 1 in lobby, 0 while racing
-    private const uint RvaSessionRacing = 0x19146EC;    // byte: 1 while racing or voting
 
     private static readonly TimeSpan ServerStateCacheWindow = TimeSpan.FromSeconds(2);
     private readonly object _serverStateLock = new();
@@ -1250,14 +1249,13 @@ public class VotingService
             }
         }
 
-        var lobbyBytes = await _serverManager.ReadHookMemoryAsync(RvaSessionLobby, 1);
-        var racingBytes = await _serverManager.ReadHookMemoryAsync(RvaSessionRacing, 1);
-        if (lobbyBytes?.Length == 1 && racingBytes?.Length == 1)
+        // Only the game's own racing state counts. Lobby, countdown, the results
+        // screen and any value the game is not known to use fall through as "not
+        // racing", so an unknown state never silences chat (issue #189).
+        var session = await _serverManager.ReadHookSessionAsync();
+        if (session is not null)
         {
-            // Only the combination positively observed while driving counts as
-            // racing. Lobby, the post-race vote screen and any state not yet mapped
-            // fall through as "not racing", so an unknown state never silences chat.
-            racing = lobbyBytes[0] == 0 && racingBytes[0] == 1;
+            racing = session.Phase == ServerSessionPhase.Racing;
         }
 
         lock (_serverStateLock)

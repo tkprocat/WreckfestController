@@ -5,7 +5,7 @@ using WreckfestController.Models;
 
 namespace WreckfestController.Services.Hook;
 
-public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader, IHookMemoryReader
+public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader, IHookMemoryReader, IHookSessionReader
 {
     // The hook dispatched the command but wrote back no acknowledgement. Callers
     // distinguish this from an outright rejection - see ServerManager's exit path,
@@ -192,6 +192,26 @@ public class InjectedHookInputWriter : IServerInputWriter, IPlayerSnapshotReader
         {
             _logger.LogDebug(ex, "Hook memory read failed at rva 0x{Rva:X8}", rva);
             return (false, "The hook could not read the game's memory. The desktop app's log has the details.", []);
+        }
+    }
+
+    public virtual async Task<(bool Success, string Message, HookSessionState? Session)> ReadSessionStateAsync(int processId)
+    {
+        try
+        {
+            var lines = await SendPipeCommandAsync(HookSessionState.Command, processId);
+            var response = lines.FirstOrDefault() ?? string.Empty;
+            if (HookSessionState.TryParse(response, out var session))
+            {
+                return (true, "ok", session);
+            }
+
+            return (false, string.IsNullOrWhiteSpace(response) ? "Hook session read returned no response" : response, null);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Hook session read failed");
+            return (false, "The hook could not read the session state. The desktop app's log has the details.", null);
         }
     }
 

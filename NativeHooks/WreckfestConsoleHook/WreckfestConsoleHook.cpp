@@ -491,7 +491,7 @@ bool ReadRaceResultsNoThrow(std::string& response)
         response.reserve(32768);
         char line[512] = {};
 
-        // Session globals around the lobby flag (0x19146E0) and the event counter
+        // Session globals around the parity bit (0x19146E0) and the event counter
         // (0x19146EC), so state can be correlated with each snapshot.
         AppendHexDump(response, "SESSION 19146D0", moduleBase + 0x19146D0, 0x20);
 
@@ -1318,6 +1318,64 @@ bool ReadModuleMemoryNoThrow(uintptr_t rva, size_t size, std::string& response)
     }
 }
 
+// The SERVER object's session state machine (issue #189): an int at +0x4 and its
+// timer in ms at +0x10. 0 lobby, 1 countdown, 2 racing, 3 results, 4 the handover
+// to the next event in the loop. See docs/finding-rvas.md.
+constexpr size_t ServerSessionStateOffset = 0x4;
+constexpr size_t ServerSessionTimerOffset = 0x10;
+
+struct SessionSnapshot
+{
+    int state;
+    int timerMs;
+    int eventCounter;
+    unsigned char ended;
+};
+
+// POD only, so the SEH guard needs no unwinding: a stale offset after a game patch
+// must cost the answer, not the game.
+bool ReadSessionNoThrow(SessionSnapshot& snapshot)
+{
+    __try
+    {
+        auto moduleBase = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        auto server = LookupRegistryObject(moduleBase, "SERVER", ServerNamespaceTagRva);
+        if (server == 0)
+        {
+            return false;
+        }
+
+        snapshot.state = *reinterpret_cast<int*>(server + ServerSessionStateOffset);
+        snapshot.timerMs = *reinterpret_cast<int*>(server + ServerSessionTimerOffset);
+        snapshot.eventCounter = *reinterpret_cast<int*>(moduleBase + EventCounterRva);
+        snapshot.ended = *reinterpret_cast<unsigned char*>(moduleBase + EventEndedFlagRva);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return false;
+    }
+}
+
+std::string HandleSessionCommand()
+{
+    if (g_layoutStatus != LayoutStatus::Ok)
+    {
+        return "ERR session module layout not validated" NLSTR;
+    }
+
+    SessionSnapshot snapshot = {};
+    if (!ReadSessionNoThrow(snapshot))
+    {
+        return "ERR session SERVER object unreadable" NLSTR;
+    }
+
+    char line[160] = {};
+    std::snprintf(line, sizeof(line), "OK session state=%d timer=%d counter=%d ended=%u" NLSTR,
+        snapshot.state, snapshot.timerMs, snapshot.eventCounter, static_cast<unsigned>(snapshot.ended));
+    return line;
+}
+
 std::string HandleInputCommand(const char* buffer)
 {
     auto commandLine = TrimCommand(buffer == nullptr ? "" : buffer);
@@ -1355,6 +1413,11 @@ std::string HandleInputCommand(const char* buffer)
         ReadPlayersNoThrow(response);
         WriteHookLine("WreckfestConsoleHook read player snapshot.");
         return response;
+    }
+
+    if (commandLine == "__hook_session")
+    {
+        return HandleSessionCommand();
     }
 
     if (commandLine == "__hook_results")

@@ -1091,6 +1091,30 @@ public class ServerManager
     }
 
     /// <summary>
+    /// Reads the server's session state through the hook. Null when the hook is
+    /// unavailable or the read fails, so callers can fail open.
+    /// </summary>
+    public virtual async Task<HookSessionState?> ReadHookSessionAsync()
+    {
+        var processId = GetActualServerPid();
+        if (processId == null || _serverInputWriter is not IHookSessionReader reader)
+        {
+            return null;
+        }
+
+        try
+        {
+            var result = await reader.ReadSessionStateAsync(processId.Value);
+            return result.Success ? result.Session : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Hook session read failed");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Reads module-relative memory from the running server through the hook.
     /// Returns null when the hook is unavailable, so callers can fail open rather
     /// than treating "cannot read" as a definite state.
