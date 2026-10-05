@@ -1476,6 +1476,35 @@ public class ServerManagerTests
         Assert.NotEqual(selection, serverManager.CurrentSelectionId);
     }
 
+    // Starting attaches the new process too, so it waits for a running injection (here past
+    // the test's short wait) instead of switching the attachment under it.
+    [Fact]
+    public async Task Start_WhileAnInjectionRuns_WaitsForIt()
+    {
+        _mockConfiguration.Setup(c => c["WreckfestServer:SupportedBuild"])
+            .Returns("1.308438");
+        var pid = Process.GetCurrentProcess().Id;
+        var release = new TaskCompletionSource<(bool, string)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        injectedHookReader.Setup(r => r.InjectAsync(pid)).Returns(release.Task);
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+        serverManager.AttachToExistingProcess(pid);
+
+        var injecting = serverManager.InjectConsoleHookAsync(pid);
+        Assert.True(serverManager.IsInjectionInProgress);
+        var during = await serverManager.StartServerAsync();
+
+        Assert.False(during.Success);
+        Assert.Contains("injection is in progress", during.Message);
+
+        release.SetResult((true, "injected"));
+        Assert.True((await injecting).Success);
+
+        // Through the gate now: refused for its own reason, the attached process running.
+        var after = await serverManager.StartServerAsync();
+        Assert.DoesNotContain("injection is in progress", after.Message);
+    }
+
     private sealed class TestServerManager : ServerManager
     {
         private readonly string? _build;
@@ -1515,6 +1544,8 @@ public class ServerManagerTests
         protected override bool HasServerWindow(Process process) => ++WindowChecks > ChecksWithoutWindow;
 
         protected override TimeSpan ServerWindowRetryDelay => TimeSpan.Zero;
+
+        protected override TimeSpan AttachmentGateWait => TimeSpan.FromMilliseconds(50);
     }
 
     /// <summary>

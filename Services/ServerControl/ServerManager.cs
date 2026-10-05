@@ -307,100 +307,113 @@ public class ServerManager
     {
         Process? process = null;
 
-        lock (_lock)
+        // Starting attaches the new process: not while an injection or another attach runs.
+        if (!await _attachmentGate.WaitAsync(AttachmentGateWait))
         {
-            if (IsRunning)
-            {
-                return (false, "Server is already running");
-            }
+            return (false, BusyMessage);
+        }
 
-            try
+        try
+        {
+            lock (_lock)
             {
-                var server = _server.CurrentValue;
-                var serverPath = server.ServerPath;
-                // This controller's marker goes on every server it starts, so the server can
-                // be told apart from other controllers' in the process list (#201).
-                var serverArguments = server.ServerArguments ?? "";
-                if (_instance is not null)
+                if (IsRunning)
                 {
-                    if (!_instance.TryAddTo(serverArguments, out var marked))
+                    return (false, "Server is already running");
+                }
+
+                try
+                {
+                    var server = _server.CurrentValue;
+                    var serverPath = server.ServerPath;
+                    // This controller's marker goes on every server it starts, so the server can
+                    // be told apart from other controllers' in the process list (#201).
+                    var serverArguments = server.ServerArguments ?? "";
+                    if (_instance is not null)
                     {
-                        return (false, "The Server Arguments end inside an unclosed quote. Fix them in the desktop app's Configuration.");
+                        if (!_instance.TryAddTo(serverArguments, out var marked))
+                        {
+                            return (false, "The Server Arguments end inside an unclosed quote. Fix them in the desktop app's Configuration.");
+                        }
+
+                        serverArguments = marked;
+                    }
+                    var workingDirectory = server.WorkingDirectory;
+
+                    if (string.IsNullOrEmpty(serverPath) || !File.Exists(serverPath))
+                    {
+                        // The path stays in the log: the web never sees local paths (#153).
+                        _logger.LogWarning("Server executable not found at {ServerPath}", serverPath);
+                        return (false, "The server executable was not found. Check the server path in the desktop app's settings.");
                     }
 
-                    serverArguments = marked;
-                }
-                var workingDirectory = server.WorkingDirectory;
-
-                if (string.IsNullOrEmpty(serverPath) || !File.Exists(serverPath))
-                {
-                    // The path stays in the log: the web never sees local paths (#153).
-                    _logger.LogWarning("Server executable not found at {ServerPath}", serverPath);
-                    return (false, "The server executable was not found. Check the server path in the desktop app's settings.");
-                }
-
-                // Resolve config file path if it contains server_config reference
-                if (!string.IsNullOrEmpty(serverArguments) && serverArguments.Contains("server_config="))
-                {
-                    var configMatch = System.Text.RegularExpressions.Regex.Match(serverArguments, @"server_config=([^\s]+)");
-                    if (configMatch.Success)
+                    // Resolve config file path if it contains server_config reference
+                    if (!string.IsNullOrEmpty(serverArguments) && serverArguments.Contains("server_config="))
                     {
-                        var configPath = configMatch.Groups[1].Value;
-                        // If not an absolute path, make it relative to working directory
-                        if (!Path.IsPathRooted(configPath) && !string.IsNullOrEmpty(workingDirectory))
+                        var configMatch = System.Text.RegularExpressions.Regex.Match(serverArguments, @"server_config=([^\s]+)");
+                        if (configMatch.Success)
                         {
-                            var fullConfigPath = Path.Combine(workingDirectory, configPath);
-                            if (File.Exists(fullConfigPath))
+                            var configPath = configMatch.Groups[1].Value;
+                            // If not an absolute path, make it relative to working directory
+                            if (!Path.IsPathRooted(configPath) && !string.IsNullOrEmpty(workingDirectory))
                             {
-                                _logger.LogInformation("Using config file: {ConfigPath}", fullConfigPath);
-                            }
-                            else
-                            {
-                                _logger.LogWarning("Config file not found at: {ConfigPath}", fullConfigPath);
+                                var fullConfigPath = Path.Combine(workingDirectory, configPath);
+                                if (File.Exists(fullConfigPath))
+                                {
+                                    _logger.LogInformation("Using config file: {ConfigPath}", fullConfigPath);
+                                }
+                                else
+                                {
+                                    _logger.LogWarning("Config file not found at: {ConfigPath}", fullConfigPath);
+                                }
                             }
                         }
                     }
-                }
 
-                _logger.LogInformation("Starting server: {Path} {Args} in directory {WorkingDir}",
-                    serverPath, serverArguments, workingDirectory ?? "(default)");
+                    _logger.LogInformation("Starting server: {Path} {Args} in directory {WorkingDir}",
+                        serverPath, serverArguments, workingDirectory ?? "(default)");
 
-                process = new Process
-                {
-                    StartInfo = new ProcessStartInfo
+                    process = new Process
                     {
-                        FileName = serverPath,
-                        Arguments = serverArguments,
-                        WorkingDirectory = workingDirectory,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    }
-                };
+                        StartInfo = new ProcessStartInfo
+                        {
+                            FileName = serverPath,
+                            Arguments = serverArguments,
+                            WorkingDirectory = workingDirectory,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
 
-                process.Start();
+                    process.Start();
 
-                _logger.LogInformation("Process started with PID: {PID}", process.Id);
+                    _logger.LogInformation("Process started with PID: {PID}", process.Id);
 
-                // Monitor process exit
-                process.EnableRaisingEvents = true;
-                process.Exited += (sender, e) =>
+                    // Monitor process exit
+                    process.EnableRaisingEvents = true;
+                    process.Exited += (sender, e) =>
+                    {
+                        _logger.LogWarning("Server process exited. Exit code: {ExitCode}", process.ExitCode);
+                    };
+
+                    _serverProcess = process;
+                    SetAttachedProcess(process.Id);
+                    _startTime = DateTime.UtcNow;
+                    ProcessIdChanged?.Invoke(process.Id);
+
+                    // Start monitoring the server output (console or log file)
+                    StartOutputMonitoring();
+                }
+                catch (Exception ex)
                 {
-                    _logger.LogWarning("Server process exited. Exit code: {ExitCode}", process.ExitCode);
-                };
-
-                _serverProcess = process;
-                SetAttachedProcess(process.Id);
-                _startTime = DateTime.UtcNow;
-                ProcessIdChanged?.Invoke(process.Id);
-
-                // Start monitoring the server output (console or log file)
-                StartOutputMonitoring();
+                    _logger.LogError(ex, "Failed to start server");
+                    return (false, "The server could not be started. The desktop app's log has the details.");
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to start server");
-                return (false, "The server could not be started. The desktop app's log has the details.");
-            }
+        }
+        finally
+        {
+            _attachmentGate.Release();
         }
 
         // Check if process exits immediately — done outside the lock to avoid blocking callers during the wait
@@ -766,13 +779,25 @@ public class ServerManager
                 return (false, "Server restart failed: replacement process changed during detection.");
 
             var newPid = replacement.ProcessId;
-            lock (_lock)
+
+            // A manual INJECT into the old process may still be running; let it finish
+            // rather than switch the attachment under it.
+            if (!await _attachmentGate.WaitAsync(AttachmentGateWait))
+                return (false, "Server restart failed: a hook injection did not finish; replacement was not attached.");
+            try
             {
-                if (_attachmentSelectionId != selectionId)
-                    return (false, "Attachment changed during restart; replacement was not attached.");
-                StopHookOutputListener();
-                ClearProcessScopedState();
-                SetAttachedProcess(newPid);
+                lock (_lock)
+                {
+                    if (_attachmentSelectionId != selectionId)
+                        return (false, "Attachment changed during restart; replacement was not attached.");
+                    StopHookOutputListener();
+                    ClearProcessScopedState();
+                    SetAttachedProcess(newPid);
+                }
+            }
+            finally
+            {
+                _attachmentGate.Release();
             }
             ProcessIdChanged?.Invoke(newPid);
 
@@ -1355,12 +1380,20 @@ public class ServerManager
     public long CurrentSelectionId => Interlocked.Read(ref _attachmentSelectionId);
 
     /// <summary>
-    /// Why the attachment may not change now, or null. Called under <c>_lock</c>. An
-    /// injection checks its target after taking its flag under the same lock, so refusing
-    /// here while one runs means the hook always goes into the process that is attached.
+    /// One at a time: an injection, or a change of attachment (attach, start, restart), from
+    /// the moment it begins until it is done - side effects included. An injection checks its
+    /// target and loads the DLL inside it, so the process it checked is still the attached one
+    /// when the DLL goes in (#201).
     /// </summary>
-    private string? AttachBlockedByInjection() =>
-        IsInjectionInProgress ? "A hook injection is in progress; try again in a moment." : null;
+    private readonly SemaphoreSlim _attachmentGate = new(1, 1);
+
+    private const string BusyMessage = "A hook injection is in progress, or another attach; try again in a moment.";
+
+    /// <summary>
+    /// How long a start or restart waits for the gate. An injection takes at most about 30
+    /// seconds: up to 20 for the server's window, 10 for the DLL to load.
+    /// </summary>
+    protected virtual TimeSpan AttachmentGateWait => TimeSpan.FromSeconds(60);
 
     /// <summary>
     /// The process with a native handle opened and held (Process.SafeHandle keeps it until
@@ -1390,6 +1423,11 @@ public class ServerManager
     private (bool Success, string Message) AttachToExistingProcess(Process process, long? onlyIfSelection = null)
     {
         var pid = process.Id;
+        if (!_attachmentGate.Wait(0))
+        {
+            return (false, BusyMessage);
+        }
+
         try
         {
             if (process.HasExited)
@@ -1403,11 +1441,6 @@ public class ServerManager
             // to this one.
             lock (_lock)
             {
-                if (AttachBlockedByInjection() is { } blocked)
-                {
-                    return (false, blocked);
-                }
-
                 if (onlyIfSelection is { } expected && _attachmentSelectionId != expected)
                 {
                     return (false, "The attachment changed meanwhile; left as it is.");
@@ -1433,6 +1466,10 @@ public class ServerManager
         {
             _logger.LogError(ex, "Failed to attach to process {PID}", pid);
             return (false, $"Process {pid} could not be attached to; see the desktop app's log.");
+        }
+        finally
+        {
+            _attachmentGate.Release();
         }
     }
 
@@ -2325,16 +2362,16 @@ public class ServerManager
     /// </summary>
     public async Task<(bool Success, string Message)> AttachToProcessAsync(int processId)
     {
+        // Held for the whole attach: it stops monitoring, and maybe the started server,
+        // before the attachment itself changes.
+        if (!_attachmentGate.Wait(0))
+        {
+            return (false, BusyMessage);
+        }
+
         try
         {
             _logger.LogInformation($"Attempting to attach to process {processId}");
-
-            // Checked again under the lock below, which is what decides. Checked here too
-            // because this path stops monitoring, and maybe the started server, before that.
-            if (IsInjectionInProgress)
-            {
-                return (false, "A hook injection is in progress; try again in a moment.");
-            }
 
             // Check if process exists and is a Wreckfest server
             var process = Process.GetProcessById(processId);
@@ -2369,11 +2406,6 @@ public class ServerManager
 
             lock (_lock)
             {
-                if (AttachBlockedByInjection() is { } blocked)
-                {
-                    return (false, blocked);
-                }
-
                 _serverProcess = process;
                 SetAttachedProcess(processId);
                 _startTime = process.StartTime.ToUniversalTime();
@@ -2422,23 +2454,16 @@ public class ServerManager
     {
         _logger.LogInformation("Console hook injection requested for process {ProcessId}", processId);
 
-        // One at a time, from the button and the API alike. A second injection would
-        // restart the hook listener under the first one.
-        // Taken under _lock, which every attachment change also takes and which refuses while
-        // this is set: the target check below then sees the attachment that will still hold
-        // when the DLL goes in.
-        bool claimed;
-        lock (_lock)
+        // One at a time, from the button and the API alike: a second injection would restart
+        // the hook listener under the first one. And no attachment change meanwhile, so the
+        // process the target check passes is the one the DLL goes into.
+        if (!_attachmentGate.Wait(0))
         {
-            claimed = Interlocked.CompareExchange(ref _injectionInProgress, 1, 0) == 0;
+            _logger.LogWarning("Console hook injection into process {ProcessId} refused: another injection or an attach is in progress", processId);
+            return (false, "Injection refused: another injection or an attach is already in progress.");
         }
 
-        if (!claimed)
-        {
-            _logger.LogWarning("Console hook injection into process {ProcessId} refused: another is in progress", processId);
-            return (false, "Injection refused: another injection is already in progress.");
-        }
-
+        Volatile.Write(ref _injectionInProgress, 1);
         try
         {
             return await InjectConsoleHookCoreAsync(processId);
@@ -2446,6 +2471,7 @@ public class ServerManager
         finally
         {
             Volatile.Write(ref _injectionInProgress, 0);
+            _attachmentGate.Release();
         }
     }
 
