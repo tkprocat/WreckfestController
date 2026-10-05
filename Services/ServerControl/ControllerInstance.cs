@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace WreckfestController.Services.ServerControl;
 
@@ -51,16 +50,21 @@ public sealed class ControllerInstance
     }
 
     /// <summary>
-    /// <paramref name="arguments"/> with this controller's marker added, replacing any marker
-    /// already there, so a copied argument line cannot carry another controller's id.
+    /// <paramref name="arguments"/> with this controller's marker appended. The arguments
+    /// themselves are left exactly as configured: rewriting them would mean re-quoting, and a
+    /// quoted path can contain anything. A marker already in them does no harm, because the
+    /// last marker on a command line is the one that counts
+    /// (<see cref="WindowsCommandLine.ControllerMarker"/>).
     /// </summary>
-    public string AddTo(string? arguments)
+    /// <returns>False when the arguments end inside an unclosed quote, which would swallow
+    /// the marker into the last argument.</returns>
+    public bool TryAddTo(string? arguments, out string withMarker)
     {
-        var rest = ExistingMarker.Replace(arguments ?? string.Empty, string.Empty).Trim();
-        return rest.Length == 0 ? Argument : $"{rest} {Argument}";
-    }
+        var trimmed = (arguments ?? string.Empty).Trim();
+        withMarker = trimmed.Length == 0 ? Argument : $"{trimmed} {Argument}";
 
-    private static readonly Regex ExistingMarker = new(
-        @"(?<!\S)" + Regex.Escape(MarkerName) + @"=\S*",
-        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        // Split as the server will: the marker must come out as its own last argument.
+        var parsed = WindowsCommandLine.Split("x " + withMarker);
+        return parsed.Count > 1 && parsed[^1] == Argument;
+    }
 }

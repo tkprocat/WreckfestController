@@ -1447,6 +1447,35 @@ public class ServerManagerTests
             build);
     }
 
+    // #201 review: a check-then-inject could put the hook into a process the controller had
+    // just been switched away from. While an injection runs, the attachment cannot change.
+    [Fact]
+    public async Task Attach_WhileAnInjectionRuns_IsRefused_AndWorksAfterwards()
+    {
+        _mockConfiguration.Setup(c => c["WreckfestServer:SupportedBuild"])
+            .Returns("1.308438");
+        var pid = Process.GetCurrentProcess().Id;
+        var release = new TaskCompletionSource<(bool, string)>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        injectedHookReader.Setup(r => r.InjectAsync(pid)).Returns(release.Task);
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+        serverManager.AttachToExistingProcess(pid);
+        var selection = serverManager.CurrentSelectionId;
+
+        var injecting = serverManager.InjectConsoleHookAsync(pid);
+        Assert.True(serverManager.IsInjectionInProgress);
+        var during = serverManager.AttachToExistingProcess(pid);
+
+        Assert.False(during.Success);
+        Assert.Contains("injection is in progress", during.Message);
+        Assert.Equal(selection, serverManager.CurrentSelectionId);
+
+        release.SetResult((true, "injected"));
+        Assert.True((await injecting).Success);
+        Assert.True(serverManager.AttachToExistingProcess(pid).Success);
+        Assert.NotEqual(selection, serverManager.CurrentSelectionId);
+    }
+
     private sealed class TestServerManager : ServerManager
     {
         private readonly string? _build;

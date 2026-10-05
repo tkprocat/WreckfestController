@@ -49,8 +49,9 @@ public static class WindowsCommandLine
 
     /// <summary>
     /// The controller id in a <c>-wfc_controller=&lt;id&gt;</c> argument
-    /// (<see cref="ControllerInstance"/>), or null when the command line has none. The first
-    /// one counts.
+    /// (<see cref="ControllerInstance"/>), or null when the command line has none. The last
+    /// one counts: the controller appends its own after the configured arguments, which may
+    /// already contain one.
     /// </summary>
     public static string? ControllerMarker(string? commandLine)
     {
@@ -59,7 +60,7 @@ public static class WindowsCommandLine
             .Skip(1)
             .Where(argument => argument.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
             .Select(argument => argument[prefix.Length..])
-            .FirstOrDefault();
+            .LastOrDefault();
     }
 
     [DllImport("shell32.dll", SetLastError = true)]

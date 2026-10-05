@@ -47,25 +47,39 @@ public class ControllerInstanceTests
     [Theory]
     [InlineData("-s server_config=server_config.cfg", "-s server_config=server_config.cfg {0}")]
     [InlineData("  -s server_config=a.cfg  ", "-s server_config=a.cfg {0}")]
-    [InlineData("-s server_config=a.cfg -wfc_controller=deadbeef", "-s server_config=a.cfg {0}")]
-    [InlineData("-WFC_CONTROLLER=deadbeef -s server_config=a.cfg", "-s server_config=a.cfg {0}")]
-    [InlineData("-s server_config=x-wfc_controller=1.cfg", "-s server_config=x-wfc_controller=1.cfg {0}")]
+    [InlineData("-s server_config=a.cfg -wfc_controller=deadbeef", "-s server_config=a.cfg -wfc_controller=deadbeef {0}")]
+    [InlineData("-s \"-wfc_controller=deadbeef\"", "-s \"-wfc_controller=deadbeef\" {0}")]
+    [InlineData("-s --save-dir=\"C:\\Servers -wfc_controller=copy\"", "-s --save-dir=\"C:\\Servers -wfc_controller=copy\" {0}")]
     [InlineData("", "{0}")]
     [InlineData(null, "{0}")]
-    public void AddTo_AppendsTheMarker_ReplacingAnyThere(string? arguments, string expected)
+    public void TryAddTo_AppendsTheMarker_LeavingTheArgumentsAsTheyAre(string? arguments, string expected)
     {
         var instance = new ControllerInstance(@"C:\Data\controller.db");
 
-        Assert.Equal(string.Format(expected, instance.Argument), instance.AddTo(arguments));
+        Assert.True(instance.TryAddTo(arguments, out var withMarker));
+        Assert.Equal(string.Format(expected, instance.Argument), withMarker);
     }
 
-    [Fact]
-    public void AddTo_WhatItAdds_IsReadBackAsThisController()
+    [Theory]
+    [InlineData("-s server_config=a.cfg -wfc_controller=deadbeef")]
+    [InlineData("-s \"-wfc_controller=deadbeef\"")]
+    [InlineData("-s --save-dir=\"C:\\Servers -wfc_controller=copy\"")]
+    public void TryAddTo_WhatItAdds_IsReadBackAsThisController(string arguments)
     {
         var instance = new ControllerInstance(@"C:\Data\controller.db");
-        var commandLine = @"""C:\Servers\Wreckfest_x64.exe"" " + instance.AddTo("-s server_config=a.cfg");
+        Assert.True(instance.TryAddTo(arguments, out var withMarker));
+
+        var commandLine = @"""C:\Servers\Wreckfest_x64.exe"" " + withMarker;
 
         Assert.Equal(instance.Id, WindowsCommandLine.ControllerMarker(commandLine));
         Assert.True(WindowsCommandLine.HasServerFlag(commandLine));
+    }
+
+    [Fact]
+    public void TryAddTo_RefusesArgumentsEndingInsideAQuote()
+    {
+        var instance = new ControllerInstance(@"C:\Data\controller.db");
+
+        Assert.False(instance.TryAddTo("-s --save-dir=\"C:\\Servers", out _));
     }
 }

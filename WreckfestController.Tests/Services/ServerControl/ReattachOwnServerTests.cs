@@ -36,7 +36,7 @@ public class ReattachOwnServerTests
         {
             CallBase = true,
         };
-        _server.Setup(s => s.AttachToConfiguredServer(It.IsAny<int>())).Returns((true, "Attached"));
+        _server.Setup(s => s.AttachToConfiguredServer(It.IsAny<int>(), It.IsAny<long?>())).Returns((true, "Attached"));
         _server.Setup(s => s.InjectConsoleHookAsync(It.IsAny<int>())).ReturnsAsync((true, "Injected"));
     }
 
@@ -57,8 +57,9 @@ public class ReattachOwnServerTests
         var (success, message) = await _server.Object.ReattachOwnServerAsync();
 
         Assert.True(success, message);
-        _server.Verify(s => s.AttachToConfiguredServer(12), Times.Once);
-        _server.Verify(s => s.AttachToConfiguredServer(It.Is<int>(pid => pid != 12)), Times.Never);
+        // Conditional on the selection read before the scan, so an admin's attach meanwhile wins.
+        _server.Verify(s => s.AttachToConfiguredServer(12, _server.Object.CurrentSelectionId), Times.Once);
+        _server.Verify(s => s.AttachToConfiguredServer(It.Is<int>(pid => pid != 12), It.IsAny<long?>()), Times.Never);
         _server.Verify(s => s.InjectConsoleHookAsync(12), Times.Once);
         Assert.Contains("Hook injected", message);
     }
@@ -71,7 +72,7 @@ public class ReattachOwnServerTests
         var (success, _) = await _server.Object.ReattachOwnServerAsync();
 
         Assert.False(success);
-        _server.Verify(s => s.AttachToConfiguredServer(It.IsAny<int>()), Times.Never);
+        _server.Verify(s => s.AttachToConfiguredServer(It.IsAny<int>(), It.IsAny<long?>()), Times.Never);
     }
 
     [Fact]
@@ -83,7 +84,7 @@ public class ReattachOwnServerTests
 
         Assert.False(success);
         Assert.Contains("12, 13", message);
-        _server.Verify(s => s.AttachToConfiguredServer(It.IsAny<int>()), Times.Never);
+        _server.Verify(s => s.AttachToConfiguredServer(It.IsAny<int>(), It.IsAny<long?>()), Times.Never);
     }
 
     [Fact]
@@ -94,7 +95,7 @@ public class ReattachOwnServerTests
         var (success, _) = await _server.Object.ReattachOwnServerAsync();
 
         Assert.False(success);
-        _server.Verify(s => s.AttachToConfiguredServer(It.IsAny<int>()), Times.Never);
+        _server.Verify(s => s.AttachToConfiguredServer(It.IsAny<int>(), It.IsAny<long?>()), Times.Never);
     }
 
     [Fact]
@@ -129,7 +130,7 @@ public class ReattachOwnServerTests
     public async Task FailedAttach_DoesNotInject()
     {
         Running(Server(12, ServerOwner.ThisController));
-        _server.Setup(s => s.AttachToConfiguredServer(12)).Returns((false, "Process 12 has exited"));
+        _server.Setup(s => s.AttachToConfiguredServer(12, It.IsAny<long?>())).Returns((false, "The attachment changed meanwhile; left as it is."));
 
         var (success, _) = await _server.Object.ReattachOwnServerAsync();
 

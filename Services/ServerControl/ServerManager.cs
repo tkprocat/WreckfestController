@@ -320,7 +320,16 @@ public class ServerManager
                 var serverPath = server.ServerPath;
                 // This controller's marker goes on every server it starts, so the server can
                 // be told apart from other controllers' in the process list (#201).
-                var serverArguments = _instance?.AddTo(server.ServerArguments) ?? server.ServerArguments ?? "";
+                var serverArguments = server.ServerArguments ?? "";
+                if (_instance is not null)
+                {
+                    if (!_instance.TryAddTo(serverArguments, out var marked))
+                    {
+                        return (false, "The Server Arguments end inside an unclosed quote. Fix them in the desktop app's Configuration.");
+                    }
+
+                    serverArguments = marked;
+                }
                 var workingDirectory = server.WorkingDirectory;
 
                 if (string.IsNullOrEmpty(serverPath) || !File.Exists(serverPath))
@@ -826,6 +835,9 @@ public class ServerManager
             return (false, "This controller has no id, so it cannot recognise its server.");
         }
 
+        // Read before the scan, which takes a while: an admin who attaches or starts a server
+        // meanwhile wins, and this attach then backs off.
+        var selection = CurrentSelectionId;
         if (AttachedProcessId is { } attached)
         {
             return (false, $"Already attached to process {attached}.");
@@ -845,7 +857,7 @@ public class ServerManager
         }
 
         var pid = own[0];
-        var attach = AttachToConfiguredServer(pid);
+        var attach = AttachToConfiguredServer(pid, selection);
         if (!attach.Success)
         {
             _logger.LogWarning("Could not reattach to this controller's server, process {ProcessId}: {Message}", pid, attach.Message);
@@ -898,6 +910,9 @@ public class ServerManager
     /// load, and the retry then finds it loaded. A failure never fails the start: the
     /// returned text says the hook is missing, and the manual INJECT stays available.
     /// </summary>
+    /// <summary>Ends a start or restart message when the automatic inject failed.</summary>
+    public const string HookMissingNote = "The hook could not be injected automatically; use INJECT.";
+
     private async Task<string> InjectAutomaticallyAsync(int processId)
     {
         const int attempts = 2;
@@ -917,7 +932,7 @@ public class ServerManager
                 message);
         }
 
-        return "The hook could not be injected automatically; use INJECT.";
+        return HookMissingNote;
     }
 
     /// <summary>
@@ -1314,7 +1329,15 @@ public class ServerManager
     /// process that passed the check is the one attached - not another that took its PID
     /// in between.
     /// </summary>
-    public virtual (bool Success, string Message) AttachToConfiguredServer(int pid)
+    public virtual (bool Success, string Message) AttachToConfiguredServer(int pid) =>
+        AttachToConfiguredServer(pid, onlyIfSelection: null);
+
+    /// <param name="onlyIfSelection">
+    /// When set, attach only if no attachment was chosen since this
+    /// <see cref="CurrentSelectionId"/> was read - checked under the lock that every
+    /// attachment change takes - so a background attach never overrides an admin's choice.
+    /// </param>
+    public virtual (bool Success, string Message) AttachToConfiguredServer(int pid, long? onlyIfSelection)
     {
         if (OpenHeld(pid) is not { } process)
         {
@@ -1324,9 +1347,20 @@ public class ServerManager
         using (process)
         {
             var check = CheckConfiguredServer(process);
-            return check.Allowed ? AttachToExistingProcess(process) : (false, check.Reason);
+            return check.Allowed ? AttachToExistingProcess(process, onlyIfSelection) : (false, check.Reason);
         }
     }
+
+    /// <summary>Changes whenever an attachment is chosen: an attach, a start or a restart.</summary>
+    public long CurrentSelectionId => Interlocked.Read(ref _attachmentSelectionId);
+
+    /// <summary>
+    /// Why the attachment may not change now, or null. Called under <c>_lock</c>. An
+    /// injection checks its target after taking its flag under the same lock, so refusing
+    /// here while one runs means the hook always goes into the process that is attached.
+    /// </summary>
+    private string? AttachBlockedByInjection() =>
+        IsInjectionInProgress ? "A hook injection is in progress; try again in a moment." : null;
 
     /// <summary>
     /// The process with a native handle opened and held (Process.SafeHandle keeps it until
@@ -1353,7 +1387,7 @@ public class ServerManager
     private static string NotAnInspectableServer(int pid) =>
         $"Process {pid} is not a running Wreckfest dedicated server that the controller can inspect.";
 
-    private (bool Success, string Message) AttachToExistingProcess(Process process)
+    private (bool Success, string Message) AttachToExistingProcess(Process process, long? onlyIfSelection = null)
     {
         var pid = process.Id;
         try
@@ -1369,6 +1403,16 @@ public class ServerManager
             // to this one.
             lock (_lock)
             {
+                if (AttachBlockedByInjection() is { } blocked)
+                {
+                    return (false, blocked);
+                }
+
+                if (onlyIfSelection is { } expected && _attachmentSelectionId != expected)
+                {
+                    return (false, "The attachment changed meanwhile; left as it is.");
+                }
+
                 StopOutputMonitoring();
                 StopHookOutputListener();
                 ClearProcessScopedState();
@@ -2285,6 +2329,13 @@ public class ServerManager
         {
             _logger.LogInformation($"Attempting to attach to process {processId}");
 
+            // Checked again under the lock below, which is what decides. Checked here too
+            // because this path stops monitoring, and maybe the started server, before that.
+            if (IsInjectionInProgress)
+            {
+                return (false, "A hook injection is in progress; try again in a moment.");
+            }
+
             // Check if process exists and is a Wreckfest server
             var process = Process.GetProcessById(processId);
             if (process == null || process.HasExited)
@@ -2318,6 +2369,11 @@ public class ServerManager
 
             lock (_lock)
             {
+                if (AttachBlockedByInjection() is { } blocked)
+                {
+                    return (false, blocked);
+                }
+
                 _serverProcess = process;
                 SetAttachedProcess(processId);
                 _startTime = process.StartTime.ToUniversalTime();
@@ -2368,7 +2424,16 @@ public class ServerManager
 
         // One at a time, from the button and the API alike. A second injection would
         // restart the hook listener under the first one.
-        if (Interlocked.CompareExchange(ref _injectionInProgress, 1, 0) != 0)
+        // Taken under _lock, which every attachment change also takes and which refuses while
+        // this is set: the target check below then sees the attachment that will still hold
+        // when the DLL goes in.
+        bool claimed;
+        lock (_lock)
+        {
+            claimed = Interlocked.CompareExchange(ref _injectionInProgress, 1, 0) == 0;
+        }
+
+        if (!claimed)
         {
             _logger.LogWarning("Console hook injection into process {ProcessId} refused: another is in progress", processId);
             return (false, "Injection refused: another injection is already in progress.");
