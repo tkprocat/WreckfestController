@@ -151,13 +151,21 @@ public class Cup : IVersioned
     /// schedule while it runs moves later occurrences, not this one. Null: no end.
     /// </summary>
     public DateTime? CurrentEnd { get; set; }
+}
 
-    /// <summary>
-    /// UTC. Set when a run with cup points ended and they still have to be turned off at
-    /// the next lobby; cleared once done, or when another cup has taken over the server.
-    /// Kept in the database so a controller restart does not leave cup points on.
-    /// </summary>
-    public DateTime? PointsOffPendingSince { get; set; }
+/// <summary>
+/// An ended run whose cup points still have to be turned off at the next lobby. Its own
+/// table, not a column of the cup, so deleting the cup does not lose it. Removed once done,
+/// or by any activation: the activated cup's settings are what the server runs then.
+/// </summary>
+public class CupPointsOff
+{
+    public int Id { get; set; }
+
+    public string CupName { get; set; } = string.Empty;
+
+    /// <summary>UTC. When the run ended.</summary>
+    public DateTime Since { get; set; }
 }
 
 /// <summary>Where the active cup is in its occurrence.</summary>
@@ -166,6 +174,13 @@ public enum CupPhase
 {
     /// <summary>Restarted into the cup's settings; the start is still to come.</summary>
     Warmup,
+
+    /// <summary>
+    /// The start is under way: claimed, but cup points not yet reset (no hook at that moment,
+    /// say). Kept so a controller restart picks it up. Counts as the warmup everywhere it is
+    /// shown or recorded: the warmup's points are still on the board.
+    /// </summary>
+    Starting,
 
     /// <summary>Started: cup points reset, the cup counts.</summary>
     Running,

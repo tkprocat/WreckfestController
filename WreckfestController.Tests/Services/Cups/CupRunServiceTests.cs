@@ -219,11 +219,13 @@ public sealed class CupRunServiceTests : IDisposable
 
         await _runs.TickAsync();
 
-        // Started (claimed) at once; the reset and the announcement wait for the retry.
-        Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
+        // Claimed as starting; the cup counts only once the reset has gone through.
+        Assert.Equal(CupPhase.Starting, (await _db.ReloadAsync(cup.Id)).Phase);
         Assert.Empty(_sent);
+        _publisher.Verify(p => p.CupStartedAsync(It.IsAny<int>(), It.IsAny<string>()), Times.Never);
 
         await _runs.TickAsync();
+        Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
         Assert.Equal(["/message Friday Derby has started - good luck!"], _sent);
     }
 
@@ -293,7 +295,7 @@ public sealed class CupRunServiceTests : IDisposable
 
         Assert.Equal("session_mode=normal", _sent[^1]);
         Assert.Single(_written);
-        Assert.Null((await _db.ReloadAsync(cup.Id)).PointsOffPendingSince);
+        Assert.Empty(await _db.Store.PendingPointsOffAsync(Ct));
     }
 
     // #206 review: a run activated after its start (a restart that ran long, or the scheduler
@@ -334,13 +336,13 @@ public sealed class CupRunServiceTests : IDisposable
         _session = ServerSessionPhase.Racing;
         At(end);
         await _runs.TickAsync();
-        Assert.NotNull((await _db.ReloadAsync(cup.Id)).PointsOffPendingSince);
+        Assert.Single(await _db.Store.PendingPointsOffAsync(Ct));
 
         _session = ServerSessionPhase.Lobby;
         await NewService().TickAsync();
 
         Assert.Equal("session_mode=normal", _sent[^1]);
-        Assert.Null((await _db.ReloadAsync(cup.Id)).PointsOffPendingSince);
+        Assert.Empty(await _db.Store.PendingPointsOffAsync(Ct));
     }
 
     // #206 review: once another cup runs the server, the ended cup's points-off would turn
@@ -360,7 +362,7 @@ public sealed class CupRunServiceTests : IDisposable
 
         Assert.DoesNotContain("session_mode=normal", _sent);
         Assert.Empty(_written);
-        Assert.Null((await _db.ReloadAsync(cup.Id)).PointsOffPendingSince);
+        Assert.Empty(await _db.Store.PendingPointsOffAsync(Ct));
     }
 
     // #206 review: a cup that keeps the server's own session mode ran with whatever the
@@ -421,6 +423,96 @@ public sealed class CupRunServiceTests : IDisposable
         Assert.Empty(_sent);
         Assert.True((await _db.ReloadAsync(cup.Id)).IsActive);
     }
+
+    // #206 review: a reset retried after a race began would wipe that race's points; the
+    // retry waits for a lobby, as the start did.
+    [Fact]
+    public async Task AResetRetry_WaitsForTheLobby()
+    {
+        var (cup, start, _) = await ActiveAsync();
+        _server.SetupSequence(s => s.SendCommandAsync("/cupreset"))
+            .ReturnsAsync((false, "No hook"))
+            .ReturnsAsync((true, "OK dispatched"));
+        At(start);
+        await _runs.TickAsync();
+
+        _session = ServerSessionPhase.Racing;
+        At(start.AddMinutes(2));
+        await _runs.TickAsync();
+        _server.Verify(s => s.SendCommandAsync("/cupreset"), Times.Once);
+        Assert.Equal(CupPhase.Starting, (await _db.ReloadAsync(cup.Id)).Phase);
+
+        _session = ServerSessionPhase.Lobby;
+        await _runs.TickAsync();
+        _server.Verify(s => s.SendCommandAsync("/cupreset"), Times.Exactly(2));
+        Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
+    }
+
+    // #206 review: a start whose reset failed is kept in the database, so a controller
+    // restart retries it instead of leaving the warmup's points on the board.
+    [Fact]
+    public async Task AStartWhoseResetFailed_SurvivesAControllerRestart()
+    {
+        var (cup, start, _) = await ActiveAsync();
+        _server.SetupSequence(s => s.SendCommandAsync("/cupreset"))
+            .ReturnsAsync((false, "No hook"))
+            .ReturnsAsync((true, "OK dispatched"));
+        At(start);
+        await _runs.TickAsync();
+
+        await NewService().TickAsync();
+
+        Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
+        Assert.Equal(["/message Friday Derby has started - good luck!"], _sent);
+        _publisher.Verify(p => p.CupStartedAsync(cup.Id, "Friday Derby"), Times.Once);
+    }
+
+    // #206 review: the pending points-off is not a column of the cup, so deleting the ended
+    // cup before the lobby does not leave cup points on.
+    [Fact]
+    public async Task DeletingAnEndedCup_KeepsItsPointsOff()
+    {
+        var (cup, _, end) = await ActiveAsync(CupPhase.Running);
+        _session = ServerSessionPhase.Racing;
+        At(end);
+        await _runs.TickAsync();
+
+        var ended = await _db.ReloadAsync(cup.Id);
+        Assert.Equal(CupWriteStatus.Saved, (await _db.Store.DeleteAsync(cup.Id, ended.Version, Ct)).Status);
+        _session = ServerSessionPhase.Lobby;
+        await _runs.TickAsync();
+
+        Assert.Equal("session_mode=normal", _sent[^1]);
+        Assert.Empty(await _db.Store.PendingPointsOffAsync(Ct));
+    }
+
+    // #206 review: a check never runs while an activation (writing its settings) or a delete
+    // holds the gate, so neither can come between what it reads and what it sends.
+    [Fact]
+    public async Task WhileTheGateIsHeld_ACheckDoesNothing()
+    {
+        var (_, start, _) = await ActiveAsync();
+        At(start);
+
+        await _db.Store.RunGate.WaitAsync(Ct);
+        try
+        {
+            await _runs.TickAsync();
+        }
+        finally
+        {
+            _db.Store.RunGate.Release();
+        }
+
+        Assert.Empty(_sent);
+        await _runs.TickAsync();
+        Assert.Contains("/cupreset", _sent);
+    }
+
+    // Shown and recorded as the warmup: the warmup's points are still on the board.
+    [Fact]
+    public void Starting_IsShownAsTheWarmup() =>
+        Assert.Equal(CupPhase.Warmup, CupStore.Shown(CupPhase.Starting));
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 

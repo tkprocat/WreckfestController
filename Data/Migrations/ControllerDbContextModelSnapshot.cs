@@ -577,9 +577,6 @@ namespace WreckfestController.Data.Migrations
                         .HasMaxLength(16)
                         .HasColumnType("TEXT");
 
-                    b.Property<DateTime?>("PointsOffPendingSince")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Repeat")
                         .HasColumnType("TEXT");
 
@@ -656,6 +653,25 @@ namespace WreckfestController.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("CupOccurrences");
+                });
+
+            modelBuilder.Entity("WreckfestController.Data.Cups.CupPointsOff", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CupName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("Since")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("CupPointsOff");
                 });
 
             modelBuilder.Entity("WreckfestController.Data.Races.Race", b =>

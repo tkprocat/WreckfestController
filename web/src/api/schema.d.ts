@@ -3590,7 +3590,7 @@ export interface components {
             cups: components["schemas"]["CupResponse"][];
         };
         /** @enum {unknown} */
-        CupPhase: "Warmup" | "Running" | null;
+        CupPhase: "Warmup" | "Starting" | "Running" | null;
         CupRequest: {
             name?: null | string;
             description?: null | string;

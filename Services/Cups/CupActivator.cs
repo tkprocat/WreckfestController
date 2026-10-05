@@ -150,10 +150,19 @@ public sealed class CupActivator
         bool started;
         try
         {
-            started = _restart.InitiateRestart(
-                CupStore.ToRestartEvent(cup),
-                _ => MarkActive(cup, occurrence, onActivated),
-                (_, outcome) => Finish(cup, occurrence, outcome, onFinished));
+            // Applying the cup's settings is part of this: not in the middle of a run step.
+            _store.RunGate.Wait();
+            try
+            {
+                started = _restart.InitiateRestart(
+                    CupStore.ToRestartEvent(cup),
+                    _ => MarkActive(cup, occurrence, onActivated),
+                    (_, outcome) => Finish(cup, occurrence, outcome, onFinished));
+            }
+            finally
+            {
+                _store.RunGate.Release();
+            }
         }
         catch
         {

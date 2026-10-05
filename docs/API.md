@@ -376,13 +376,15 @@ restart on, the cup is active, and its run goes:
   loading anything). Players are told "*name* has started - good luck!"; a race still on
   at the start is announced with "*name* starts after this race." The cup is then
   `Running`, and `CupStarted` is sent. A run whose restart finished after its start (one
-  that ran long, say) starts at once.
+  that ran long, say) starts at once. A reset that cannot be sent yet is retried, in a lobby
+  only, until it goes through (even across a controller restart), or for at most 15
+  minutes; until then the cup still shows as warming up.
 - **End** (with an `endTime`): players are told "*name* is over - thanks for racing!", the
   cup is no longer active, and `CupEnded` is sent. A cup that ran with cup points - its own
   `sessionMode`, or the server's when it keeps that - has them turned off at the next
   lobby: `session_mode=normal`, live and in server_config.cfg. The rotation stays. This
-  is kept in the database until done, so a controller restart does not lose it, and is
-  dropped if another cup becomes active first. The run's end is fixed when it begins: an
+  is kept in the database until done, so neither a controller restart nor deleting the
+  cup loses it, and any activation drops it: the activated cup's settings rule then. The run's end is fixed when it begins: an
   edit while it runs moves later occurrences, not this one.
 
 A lobby is waited for at most 15 minutes; then, or when the session state cannot be

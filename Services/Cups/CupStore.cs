@@ -92,6 +92,14 @@ public sealed class CupStore
 
     private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
 
+    /// <summary>
+    /// One at a time: a step of the active cup's run (<see cref="CupRunService"/>), the start of
+    /// an activation (which writes the cup's settings to the server config), and a delete. A
+    /// run step reads the active cup inside it and acts on what it read, so neither an
+    /// activation nor a delete can come between its check and its commands.
+    /// </summary>
+    public SemaphoreSlim RunGate { get; } = new(1, 1);
+
     private readonly object _activeCupLock = new();
     private ActiveCupSnapshot? _activeCup;
 
@@ -186,7 +194,7 @@ public sealed class CupStore
         {
             activeSummary = new CupSummary(
                 active.Name, active.Description, active.NextOccurrence, active.Repeat, active.ActivatedAt,
-                null, active.CurrentOccurrence, active.CurrentEnd, active.Phase);
+                null, active.CurrentOccurrence, active.CurrentEnd, Shown(active.Phase));
         }
 
         return (activeSummary, next
@@ -312,9 +320,19 @@ public sealed class CupStore
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
-        var deleted = await db.Cups
-            .Where(e => e.Id == id && e.Version == expectedVersion)
-            .ExecuteDeleteAsync(cancellationToken);
+        int deleted;
+        await RunGate.WaitAsync(cancellationToken);
+        try
+        {
+            deleted = await db.Cups
+                .Where(e => e.Id == id && e.Version == expectedVersion)
+                .ExecuteDeleteAsync(cancellationToken);
+        }
+        finally
+        {
+            RunGate.Release();
+        }
+
         if (deleted > 0)
         {
             if (CachedActiveCup?.Id == id)
@@ -353,6 +371,9 @@ public sealed class CupStore
             .Select(c => c.Cup)
             .FirstOrDefault();
     }
+
+    /// <summary>A phase as shown and recorded: <see cref="CupPhase.Starting"/> is still the warmup.</summary>
+    public static CupPhase? Shown(CupPhase? phase) => phase == CupPhase.Starting ? CupPhase.Warmup : phase;
 
     /// <summary>The window of the occurrence starting at <paramref name="start"/>; null without one.</summary>
     public static (DateTime Warmup, DateTime? End)? WindowOf(Cup cup, DateTime? start) =>
@@ -411,6 +432,8 @@ public sealed class CupStore
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var name = await db.Cups.Where(e => e.Id == id).Select(e => e.Name).FirstOrDefaultAsync(cancellationToken);
         var updated = await db.Cups
             .Where(e => e.Id == id && e.IsActive && e.CurrentOccurrence == occurrence && e.Phase == CupPhase.Running)
             .ExecuteUpdateAsync(
@@ -418,9 +441,15 @@ public sealed class CupStore
                     .SetProperty(e => e.IsActive, false)
                     .SetProperty(e => e.Phase, (CupPhase?)null)
                     .SetProperty(e => e.CurrentOccurrence, (DateTime?)null)
-                    .SetProperty(e => e.CurrentEnd, (DateTime?)null)
-                    .SetProperty(e => e.PointsOffPendingSince, pointsOffSince),
+                    .SetProperty(e => e.CurrentEnd, (DateTime?)null),
                 cancellationToken);
+        if (updated > 0 && pointsOffSince is { } since)
+        {
+            db.CupPointsOff.Add(new CupPointsOff { CupName = name ?? string.Empty, Since = since });
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
         if (updated > 0 && CachedActiveCup?.Id == id)
         {
             SetCachedActiveCup(null);
@@ -433,11 +462,10 @@ public sealed class CupStore
     public async Task<List<PendingPointsOff>> PendingPointsOffAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
-        return await db.Cups
+        return await db.CupPointsOff
             .AsNoTracking()
-            .Where(c => c.PointsOffPendingSince != null)
-            .OrderBy(c => c.PointsOffPendingSince)
-            .Select(c => new PendingPointsOff(c.Id, c.Name, c.PointsOffPendingSince!.Value))
+            .OrderBy(p => p.Since)
+            .Select(p => new PendingPointsOff(p.Id, p.CupName, p.Since))
             .ToListAsync(cancellationToken);
     }
 
@@ -445,9 +473,7 @@ public sealed class CupStore
     public async Task ClearPointsOffAsync(IReadOnlyCollection<int> ids, CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
-        await db.Cups
-            .Where(c => ids.Contains(c.Id))
-            .ExecuteUpdateAsync(s => s.SetProperty(c => c.PointsOffPendingSince, (DateTime?)null), cancellationToken);
+        await db.CupPointsOff.Where(p => ids.Contains(p.Id)).ExecuteDeleteAsync(cancellationToken);
     }
 
     /// <summary>Makes <paramref name="id"/> the active cup, running no particular occurrence.</summary>
@@ -468,6 +494,10 @@ public sealed class CupStore
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+
+        // The activated cup's settings are what the server runs from now on: an earlier cup's
+        // cup points are no longer for anyone to turn off.
+        await db.CupPointsOff.ExecuteDeleteAsync(cancellationToken);
 
         // Deactivate first: the unique index allows one active row at a time.
         await db.Cups

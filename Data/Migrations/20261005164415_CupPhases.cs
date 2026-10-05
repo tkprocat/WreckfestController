@@ -43,12 +43,6 @@ namespace WreckfestController.Data.Migrations
                 maxLength: 16,
                 nullable: true);
 
-            migrationBuilder.AddColumn<DateTime>(
-                name: "PointsOffPendingSince",
-                table: "Cups",
-                type: "TEXT",
-                nullable: true);
-
             migrationBuilder.AddColumn<bool>(
                 name: "RestartRotationAtStart",
                 table: "Cups",
@@ -61,11 +55,28 @@ namespace WreckfestController.Data.Migrations
                 table: "Cups",
                 type: "TEXT",
                 nullable: true);
+
+            migrationBuilder.CreateTable(
+                name: "CupPointsOff",
+                columns: table => new
+                {
+                    Id = table.Column<int>(type: "INTEGER", nullable: false)
+                        .Annotation("Sqlite:Autoincrement", true),
+                    CupName = table.Column<string>(type: "TEXT", maxLength: 128, nullable: false),
+                    Since = table.Column<DateTime>(type: "TEXT", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_CupPointsOff", x => x.Id);
+                });
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
+            migrationBuilder.DropTable(
+                name: "CupPointsOff");
+
             migrationBuilder.DropColumn(
                 name: "CupPhase",
                 table: "Races");
@@ -84,10 +95,6 @@ namespace WreckfestController.Data.Migrations
 
             migrationBuilder.DropColumn(
                 name: "Phase",
-                table: "Cups");
-
-            migrationBuilder.DropColumn(
-                name: "PointsOffPendingSince",
                 table: "Cups");
 
             migrationBuilder.DropColumn(

@@ -19,16 +19,18 @@ namespace WreckfestController.Services.Cups;
 /// <item><b>Start:</b> at the first lobby at or after the start - so a warmup race finishing
 /// late cannot leave points on the board - optionally the rotation sent back to its beginning
 /// (<see cref="EventLoopControl.RestartAsync"/>), then <c>/cupreset</c> and "has started". A
-/// run activated after its start (a restart that ran long) starts at once.</item>
+/// run activated after its start (a restart that ran long) starts at once. The start passes
+/// through <see cref="CupPhase.Starting"/>, kept in the database until the reset has gone
+/// through, so a failed reset is retried - in a lobby only - even after a controller restart.</item>
 /// <item><b>End:</b> the cup is no longer active, "is over", and at the next lobby cup points
 /// are turned off live (<c>session_mode=normal</c>) and in server_config.cfg, so a later
 /// restart does not bring them back. The rotation stays.</item>
 /// </list>
 /// <para>
-/// Every change of phase is a compare-and-set in the database, made <i>before</i> the commands
-/// it stands for: a check that finds the run deleted, replaced or already moved on does
-/// nothing. The pending points-off is kept on the cup row, so a controller restart does not
-/// lose it, and is dropped when another cup has taken over the server.
+/// Each check runs inside <see cref="CupStore.RunGate"/>, which an activation (writing its
+/// settings) and a delete also take: the active run it reads is the one it acts on. Every
+/// change of phase is also a compare-and-set in the database. The pending points-off is kept
+/// in the database, so a controller restart does not lose it, and any activation clears it.
 /// </para>
 /// <para>
 /// A lobby that never comes, or a session state that cannot be read, is waited for at most
@@ -62,9 +64,6 @@ public sealed class CupRunService : IHostedService, IDisposable
     // The run each message was last sent for, so each goes out once per run.
     private (int CupId, DateTime Start)? _warned;
     private (int CupId, DateTime Start)? _toldAfterRace;
-
-    // A started run whose /cupreset could not be sent yet, and since when.
-    private (int CupId, DateTime Start, DateTime Since)? _resetPending;
 
     public CupRunService(
         CupStore store,
@@ -100,7 +99,10 @@ public sealed class CupRunService : IHostedService, IDisposable
 
     private DateTime UtcNow => _time.GetUtcNow().UtcDateTime;
 
-    /// <summary>One check. Does nothing while a previous check runs, or a restart does.</summary>
+    /// <summary>
+    /// One check. Does nothing while a previous check runs, a restart does, or an activation
+    /// or delete holds <see cref="CupStore.RunGate"/>: the next check comes soon enough.
+    /// </summary>
     public async Task TickAsync()
     {
         if (Interlocked.Exchange(ref _ticking, 1) != 0)
@@ -108,10 +110,13 @@ public sealed class CupRunService : IHostedService, IDisposable
             return;
         }
 
+        var gated = false;
         try
         {
+            gated = await _store.RunGate.WaitAsync(TimeSpan.Zero);
+
             // The restart is what puts a cup on; mid-restart there is no server to talk to.
-            if (_restartInProgress())
+            if (!gated || _restartInProgress())
             {
                 return;
             }
@@ -124,17 +129,17 @@ public sealed class CupRunService : IHostedService, IDisposable
                 return;
             }
 
-            if (run.Phase == CupPhase.Warmup)
+            switch (run.Phase)
             {
-                await WarmupAsync(run, start);
-            }
-            else if (run.Phase == CupPhase.Running)
-            {
-                await RetryResetAsync(run, start);
-                if (run.EndsAt is { } end && UtcNow >= end)
-                {
+                case CupPhase.Warmup:
+                    await WarmupAsync(run, start);
+                    break;
+                case CupPhase.Starting:
+                    await ResetAsync(run, start);
+                    break;
+                case CupPhase.Running when run.EndsAt is { } end && UtcNow >= end:
                     await EndAsync(run);
-                }
+                    break;
             }
         }
         catch (Exception ex)
@@ -143,6 +148,11 @@ public sealed class CupRunService : IHostedService, IDisposable
         }
         finally
         {
+            if (gated)
+            {
+                _store.RunGate.Release();
+            }
+
             Volatile.Write(ref _ticking, 0);
         }
     }
@@ -174,15 +184,11 @@ public sealed class CupRunService : IHostedService, IDisposable
             return;
         }
 
-        // Claim the start first. A run deleted, replaced or started by another check since it
-        // was read fails here, before anything is sent to the server on its behalf.
-        if (_restartInProgress() || !await _store.SetPhaseAsync(run.Id, start, CupPhase.Warmup, CupPhase.Running))
+        // Kept in the database, so a reset that fails is retried even after a controller restart.
+        if (!await _store.SetPhaseAsync(run.Id, start, CupPhase.Warmup, CupPhase.Starting))
         {
             return;
         }
-
-        _logger.LogInformation("Cup {CupName} (ID {CupId}) has started", run.Name, run.Id);
-        _ = _publisher.CupStartedAsync(run.Id, run.Name);
 
         if (run.RestartRotationAtStart)
         {
@@ -196,46 +202,45 @@ public sealed class CupRunService : IHostedService, IDisposable
             }
         }
 
-        _resetPending = (run.Id, start, UtcNow);
-        await RetryResetAsync(run, start);
+        await ResetAsync(run with { Phase = CupPhase.Starting }, start);
     }
 
     /// <summary>
-    /// <c>/cupreset</c>, then "has started", for a run that has started but not yet reset - no
-    /// hook at that moment, say. Tried on every check while the run is still the active one,
-    /// for at most <see cref="LobbyWait"/>; then announced without it.
+    /// <c>/cupreset</c>, then "has started", for a run in <see cref="CupPhase.Starting"/>. In a
+    /// lobby only, as at the start: a retry mid-race would wipe that race's points. A reset
+    /// that fails stays <c>Starting</c> and is tried again on the next check; from
+    /// <see cref="LobbyWait"/> after the start, the cup starts without it.
     /// </summary>
-    private async Task RetryResetAsync(ActiveCupRun run, DateTime start)
+    private async Task ResetAsync(ActiveCupRun run, DateTime start)
     {
-        if (_resetPending is not { } pending)
+        if (!await WaitForLobbyAsync(start, onRace: () => Task.CompletedTask))
         {
-            return;
-        }
-
-        if (pending.CupId != run.Id || pending.Start != start)
-        {
-            // That run is over or replaced: its reset is no longer wanted.
-            _resetPending = null;
             return;
         }
 
         var reset = await _serverManager.SendCommandAsync("/cupreset");
         if (!reset.Success)
         {
-            if (UtcNow - pending.Since < LobbyWait)
+            if (UtcNow - start < LobbyWait)
             {
                 _logger.LogWarning("Cup {CupName}: /cupreset could not be sent ({Message}); retrying", run.Name, reset.Message);
                 return;
             }
 
             _logger.LogWarning(
-                "Cup {CupName}: /cupreset could not be sent within {Minutes} minutes ({Message}); the cup runs without it",
+                "Cup {CupName}: /cupreset could not be sent within {Minutes} minutes of the start ({Message}); the cup runs without it",
                 run.Name,
                 LobbyWait.TotalMinutes,
                 reset.Message);
         }
 
-        _resetPending = null;
+        if (!await _store.SetPhaseAsync(run.Id, start, CupPhase.Starting, CupPhase.Running))
+        {
+            return;
+        }
+
+        _logger.LogInformation("Cup {CupName} (ID {CupId}) has started", run.Name, run.Id);
+        _ = _publisher.CupStartedAsync(run.Id, run.Name);
         await ChatAsync($"{Short(run.Name)} has started - good luck!");
     }
 
@@ -249,7 +254,6 @@ public sealed class CupRunService : IHostedService, IDisposable
             return;
         }
 
-        _resetPending = null;
         _logger.LogInformation("Cup {CupName} (ID {CupId}) has ended", run.Name, run.Id);
         _ = _publisher.CupEndedAsync(run.Id, run.Name);
         await ChatAsync($"{Short(run.Name)} is over - thanks for racing!");
@@ -264,7 +268,8 @@ public sealed class CupRunService : IHostedService, IDisposable
     /// For ended runs that awarded cup points: <c>session_mode=normal</c> at the next lobby (a
     /// lobby setting; unquoted, as the server takes it), and in server_config.cfg so a later
     /// restart keeps it off. Dropped, not done, while another cup is active: that cup's
-    /// settings are what the server runs now.
+    /// settings are what the server runs now. <paramref name="run"/> is the active run as read
+    /// inside the gate, so no activation can have come since.
     /// </summary>
     private async Task TurnPointsOffAsync(ActiveCupRun? run)
     {

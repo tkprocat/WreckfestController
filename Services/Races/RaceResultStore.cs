@@ -58,7 +58,7 @@ public sealed class RaceResultStore
             CupId = current != null ? cup!.Id : null,
             CupName = current ?? cup?.Name ?? string.Empty,
             CupActivatedAt = cup?.ActivatedAt,
-            CupPhase = cup?.Phase,
+            CupPhase = CupStore.Shown(cup?.Phase),
             Entries = record.Cars.Select(ToEntry).ToList(),
         };
 

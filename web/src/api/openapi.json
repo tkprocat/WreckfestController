@@ -4294,6 +4294,7 @@
       "CupPhase": {
         "enum": [
           "Warmup",
+          "Starting",
           "Running",
           null
         ]

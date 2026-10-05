@@ -76,7 +76,7 @@ public sealed record CupResponse(
             cup.RestartRotationAtStart,
             next?.Warmup,
             next?.End,
-            cup.IsActive ? cup.Phase : null,
+            cup.IsActive ? CupStore.Shown(cup.Phase) : null,
             cup.IsActive ? cup.CurrentOccurrence : null,
             cup.IsActive ? cup.CurrentEnd : null,
             cup.CreatedBy is { } user ? user.DisplayName ?? user.UserName : null,
