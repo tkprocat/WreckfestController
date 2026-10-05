@@ -32,4 +32,19 @@ public class WindowsCommandLineTests
             [@"C:\Servers -s copy\Wreckfest_x64.exe", "-s", "server_config=a b.cfg"],
             WindowsCommandLine.Split(@"""C:\Servers -s copy\Wreckfest_x64.exe"" -s ""server_config=a b.cfg"""));
     }
+
+    [Theory]
+    [InlineData(@"""C:\Servers\Wreckfest_x64.exe"" -s server_config=a.cfg -wfc_controller=3f9a1c07", "3f9a1c07")]
+    [InlineData(@"""C:\Servers\Wreckfest_x64.exe"" -s -WFC_CONTROLLER=ABCD1234", "ABCD1234")]
+    [InlineData(@"""C:\Servers\Wreckfest_x64.exe"" -s -wfc_controller=aaaa1111 -wfc_controller=bbbb2222", "bbbb2222")]
+    [InlineData(@"""C:\Servers\Wreckfest_x64.exe"" -s ""-wfc_controller=aaaa1111"" -wfc_controller=bbbb2222", "bbbb2222")]
+    [InlineData(@"""C:\Servers\Wreckfest_x64.exe"" -s ""--save-dir=C:\S -wfc_controller=copy""", null)]
+    [InlineData(@"""C:\Servers\Wreckfest_x64.exe"" -s server_config=a.cfg", null)]
+    [InlineData(@"""C:\-wfc_controller=3f9a1c07\Wreckfest_x64.exe"" -s", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void ControllerMarker_IsTheValueOfTheLastMarkerArgument(string? commandLine, string? expected)
+    {
+        Assert.Equal(expected, WindowsCommandLine.ControllerMarker(commandLine));
+    }
 }

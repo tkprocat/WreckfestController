@@ -122,6 +122,13 @@ public partial class ProcessManagerTab : UserControl
     /// </summary>
     private static async Task<bool> ConfirmIfNotConfiguredServerAsync(ServerProcessInfo process, string action)
     {
+        if (process.IsConfiguredServer && process.Owner == ServerOwner.OtherController)
+        {
+            return await DialogService.ShowConfirmationAsync(
+                $"Process {process.ProcessId} was started by another controller on this PC.\n\n{action} it anyway?",
+                "Another controller's server");
+        }
+
         if (process.IsConfiguredServer)
         {
             return true;

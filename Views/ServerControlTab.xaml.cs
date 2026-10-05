@@ -196,6 +196,10 @@ public partial class ServerControlTab : UserControl
         });
     }
 
+    /// <summary>Amber when a start or restart left the server without the hook, green otherwise.</summary>
+    internal static string ResultColour(string message) =>
+        message.Contains(ServerManager.HookMissingNote, StringComparison.Ordinal) ? "#FFD43B" : "#51CF66";
+
     private async void OnStartClicked(object sender, RoutedEventArgs e)
     {
         try
@@ -205,7 +209,7 @@ public partial class ServerControlTab : UserControl
 
             if (result.Success)
             {
-                AddEventLogItem("Server started successfully", "#51CF66");
+                AddEventLogItem(result.Message, ResultColour(result.Message));
             }
             else
             {
@@ -257,7 +261,7 @@ public partial class ServerControlTab : UserControl
 
             if (result.Success)
             {
-                AddEventLogItem("Server restarted successfully", "#51CF66");
+                AddEventLogItem(result.Message, ResultColour(result.Message));
                 _consoleBuffer.Clear();
             }
             else

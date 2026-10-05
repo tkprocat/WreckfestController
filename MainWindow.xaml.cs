@@ -52,6 +52,7 @@ public partial class MainWindow : Window
         DatabaseBootstrapper databaseBootstrapper,
         AccountService accountService,
         IApiServer apiServer,
+        ControllerInstance controllerInstance,
         ILogger<MainWindow> logger,
         ILoggerFactory loggerFactory)
     {
@@ -81,6 +82,7 @@ public partial class MainWindow : Window
             settingsService,
             accountService,
             apiServer,
+            controllerInstance,
             _loggerFactory.CreateLogger<ConfigurationTab>());
 
         _cupsTab = new CupsTab(
@@ -317,7 +319,7 @@ public partial class MainWindow : Window
 
             if (result.Success)
             {
-                _serverControlTab?.AddEventLogItem("Server started successfully", "#51CF66");
+                _serverControlTab?.AddEventLogItem(result.Message, ServerControlTab.ResultColour(result.Message));
                 // Refresh process list after a short delay
                 await Task.Delay(2000);
                 _processManagerTab?.RefreshProcessList();

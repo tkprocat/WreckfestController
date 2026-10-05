@@ -214,6 +214,9 @@ public class Program
                 services.AddDbContextFactory<ControllerDbContext>(
                     options => ControllerDbContext.Configure(options, databasePath));
                 services.AddSingleton(new DatabaseState(databasePath));
+
+                // This controller's id among several on one PC, from the database path (#201).
+                services.AddSingleton(new ControllerInstance(databasePath));
                 services.AddSingleton<DatabaseBootstrapper>();
                 AccountService.AddAccounts(services);
 
@@ -227,6 +230,11 @@ public class Program
                 // The scheduler waits while the database is unavailable (recovery mode).
                 services.AddSingleton<CupSchedulerService>();
                 services.AddHostedService<DatabaseGatedHostedService<CupSchedulerService>>();
+
+                // Reattach to this controller's own server if it outlived the controller (#201).
+                // Gated: the server path it checks against comes from the database.
+                services.AddSingleton<ServerReattachService>();
+                services.AddHostedService<DatabaseGatedHostedService<ServerReattachService>>();
 
                 // Race results are saved as the hook reports them; nothing is recorded
                 // while the database is unavailable.

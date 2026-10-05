@@ -112,7 +112,7 @@ public class ServerController : ControllerBase
     [HttpGet("processes")]
     public IReadOnlyList<ServerProcessResponse> GetServerProcesses() =>
         _serverManager.GetRunningWreckfestServers()
-            .Where(p => p.IsConfiguredServer)
+            .Where(p => p.IsConfiguredServer && p.Owner != ServerOwner.OtherController)
             .Select(p => new ServerProcessResponse(p.ProcessId, p.StartTime.ToUniversalTime(), p.IsAttached))
             .ToList();
 

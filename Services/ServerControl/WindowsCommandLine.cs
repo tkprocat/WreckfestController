@@ -47,6 +47,22 @@ public static class WindowsCommandLine
     public static bool HasServerFlag(string? commandLine) =>
         Split(commandLine).Skip(1).Any(argument => string.Equals(argument, "-s", StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// The controller id in a <c>-wfc_controller=&lt;id&gt;</c> argument
+    /// (<see cref="ControllerInstance"/>), or null when the command line has none. The last
+    /// one counts: the controller appends its own after the configured arguments, which may
+    /// already contain one.
+    /// </summary>
+    public static string? ControllerMarker(string? commandLine)
+    {
+        const string prefix = ControllerInstance.MarkerName + "=";
+        return Split(commandLine)
+            .Skip(1)
+            .Where(argument => argument.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            .Select(argument => argument[prefix.Length..])
+            .LastOrDefault();
+    }
+
     [DllImport("shell32.dll", SetLastError = true)]
     private static extern IntPtr CommandLineToArgvW([MarshalAs(UnmanagedType.LPWStr)] string lpCmdLine, out int pNumArgs);
 

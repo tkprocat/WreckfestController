@@ -283,6 +283,11 @@
                                FontSize="11"
                                Foreground="{StaticResource TextSecondary}"
                                TextWrapping="Wrap"/>
+                    <TextBlock x:Name="ControllerIdText"
+                               FontSize="11"
+                               Foreground="{StaticResource TextSecondary}"
+                               TextWrapping="Wrap"
+                               Margin="0,5,0,0"/>
                 </StackPanel>
             </Border>
         </Grid>

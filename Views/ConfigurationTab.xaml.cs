@@ -9,6 +9,7 @@ using WreckfestController.Services.Auth;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Desktop;
 using WreckfestController.Services.Hook;
+using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Voting;
 
 namespace WreckfestController.Views;
@@ -30,9 +31,15 @@ public partial class ConfigurationTab : UserControl
         SettingsService settingsService,
         AccountService accountService,
         IApiServer apiServer,
+        ControllerInstance controllerInstance,
         ILogger<ConfigurationTab> logger)
     {
         InitializeComponent();
+
+        // Matches the -wfc_controller argument on the servers this controller starts (#201),
+        // so they can be told apart in Task Manager when several controllers share a PC.
+        ControllerIdText.Text =
+            $"Controller id: {controllerInstance.Id}. Servers started here carry {controllerInstance.Argument} on their command line.";
 
         _settingsService = settingsService;
         _accountService = accountService;
