@@ -64,10 +64,12 @@ Everything the controller knows about a running server (console output, chat, pl
 race results) comes from a hook DLL injected into the server process. Commands are sent
 through the hook too. Nothing works until it is injected.
 
-**Inject the hook after every start or restart:** in the desktop app's Process Manager
-tab, select the server and click **INJECT**, or use **Inject hook** on the web site's
-Server Control page. A restart, including a cup's scheduled restart, starts a new
-process without the hook.
+The controller injects the hook itself after every start and restart, a cup's scheduled
+restart included, and reattaches to its server when the controller itself is restarted
+while the server keeps running. The result of a start or restart says whether the hook
+went in. If it did not, inject it by hand: in the desktop app's Process Manager tab,
+select the server and click **INJECT**, or use **Inject hook** on the web site's Server
+Control page.
 
 The hook reads the game's memory at fixed offsets, which belong to one game build. The
 supported build is `WreckfestServer:SupportedBuild` in `appsettings.json`, and the
@@ -131,6 +133,18 @@ which would give them the same server paths, accounts and cups.
 2. In that `user-settings.json`, set `Database:Path` to a database of its own, such as
    `%LocalAppData%\WreckfestController\server2\controller.db`, and give `Api` its own
    `HttpPort` and `HttpsPort`.
+3. If the servers share one dedicated-server install folder, give each its own save
+   folder: add `--save-dir=<folder>` to its **Server Arguments** on the Configuration
+   tab. The folder must exist. Without it, the second server to start stops with "Save
+   directory is already in use". Give each server its own `server_config.cfg` with its
+   own `steam_port`, `game_port` and `query_port` as well.
+
+Each controller adds its own id to the command line of every server it starts, such as
+`-wfc_controller=3f9a1c07`. The id is shown on the Configuration tab under **WEB API**,
+and comes from the database path, so it stays the same across restarts. It shows which
+server belongs to which controller in Task Manager's Command line column. A controller
+reattaches only to a server carrying its own id, and will not attach to or inject into
+another controller's server; the desktop app's Process Manager asks first.
 
 ## 4. Create the first admin account
 

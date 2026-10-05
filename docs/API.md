@@ -228,10 +228,18 @@ A `pid` that is not a positive number is a **400** naming `pid`.
 `attach/{pid}` and `inject/{pid}` accept only a running Wreckfest dedicated server (started
 with `-s`) whose executable is the `serverPath` set in the desktop app: never the game
 client, which has the same file name in another folder, a server from another install,
-or any other process. Anything else is a **409**, as is any pid when no `serverPath` is set.
+or any other process. Nor a server another controller on this PC started: its command line
+carries that controller's `-wfc_controller=<id>`, where servers started by this one carry
+this controller's id. A server with no id (started by hand) is accepted. Anything else is
+a **409**, as is any pid when no `serverPath` is set.
 Attach decides what `forcestop` kills and what `inject` loads the hook into, so this is
 what keeps those to the server. `processes` lists exactly the processes that pass. The
-desktop app's Process Manager may still pick another install's server, after asking.
+desktop app's Process Manager may still pick another install's or another controller's
+server, after asking.
+
+`start`, `restart` and `forcerestart` inject the hook into the new process themselves,
+retrying once; their `message` ends with whether that worked. A failed inject does not
+fail the action, and `inject` stays available to try again.
 
 `logfile` is the only endpoint that reads server output from disk rather than from the
 injected hook. It is kept on purpose: the web app's Server Control page shows it, and it

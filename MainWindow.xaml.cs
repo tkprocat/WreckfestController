@@ -52,6 +52,7 @@ public partial class MainWindow : Window
         DatabaseBootstrapper databaseBootstrapper,
         AccountService accountService,
         IApiServer apiServer,
+        ControllerInstance controllerInstance,
         ILogger<MainWindow> logger,
         ILoggerFactory loggerFactory)
     {
@@ -81,6 +82,7 @@ public partial class MainWindow : Window
             settingsService,
             accountService,
             apiServer,
+            controllerInstance,
             _loggerFactory.CreateLogger<ConfigurationTab>());
 
         _cupsTab = new CupsTab(

@@ -53,6 +53,10 @@ public class ServerManager
     private const int MaxBufferSize = 500;
     private readonly IServerInputWriter _serverInputWriter;
     private readonly IInjectedHookOutputReader _injectedHookOutputReader;
+
+    // Null in tests that construct a ServerManager by hand: no marker is added, and any
+    // marker found is another controller's.
+    private readonly ControllerInstance? _instance;
     private readonly SemaphoreSlim _commandSendLock = new(1, 1);
     private readonly PlayerTracker _playerTracker;
     private readonly TrackChangeTracker _trackChangeTracker;
@@ -208,8 +212,10 @@ public class ServerManager
         ServerInfoTracker serverInfoTracker,
         IServerEventPublisher events,
         IServerInputWriter serverInputWriter,
-        IInjectedHookOutputReader injectedHookOutputReader)
+        IInjectedHookOutputReader injectedHookOutputReader,
+        ControllerInstance? instance = null)
     {
+        _instance = instance;
         _configuration = configuration;
         _server = server;
         _steamCmd = steamCmd;
@@ -312,7 +318,9 @@ public class ServerManager
             {
                 var server = _server.CurrentValue;
                 var serverPath = server.ServerPath;
-                var serverArguments = server.ServerArguments ?? "";
+                // This controller's marker goes on every server it starts, so the server can
+                // be told apart from other controllers' in the process list (#201).
+                var serverArguments = _instance?.AddTo(server.ServerArguments) ?? server.ServerArguments ?? "";
                 var workingDirectory = server.WorkingDirectory;
 
                 if (string.IsNullOrEmpty(serverPath) || !File.Exists(serverPath))
@@ -437,7 +445,8 @@ public class ServerManager
                 }
             });
 
-            return (true, $"Server started successfully. Process: {processName} (PID: {processId})");
+            var hook = await InjectAutomaticallyAsync(processId);
+            return (true, $"Server started successfully. Process: {processName} (PID: {processId}). {hook}");
         }
 
         // Process is running but not detected by GetActualServerProcess (shouldn't happen with PID tracking)
@@ -721,54 +730,9 @@ public class ServerManager
 
             _logger.LogInformation("Restart command sent, waiting for server to restart...");
 
-            // Step 3: Wait for restart to complete
-            // We'll wait for either:
-            // - A log message indicating restart (e.g., "Server connected.", "Current track loaded!")
-            // - Or a timeout (30 seconds max)
-
-            var restartDetected = false;
-            var timeout = TimeSpan.FromSeconds(30);
-            var startTime = DateTime.Now;
-            var logCheckInterval = TimeSpan.FromMilliseconds(500);
-
-            while (DateTime.Now - startTime < timeout)
-            {
-                await Task.Delay(logCheckInterval);
-
-                // Look for restart indicators in hook output received since the command was sent
-                {
-                    var recentMessages = _outputBuffer
-                        .Where(m => m.Timestamp > startTime)
-                        .Select(m => m.Message)
-                        .ToList();
-
-                    // Check for common restart indicators
-                    if (recentMessages.Any(m =>
-                        m.Contains("Server connected", StringComparison.OrdinalIgnoreCase) ||
-                        m.Contains("Current track loaded!", StringComparison.OrdinalIgnoreCase) ||
-                        m.Contains("Server started", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        _logger.LogInformation("Restart detected via log message");
-                        restartDetected = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!restartDetected)
-            {
-                _logger.LogWarning("Restart completion not detected via logs within timeout, proceeding with PID detection anyway");
-            }
-
-            // Wait a bit more to ensure new process is fully started
-            await Task.Delay(2000);
-
-            // Step 4: Get all current Wreckfest*.exe PIDs again
-            var newPids = GetAllWreckfestPids();
-            _logger.LogInformation("Wreckfest PIDs after restart: {PIDs}", string.Join(", ", newPids));
-
-            // Step 5: Find the new PID (PIDs in newPids that aren't in oldPids)
-            var newProcessPids = newPids.Except(oldPids).ToList();
+            // Step 4: Wait for the old process to exit and its replacement to appear. Not for
+            // console text: the replacement has no hook yet, so it cannot send any (#201).
+            var newProcessPids = await WaitForReplacementAsync(originalProcess, oldPids, RestartReplacementTimeout);
 
             if (newProcessPids.Count == 0)
             {
@@ -821,6 +785,8 @@ public class ServerManager
             _logger.LogDebug("Restarting output monitoring for new process");
             StartOutputMonitoring();
 
+            var hook = await InjectAutomaticallyAsync(newPid);
+
             // Notify the web UI
             _ = Task.Run(async () =>
             {
@@ -839,13 +805,119 @@ public class ServerManager
                 }
             });
 
-            return (true, $"Server restarted successfully via /restart command. New PID: {newPid}");
+            return (true, $"Server restarted successfully via /restart command. New PID: {newPid}. {hook}");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to restart server via /restart command");
             return (false, "The server could not be restarted. The desktop app's log has the details.");
         }
+    }
+
+    /// <summary>
+    /// At controller startup (#201): attaches to this controller's own running server, found
+    /// by its marker, and injects the hook. Exactly one server must carry the marker; with
+    /// none or several, nothing is attached, as before, and the reason is logged.
+    /// </summary>
+    public virtual async Task<(bool Success, string Message)> ReattachOwnServerAsync()
+    {
+        if (_instance is null)
+        {
+            return (false, "This controller has no id, so it cannot recognise its server.");
+        }
+
+        if (AttachedProcessId is { } attached)
+        {
+            return (false, $"Already attached to process {attached}.");
+        }
+
+        var own = GetRunningWreckfestServers()
+            .Where(p => p.IsConfiguredServer && p.Owner == Models.ServerOwner.ThisController)
+            .Select(p => p.ProcessId)
+            .ToList();
+        if (own.Count != 1)
+        {
+            var reason = own.Count == 0
+                ? $"No running server carries this controller's id ({_instance.Id}); nothing to reattach to."
+                : $"{own.Count} running servers carry this controller's id ({_instance.Id}): processes {string.Join(", ", own)}. Attach to one by hand.";
+            _logger.LogInformation("{Reason}", reason);
+            return (false, reason);
+        }
+
+        var pid = own[0];
+        var attach = AttachToConfiguredServer(pid);
+        if (!attach.Success)
+        {
+            _logger.LogWarning("Could not reattach to this controller's server, process {ProcessId}: {Message}", pid, attach.Message);
+            return attach;
+        }
+
+        var hook = await InjectAutomaticallyAsync(pid);
+        _logger.LogInformation("Reattached to this controller's server, process {ProcessId}. {Hook}", pid, hook);
+        return (true, $"Reattached to this controller's server, process {pid}. {hook}");
+    }
+
+    /// <summary>How long <c>/restart</c> may take to replace the process.</summary>
+    protected virtual TimeSpan RestartReplacementTimeout => TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Polls until <paramref name="original"/> has exited and a Wreckfest process not in
+    /// <paramref name="oldPids"/> exists, or <paramref name="timeout"/> passes. Returns the new
+    /// PIDs, empty on timeout; the caller still checks which of them is the replacement.
+    /// </summary>
+    private async Task<List<int>> WaitForReplacementAsync(Process original, List<int> oldPids, TimeSpan timeout)
+    {
+        var waited = Stopwatch.StartNew();
+        var newPids = new List<int>();
+        while (waited.Elapsed < timeout)
+        {
+            await Task.Delay(500);
+            if (!original.HasExited)
+            {
+                continue;
+            }
+
+            newPids = GetAllWreckfestPids().Except(oldPids).ToList();
+            if (newPids.Count > 0)
+            {
+                break;
+            }
+        }
+
+        _logger.LogInformation(
+            "New Wreckfest PIDs after restart: {PIDs} ({Seconds:0.0}s)",
+            newPids.Count == 0 ? "none" : string.Join(", ", newPids),
+            waited.Elapsed.TotalSeconds);
+        return newPids;
+    }
+
+    /// <summary>
+    /// Injects the hook into a server this controller has just started or restarted into
+    /// (#201): nothing works without it, and a cup's scheduled restart has nobody at hand to
+    /// press INJECT. One retry, because an inject can report failure although the DLL did
+    /// load, and the retry then finds it loaded. A failure never fails the start: the
+    /// returned text says the hook is missing, and the manual INJECT stays available.
+    /// </summary>
+    private async Task<string> InjectAutomaticallyAsync(int processId)
+    {
+        const int attempts = 2;
+        for (var attempt = 1; attempt <= attempts; attempt++)
+        {
+            var (success, message) = await InjectConsoleHookAsync(processId);
+            if (success)
+            {
+                return "Hook injected.";
+            }
+
+            _logger.LogWarning(
+                "Automatic hook injection into process {ProcessId} failed (attempt {Attempt} of {Attempts}): {Message}",
+                processId,
+                attempt,
+                attempts,
+                message);
+        }
+
+        return "The hook could not be injected automatically; use INJECT.";
     }
 
     /// <summary>
@@ -1302,7 +1374,7 @@ public class ServerManager
                 ClearProcessScopedState();
 
                 SetAttachedProcess(pid);
-                _startTime = process.StartTime;
+                _startTime = process.StartTime.ToUniversalTime();
             }
 
             ProcessIdChanged?.Invoke(pid);
@@ -2054,15 +2126,30 @@ public class ServerManager
             return (false, notAServer);
         }
 
-        if (!WindowsCommandLine.HasServerFlag(CommandLineOf(pid)))
+        var commandLine = CommandLineOf(pid);
+        if (!WindowsCommandLine.HasServerFlag(commandLine))
         {
             return (false, notAServer);
         }
 
-        return IsConfiguredServerPath(executable, _server.CurrentValue.ServerPath)
-            ? (true, string.Empty)
-            : (false, $"Process {pid} is a Wreckfest server from another install, not the one set in the desktop app's Configuration.");
+        if (!IsConfiguredServerPath(executable, _server.CurrentValue.ServerPath))
+        {
+            return (false, $"Process {pid} is a Wreckfest server from another install, not the one set in the desktop app's Configuration.");
+        }
+
+        return OwnerOf(commandLine) == Models.ServerOwner.OtherController
+            ? (false, $"Process {pid} belongs to another controller on this PC.")
+            : (true, string.Empty);
     }
+
+    /// <summary>Whose server a command line starts, by its <c>-wfc_controller</c> marker.</summary>
+    private Models.ServerOwner OwnerOf(string? commandLine) =>
+        WindowsCommandLine.ControllerMarker(commandLine) switch
+        {
+            null => Models.ServerOwner.Unmarked,
+            var id when string.Equals(id, _instance?.Id, StringComparison.OrdinalIgnoreCase) => Models.ServerOwner.ThisController,
+            _ => Models.ServerOwner.OtherController,
+        };
 
     private static bool IsWreckfestProcessName(string name) =>
         name.Equals("Wreckfest_x64", StringComparison.OrdinalIgnoreCase) || name.Equals("Wreckfest", StringComparison.OrdinalIgnoreCase);
@@ -2093,7 +2180,7 @@ public class ServerManager
     /// <summary>
     /// Scans for running Wreckfest server processes
     /// </summary>
-    public List<Models.ServerProcessInfo> GetRunningWreckfestServers()
+    public virtual List<Models.ServerProcessInfo> GetRunningWreckfestServers()
     {
         var servers = new List<Models.ServerProcessInfo>();
         var configuredPath = _server.CurrentValue.ServerPath;
@@ -2132,6 +2219,7 @@ public class ServerManager
                                         StartTime = process.StartTime,
                                         ExecutablePath = executable,
                                         IsConfiguredServer = IsConfiguredServerPath(executable, configuredPath),
+                                        Owner = OwnerOf(commandLine),
                                         MemoryUsageMB = process.WorkingSet64 / 1024 / 1024,
                                         IsAttached = process.Id == currentPid,
                                         ConfigFile = ExtractConfigFileName(commandLine)
@@ -2232,7 +2320,7 @@ public class ServerManager
             {
                 _serverProcess = process;
                 SetAttachedProcess(processId);
-                _startTime = process.StartTime;
+                _startTime = process.StartTime.ToUniversalTime();
             }
             ProcessIdChanged?.Invoke(processId);
 
