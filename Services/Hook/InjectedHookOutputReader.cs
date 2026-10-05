@@ -45,30 +45,39 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
         return Task.CompletedTask;
     }
 
-    public Task<(bool Success, string Message)> InjectAsync(int processId)
+    public async Task<(bool Success, string Message)> InjectAsync(int processId)
     {
         var hookDllPath = ResolveHookDllPath();
         if (hookDllPath == null)
         {
-            return Task.FromResult((
+            return (
                 false,
-                "Console hook DLL not found. Build NativeHooks\\WreckfestConsoleHook and copy WreckfestConsoleHook.dll next to the controller executable."));
+                "Console hook DLL not found. Build NativeHooks\\WreckfestConsoleHook and copy WreckfestConsoleHook.dll next to the controller executable.");
         }
 
         var pipeName = GetPipeName(processId);
         StartPipeListener(processId, pipeName);
 
-        if (!NativeConsoleHookInjector.InjectDll(processId, hookDllPath, TimeSpan.FromSeconds(10), out var error, out var wasAlreadyLoaded))
+        // On a worker thread: injection waits on remote threads for up to ten seconds
+        // each, and retries a module snapshot, so run inline it froze the desktop app's
+        // window whenever INJECT was pressed.
+        var (injected, error, wasAlreadyLoaded) = await Task.Run(() =>
+        {
+            var ok = NativeConsoleHookInjector.InjectDll(processId, hookDllPath, TimeSpan.FromSeconds(10), out var injectError, out var alreadyLoaded);
+            return (ok, injectError, alreadyLoaded);
+        });
+
+        if (!injected)
         {
             StopPipeListener(processId);
             // The error can name the DLL's path and carries Windows' own text: log it, answer plainly.
             _logger.LogWarning("Console hook injection into process {ProcessId} failed: {Error}", processId, error);
-            return Task.FromResult((false, "The console hook could not be injected. The desktop app's log has the details."));
+            return (false, "The console hook could not be injected. The desktop app's log has the details.");
         }
 
         var action = wasAlreadyLoaded ? "Reconnected existing" : "Injected";
         PublishHookOutput(processId, $"{action} {Path.GetFileName(hookDllPath)}. Waiting for hook output on pipe {pipeName}.");
-        return Task.FromResult((true, $"Console hook {action.ToLowerInvariant()} for process {processId}"));
+        return (true, $"Console hook {action.ToLowerInvariant()} for process {processId}");
     }
 
     /// <summary>

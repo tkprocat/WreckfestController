@@ -263,7 +263,7 @@ internal static class NativeConsoleHookInjector
 
     private static IntPtr FindRemoteModuleBase(int processId, string moduleName)
     {
-        var snapshot = CreateToolhelp32Snapshot(Th32csSnapModule | Th32csSnapModule32, (uint)processId);
+        var snapshot = CreateModuleSnapshot(processId);
         if (snapshot == InvalidHandleValue)
         {
             return IntPtr.Zero;
@@ -296,6 +296,31 @@ internal static class NativeConsoleHookInjector
         finally
         {
             CloseHandle(snapshot);
+        }
+    }
+
+    // A module snapshot fails with ERROR_BAD_LENGTH while the target's loader is
+    // changing its module list - a process still starting, or one loading a library
+    // at that moment - and the documented remedy is to retry. Without this a hook
+    // that had just loaded could be reported missing.
+    private static IntPtr CreateModuleSnapshot(int processId)
+    {
+        const int ErrorBadLength = 24;
+        const int ErrorPartialCopy = 299;
+        const int MaxAttempts = 40;
+
+        for (var attempt = 1; ; attempt++)
+        {
+            var snapshot = CreateToolhelp32Snapshot(Th32csSnapModule | Th32csSnapModule32, (uint)processId);
+            var error = Marshal.GetLastWin32Error();
+            if (snapshot != InvalidHandleValue ||
+                attempt >= MaxAttempts ||
+                (error != ErrorBadLength && error != ErrorPartialCopy))
+            {
+                return snapshot;
+            }
+
+            Thread.Sleep(25);
         }
     }
 
