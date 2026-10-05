@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -120,24 +121,35 @@ wchar_t g_fallbackLogPath[MAX_PATH] = {};
 // WreckfestConsoleHookShutdown can stop and join it before anything shared is
 // released. DllMain cannot do that itself: a thread cannot exit while the loader
 // lock is held, so joining from DLL_PROCESS_DETACH would deadlock.
+//
+// The first worker also takes a reference on this module, and only a completed
+// shutdown gives it back. A FreeLibrary that skips the shutdown therefore cannot
+// unmap code that a worker or a hooked game thread is still running.
+HMODULE g_module = nullptr;
 HANDLE g_shutdownEvent = nullptr;
 // Completion event for output pipe writes, which g_outputLock serialises.
 HANDLE g_pipeIoEvent = nullptr;
 CRITICAL_SECTION g_threadsLock;
 std::vector<HANDLE> g_workerThreads;
+HANDLE g_inputThread = nullptr;
 bool g_shuttingDown = false;
+bool g_selfReferenced = false;
 CRITICAL_SECTION g_teardownLock;
 bool g_teardownDone = false;
-// Game threads currently inside a detour. The trampolines they call into are freed
-// by MH_Uninitialize, so teardown waits for this to reach zero first.
-volatile LONG g_detourCallers = 0;
+// Set while the input thread is inside FlushFileBuffers, the one pipe call it
+// cannot make overlapped. See InputPipeThread.
+volatile LONG g_inputFlushing = 0;
+// Calls currently running module code on a thread this module does not own: game
+// threads inside a detour, and callers of the start exports. Teardown waits for
+// this to reach zero; see NoCallersInModule for the windows it cannot see.
+volatile LONG g_activeCalls = 0;
 
-struct DetourCall
+struct ActiveCall
 {
-    DetourCall() { InterlockedIncrement(&g_detourCallers); }
-    ~DetourCall() { InterlockedDecrement(&g_detourCallers); }
-    DetourCall(const DetourCall&) = delete;
-    DetourCall& operator=(const DetourCall&) = delete;
+    ActiveCall() { InterlockedIncrement(&g_activeCalls); }
+    ~ActiveCall() { InterlockedDecrement(&g_activeCalls); }
+    ActiveCall(const ActiveCall&) = delete;
+    ActiveCall& operator=(const ActiveCall&) = delete;
 };
 
 // Waits up to ms, returning early - and true - once teardown has begun.
@@ -151,9 +163,33 @@ bool ShutdownRequested()
     return WaitForShutdown(0);
 }
 
+DWORD RemainingMs(ULONGLONG deadline)
+{
+    ULONGLONG now = GetTickCount64();
+    return now < deadline ? static_cast<DWORD>(deadline - now) : 0;
+}
+
+// EnterCriticalSection with a deadline, so a lock held by a stalled thread turns
+// into a timeout rather than a hang.
+bool EnterBefore(CRITICAL_SECTION* lock, ULONGLONG deadline)
+{
+    while (!TryEnterCriticalSection(lock))
+    {
+        if (GetTickCount64() >= deadline)
+        {
+            return false;
+        }
+
+        Sleep(5);
+    }
+
+    return true;
+}
+
 // Starts a thread that teardown will join. Refused once teardown has begun, so no
-// thread can appear after the list has been taken.
-DWORD StartWorker(LPTHREAD_START_ROUTINE routine)
+// thread can appear after the list has been taken. started, when given, receives
+// the thread's handle; it stays owned by the list.
+DWORD StartWorker(LPTHREAD_START_ROUTINE routine, HANDLE* started = nullptr)
 {
     EnterCriticalSection(&g_threadsLock);
     if (g_shuttingDown)
@@ -162,11 +198,32 @@ DWORD StartWorker(LPTHREAD_START_ROUTINE routine)
         return ERROR_SHUTDOWN_IN_PROGRESS;
     }
 
+    if (!g_selfReferenced)
+    {
+        HMODULE self = nullptr;
+        if (!GetModuleHandleExW(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                reinterpret_cast<LPCWSTR>(&StartWorker),
+                &self))
+        {
+            DWORD error = GetLastError();
+            LeaveCriticalSection(&g_threadsLock);
+            return error;
+        }
+
+        g_selfReferenced = true;
+    }
+
     // Every reconnect starts a HookThread, so drop the handles of finished ones.
     for (auto it = g_workerThreads.begin(); it != g_workerThreads.end();)
     {
         if (WaitForSingleObject(*it, 0) == WAIT_OBJECT_0)
         {
+            if (*it == g_inputThread)
+            {
+                g_inputThread = nullptr;
+            }
+
             CloseHandle(*it);
             it = g_workerThreads.erase(it);
         }
@@ -185,6 +242,10 @@ DWORD StartWorker(LPTHREAD_START_ROUTINE routine)
     else
     {
         g_workerThreads.push_back(thread);
+        if (started != nullptr)
+        {
+            *started = thread;
+        }
     }
 
     LeaveCriticalSection(&g_threadsLock);
@@ -843,7 +904,7 @@ void EmitPendingChatRecord();
 
 void __fastcall HookedConsolePrint(const char* text, void* arg2, void* arg3, void* arg4)
 {
-    DetourCall inDetour;
+    ActiveCall inDetour;
 
     // The chat line is held back rather than written here. Two constraints meet at
     // this point: the controller warns about a chat-shaped line that arrived with
@@ -1035,7 +1096,7 @@ bool ReadRingMessageNoThrow(uintptr_t moduleBase, uintptr_t ringIndex, std::stri
 // See TryEmitStructuredChat.
 uintptr_t __fastcall HookedChatHandler(uintptr_t ringIndex, const char* text, uintptr_t serverObject, uintptr_t arg4)
 {
-    DetourCall inDetour;
+    ActiveCall inDetour;
 
     // Saved and restored rather than simply cleared, so a nested call (the console
     // path re-entering the handler) cannot lose the outer call's state.
@@ -1652,9 +1713,12 @@ DWORD WINAPI InputPipeThread(void*)
             BOOL writeReturned = WriteFile(pipe, response.c_str(), static_cast<DWORD>(response.size()), nullptr, &overlapped);
             FinishPipeIo(pipe, overlapped, writeReturned, transferred);
 
-            // Waits for the controller to read the response, which it does at once
-            // and gives up on after its own timeout, so this cannot outlast that.
+            // Waits for the controller to read the response, so that disconnecting
+            // below cannot discard it. There is no overlapped form, so teardown
+            // cancels it through this flag - see JoinWorker.
+            InterlockedExchange(&g_inputFlushing, 1);
             FlushFileBuffers(pipe);
+            InterlockedExchange(&g_inputFlushing, 0);
         }
 
         DisconnectNamedPipe(pipe);
@@ -2050,34 +2114,129 @@ DWORD WINAPI HookThread(void*)
 
     return 0;
 }
-// Takes the hooks out of the game. Disabling puts both entry points back at once;
-// the trampolines are freed only when no game thread is still inside a detour,
-// since a detour calls through one. waitForCallersMs bounds that wait. False when
-// a caller was still inside after it: the hooks are then disabled but left in place.
-bool RemoveHooks(DWORD waitForCallersMs)
+bool AddressInModule(DWORD64 address)
 {
-    EnterCriticalSection(&g_hookLock);
-    if (g_hookInstalled && g_target != nullptr)
+    auto base = reinterpret_cast<uintptr_t>(g_module);
+    auto nt = GetNtHeaders(base);
+    return nt != nullptr && address >= base && address < base + nt->OptionalHeader.SizeOfImage;
+}
+
+// True when no other thread is running code in this module. Run only once both
+// hooks are disabled, so no thread can newly enter a detour.
+//
+// The counter covers a thread anywhere inside a detour or a start export,
+// including when it has called out of the module - into the game through a
+// trampoline, or into the CRT. It cannot cover the few instructions before the
+// counter goes up or after it comes down, so every other thread is also suspended
+// and its instruction pointer checked against this module's image. Together they
+// leave no window: a thread is either counted or visibly executing here.
+//
+// Nothing allocates while threads are suspended - one of them may hold the heap
+// lock - so the list is built and its storage reserved first.
+bool NoCallersInModule()
+{
+    if (InterlockedCompareExchange(&g_activeCalls, 0, 0) != 0)
     {
-        RestoreHook();
+        return false;
     }
 
-    if (g_chatHookInstalled && g_chatTarget != nullptr)
+    std::vector<DWORD> threadIds;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
     {
-        RestoreChatHook();
-    }
-    LeaveCriticalSection(&g_hookLock);
-
-    // Outside the lock: the chat detour takes g_hookLock while counted as a caller.
-    // A thread that had already jumped into a detour may not have counted itself
-    // yet, so the count is only trusted after a short pause.
-    if (waitForCallersMs > 0)
-    {
-        Sleep(20);
+        return false;
     }
 
-    ULONGLONG deadline = GetTickCount64() + waitForCallersMs;
-    while (InterlockedCompareExchange(&g_detourCallers, 0, 0) != 0)
+    THREADENTRY32 entry = {};
+    entry.dwSize = sizeof(entry);
+    for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry))
+    {
+        if (entry.th32OwnerProcessID == GetCurrentProcessId() && entry.th32ThreadID != GetCurrentThreadId())
+        {
+            threadIds.push_back(entry.th32ThreadID);
+        }
+    }
+    CloseHandle(snapshot);
+
+    std::vector<HANDLE> suspended;
+    suspended.reserve(threadIds.size());
+
+    bool idle = true;
+    for (DWORD id : threadIds)
+    {
+        HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, id);
+        if (thread == nullptr)
+        {
+            // Exited since the snapshot.
+            continue;
+        }
+
+        if (SuspendThread(thread) == static_cast<DWORD>(-1))
+        {
+            CloseHandle(thread);
+            continue;
+        }
+
+        suspended.push_back(thread);
+
+        // GetThreadContext also waits for the suspension to take effect.
+        CONTEXT context = {};
+        context.ContextFlags = CONTEXT_CONTROL;
+        if (!GetThreadContext(thread, &context) || AddressInModule(context.Rip))
+        {
+            idle = false;
+            break;
+        }
+    }
+
+    // A thread may have entered a counted region before it was suspended.
+    if (idle && InterlockedCompareExchange(&g_activeCalls, 0, 0) != 0)
+    {
+        idle = false;
+    }
+
+    for (HANDLE thread : suspended)
+    {
+        ResumeThread(thread);
+        CloseHandle(thread);
+    }
+
+    return idle;
+}
+
+// Takes the hooks out of the game, by deadline. Disabling puts both entry points
+// back; the trampolines are freed only once no thread can still be running through
+// one. Every MinHook result is checked: false means a hook may still be in place,
+// so the module must not be unloaded. A retry picks up where this stopped.
+//
+// Runs only after every worker has been joined, so nothing else touches the hook
+// state and g_hookLock is not taken. The chat detour holds that lock while it runs
+// the game's handler, so taking it here would wait on the game.
+bool RemoveHooks(ULONGLONG deadline)
+{
+    bool console = g_hookInstalled && g_target != nullptr;
+    bool chat = g_chatHookInstalled && g_chatTarget != nullptr;
+
+    // MH_ERROR_DISABLED: an earlier attempt already got this far.
+    if (console)
+    {
+        MH_STATUS status = MH_DisableHook(g_target);
+        if (status != MH_OK && status != MH_ERROR_DISABLED)
+        {
+            return false;
+        }
+    }
+
+    if (chat)
+    {
+        MH_STATUS status = MH_DisableHook(g_chatTarget);
+        if (status != MH_OK && status != MH_ERROR_DISABLED)
+        {
+            return false;
+        }
+    }
+
+    while (!NoCallersInModule())
     {
         if (GetTickCount64() >= deadline)
         {
@@ -2087,27 +2246,64 @@ bool RemoveHooks(DWORD waitForCallersMs)
         Sleep(10);
     }
 
-    EnterCriticalSection(&g_hookLock);
-    if (g_hookInstalled && g_target != nullptr)
+    if (console)
     {
-        MH_RemoveHook(g_target);
+        if (MH_RemoveHook(g_target) != MH_OK)
+        {
+            return false;
+        }
+
         g_hookInstalled = false;
         g_originalConsolePrint = nullptr;
     }
 
-    if (g_chatHookInstalled && g_chatTarget != nullptr)
+    if (chat)
     {
-        MH_RemoveHook(g_chatTarget);
+        if (MH_RemoveHook(g_chatTarget) != MH_OK)
+        {
+            return false;
+        }
+
         g_chatHookInstalled = false;
         g_chatOriginal = nullptr;
     }
 
-    // One MinHook instance backs both hooks, so uninitialise once, after both. It
-    // may have been initialised with neither hook installed, so this is
-    // unconditional; it reports MH_ERROR_NOT_INITIALIZED harmlessly otherwise.
-    MH_Uninitialize();
-    LeaveCriticalSection(&g_hookLock);
-    return true;
+    // MinHook may have been initialised with neither hook installed, or not at all.
+    MH_STATUS status = MH_Uninitialize();
+    return status == MH_OK || status == MH_ERROR_NOT_INITIALIZED;
+}
+
+// Joins one worker by deadline. The input thread may be in FlushFileBuffers,
+// which nothing else can wake, so it is cancelled there. Only there: anywhere
+// else CancelSynchronousIo could cancel the game's own I/O mid-dispatch. The
+// shutdown event is already set, so once out of the flush the thread cannot start
+// another dispatch - the cancel can only ever land on the flush or on the pipe
+// cleanup after it.
+bool JoinWorker(HANDLE thread, HANDLE inputThread, ULONGLONG deadline)
+{
+    for (;;)
+    {
+        DWORD slice = RemainingMs(deadline);
+        if (slice > 50)
+        {
+            slice = 50;
+        }
+
+        if (WaitForSingleObject(thread, slice) == WAIT_OBJECT_0)
+        {
+            return true;
+        }
+
+        if (GetTickCount64() >= deadline)
+        {
+            return false;
+        }
+
+        if (thread == inputThread && InterlockedCompareExchange(&g_inputFlushing, 0, 0) != 0)
+        {
+            CancelSynchronousIo(thread);
+        }
+    }
 }
 }
 
@@ -2131,11 +2327,14 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookImageSize()
 
 extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookReconnect()
 {
+    ActiveCall inExport;
     return StartWorker(HookThread);
 }
 
 extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookStartInput()
 {
+    ActiveCall inExport;
+
     EnterCriticalSection(&g_dispatchLock);
     if (g_inputStarted)
     {
@@ -2146,7 +2345,7 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookStartInput()
     g_inputStarted = true;
     LeaveCriticalSection(&g_dispatchLock);
 
-    DWORD result = StartWorker(InputPipeThread);
+    DWORD result = StartWorker(InputPipeThread, &g_inputThread);
     if (result != ERROR_SUCCESS)
     {
         EnterCriticalSection(&g_dispatchLock);
@@ -2159,6 +2358,8 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookStartInput()
 
 extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookStartOutputWriter()
 {
+    ActiveCall inExport;
+
     EnterCriticalSection(&g_queueLock);
     bool alreadyStarted = g_writerStarted;
     g_writerStarted = true;
@@ -2182,6 +2383,8 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookStartOutputWriter()
 
 extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookInitialize()
 {
+    ActiveCall inExport;
+
     // Start the writer first so nothing queued during startup sits undrained.
     WreckfestConsoleHookStartOutputWriter();
 
@@ -2194,40 +2397,54 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookInitialize()
     return WreckfestConsoleHookStartInput();
 }
 
-// Stops every thread this module started, takes the hooks out of the game and
-// closes the output pipe, leaving the module safe to FreeLibrary. Call it through
-// CreateRemoteThread, like the other exports, and unload only when it returns 0.
+// Stops every thread this module started, takes the hooks out of the game, closes
+// the output pipe and gives back the module reference the first worker took.
 //
-// WAIT_TIMEOUT means a worker, or a game thread inside a detour, was still running
-// after the timeout. Nothing shared has been released then, so unloading would
-// still be unsafe; calling again retries. The hook does not restart afterwards:
-// the start exports refuse with ERROR_SHUTDOWN_IN_PROGRESS.
+// It must be a thread's start routine - call it through CreateRemoteThread like
+// the other exports - because on success it ends that thread with
+// FreeLibraryAndExitThread, exit code 0: if a FreeLibrary has already dropped every
+// other reference, the module is unmapped as this thread leaves it. Unload only
+// after it returned 0, and with no other export call in flight.
+//
+// WAIT_TIMEOUT means a worker, a game thread inside a detour, or a lock holder was
+// still busy at the deadline. Nothing has been released and the module stays
+// pinned, so a premature FreeLibrary cannot unmap it; calling again retries. The
+// hook does not restart afterwards: the start exports refuse with
+// ERROR_SHUTDOWN_IN_PROGRESS.
 extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookShutdown()
 {
     constexpr DWORD TimeoutMs = 5000;
+    ULONGLONG deadline = GetTickCount64() + TimeoutMs;
 
-    EnterCriticalSection(&g_teardownLock);
+    if (!EnterBefore(&g_teardownLock, deadline))
+    {
+        return WAIT_TIMEOUT;
+    }
+
     if (g_teardownDone)
     {
         LeaveCriticalSection(&g_teardownLock);
         return 0;
     }
 
-    EnterCriticalSection(&g_threadsLock);
+    if (!EnterBefore(&g_threadsLock, deadline))
+    {
+        LeaveCriticalSection(&g_teardownLock);
+        return WAIT_TIMEOUT;
+    }
+
     g_shuttingDown = true;
     std::vector<HANDLE> threads = g_workerThreads;
+    HANDLE inputThread = g_inputThread;
     LeaveCriticalSection(&g_threadsLock);
 
     SetEvent(g_shutdownEvent);
 
     // Before the hooks: a HookThread still running could otherwise install them
     // again after they were removed.
-    ULONGLONG deadline = GetTickCount64() + TimeoutMs;
     for (HANDLE thread : threads)
     {
-        ULONGLONG now = GetTickCount64();
-        DWORD remaining = now < deadline ? static_cast<DWORD>(deadline - now) : 0;
-        if (WaitForSingleObject(thread, remaining) != WAIT_OBJECT_0)
+        if (!JoinWorker(thread, inputThread, deadline))
         {
             // Not through the pipe: the worker still running may hold g_outputLock.
             WriteFallbackLog("WreckfestConsoleHook shutdown timed out waiting for a worker thread.");
@@ -2242,22 +2459,32 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookShutdown()
         CloseHandle(thread);
     }
     g_workerThreads.clear();
+    g_inputThread = nullptr;
     LeaveCriticalSection(&g_threadsLock);
 
-    if (!RemoveHooks(TimeoutMs))
+    if (!RemoveHooks(deadline))
     {
-        WriteFallbackLog("WreckfestConsoleHook shutdown timed out waiting for game threads to leave the hooks.");
+        WriteFallbackLog("WreckfestConsoleHook shutdown could not remove the hooks before its deadline.");
         LeaveCriticalSection(&g_teardownLock);
         return WAIT_TIMEOUT;
     }
 
     // The writer is gone and the hooks are out, so this is the last of the output.
+    // Uncontended now: g_outputLock was only ever taken by the writer and the hooks.
     DrainOutputQueue();
     WriteHookLineBlocking("WreckfestConsoleHook shut down.");
     ClosePipe();
 
     g_teardownDone = true;
+    bool release = g_selfReferenced;
+    g_selfReferenced = false;
     LeaveCriticalSection(&g_teardownLock);
+
+    if (release)
+    {
+        FreeLibraryAndExitThread(g_module, 0);
+    }
+
     return 0;
 }
 
@@ -2265,6 +2492,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
 {
     if (reason == DLL_PROCESS_ATTACH)
     {
+        g_module = module;
         DisableThreadLibraryCalls(module);
         InitializeCriticalSection(&g_hookLock);
         InitializeCriticalSection(&g_outputLock);
@@ -2294,33 +2522,24 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
             return TRUE;
         }
 
-        if (g_teardownDone)
-        {
-            // WreckfestConsoleHookShutdown joined every worker and removed the hooks,
-            // so nothing else can reach any of these.
-            DeleteCriticalSection(&g_outputLock);
-            DeleteCriticalSection(&g_hookLock);
-            DeleteCriticalSection(&g_dispatchLock);
-            DeleteCriticalSection(&g_queueLock);
-            DeleteCriticalSection(&g_threadsLock);
-            DeleteCriticalSection(&g_teardownLock);
-            CloseHandle(g_queueEvent);
-            CloseHandle(g_shutdownEvent);
-            CloseHandle(g_pipeIoEvent);
-            return TRUE;
-        }
+        // Unloading. The first worker pinned this module and only a completed
+        // shutdown unpins it, so reaching here means either that shutdown joined
+        // every worker and removed the hooks, or that nothing was ever started.
+        // Either way no other thread can be using any of this.
+        DeleteCriticalSection(&g_outputLock);
+        DeleteCriticalSection(&g_hookLock);
+        DeleteCriticalSection(&g_dispatchLock);
+        DeleteCriticalSection(&g_queueLock);
+        DeleteCriticalSection(&g_threadsLock);
+        DeleteCriticalSection(&g_teardownLock);
 
-        // Unloaded without WreckfestConsoleHookShutdown, or after a failed load.
-        // Nothing can be joined under the loader lock, so this is best effort: tell
-        // the workers to stop and give the game back its entry points so it stops
-        // calling into this module. The locks are left alone, since a worker may
-        // still hold one.
-        if (g_shutdownEvent != nullptr)
+        for (HANDLE event : { g_queueEvent, g_shutdownEvent, g_pipeIoEvent })
         {
-            SetEvent(g_shutdownEvent);
+            if (event != nullptr)
+            {
+                CloseHandle(event);
+            }
         }
-
-        RemoveHooks(0);
     }
 
     return TRUE;
