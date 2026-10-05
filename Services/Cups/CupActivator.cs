@@ -193,8 +193,21 @@ public sealed class CupActivator
     {
         try
         {
-            if (_store.SetActiveAsync(cup.Id, occurrence, PhaseFor(occurrence), CupStore.WindowOf(cup, occurrence)?.End)
-                .GetAwaiter().GetResult())
+            // Replaces the active run: not in the middle of a run step for the old one, which
+            // could otherwise act on a run this has just ended.
+            bool activated;
+            _store.RunGate.Wait();
+            try
+            {
+                activated = _store.SetActiveAsync(cup.Id, occurrence, PhaseFor(occurrence), CupStore.WindowOf(cup, occurrence)?.End)
+                    .GetAwaiter().GetResult();
+            }
+            finally
+            {
+                _store.RunGate.Release();
+            }
+
+            if (activated)
             {
                 _logger.LogInformation("Cup {CupName} (ID {CupId}) is now the active cup", cup.Name, cup.Id);
             }

@@ -169,8 +169,10 @@ public sealed class CupRunServiceTests : IDisposable
         Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
     }
 
+    // #206 review: a reset is never sent mid-race, where it would wipe that race's points.
+    // With no lobby within the wait, the cup starts without it.
     [Fact]
-    public async Task NoLobbyWithinTheWait_TheCupStartsAnyway()
+    public async Task NoLobbyWithinTheWait_TheCupStartsWithoutAReset()
     {
         var (cup, start, _) = await ActiveAsync();
         _session = ServerSessionPhase.Racing;
@@ -178,20 +180,44 @@ public sealed class CupRunServiceTests : IDisposable
 
         await _runs.TickAsync();
 
-        Assert.Contains("/cupreset", _sent);
+        Assert.DoesNotContain("/cupreset", _sent);
+        Assert.Equal("/message Friday Derby has started - good luck!", _sent[^1]);
         Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
     }
 
     [Fact]
-    public async Task AnUnreadableSession_DoesNotHoldTheStartBack()
+    public async Task AFailedReset_IsNotRetriedMidRace_EvenPastTheWait()
+    {
+        var (cup, start, _) = await ActiveAsync();
+        _server.SetupSequence(s => s.SendCommandAsync("/cupreset"))
+            .ReturnsAsync((false, "No hook"))
+            .ReturnsAsync((true, "OK dispatched"));
+        At(start);
+        await _runs.TickAsync();
+
+        _session = ServerSessionPhase.Racing;
+        At(start + CupRunService.LobbyWait);
+        await _runs.TickAsync();
+
+        _server.Verify(s => s.SendCommandAsync("/cupreset"), Times.Once);
+        Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
+    }
+
+    // Unreadable (no hook, say), nothing can be sent anyway: it waits, then starts without.
+    [Fact]
+    public async Task AnUnreadableSession_GetsNoReset_AndTheCupStartsAfterTheWait()
     {
         var (cup, start, _) = await ActiveAsync();
         _session = null;
         At(start);
 
         await _runs.TickAsync();
+        Assert.Equal(CupPhase.Starting, (await _db.ReloadAsync(cup.Id)).Phase);
 
-        Assert.Contains("/cupreset", _sent);
+        At(start + CupRunService.LobbyWait);
+        await _runs.TickAsync();
+
+        Assert.DoesNotContain("/cupreset", _sent);
         Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
     }
 

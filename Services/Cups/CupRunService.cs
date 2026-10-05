@@ -206,29 +206,28 @@ public sealed class CupRunService : IHostedService, IDisposable
     }
 
     /// <summary>
-    /// <c>/cupreset</c>, then "has started", for a run in <see cref="CupPhase.Starting"/>. In a
-    /// lobby only, as at the start: a retry mid-race would wipe that race's points. A reset
-    /// that fails stays <c>Starting</c> and is tried again on the next check; from
-    /// <see cref="LobbyWait"/> after the start, the cup starts without it.
+    /// <c>/cupreset</c>, then "has started", for a run in <see cref="CupPhase.Starting"/>. Only
+    /// in a lobby the server confirms - never after a timeout, nor with the session unreadable:
+    /// a reset mid-race would wipe that race's points. A reset that fails, or has no lobby to
+    /// go into, stays <c>Starting</c> and is tried again on the next check; from
+    /// <see cref="LobbyWait"/> after the start, the cup starts without it, with a warning.
     /// </summary>
     private async Task ResetAsync(ActiveCupRun run, DateTime start)
     {
-        if (!await WaitForLobbyAsync(start, onRace: () => Task.CompletedTask))
-        {
-            return;
-        }
-
-        var reset = await _serverManager.SendCommandAsync("/cupreset");
+        var session = await _serverManager.ReadHookSessionAsync();
+        var reset = session?.Phase == ServerSessionPhase.Lobby
+            ? await _serverManager.SendCommandAsync("/cupreset")
+            : (Success: false, Message: session is null ? "the session state cannot be read" : "not in the lobby");
         if (!reset.Success)
         {
             if (UtcNow - start < LobbyWait)
             {
-                _logger.LogWarning("Cup {CupName}: /cupreset could not be sent ({Message}); retrying", run.Name, reset.Message);
+                _logger.LogInformation("Cup {CupName}: /cupreset not sent yet ({Message}); retrying", run.Name, reset.Message);
                 return;
             }
 
             _logger.LogWarning(
-                "Cup {CupName}: /cupreset could not be sent within {Minutes} minutes of the start ({Message}); the cup runs without it",
+                "Cup {CupName}: no /cupreset within {Minutes} minutes of the start ({Message}); the cup runs without it, and the warmup's points stay",
                 run.Name,
                 LobbyWait.TotalMinutes,
                 reset.Message);

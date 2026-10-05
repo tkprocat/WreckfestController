@@ -376,9 +376,11 @@ restart on, the cup is active, and its run goes:
   loading anything). Players are told "*name* has started - good luck!"; a race still on
   at the start is announced with "*name* starts after this race." The cup is then
   `Running`, and `CupStarted` is sent. A run whose restart finished after its start (one
-  that ran long, say) starts at once. A reset that cannot be sent yet is retried, in a lobby
-  only, until it goes through (even across a controller restart), or for at most 15
-  minutes; until then the cup still shows as warming up.
+  that ran long, say) starts at once. `/cupreset` is only ever sent in a lobby the server
+  confirms, never mid-race. One that cannot go through yet is retried (even across a
+  controller restart) for at most 15 minutes after the start; then the cup starts without
+  it, keeping the warmup's points, with a warning in the log. Until then the cup still
+  shows as warming up.
 - **End** (with an `endTime`): players are told "*name* is over - thanks for racing!", the
   cup is no longer active, and `CupEnded` is sent. A cup that ran with cup points - its own
   `sessionMode`, or the server's when it keeps that - has them turned off at the next
