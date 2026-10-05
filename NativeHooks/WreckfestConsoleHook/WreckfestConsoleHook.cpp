@@ -777,6 +777,7 @@ bool WritePipeLocked(const char* data, DWORD size)
         WaitForSingleObject(overlapped.hEvent, ShutdownGraceMs) != WAIT_OBJECT_0)
     {
         CancelIoEx(g_pipe, &overlapped);
+        WriteFallbackLog("WreckfestConsoleHook gave up on a controller that stopped reading.");
     }
 
     // Waits for the cancellation too, so overlapped is not released while in flight.
@@ -2131,8 +2132,14 @@ bool AddressInModule(DWORD64 address)
 // and its instruction pointer checked against this module's image. Together they
 // leave no window: a thread is either counted or visibly executing here.
 //
-// Nothing allocates while threads are suspended - one of them may hold the heap
-// lock - so the list is built and its storage reserved first.
+// A thread that cannot be opened, suspended or read counts as busy: it may be the
+// one paused in a detour. One that has exited simply fails again on the retry,
+// against a fresh snapshot without it.
+//
+// While threads are suspended only plain arrays and Win32 calls are used - no
+// allocation and no STL operation. One of the suspended threads may hold the heap
+// lock, or the debug CRT's lock, which a debug build's vector takes even for a
+// push_back within its capacity.
 bool NoCallersInModule()
 {
     if (InterlockedCompareExchange(&g_activeCalls, 0, 0) != 0)
@@ -2158,26 +2165,30 @@ bool NoCallersInModule()
     }
     CloseHandle(snapshot);
 
-    std::vector<HANDLE> suspended;
-    suspended.reserve(threadIds.size());
+    std::vector<HANDLE> handles(threadIds.size(), nullptr);
+    const DWORD* ids = threadIds.data();
+    HANDLE* suspended = handles.data();
+    size_t threadCount = threadIds.size();
+    size_t suspendedCount = 0;
 
     bool idle = true;
-    for (DWORD id : threadIds)
+    for (size_t i = 0; i < threadCount; i++)
     {
-        HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, id);
+        HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, ids[i]);
         if (thread == nullptr)
         {
-            // Exited since the snapshot.
-            continue;
+            idle = false;
+            break;
         }
 
         if (SuspendThread(thread) == static_cast<DWORD>(-1))
         {
             CloseHandle(thread);
-            continue;
+            idle = false;
+            break;
         }
 
-        suspended.push_back(thread);
+        suspended[suspendedCount++] = thread;
 
         // GetThreadContext also waits for the suspension to take effect.
         CONTEXT context = {};
@@ -2195,10 +2206,10 @@ bool NoCallersInModule()
         idle = false;
     }
 
-    for (HANDLE thread : suspended)
+    for (size_t i = 0; i < suspendedCount; i++)
     {
-        ResumeThread(thread);
-        CloseHandle(thread);
+        ResumeThread(suspended[i]);
+        CloseHandle(suspended[i]);
     }
 
     return idle;
@@ -2453,7 +2464,14 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookShutdown()
         }
     }
 
-    EnterCriticalSection(&g_threadsLock);
+    // Bounded too: a start export racing this shutdown can hold it for a moment
+    // before it sees g_shuttingDown and gives up.
+    if (!EnterBefore(&g_threadsLock, deadline))
+    {
+        LeaveCriticalSection(&g_teardownLock);
+        return WAIT_TIMEOUT;
+    }
+
     for (HANDLE thread : g_workerThreads)
     {
         CloseHandle(thread);
