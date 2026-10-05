@@ -307,13 +307,14 @@ internal static class NativeConsoleHookInjector
     {
         const int ErrorBadLength = 24;
         const int ErrorPartialCopy = 299;
+        const int MaxAttempts = 40;
 
-        for (var attempt = 0; ; attempt++)
+        for (var attempt = 1; ; attempt++)
         {
             var snapshot = CreateToolhelp32Snapshot(Th32csSnapModule | Th32csSnapModule32, (uint)processId);
             var error = Marshal.GetLastWin32Error();
             if (snapshot != InvalidHandleValue ||
-                attempt >= 40 ||
+                attempt >= MaxAttempts ||
                 (error != ErrorBadLength && error != ErrorPartialCopy))
             {
                 return snapshot;
