@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Moq;
 using WreckfestController.Data.Cups;
+using WreckfestController.Models;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Cups;
 using WreckfestController.Services.Hook;
@@ -62,16 +63,23 @@ public sealed class CupRunServiceTests : IDisposable
         _config.Setup(c => c.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
             .Callback<IReadOnlyDictionary<string, string>>(_written.Add);
 
-        _runs = new CupRunService(
-            _db.Store,
-            _server.Object,
-            _eventLoop.Object,
-            _config.Object,
-            _publisher.Object,
-            _db.Clock,
-            () => _restarting,
-            Mock.Of<ILogger<CupRunService>>());
+        _config.Setup(c => c.ReadBasicConfig()).Returns(() => new ServerConfig { SessionMode = _serverSessionMode });
+
+        _runs = NewService();
     }
+
+    private string _serverSessionMode = "normal";
+
+    /// <summary>A fresh service over the same database: what a controller restart gives.</summary>
+    private CupRunService NewService() => new(
+        _db.Store,
+        _server.Object,
+        _eventLoop.Object,
+        _config.Object,
+        _publisher.Object,
+        _db.Clock,
+        () => _restarting,
+        Mock.Of<ILogger<CupRunService>>());
 
     private DateTime Now => _db.Clock.UtcNow;
 
@@ -93,7 +101,7 @@ public sealed class CupRunServiceTests : IDisposable
             warmup: TimeOnly.FromDateTime(start.AddMinutes(-30)),
             end: withEnd ? TimeOnly.FromDateTime(end) : null,
             restartRotation: restartRotation));
-        Assert.True(await _db.Store.SetActiveAsync(cup.Id, start, phase));
+        Assert.True(await _db.Store.SetActiveAsync(cup.Id, start, phase, withEnd ? end : null, Ct));
         return (cup, start, end);
     }
 
@@ -210,10 +218,12 @@ public sealed class CupRunServiceTests : IDisposable
         At(start);
 
         await _runs.TickAsync();
-        Assert.Equal(CupPhase.Warmup, (await _db.ReloadAsync(cup.Id)).Phase);
+
+        // Started (claimed) at once; the reset and the announcement wait for the retry.
+        Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
+        Assert.Empty(_sent);
 
         await _runs.TickAsync();
-        Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
         Assert.Equal(["/message Friday Derby has started - good luck!"], _sent);
     }
 
@@ -283,6 +293,106 @@ public sealed class CupRunServiceTests : IDisposable
 
         Assert.Equal("session_mode=normal", _sent[^1]);
         Assert.Single(_written);
+        Assert.Null((await _db.ReloadAsync(cup.Id)).PointsOffPendingSince);
+    }
+
+    // #206 review: a run activated after its start (a restart that ran long, or the scheduler
+    // checking late) still gets its start: the reset, the rotation and the announcement.
+    [Fact]
+    public async Task ARunActivatedAfterItsStart_StartsAtOnce()
+    {
+        var (cup, start, _) = await ActiveAsync(restartRotation: true);
+        At(start.AddMinutes(2));
+
+        await _runs.TickAsync();
+
+        Assert.Equal(
+            ["<rotation back to the beginning>", "/cupreset", "/message Friday Derby has started - good luck!"],
+            _sent);
+        Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
+    }
+
+    [Fact]
+    public async Task ARunNoLongerInWarmup_IsNotStartedAgain()
+    {
+        var (cup, start, _) = await ActiveAsync();
+        Assert.True(await _db.Store.SetPhaseAsync(cup.Id, start, CupPhase.Warmup, CupPhase.Running, Ct));
+        At(start);
+
+        // Read as running already: a stale check that read it in warmup loses the claim.
+        Assert.False(await _db.Store.SetPhaseAsync(cup.Id, start, CupPhase.Warmup, CupPhase.Running, Ct));
+        await _runs.TickAsync();
+
+        Assert.Empty(_sent);
+    }
+
+    // #206 review: the pending points-off is kept in the database, so it survives a restart.
+    [Fact]
+    public async Task APendingPointsOff_SurvivesAControllerRestart()
+    {
+        var (cup, _, end) = await ActiveAsync(CupPhase.Running);
+        _session = ServerSessionPhase.Racing;
+        At(end);
+        await _runs.TickAsync();
+        Assert.NotNull((await _db.ReloadAsync(cup.Id)).PointsOffPendingSince);
+
+        _session = ServerSessionPhase.Lobby;
+        await NewService().TickAsync();
+
+        Assert.Equal("session_mode=normal", _sent[^1]);
+        Assert.Null((await _db.ReloadAsync(cup.Id)).PointsOffPendingSince);
+    }
+
+    // #206 review: once another cup runs the server, the ended cup's points-off would turn
+    // off that cup's scoring. It is dropped instead.
+    [Fact]
+    public async Task APendingPointsOff_IsDropped_WhenAnotherCupIsActive()
+    {
+        var (cup, _, end) = await ActiveAsync(CupPhase.Running);
+        _session = ServerSessionPhase.Racing;
+        At(end);
+        await _runs.TickAsync();
+
+        var next = await _db.CreateAsync(CupTestDatabase.Definition("Saturday Cup", Now.AddDays(1), sessionMode: "25p-aggr"));
+        Assert.True(await _db.Store.SetActiveAsync(next.Id, Ct));
+        _session = ServerSessionPhase.Lobby;
+        await _runs.TickAsync();
+
+        Assert.DoesNotContain("session_mode=normal", _sent);
+        Assert.Empty(_written);
+        Assert.Null((await _db.ReloadAsync(cup.Id)).PointsOffPendingSince);
+    }
+
+    // #206 review: a cup that keeps the server's own session mode ran with whatever the
+    // server has; when that awards cup points, they go off at the end too.
+    [Fact]
+    public async Task ACupKeepingTheServersPointsSystem_TurnsThemOffAtTheEnd()
+    {
+        _serverSessionMode = "30p-aggr";
+        var (_, _, end) = await ActiveAsync(CupPhase.Running, sessionMode: null);
+        At(end);
+
+        await _runs.TickAsync();
+
+        Assert.Equal("session_mode=normal", _sent[^1]);
+        Assert.Single(_written);
+    }
+
+    // #206 review: the run's end is fixed when it begins; editing the schedule while it runs
+    // moves later occurrences, not this one.
+    [Fact]
+    public async Task EditingTheScheduleWhileItRuns_DoesNotMoveThisRunsEnd()
+    {
+        var (cup, start, end) = await ActiveAsync(CupPhase.Running);
+        var edited = CupTestDatabase.Definition(
+            "Friday Derby", Now.AddDays(3), timeZone: "Europe/Copenhagen", end: new TimeOnly(21, 0));
+
+        var (status, _) = await _db.Store.UpdateAsync(cup.Id, edited, cup.Version, Ct);
+
+        Assert.Equal(CupWriteStatus.Saved, status);
+        var run = await _db.Store.ActiveRunAsync(Ct);
+        Assert.Equal(start, run!.StartsAt);
+        Assert.Equal(end, run.EndsAt);
     }
 
     [Theory]

@@ -261,6 +261,8 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
             cup.Property(e => e.ActivatedAt).HasConversion(UtcConverter);
             cup.Property(e => e.LastOutcome).HasConversion<string>().HasMaxLength(16);
             cup.Property(e => e.CurrentOccurrence).HasConversion(UtcConverter);
+            cup.Property(e => e.CurrentEnd).HasConversion(UtcConverter);
+            cup.Property(e => e.PointsOffPendingSince).HasConversion(UtcConverter);
             cup.Property(e => e.Phase).HasConversion<string>().HasMaxLength(16);
 
             Json(cup.Property(e => e.Repeat));

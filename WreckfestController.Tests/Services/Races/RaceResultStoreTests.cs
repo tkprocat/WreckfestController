@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using WreckfestController.Data.Cups;
 using WreckfestController.Data.Races;
 using WreckfestController.Services.Cups;
 using WreckfestController.Services.Hook;
@@ -153,6 +154,14 @@ public sealed class RaceResultStoreTests : IDisposable
     [Fact]
     public void The_note_wins_when_the_active_cup_came_after_the_end() =>
         Assert.Equal(CupA, RaceResultStore.CupAtEnd(active: CupBAfter, noted: CupA, End));
+
+    // #206 review: a warmup race saved after the cup started is still a warmup race. The same
+    // run in the note and the database: the note's phase is the one at the end.
+    [Fact]
+    public void The_note_keeps_its_phase_when_the_run_moved_on_before_the_save() =>
+        Assert.Equal(
+            CupPhase.Warmup,
+            RaceResultStore.CupAtEnd(active: CupA with { Phase = CupPhase.Running }, noted: CupA with { Phase = CupPhase.Warmup }, End)!.Phase);
 
     [Fact]
     public void No_cup_when_both_came_after_the_end() =>

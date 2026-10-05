@@ -156,7 +156,8 @@ public class CupSchedulerService : IHostedService, IDisposable
                 cup.Name,
                 cup.Id,
                 occurrence);
-            await _store.SetActiveAsync(cup.Id, occurrence, CupActivator.PhaseAt(occurrence, now));
+            await _store.SetActiveAsync(
+                cup.Id, occurrence, CupActivator.PhaseFor(occurrence), CupStore.WindowOf(cup, occurrence)?.End);
             await _activator.EndOccurrenceAsync(cup, occurrence, OccurrenceOutcome.Activated);
             return true;
         }

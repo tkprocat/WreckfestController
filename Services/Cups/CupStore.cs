@@ -41,6 +41,9 @@ public sealed record CupSummary(
 /// <summary>Which cup is active, since when (UTC), and whether it is warming up or running.</summary>
 public sealed record ActiveCupSnapshot(int Id, string Name, DateTime ActivatedAt, CupPhase? Phase = null);
 
+/// <summary>An ended run whose cup points still have to be turned off.</summary>
+public sealed record PendingPointsOff(int Id, string Name, DateTime Since);
+
 /// <summary>The active cup as its run sees it: what the phase ticks need, read in one query.</summary>
 public sealed record ActiveCupRun(
     int Id,
@@ -162,7 +165,7 @@ public sealed class CupStore
             .Select(c => new
             {
                 c.Name, c.Description, c.NextOccurrence, c.Repeat, c.ActivatedAt,
-                c.WarmupTime, c.EndTime, c.TimeZone, c.Phase, c.CurrentOccurrence,
+                c.Phase, c.CurrentOccurrence, c.CurrentEnd,
             })
             .FirstOrDefaultAsync(cancellationToken);
         var next = await db.Cups
@@ -181,10 +184,9 @@ public sealed class CupStore
         CupSummary? activeSummary = null;
         if (active is not null)
         {
-            var run = Window(active.CurrentOccurrence, active.WarmupTime, active.EndTime, active.TimeZone);
             activeSummary = new CupSummary(
                 active.Name, active.Description, active.NextOccurrence, active.Repeat, active.ActivatedAt,
-                run?.Warmup, active.CurrentOccurrence, run?.End, active.Phase);
+                null, active.CurrentOccurrence, active.CurrentEnd, active.Phase);
         }
 
         return (activeSummary, next
@@ -366,32 +368,28 @@ public sealed class CupStore
         var cup = await db.Cups
             .AsNoTracking()
             .Where(c => c.IsActive)
-            .Select(c => new
-            {
-                c.Id, c.Name, c.Phase, c.CurrentOccurrence, c.WarmupTime, c.EndTime, c.TimeZone,
-                c.SessionMode, c.RestartRotationAtStart,
-            })
+            .Select(c => new ActiveCupRun(
+                c.Id, c.Name, c.Phase, c.CurrentOccurrence, c.CurrentOccurrence, c.CurrentEnd,
+                c.SessionMode, c.RestartRotationAtStart))
             .FirstOrDefaultAsync(cancellationToken);
-        if (cup is null)
-        {
-            return null;
-        }
-
-        var window = Window(cup.CurrentOccurrence, cup.WarmupTime, cup.EndTime, cup.TimeZone);
-        return new ActiveCupRun(
-            cup.Id, cup.Name, cup.Phase, cup.CurrentOccurrence, cup.CurrentOccurrence, window?.End,
-            cup.SessionMode, cup.RestartRotationAtStart);
+        return cup;
     }
 
     /// <summary>
-    /// Moves the active cup's run at <paramref name="occurrence"/> to <paramref name="phase"/>.
-    /// False when that run is no longer the active one.
+    /// Moves the active cup's run at <paramref name="occurrence"/> from <paramref name="from"/>
+    /// to <paramref name="phase"/>. False, changing nothing, when that run is no longer the
+    /// active one or has moved on: whoever gets true owns the change.
     /// </summary>
-    public async Task<bool> SetPhaseAsync(int id, DateTime? occurrence, CupPhase phase, CancellationToken cancellationToken = default)
+    public async Task<bool> SetPhaseAsync(
+        int id,
+        DateTime? occurrence,
+        CupPhase from,
+        CupPhase phase,
+        CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
         var updated = await db.Cups
-            .Where(e => e.Id == id && e.IsActive && e.CurrentOccurrence == occurrence)
+            .Where(e => e.Id == id && e.IsActive && e.CurrentOccurrence == occurrence && e.Phase == from)
             .ExecuteUpdateAsync(s => s.SetProperty(e => e.Phase, phase), cancellationToken);
         if (updated > 0 && CachedActiveCup is { } cached && cached.Id == id)
         {
@@ -403,18 +401,25 @@ public sealed class CupStore
 
     /// <summary>
     /// Ends the active cup's run at <paramref name="occurrence"/>: no cup is active afterwards.
-    /// False when that run is no longer the active one.
+    /// <paramref name="pointsOffSince"/> records that its cup points still have to be turned
+    /// off. False, changing nothing, when that run is no longer the active one.
     /// </summary>
-    public async Task<bool> EndRunAsync(int id, DateTime? occurrence, CancellationToken cancellationToken = default)
+    public async Task<bool> EndRunAsync(
+        int id,
+        DateTime? occurrence,
+        DateTime? pointsOffSince = null,
+        CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
         var updated = await db.Cups
-            .Where(e => e.Id == id && e.IsActive && e.CurrentOccurrence == occurrence)
+            .Where(e => e.Id == id && e.IsActive && e.CurrentOccurrence == occurrence && e.Phase == CupPhase.Running)
             .ExecuteUpdateAsync(
                 s => s
                     .SetProperty(e => e.IsActive, false)
                     .SetProperty(e => e.Phase, (CupPhase?)null)
-                    .SetProperty(e => e.CurrentOccurrence, (DateTime?)null),
+                    .SetProperty(e => e.CurrentOccurrence, (DateTime?)null)
+                    .SetProperty(e => e.CurrentEnd, (DateTime?)null)
+                    .SetProperty(e => e.PointsOffPendingSince, pointsOffSince),
                 cancellationToken);
         if (updated > 0 && CachedActiveCup?.Id == id)
         {
@@ -424,9 +429,30 @@ public sealed class CupStore
         return updated > 0;
     }
 
+    /// <summary>Ended runs whose cup points still have to be turned off, oldest first.</summary>
+    public async Task<List<PendingPointsOff>> PendingPointsOffAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
+        return await db.Cups
+            .AsNoTracking()
+            .Where(c => c.PointsOffPendingSince != null)
+            .OrderBy(c => c.PointsOffPendingSince)
+            .Select(c => new PendingPointsOff(c.Id, c.Name, c.PointsOffPendingSince!.Value))
+            .ToListAsync(cancellationToken);
+    }
+
+    /// <summary>Clears the pending points-off of <paramref name="ids"/>: done, or no longer wanted.</summary>
+    public async Task ClearPointsOffAsync(IReadOnlyCollection<int> ids, CancellationToken cancellationToken = default)
+    {
+        await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
+        await db.Cups
+            .Where(c => ids.Contains(c.Id))
+            .ExecuteUpdateAsync(s => s.SetProperty(c => c.PointsOffPendingSince, (DateTime?)null), cancellationToken);
+    }
+
     /// <summary>Makes <paramref name="id"/> the active cup, running no particular occurrence.</summary>
     public Task<bool> SetActiveAsync(int id, CancellationToken cancellationToken = default) =>
-        SetActiveAsync(id, occurrence: null, CupPhase.Running, cancellationToken);
+        SetActiveAsync(id, occurrence: null, CupPhase.Running, end: null, cancellationToken);
 
     /// <summary>
     /// Makes <paramref name="id"/> the active cup and every other cup inactive, in one
@@ -437,6 +463,7 @@ public sealed class CupStore
         int id,
         DateTime? occurrence,
         CupPhase phase,
+        DateTime? end,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
@@ -449,7 +476,8 @@ public sealed class CupStore
                 s => s
                     .SetProperty(e => e.IsActive, false)
                     .SetProperty(e => e.Phase, (CupPhase?)null)
-                    .SetProperty(e => e.CurrentOccurrence, (DateTime?)null),
+                    .SetProperty(e => e.CurrentOccurrence, (DateTime?)null)
+                    .SetProperty(e => e.CurrentEnd, (DateTime?)null),
                 cancellationToken);
 
         var now = UtcNow;
@@ -460,7 +488,8 @@ public sealed class CupStore
                     .SetProperty(e => e.IsActive, true)
                     .SetProperty(e => e.ActivatedAt, now)
                     .SetProperty(e => e.Phase, (CupPhase?)phase)
-                    .SetProperty(e => e.CurrentOccurrence, occurrence),
+                    .SetProperty(e => e.CurrentOccurrence, occurrence)
+                    .SetProperty(e => e.CurrentEnd, end),
                 cancellationToken);
 
         if (activated == 0)

@@ -19,6 +19,12 @@ namespace WreckfestController.Data.Migrations
                 nullable: true);
 
             migrationBuilder.AddColumn<DateTime>(
+                name: "CurrentEnd",
+                table: "Cups",
+                type: "TEXT",
+                nullable: true);
+
+            migrationBuilder.AddColumn<DateTime>(
                 name: "CurrentOccurrence",
                 table: "Cups",
                 type: "TEXT",
@@ -35,6 +41,12 @@ namespace WreckfestController.Data.Migrations
                 table: "Cups",
                 type: "TEXT",
                 maxLength: 16,
+                nullable: true);
+
+            migrationBuilder.AddColumn<DateTime>(
+                name: "PointsOffPendingSince",
+                table: "Cups",
+                type: "TEXT",
                 nullable: true);
 
             migrationBuilder.AddColumn<bool>(
@@ -59,6 +71,10 @@ namespace WreckfestController.Data.Migrations
                 table: "Races");
 
             migrationBuilder.DropColumn(
+                name: "CurrentEnd",
+                table: "Cups");
+
+            migrationBuilder.DropColumn(
                 name: "CurrentOccurrence",
                 table: "Cups");
 
@@ -68,6 +84,10 @@ namespace WreckfestController.Data.Migrations
 
             migrationBuilder.DropColumn(
                 name: "Phase",
+                table: "Cups");
+
+            migrationBuilder.DropColumn(
+                name: "PointsOffPendingSince",
                 table: "Cups");
 
             migrationBuilder.DropColumn(

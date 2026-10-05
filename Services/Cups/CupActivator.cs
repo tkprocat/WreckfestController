@@ -184,8 +184,8 @@ public sealed class CupActivator
     {
         try
         {
-            var phase = PhaseAt(occurrence, _time.GetUtcNow().UtcDateTime);
-            if (_store.SetActiveAsync(cup.Id, occurrence, phase).GetAwaiter().GetResult())
+            if (_store.SetActiveAsync(cup.Id, occurrence, PhaseFor(occurrence), CupStore.WindowOf(cup, occurrence)?.End)
+                .GetAwaiter().GetResult())
             {
                 _logger.LogInformation("Cup {CupName} (ID {CupId}) is now the active cup", cup.Name, cup.Id);
             }
@@ -207,12 +207,14 @@ public sealed class CupActivator
     }
 
     /// <summary>
-    /// The phase a run of <paramref name="occurrence"/> is in at <paramref name="now"/>: warming
-    /// up until its start, then running. A run that stands for no occurrence has no start to
-    /// wait for, so it runs.
+    /// The phase a run of <paramref name="occurrence"/> begins in. Always the warmup, even when
+    /// the start has already passed - a restart that ran long, say: <see cref="CupRunService"/>
+    /// then carries out the start at once (the reset, the rotation, the announcement), which
+    /// only happens on the way out of the warmup. A run that stands for no occurrence has no
+    /// start to carry out, so it runs.
     /// </summary>
-    public static CupPhase PhaseAt(DateTime? occurrence, DateTime now) =>
-        occurrence is { } start && now < start ? CupPhase.Warmup : CupPhase.Running;
+    public static CupPhase PhaseFor(DateTime? occurrence) =>
+        occurrence is null ? CupPhase.Running : CupPhase.Warmup;
 
     /// <summary>
     /// Records how <paramref name="occurrence"/> ended and moves the cup past it. Anything

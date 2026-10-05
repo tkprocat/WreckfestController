@@ -51,7 +51,7 @@ public sealed record CupResponse(
     {
         var deployed = CupStore.ToRestartEvent(cup);
         var next = CupStore.WindowOf(cup, cup.NextOccurrence);
-        var current = cup.IsActive ? CupStore.WindowOf(cup, cup.CurrentOccurrence) : null;
+
         return new(
             cup.Id,
             cup.Name,
@@ -77,8 +77,8 @@ public sealed record CupResponse(
             next?.Warmup,
             next?.End,
             cup.IsActive ? cup.Phase : null,
-            current is null ? null : cup.CurrentOccurrence,
-            current?.End,
+            cup.IsActive ? cup.CurrentOccurrence : null,
+            cup.IsActive ? cup.CurrentEnd : null,
             cup.CreatedBy is { } user ? user.DisplayName ?? user.UserName : null,
             cup.CreatedAt,
             cup.UpdatedAt,

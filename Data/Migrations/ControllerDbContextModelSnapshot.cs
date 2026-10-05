@@ -537,6 +537,9 @@ namespace WreckfestController.Data.Migrations
                     b.Property<string>("CreatedById")
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTime?>("CurrentEnd")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTime?>("CurrentOccurrence")
                         .HasColumnType("TEXT");
 
@@ -572,6 +575,9 @@ namespace WreckfestController.Data.Migrations
 
                     b.Property<string>("Phase")
                         .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("PointsOffPendingSince")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Repeat")

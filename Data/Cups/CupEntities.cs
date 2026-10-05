@@ -145,6 +145,19 @@ public class Cup : IVersioned
     /// occurrence: it has no start to wait for and no end.
     /// </summary>
     public DateTime? CurrentOccurrence { get; set; }
+
+    /// <summary>
+    /// UTC. When the active cup's run ends, resolved when it began, so an edit to the
+    /// schedule while it runs moves later occurrences, not this one. Null: no end.
+    /// </summary>
+    public DateTime? CurrentEnd { get; set; }
+
+    /// <summary>
+    /// UTC. Set when a run with cup points ended and they still have to be turned off at
+    /// the next lobby; cleared once done, or when another cup has taken over the server.
+    /// Kept in the database so a controller restart does not leave cup points on.
+    /// </summary>
+    public DateTime? PointsOffPendingSince { get; set; }
 }
 
 /// <summary>Where the active cup is in its occurrence.</summary>

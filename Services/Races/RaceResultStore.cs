@@ -96,7 +96,11 @@ public sealed class RaceResultStore
     {
         if (active != null && active.ActivatedAt <= endedAt)
         {
-            return active;
+            // The same run as noted: the note has the phase as the race ended, which the
+            // database may since have moved on from warmup to running.
+            return noted != null && noted.Id == active.Id && noted.ActivatedAt == active.ActivatedAt
+                ? active with { Phase = noted.Phase }
+                : active;
         }
 
         return noted != null && noted.ActivatedAt <= endedAt ? noted : null;
