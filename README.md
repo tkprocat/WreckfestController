@@ -9,9 +9,6 @@ hosts a web site and an HTTP API: a public home page showing who is on and what 
 running, and an admin area for the server's config, track rotation, cups, the track
 catalogue and user accounts.
 
-Version 2.0 replaces the separate Laravel site, WreckfestWeb, which works only with
-1.x (`v1-final`).
-
 ## Features
 
 - **Server control**: start, stop (graceful or forced), restart and update through
