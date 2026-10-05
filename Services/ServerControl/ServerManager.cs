@@ -2445,6 +2445,10 @@ public class ServerManager
             _logger.LogError(ex, $"Failed to attach to process {processId}");
             return (false, "Could not attach to the server. The desktop app's log has the details.");
         }
+        finally
+        {
+            _attachmentGate.Release();
+        }
     }
 
     /// <summary>

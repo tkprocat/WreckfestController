@@ -1505,6 +1505,22 @@ public class ServerManagerTests
         Assert.DoesNotContain("injection is in progress", after.Message);
     }
 
+    // The desktop app's attach holds the gate for its whole run; every way out must give it
+    // back, or every later attach and inject is refused and start waits out its timeout.
+    [Theory]
+    [InlineData(false)] // the test process: not a Wreckfest server, an early return
+    [InlineData(true)]  // no such process: GetProcessById throws, the catch returns
+    public async Task DesktopAttach_ThatFails_ReleasesTheGate(bool noSuchProcess)
+    {
+        var serverManager = CreateTestServerManager(Mock.Of<IInjectedHookOutputReader>(), "1.308438");
+        var target = noSuchProcess ? int.MaxValue : Process.GetCurrentProcess().Id;
+
+        var failed = await serverManager.AttachToProcessAsync(target);
+        Assert.False(failed.Success);
+
+        Assert.True(serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id).Success);
+    }
+
     private sealed class TestServerManager : ServerManager
     {
         private readonly string? _build;
