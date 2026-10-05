@@ -585,6 +585,22 @@ public sealed class CupRunServiceTests : IDisposable
         Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
     }
 
+    // #207 review: a run left Starting (a controller that stopped after the reset) and found
+    // again long after the start, in a lobby, is not reset: that would wipe the cup's results.
+    [Fact]
+    public async Task AStartingRunFoundLate_IsNotResetEvenInALobby()
+    {
+        var (cup, start, _) = await ActiveAsync(CupPhase.Starting, restartRotation: true);
+        _session = ServerSessionPhase.Lobby;
+        At(start.AddMinutes(45));
+
+        await _runs.TickAsync();
+
+        Assert.DoesNotContain("/cupreset", _sent);
+        Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
+        _eventLoop.Verify(l => l.RestartAsync(), Times.Once);
+    }
+
     // Shown and recorded as the warmup: the warmup's points are still on the board.
     [Fact]
     public void Starting_IsShownAsTheWarmup() =>

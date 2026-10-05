@@ -218,10 +218,20 @@ public sealed class CupRunService : IHostedService, IDisposable
     /// </remarks>
     private async Task ResetAsync(ActiveCupRun run, DateTime start)
     {
-        var session = await _serverManager.ReadHookSessionAsync();
-        var reset = session?.Phase == ServerSessionPhase.Lobby
-            ? await _serverManager.SendCommandAsync("/cupreset")
-            : (Success: false, Message: session is null ? "the session state cannot be read" : "not in the lobby");
+        // The window is checked before sending, not only after a failure: a controller coming
+        // back long after the start must not reset a cup that has been racing since.
+        (bool Success, string Message) reset;
+        if (UtcNow - start >= LobbyWait)
+        {
+            reset = (false, $"more than {LobbyWait.TotalMinutes} minutes after the start");
+        }
+        else
+        {
+            var session = await _serverManager.ReadHookSessionAsync();
+            reset = session?.Phase == ServerSessionPhase.Lobby
+                ? await _serverManager.SendCommandAsync("/cupreset")
+                : (false, session is null ? "the session state cannot be read" : "not in the lobby");
+        }
         if (!reset.Success)
         {
             if (UtcNow - start < LobbyWait)
