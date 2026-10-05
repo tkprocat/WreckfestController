@@ -10,6 +10,9 @@ namespace WreckfestController.Controllers;
 /// now: a linked collection's current tracks, else the cup's own.
 /// <see cref="Version"/> (and the ETag) covers what an admin edits; the scheduler's
 /// fields from <see cref="NextOccurrence"/> on change without it.
+/// <see cref="NextWarmup"/> and <see cref="NextEnd"/> are the next occurrence's window;
+/// <see cref="CurrentStart"/> and <see cref="CurrentEnd"/> the window of the run the active
+/// cup is in, whose occurrence the scheduler has already moved past.
 /// </summary>
 public sealed record CupResponse(
     int Id,
@@ -30,6 +33,14 @@ public sealed record CupResponse(
     OccurrenceOutcome? LastOutcome,
     bool IsActive,
     DateTime? ActivatedAt,
+    string? WarmupTime,
+    string? EndTime,
+    bool RestartRotationAtStart,
+    DateTime? NextWarmup,
+    DateTime? NextEnd,
+    CupPhase? Phase,
+    DateTime? CurrentStart,
+    DateTime? CurrentEnd,
     string? CreatedBy,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
@@ -39,6 +50,8 @@ public sealed record CupResponse(
     public static CupResponse From(Cup cup)
     {
         var deployed = CupStore.ToRestartEvent(cup);
+        var next = CupStore.WindowOf(cup, cup.NextOccurrence);
+        var current = cup.IsActive ? CupStore.WindowOf(cup, cup.CurrentOccurrence) : null;
         return new(
             cup.Id,
             cup.Name,
@@ -58,6 +71,14 @@ public sealed record CupResponse(
             cup.LastOutcome,
             cup.IsActive,
             cup.ActivatedAt,
+            CupRules.Format(cup.WarmupTime),
+            CupRules.Format(cup.EndTime),
+            cup.RestartRotationAtStart,
+            next?.Warmup,
+            next?.End,
+            cup.IsActive ? cup.Phase : null,
+            current is null ? null : cup.CurrentOccurrence,
+            current?.End,
             cup.CreatedBy is { } user ? user.DisplayName ?? user.UserName : null,
             cup.CreatedAt,
             cup.UpdatedAt,
@@ -104,6 +125,18 @@ public sealed class CupRequest
     /// <summary><c>grid_order</c>, such as "cup_reverse". Omit to keep the server's own.</summary>
     public string? GridOrder { get; init; }
 
+    /// <summary>
+    /// "HH:MM" in <see cref="TimeZone"/>: when the warmup begins, which is when the server
+    /// restarts into the cup. At most 12 hours before the start. Omit for no warmup.
+    /// </summary>
+    public string? WarmupTime { get; init; }
+
+    /// <summary>"HH:MM" in <see cref="TimeZone"/>: when the cup ends. Omit for no end.</summary>
+    public string? EndTime { get; init; }
+
+    /// <summary>At the start, send the event loop back to the beginning of the rotation.</summary>
+    public bool? RestartRotationAtStart { get; init; }
+
     public int? CollectionId { get; init; }
 
     public List<EventLoopTrack?>? Tracks { get; init; }
@@ -115,6 +148,9 @@ public sealed class CupRequest
 public static class CupRules
 {
     private const int ServerTextMaxLength = 256;
+
+    /// <summary>How far before its start a warmup may begin.</summary>
+    public static readonly TimeSpan MaxWarmup = CupRecurrence.MaxWarmup;
     private static readonly Regex TimeOfDay = new("^([01][0-9]|2[0-3]):[0-5][0-9]$", RegexOptions.CultureInvariant);
 
     public static EventLoopError? Validate(CupRequest request, out CupDefinition? definition)
@@ -165,6 +201,11 @@ public static class CupRules
         if (ValidateRepeat(request.Repeat, out var repeat) is { } repeatError)
         {
             return repeatError;
+        }
+
+        if (ValidateWindow(request, startTime, timeZone, repeat, out var warmupTime, out var endTime) is { } windowError)
+        {
+            return windowError;
         }
 
         if (ValidateServerConfig(request.ServerConfig) is { } configError)
@@ -218,7 +259,74 @@ public static class CupRules
             tracks,
             collectionName,
             sessionMode,
-            gridOrder);
+            gridOrder,
+            warmupTime,
+            endTime,
+            request.RestartRotationAtStart ?? false);
+        return null;
+    }
+
+    /// <summary>"HH:MM", or null.</summary>
+    public static string? Format(TimeOnly? time) => time?.ToString("HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// The warmup and end clock times, checked against the start's clock time: the repeat's
+    /// time, or a one-off start in the cup's zone. A warmup at the start is no warmup.
+    /// </summary>
+    private static EventLoopError? ValidateWindow(
+        CupRequest request,
+        DateTime startTime,
+        string timeZone,
+        RepeatSchedule? repeat,
+        out TimeOnly? warmupTime,
+        out TimeOnly? endTime)
+    {
+        warmupTime = null;
+        endTime = null;
+        if (ParseTime("warmupTime", request.WarmupTime, out var warmup) is { } warmupError)
+        {
+            return warmupError;
+        }
+
+        if (ParseTime("endTime", request.EndTime, out var end) is { } endError)
+        {
+            return endError;
+        }
+
+        var start = repeat is not null
+            ? TimeOnly.ParseExact(repeat.Time!, "HH:mm", System.Globalization.CultureInfo.InvariantCulture)
+            : TimeOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(startTime.ToUniversalTime(), CupRecurrence.FindZone(timeZone)!));
+        var (warmupSpan, duration) = CupRecurrence.ClockSpans(start, warmup, end);
+
+        if (warmupSpan > MaxWarmup)
+        {
+            return new("warmupTime", $"warmupTime must be at most {MaxWarmup.TotalHours:0} hours before the start ({Format(start)}).");
+        }
+
+        if (duration == TimeSpan.Zero)
+        {
+            return new("endTime", $"endTime must differ from the start ({Format(start)}).");
+        }
+
+        warmupTime = warmupSpan == TimeSpan.Zero ? null : warmup;
+        endTime = end;
+        return null;
+    }
+
+    private static EventLoopError? ParseTime(string field, string? value, out TimeOnly? time)
+    {
+        time = null;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (!TimeOfDay.IsMatch(value.Trim()))
+        {
+            return new(field, $"{field} must be HH:MM, 00:00 to 23:59.");
+        }
+
+        time = TimeOnly.ParseExact(value.Trim(), "HH:mm", System.Globalization.CultureInfo.InvariantCulture);
         return null;
     }
 

@@ -3589,6 +3589,8 @@ export interface components {
             count: number;
             cups: components["schemas"]["CupResponse"][];
         };
+        /** @enum {unknown} */
+        CupPhase: "Warmup" | "Running" | null;
         CupRequest: {
             name?: null | string;
             description?: null | string;
@@ -3599,6 +3601,9 @@ export interface components {
             serverConfig?: null | components["schemas"]["EventServerConfig"];
             sessionMode?: null | string;
             gridOrder?: null | string;
+            warmupTime?: null | string;
+            endTime?: null | string;
+            restartRotationAtStart?: null | boolean;
             /** Format: int32 */
             collectionId?: null | number;
             tracks?: null | components["schemas"]["EventLoopTrack"][];
@@ -3629,6 +3634,18 @@ export interface components {
             isActive: boolean;
             /** Format: date-time */
             activatedAt: null | string;
+            warmupTime: null | string;
+            endTime: null | string;
+            restartRotationAtStart: boolean;
+            /** Format: date-time */
+            nextWarmup: null | string;
+            /** Format: date-time */
+            nextEnd: null | string;
+            phase: null | components["schemas"]["CupPhase"];
+            /** Format: date-time */
+            currentStart: null | string;
+            /** Format: date-time */
+            currentEnd: null | string;
             createdBy: null | string;
             /** Format: date-time */
             createdAt: string;
@@ -3779,6 +3796,11 @@ export interface components {
             name: string;
             /** Format: date-time */
             activatedAt: null | string;
+            phase: null | components["schemas"]["CupPhase"];
+            /** Format: date-time */
+            startsAt: null | string;
+            /** Format: date-time */
+            endsAt: null | string;
         };
         PublicOverview: {
             serverName: null | string;
@@ -3830,6 +3852,10 @@ export interface components {
             /** Format: date-time */
             nextOccurrence: string;
             repeat: null | string;
+            /** Format: date-time */
+            warmupAt: null | string;
+            /** Format: date-time */
+            endsAt: null | string;
         };
         RepeatSchedule: {
             frequency?: string;

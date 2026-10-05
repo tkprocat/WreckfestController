@@ -22,6 +22,8 @@ export interface HubEvents {
   PlayerLeft: { playerName: string }
   TrackChanged: { trackId: string }
   CupActivated: { cupId: number; cupName: string; timestamp: string }
+  CupStarted: { cupId: number; cupName: string; timestamp: string }
+  CupEnded: { cupId: number; cupName: string; timestamp: string }
   ServerStarted: { processId: number; processName: string; startTime: string; timestamp: string }
   ServerStopped: { processId: number; stopMethod: string; timestamp: string }
   ServerRestarted: { oldProcessId: number | null; newProcessId: number; restartMethod: string; timestamp: string }

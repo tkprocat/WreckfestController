@@ -158,11 +158,11 @@ public sealed class PublicEndpointsTests : IDisposable
         Assert.Equal(["isBot", "name"], Names(players.GetProperty("list")[0]));
 
         var active = body.GetProperty("activeCup");
-        Assert.Equal(["activatedAt", "name"], Names(active));
+        Assert.Equal(["activatedAt", "endsAt", "name", "phase", "startsAt"], Names(active));
         Assert.Equal("Tonight", active.GetProperty("name").GetString());
 
         var upcoming = body.GetProperty("upcomingCups");
-        Assert.Equal(["description", "name", "nextOccurrence", "repeat"], Names(upcoming[0]));
+        Assert.Equal(["description", "endsAt", "name", "nextOccurrence", "repeat", "warmupAt"], Names(upcoming[0]));
         Assert.Equal(["Tonight", "Weekly"], upcoming.EnumerateArray().Select(c => c.GetProperty("name").GetString()));
         Assert.Equal(JsonValueKind.Null, upcoming[0].GetProperty("repeat").ValueKind);
         Assert.StartsWith("Weekly on Fri at 20:00", upcoming[1].GetProperty("repeat").GetString(), StringComparison.Ordinal);

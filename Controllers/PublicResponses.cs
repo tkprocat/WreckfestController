@@ -1,3 +1,4 @@
+using WreckfestController.Data.Cups;
 namespace WreckfestController.Controllers;
 
 // The public home page's data. Every field here is safe for anyone to read: add to
@@ -29,7 +30,26 @@ public sealed record PublicRotation(string? Name, IReadOnlyList<PublicRotationTr
 
 public sealed record PublicRotationTrack(string Id, string Name, string? GameMode, int? Laps);
 
-public sealed record PublicActiveCup(string Name, DateTime? ActivatedAt);
+/// <summary>
+/// The active cup. <see cref="Phase"/> is <c>Warmup</c> until <see cref="StartsAt"/>, then
+/// <c>Running</c> until <see cref="EndsAt"/> (null: no end). Both times are null for an
+/// activation that stood for no occurrence.
+/// </summary>
+public sealed record PublicActiveCup(
+    string Name,
+    DateTime? ActivatedAt,
+    CupPhase? Phase,
+    DateTime? StartsAt,
+    DateTime? EndsAt);
 
-/// <summary>A cup's next occurrence. Its server settings are never shown here.</summary>
-public sealed record PublicUpcomingCup(string Name, string Description, DateTime NextOccurrence, string? Repeat);
+/// <summary>
+/// A cup's next occurrence: the server restarts into it at <see cref="WarmupAt"/> (the start,
+/// without a warmup). Its server settings are never shown here.
+/// </summary>
+public sealed record PublicUpcomingCup(
+    string Name,
+    string Description,
+    DateTime NextOccurrence,
+    string? Repeat,
+    DateTime? WarmupAt,
+    DateTime? EndsAt);

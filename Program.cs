@@ -231,6 +231,19 @@ public class Program
                 services.AddSingleton<CupSchedulerService>();
                 services.AddHostedService<DatabaseGatedHostedService<CupSchedulerService>>();
 
+                // The active cup's warmup, start and end, after the scheduler's restart (#204).
+                services.AddSingleton(sp => new EventLoopControl(sp.GetRequiredService<ServerManager>()));
+                services.AddSingleton(sp => new CupRunService(
+                    sp.GetRequiredService<CupStore>(),
+                    sp.GetRequiredService<ServerManager>(),
+                    sp.GetRequiredService<EventLoopControl>(),
+                    sp.GetRequiredService<ConfigService>(),
+                    sp.GetRequiredService<IServerEventPublisher>(),
+                    sp.GetRequiredService<TimeProvider>(),
+                    () => sp.GetRequiredService<SmartRestartService>().GetState() != SmartRestartState.Idle,
+                    sp.GetRequiredService<ILogger<CupRunService>>()));
+                services.AddHostedService<DatabaseGatedHostedService<CupRunService>>();
+
                 // Reattach to this controller's own server if it outlived the controller (#201).
                 // Gated: the server path it checks against comes from the database.
                 services.AddSingleton<ServerReattachService>();

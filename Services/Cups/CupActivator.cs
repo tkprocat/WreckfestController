@@ -101,8 +101,12 @@ public sealed class CupActivator
             return ActivationResult.AlreadyActive;
         }
 
+        // From the lead-in before its warmup (its start, without one), an activation is that
+        // occurrence: the scheduler would otherwise start the same cup again minutes later.
         var dueBy = _time.GetUtcNow().UtcDateTime + LeadIn;
-        var occurrence = cup.NextOccurrence <= dueBy ? cup.NextOccurrence : null;
+        var occurrence = CupStore.WindowOf(cup, cup.NextOccurrence) is { } window && window.Warmup <= dueBy
+            ? cup.NextOccurrence
+            : null;
         return StartClaimed(cup, occurrence, onActivated, onFinished: null);
     }
 
@@ -148,7 +152,7 @@ public sealed class CupActivator
         {
             started = _restart.InitiateRestart(
                 CupStore.ToRestartEvent(cup),
-                _ => MarkActive(cup, onActivated),
+                _ => MarkActive(cup, occurrence, onActivated),
                 (_, outcome) => Finish(cup, occurrence, outcome, onFinished));
         }
         catch
@@ -176,11 +180,12 @@ public sealed class CupActivator
     // SmartRestartService calls back on a pool thread and expects the work done when
     // the callback returns: the scheduler must not look for the next due cup before
     // this one has been marked. Hence the blocking waits.
-    private void MarkActive(Cup cup, Action<Cup>? onActivated)
+    private void MarkActive(Cup cup, DateTime? occurrence, Action<Cup>? onActivated)
     {
         try
         {
-            if (_store.SetActiveAsync(cup.Id).GetAwaiter().GetResult())
+            var phase = PhaseAt(occurrence, _time.GetUtcNow().UtcDateTime);
+            if (_store.SetActiveAsync(cup.Id, occurrence, phase).GetAwaiter().GetResult())
             {
                 _logger.LogInformation("Cup {CupName} (ID {CupId}) is now the active cup", cup.Name, cup.Id);
             }
@@ -200,6 +205,14 @@ public sealed class CupActivator
             _logger.LogError(ex, "Could not mark cup {CupName} (ID {CupId}) active", cup.Name, cup.Id);
         }
     }
+
+    /// <summary>
+    /// The phase a run of <paramref name="occurrence"/> is in at <paramref name="now"/>: warming
+    /// up until its start, then running. A run that stands for no occurrence has no start to
+    /// wait for, so it runs.
+    /// </summary>
+    public static CupPhase PhaseAt(DateTime? occurrence, DateTime now) =>
+        occurrence is { } start && now < start ? CupPhase.Warmup : CupPhase.Running;
 
     /// <summary>
     /// Records how <paramref name="occurrence"/> ended and moves the cup past it. Anything

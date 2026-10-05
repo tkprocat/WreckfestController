@@ -82,6 +82,75 @@ public static class CupRecurrence
         return NextAfter(repeat, zone, occurrenceUtc > nowUtc ? occurrenceUtc : nowUtc);
     }
 
+    /// <summary>How far before its start a warmup may begin.</summary>
+    public static readonly TimeSpan MaxWarmup = TimeSpan.FromHours(12);
+
+    /// <summary>
+    /// The warmup and end of the occurrence that starts at <paramref name="startUtc"/>, from
+    /// the cup's wall-clock times in <paramref name="zone"/>. The warmup is the latest time at
+    /// or before the start with that clock time - the day before when it is later on the
+    /// clock, so 23:50 for a 00:10 start. The end is the first time after the start with its
+    /// clock time - the next day when it is earlier on the clock, for a cup running past
+    /// midnight. Without a warmup it is the start; without an end, null.
+    /// A warmup more than <see cref="MaxWarmup"/> before the start counts as none: that
+    /// happens only to a first occurrence set off the repeat's clock (a future start time at
+    /// 18:00 for a repeat at 20:00, warming up from 19:30), which would otherwise restart the
+    /// server the evening before.
+    /// </summary>
+    public static (DateTime Warmup, DateTime? End) Window(
+        DateTime startUtc,
+        TimeOnly? warmup,
+        TimeOnly? end,
+        TimeZoneInfo zone)
+    {
+        startUtc = AsUtc(startUtc);
+        var localStart = TimeZoneInfo.ConvertTimeFromUtc(startUtc, zone);
+
+        var warmupUtc = startUtc;
+        if (warmup is { } warmupClock)
+        {
+            var wall = localStart.Date + warmupClock.ToTimeSpan();
+            if (wall > localStart)
+            {
+                wall = wall.AddDays(-1);
+            }
+
+            // A clock change between the two can push it past the start; never after it.
+            var resolved = ToUtc(wall, zone);
+            warmupUtc = resolved < startUtc && startUtc - resolved <= MaxWarmup ? resolved : startUtc;
+        }
+
+        DateTime? endUtc = null;
+        if (end is { } endClock)
+        {
+            var wall = localStart.Date + endClock.ToTimeSpan();
+            if (wall <= localStart)
+            {
+                wall = wall.AddDays(1);
+            }
+
+            var resolved = ToUtc(wall, zone);
+            endUtc = resolved > startUtc ? resolved : ToUtc(wall.AddDays(1), zone);
+        }
+
+        return (warmupUtc, endUtc);
+    }
+
+    /// <summary>
+    /// How long before the start the warmup begins, and how long the cup lasts, worked out on
+    /// the clock alone (no zone, no date): what <see cref="CupRules"/> checks.
+    /// </summary>
+    public static (TimeSpan Warmup, TimeSpan? Duration) ClockSpans(TimeOnly start, TimeOnly? warmup, TimeOnly? end)
+    {
+        static TimeSpan Forward(TimeOnly from, TimeOnly to)
+        {
+            var span = to.ToTimeSpan() - from.ToTimeSpan();
+            return span < TimeSpan.Zero ? span + TimeSpan.FromDays(1) : span;
+        }
+
+        return (warmup is { } w ? Forward(w, start) : TimeSpan.Zero, end is { } e ? Forward(start, e) : null);
+    }
+
     /// <summary>The zone for <paramref name="id"/>, an IANA or Windows id; null when unknown.</summary>
     public static TimeZoneInfo? FindZone(string? id) =>
         !string.IsNullOrWhiteSpace(id) && TimeZoneInfo.TryFindSystemTimeZoneById(id.Trim(), out var zone)

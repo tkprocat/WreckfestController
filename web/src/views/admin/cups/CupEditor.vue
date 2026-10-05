@@ -68,6 +68,11 @@ interface CupDraft {
   repeat: 'none' | 'daily' | 'weekly'
   days: number[]
   time: string
+  /** "HH:MM" in the cup's zone, or "" for none: when the server restarts into the cup. */
+  warmupTime: string
+  /** "HH:MM" in the cup's zone, or "" for no end. */
+  endTime: string
+  restartRotation: boolean
   source: Source
   collectionId: number | null
   collectionName: string
@@ -137,6 +142,10 @@ function toDraft(cup: Cup | null): CupDraft {
     repeat: cup?.repeat ? (cup.repeat.frequency === 'daily' ? 'daily' : 'weekly') : 'none',
     days: [...(cup?.repeat?.days ?? [])],
     time: cup?.repeat?.time ?? '',
+    warmupTime: cup?.warmupTime ?? '',
+    endTime: cup?.endTime ?? '',
+    // New cups start their rotation from the beginning; existing ones keep their choice.
+    restartRotation: cup ? cup.restartRotationAtStart : true,
     source: cup?.collectionId != null ? 'collection' : cup?.tracks.length ? 'own' : 'server',
     collectionId: cup?.collectionId ?? null,
     // A linked collection's tracks come along, so switching to "its own" starts from them.
@@ -196,6 +205,9 @@ const editor = useResourceEditor<Cup, CupDraft>({
       startTime: startEdited ? toInstant(draft.start) : draft.startInstant,
       timeZone: draft.timeZone,
       repeat: draft.repeat === 'none' ? null : { frequency: draft.repeat, days: draft.repeat === 'weekly' ? draft.days : null, time: draft.time },
+      warmupTime: draft.warmupTime || null,
+      endTime: draft.endTime || null,
+      restartRotationAtStart: draft.restartRotation,
       serverConfig: toServerConfig(draft.config),
       sessionMode: draft.sessionMode,
       gridOrder: draft.gridOrder,
@@ -228,6 +240,33 @@ watch(errors, (now) => {
   }
 })
 
+/**
+ * The start's clock time in the cup's zone: the repeat's time, or a one-off start
+ * converted from the browser's time. Null until there is one.
+ */
+const startClock = computed(() => {
+  if (draft.repeat !== 'none') return draft.time || null
+  const instant = toInstant(draft.start)
+  if (!instant) return null
+  try {
+    return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: draft.timeZone }).format(new Date(instant))
+  } catch {
+    return null
+  }
+})
+
+/** "19:30 warmup → 20:00 start → 21:30 end", in the cup's zone, as the server will run it. */
+const timeline = computed(() => {
+  const start = startClock.value
+  if (!start || (!draft.warmupTime && !draft.endTime)) return null
+  const parts = [
+    draft.warmupTime && draft.warmupTime !== start ? `${draft.warmupTime} warmup` : null,
+    `${start} start`,
+    draft.endTime ? `${draft.endTime} end` : null,
+  ].filter((p): p is string => p !== null)
+  return `${parts.join(' → ')} (${draft.timeZone})`
+})
+
 const collectionOptions = computed(() => collections.value.map((c) => ({ value: c.id, label: `${c.name} (${c.trackCount} tracks)` })))
 
 /** What a conflict compares: everything the form sets, as text. */
@@ -244,11 +283,12 @@ function comparable(d: CupDraft) {
         : d.source === 'own'
           ? `${d.collectionName ? `"${d.collectionName}": ` : ''}${d.tracks.map(describeTrack).join('; ')}`
           : "the server's",
+    window: `warmup ${d.warmupTime || 'none'}, end ${d.endTime || 'none'}${d.restartRotation ? ', rotation from its beginning' : ''}`,
     scoring: `${d.sessionMode ?? 'server'} / ${d.gridOrder ?? 'server'}`,
     overrides: JSON.stringify(toServerConfig(d.config)),
   }
 }
-const LABELS = { name: 'Name', description: 'Description', start: 'Start', timeZone: 'Time zone', repeat: 'Repeats', rotation: 'Rotation', scoring: 'Session mode / grid', overrides: 'Server overrides' }
+const LABELS = { name: 'Name', description: 'Description', start: 'Start', timeZone: 'Time zone', repeat: 'Repeats', window: 'Warmup and end', rotation: 'Rotation', scoring: 'Session mode / grid', overrides: 'Server overrides' }
 
 // Opening waits for the pickers: only the latest click opens, and never over an open form.
 let opening = 0
@@ -322,6 +362,24 @@ defineExpose({ start })
             <input v-model="draft.time" type="time" class="native-control" :disabled="saving" v-bind="inputProps" />
           </FormField>
         </div>
+        <div class="form-grid">
+          <FormField
+            v-slot="{ inputProps }"
+            label="Warmup from (optional)"
+            field="warmupTime"
+            :errors="errors"
+            help="The server restarts into the cup then, so players can join before the start without being disconnected."
+          >
+            <input v-model="draft.warmupTime" type="time" class="native-control" :disabled="saving" v-bind="inputProps" />
+          </FormField>
+          <FormField v-slot="{ inputProps }" label="Ends (optional)" field="endTime" :errors="errors" help="Players are told, and cup points are turned off.">
+            <input v-model="draft.endTime" type="time" class="native-control" :disabled="saving" v-bind="inputProps" />
+          </FormField>
+        </div>
+        <p v-if="timeline" class="muted" data-testid="cup-timeline">{{ timeline }}</p>
+        <NCheckbox v-model:checked="draft.restartRotation" :disabled="saving">
+          Start the cup from the beginning of the rotation
+        </NCheckbox>
       </section>
 
       <section class="form-section" aria-labelledby="cup-rotation">

@@ -16,6 +16,8 @@ public interface IServerEventPublisher
     Task PlayerLeftAsync(string playerName);
     Task TrackChangedAsync(string trackId);
     Task CupActivatedAsync(int cupId, string cupName);
+    Task CupStartedAsync(int cupId, string cupName);
+    Task CupEndedAsync(int cupId, string cupName);
 
     /// <summary>A scheduled occurrence has been dealt with. Signed-in clients only.</summary>
     Task CupOccurrenceEndedAsync(int cupId, string cupName, DateTime occurrence, OccurrenceOutcome outcome);

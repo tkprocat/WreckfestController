@@ -51,6 +51,27 @@ public class Cup : IVersioned
     /// <summary>IANA (or Windows) zone the repeat's wall-clock time is in.</summary>
     public string TimeZone { get; set; } = DefaultTimeZone;
 
+    /// <summary>
+    /// Wall-clock time in <see cref="TimeZone"/> when the warmup begins: the restart that
+    /// applies the cup's settings happens then, not at the start, so players can join before
+    /// the cup without being disconnected as it begins. Null: no warmup, the restart is at the
+    /// start. Resolved per occurrence by <see cref="Services.Cups.CupRecurrence.Window"/>.
+    /// </summary>
+    public TimeOnly? WarmupTime { get; set; }
+
+    /// <summary>
+    /// Wall-clock time in <see cref="TimeZone"/> when the cup ends: players are told, it stops
+    /// being the active cup, and cup points are turned off. Null: it runs until another cup
+    /// replaces it.
+    /// </summary>
+    public TimeOnly? EndTime { get; set; }
+
+    /// <summary>
+    /// At the start, turn the event loop off and on, which sends it back to the beginning of
+    /// the rotation instead of wherever the warmup left it.
+    /// </summary>
+    public bool RestartRotationAtStart { get; set; }
+
     /// <summary>Null for a one-off cup. Stored as JSON.</summary>
     public RepeatSchedule? Repeat { get; set; }
 
@@ -114,6 +135,27 @@ public class Cup : IVersioned
 
     /// <summary>UTC. When the cup last became active.</summary>
     public DateTime? ActivatedAt { get; set; }
+
+    /// <summary>For the active cup: warming up, or running. Null when inactive.</summary>
+    public CupPhase? Phase { get; set; }
+
+    /// <summary>
+    /// UTC. For the active cup, the start of the occurrence it is running, from which its
+    /// start and end instants are worked out. Null for an activation that stood for no
+    /// occurrence: it has no start to wait for and no end.
+    /// </summary>
+    public DateTime? CurrentOccurrence { get; set; }
+}
+
+/// <summary>Where the active cup is in its occurrence.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<CupPhase>))]
+public enum CupPhase
+{
+    /// <summary>Restarted into the cup's settings; the start is still to come.</summary>
+    Warmup,
+
+    /// <summary>Started: cup points reset, the cup counts.</summary>
+    Running,
 }
 
 /// <summary>

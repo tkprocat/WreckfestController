@@ -112,14 +112,32 @@ function rotationOf(cup: Cup): string {
 
 const OUTCOMES: Record<string, string> = { Activated: 'Ran', Failed: 'Failed', Cancelled: 'Cancelled', Missed: 'Missed' }
 
+/** The active cup's tag: warming up until its start, then running. */
+function activeTag(c: Cup) {
+  if (!c.isActive) return null
+  const label = c.phase === 'Warmup' ? 'Warmup' : 'Active'
+  const title = c.phase === 'Warmup' && c.currentStart ? `Starts ${formatWhen(c.currentStart)}` : c.currentEnd ? `Ends ${formatWhen(c.currentEnd)}` : undefined
+  return h(NTag, { size: 'small', type: c.phase === 'Warmup' ? 'warning' : 'success', class: 'flag', title }, () => label)
+}
+
+/** The next occurrence, with its warmup and end when it has them. */
+function nextOf(c: Cup) {
+  if (!c.nextOccurrence) return 'Not scheduled'
+  const extra = [
+    c.nextWarmup && c.nextWarmup !== c.nextOccurrence ? `warmup ${c.warmupTime}` : null,
+    c.nextEnd ? `ends ${c.endTime}` : null,
+  ].filter(Boolean)
+  return extra.length ? `${formatWhen(c.nextOccurrence)} (${extra.join(', ')})` : formatWhen(c.nextOccurrence)
+}
+
 const columns: DataTableColumns<Cup> = [
   {
     title: 'Cup',
     key: 'name',
     sorter: (a, b) => a.name.localeCompare(b.name),
-    render: (c) => h('span', [c.name, c.isActive ? h(NTag, { size: 'small', type: 'success', class: 'flag' }, () => 'Active') : null]),
+    render: (c) => h('span', [c.name, activeTag(c)]),
   },
-  { title: 'Next', key: 'nextOccurrence', render: (c) => (c.nextOccurrence ? formatWhen(c.nextOccurrence) : 'Not scheduled') },
+  { title: 'Next', key: 'nextOccurrence', render: nextOf },
   { title: 'Repeats', key: 'repeatDescription' },
   { title: 'Rotation', key: 'rotation', render: rotationOf },
   {
@@ -170,6 +188,8 @@ onMounted(() => {
   void list.reload()
   stops.push(
     onHub('CupActivated', () => void list.reload()),
+    onHub('CupStarted', () => void list.reload()),
+    onHub('CupEnded', () => void list.reload()),
     onHub('CupOccurrenceEnded', () => void list.reload()),
   )
 })

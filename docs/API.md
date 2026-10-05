@@ -169,8 +169,11 @@ why. Numbers must be JSON numbers: `"5"` for an integer is a 400.
 
 `overview` is `{ serverName, maxPlayers, status: { isRunning, uptimeSeconds }, currentTrack,
 players: { humans, bots, list: [{ name, isBot }] }, rotation: { name, tracks: [{ id, name,
-gameMode, laps }] }, activeCup: { name, activatedAt }, upcomingCups: [{ name, description,
-nextOccurrence, repeat }], updatedAt }`.
+gameMode, laps }] }, activeCup: { name, activatedAt, phase, startsAt, endsAt },
+upcomingCups: [{ name, description, nextOccurrence, repeat, warmupAt, endsAt }], updatedAt }`.
+- The active cup's `phase` is `Warmup` until `startsAt`, then `Running` until `endsAt`
+  (null: no end). An upcoming cup's `warmupAt` is when the server restarts into it: its
+  `nextOccurrence` when it has no warmup.
 - A track's `name` is the catalogue's "Track - Variant", or its id when the catalogue does
   not know it. `serverName`, `maxPlayers` and the rotation are null or empty while the
   server config cannot be read.
@@ -311,14 +314,24 @@ scored with cup points. Cups live in the controller's database.
 | GET | `summary` | `{ totalCups, activeCups, upcomingCups, dueCups, lastUpdated }` |
 | POST | `{id}/activate` | Activate now. 202; the cup becomes active when the restart succeeds |
 
-`CupRequest` is `{ name, description?, startTime, timeZone?, repeat?, serverConfig?,
-sessionMode?, gridOrder?, collectionId?, tracks?, collectionName? }`:
+`CupRequest` is `{ name, description?, startTime, timeZone?, repeat?, warmupTime?, endTime?,
+restartRotationAtStart?, serverConfig?, sessionMode?, gridOrder?, collectionId?, tracks?,
+collectionName? }`:
 - `startTime` must carry an offset (`2026-10-02T18:00:00Z`); an unzoned time is 400.
 - `timeZone` is an IANA id such as `Europe/Copenhagen`, default `UTC`. A repeat's
   `time` and `days` are wall-clock values in that zone, so a weekly 20:00 cup stays
   at 20:00 local across daylight saving.
 - `repeat` is `{ frequency: "daily" | "weekly", days: [0-6], time: "HH:MM" }`, days
   counting from Sunday = 0. Weekly needs at least one day.
+- `warmupTime` and `endTime` are `"HH:MM"` wall-clock times in `timeZone`, like the
+  repeat's `time` (see *Scheduling*). The warmup is the latest such time at or before
+  the start, at most 12 hours before it (the evening before, for a warmup at 23:50 and
+  a start at 00:10); the end is the first after it (the next day, for a cup running past
+  midnight). They are checked against the repeat's `time`, or a one-off start in
+  `timeZone`. A warmup at the start is no warmup, and an end at the start is 400. A first
+  occurrence set off the repeat's clock whose warmup would be more than 12 hours earlier
+  gets none.
+- `restartRotationAtStart` sends the event loop back to its beginning at the start.
 - `serverConfig` overrides only the fields that are set. Text values must not contain
   line breaks.
 - `sessionMode` and `gridOrder` are the cup's scoring, written as `session_mode` and
@@ -327,8 +340,7 @@ sessionMode?, gridOrder?, collectionId?, tracks?, collectionName? }`:
   `35p-folk`, `f1-1991`, `f1-2003`, `f1-2010`, `player_count_1`), `normal` for no cup
   points, or `qualify-sprint` / `qualify-lap`. `gridOrder` is `random`, `perf_normal`,
   `perf_reverse`, `qualifying`, `cup_normal` or `cup_reverse`. Case is ignored; the
-  value is stored as the server spells it, and anything else is 400. Activation restarts
-  the server into a new process, so the controller sends no `/cupreset`.
+  value is stored as the server spells it, and anything else is 400.
 - Give the rotation either as `collectionId`, which deploys that collection's tracks
   as they are **at activation**, or inline as `tracks` (checked like `PUT
   api/config/tracks`) with an optional `collectionName`. Neither leaves the server's
@@ -336,7 +348,9 @@ sessionMode?, gridOrder?, collectionId?, tracks?, collectionName? }`:
   it, so they still deploy them.
 
 Responses add `repeatDescription`, `nextOccurrence`, `lastOccurrence`, `lastOutcome`, `isActive`,
-`activatedAt`, `createdBy` (the signed-in user who created it; null for API-key
+`activatedAt`, `nextWarmup` and `nextEnd` (the next occurrence's window), `phase`,
+`currentStart` and `currentEnd` (the active cup's run, whose occurrence the scheduler has
+already moved past), `createdBy` (the signed-in user who created it; null for API-key
 callers), `createdAt`, `updatedAt` and `version`. For a linked cup, `tracks` and
 `collectionName` are the collection's current ones.
 
@@ -350,7 +364,28 @@ occurrence of the new schedule that has not already run, failed, been cancelled 
 been missed: every occurrence dealt with is kept in the cup's history, so an edit
 never runs one twice.
 
-**Scheduling.** An occurrence starts 5 minutes early, for the players' countdown.
+**Scheduling.** An occurrence's restart begins 5 minutes before its warmup (its start,
+without one), for the players' countdown. Restarting at the warmup rather than the start
+lets players join before the cup without being disconnected as it begins. From the
+restart on, the cup is active, and its run goes:
+- **Warmup** (`phase: Warmup`): the cup's rotation, scoring and overrides are in force.
+  Five minutes before the start players are told "*name* starts in 5 minutes."
+- **Start**: at the first lobby at or after the start, `/cupreset` clears the warmup's cup
+  points, and with `restartRotationAtStart` the event loop is turned off and on (the
+  next event is then the rotation's second entry: the game resets its position without
+  loading anything). Players are told "*name* has started - good luck!"; a race still on
+  at the start is announced with "*name* starts after this race." The cup is then
+  `Running`, and `CupStarted` is sent.
+- **End** (with an `endTime`): players are told "*name* is over - thanks for racing!", the
+  cup is no longer active, and `CupEnded` is sent. A cup with cup points has them turned
+  off at the next lobby: `session_mode=normal`, live and in server_config.cfg. The
+  rotation stays.
+
+A lobby is waited for at most 15 minutes; then, or when the session state cannot be
+read, it goes ahead anyway. A cup with no `endTime` stays active until another one
+replaces it; when its next occurrence comes round it needs no restart, but starts a new
+run, so the start still resets the cup points.
+
 Each occurrence gets one attempt, and then the cup moves to its next occurrence (or
 finishes, for a one-off cup). `lastOutcome` records how it ended:
 - `Activated`: the restart succeeded, or the cup was already active;
@@ -362,7 +397,9 @@ finishes, for a one-off cup). `lastOutcome` records how it ended:
 Nothing is retried. Every outcome is sent to signed-in clients as
 `CupOccurrenceEnded`, and anything but `Activated` is also logged as a warning.
 Running a missed or failed cup anyway is the admin's call, with `activate`. At most one cup is active; activating another deactivates it. A manual
-activation within the 5 minutes before an occurrence counts as that occurrence.
+activation from 5 minutes before an occurrence's warmup counts as that occurrence, and
+runs it from warmup or start, depending on the time. Otherwise it runs no occurrence:
+active, with no start to wait for and no end.
 
 `activate` answers 409 when the cup is already active, another restart is running,
 or the cup's settings cannot be written to the server config (with a `reason`).
@@ -497,6 +534,8 @@ anonymously, but what a connection receives depends on its group:
 | `PlayerLeft` | public | `{ playerName }` |
 | `TrackChanged` | public | `{ trackId }` |
 | `CupActivated` | public | `{ cupId, cupName, timestamp }` |
+| `CupStarted` | public | `{ cupId, cupName, timestamp }` — the warmup is over, cup points reset |
+| `CupEnded` | public | `{ cupId, cupName, timestamp }` — the end time passed; no cup is active |
 | `ServerStarted` | public | `{ processId, processName, startTime, timestamp }` |
 | `ServerStopped` | public | `{ processId, stopMethod, timestamp }` — `Graceful` or `Force` |
 | `ServerRestarted` | public | `{ oldProcessId, newProcessId, restartMethod, timestamp }` |

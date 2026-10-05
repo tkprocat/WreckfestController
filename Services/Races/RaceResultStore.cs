@@ -34,7 +34,7 @@ public sealed class RaceResultStore
         var active = await db.Cups
             .AsNoTracking()
             .Where(c => c.IsActive && c.ActivatedAt != null)
-            .Select(c => new ActiveCupSnapshot(c.Id, c.Name, c.ActivatedAt!.Value))
+            .Select(c => new ActiveCupSnapshot(c.Id, c.Name, c.ActivatedAt!.Value, c.Phase))
             .FirstOrDefaultAsync(cancellationToken);
 
         var cup = CupAtEnd(active, notedCup, endedAt);
@@ -58,6 +58,7 @@ public sealed class RaceResultStore
             CupId = current != null ? cup!.Id : null,
             CupName = current ?? cup?.Name ?? string.Empty,
             CupActivatedAt = cup?.ActivatedAt,
+            CupPhase = cup?.Phase,
             Entries = record.Cars.Select(ToEntry).ToList(),
         };
 

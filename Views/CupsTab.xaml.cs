@@ -86,8 +86,15 @@ public partial class CupsTab : UserControl
         DetailsContent.Visibility = Visibility.Visible;
 
         var cup = selected.Cup;
-        CupNameText.Text = cup.IsActive ? $"{cup.Name} (active)" : cup.Name;
-        StartTimeText.Text = selected.Next;
+        CupNameText.Text = cup.IsActive
+            ? $"{cup.Name} ({(cup.Phase == CupPhase.Warmup ? "warming up" : "active")})"
+            : cup.Name;
+        var window = string.Join(", ", new[]
+        {
+            cup.WarmupTime is not null ? $"warmup from {Controllers.CupRules.Format(cup.WarmupTime)}" : null,
+            cup.EndTime is not null ? $"ends {Controllers.CupRules.Format(cup.EndTime)}" : null,
+        }.Where(part => part is not null));
+        StartTimeText.Text = window.Length == 0 ? selected.Next : $"{selected.Next} ({window}, {cup.TimeZone})";
         ServerNameText.Text = cup.ServerConfig?.ServerName ?? "N/A";
         ScoringText.Text =
             $"Session mode: {cup.SessionMode ?? "server's own"}\nGrid order: {cup.GridOrder ?? "server's own"}";

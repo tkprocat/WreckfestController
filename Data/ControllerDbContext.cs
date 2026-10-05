@@ -260,6 +260,8 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
             cup.Property(e => e.LastOccurrence).HasConversion(UtcConverter);
             cup.Property(e => e.ActivatedAt).HasConversion(UtcConverter);
             cup.Property(e => e.LastOutcome).HasConversion<string>().HasMaxLength(16);
+            cup.Property(e => e.CurrentOccurrence).HasConversion(UtcConverter);
+            cup.Property(e => e.Phase).HasConversion<string>().HasMaxLength(16);
 
             Json(cup.Property(e => e.Repeat));
             Json(cup.Property(e => e.ServerConfig));
@@ -303,6 +305,7 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
         {
             race.Property(r => r.TrackId).HasMaxLength(Race.TrackIdMaxLength);
             race.Property(r => r.CupName).HasMaxLength(Cup.NameMaxLength);
+            race.Property(r => r.CupPhase).HasConversion<string>().HasMaxLength(16);
 
             // SQLite keeps no DateTimeKind: these are UTC in, and marked UTC out.
             race.Property(r => r.StartedAt).HasConversion(UtcConverter);
