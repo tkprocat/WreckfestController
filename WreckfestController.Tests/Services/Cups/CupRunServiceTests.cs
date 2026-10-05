@@ -222,7 +222,7 @@ public sealed class CupRunServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task WithRestartRotation_TheLoopGoesBackToItsBeginning_BeforeTheReset()
+    public async Task WithRestartRotation_TheLoopGoesBackToItsBeginning_AfterTheReset()
     {
         var (_, start, _) = await ActiveAsync(restartRotation: true);
         At(start);
@@ -230,7 +230,7 @@ public sealed class CupRunServiceTests : IDisposable
         await _runs.TickAsync();
 
         Assert.Equal(
-            ["<rotation back to the beginning>", "/cupreset", "/message Friday Derby has started - good luck!"],
+            ["/cupreset", "<rotation back to the beginning>", "/message Friday Derby has started - good luck!"],
             _sent);
     }
 
@@ -335,7 +335,7 @@ public sealed class CupRunServiceTests : IDisposable
         await _runs.TickAsync();
 
         Assert.Equal(
-            ["<rotation back to the beginning>", "/cupreset", "/message Friday Derby has started - good luck!"],
+            ["/cupreset", "<rotation back to the beginning>", "/message Friday Derby has started - good luck!"],
             _sent);
         Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
     }
@@ -533,6 +533,26 @@ public sealed class CupRunServiceTests : IDisposable
         Assert.Empty(_sent);
         await _runs.TickAsync();
         Assert.Contains("/cupreset", _sent);
+    }
+
+    // The loop toggle may put the lobby into the game's track vote for a moment, which on prod
+    // left /cupreset without effect: the reset goes first, and a retried reset does not toggle
+    // the loop again.
+    [Fact]
+    public async Task AResetThatIsRetried_TogglesTheLoopOnlyOnce_AfterItGoesThrough()
+    {
+        var (_, start, _) = await ActiveAsync(restartRotation: true);
+        _server.SetupSequence(s => s.SendCommandAsync("/cupreset"))
+            .ReturnsAsync((false, "No hook"))
+            .ReturnsAsync((true, "OK dispatched"));
+        At(start);
+
+        await _runs.TickAsync();
+        _eventLoop.Verify(l => l.RestartAsync(), Times.Never);
+
+        await _runs.TickAsync();
+        _eventLoop.Verify(l => l.RestartAsync(), Times.Once);
+        Assert.Equal(["<rotation back to the beginning>", "/message Friday Derby has started - good luck!"], _sent);
     }
 
     // Shown and recorded as the warmup: the warmup's points are still on the board.

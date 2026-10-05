@@ -371,9 +371,11 @@ restart on, the cup is active, and its run goes:
 - **Warmup** (`phase: Warmup`): the cup's rotation, scoring and overrides are in force.
   Five minutes before the start players are told "*name* starts in 5 minutes."
 - **Start**: at the first lobby at or after the start, `/cupreset` clears the warmup's cup
-  points, and with `restartRotationAtStart` the event loop is turned off and on (the
+  points, then, with `restartRotationAtStart`, the event loop is turned off and on (the
   next event is then the rotation's second entry: the game resets its position without
-  loading anything). Players are told "*name* has started - good luck!"; a race still on
+  loading anything). The reset goes first: turning the loop off may move the lobby to the
+  game's track vote for a moment, and a reset sent just after the toggle was seen to have
+  no effect. Players are told "*name* has started - good luck!"; a race still on
   at the start is announced with "*name* starts after this race." The cup is then
   `Running`, and `CupStarted` is sent. A run whose restart finished after its start (one
   that ran long, say) starts at once. `/cupreset` is only ever sent in a lobby the server

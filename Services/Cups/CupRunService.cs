@@ -17,8 +17,8 @@ namespace WreckfestController.Services.Cups;
 /// <item><b>Warmup:</b> a "starts in N minutes" message from <see cref="StartWarning"/>
 /// before the start. If a race is still on at the start, "starts after this race".</item>
 /// <item><b>Start:</b> at the first lobby at or after the start - so a warmup race finishing
-/// late cannot leave points on the board - optionally the rotation sent back to its beginning
-/// (<see cref="EventLoopControl.RestartAsync"/>), then <c>/cupreset</c> and "has started". A
+/// late cannot leave points on the board - <c>/cupreset</c>, then optionally the rotation sent
+/// back to its beginning (<see cref="EventLoopControl.RestartAsync"/>), and "has started". A
 /// run activated after its start (a restart that ran long) starts at once. The start passes
 /// through <see cref="CupPhase.Starting"/>, kept in the database until the reset has gone
 /// through, so a failed reset is retried - in a lobby only - even after a controller restart.</item>
@@ -190,28 +190,23 @@ public sealed class CupRunService : IHostedService, IDisposable
             return;
         }
 
-        if (run.RestartRotationAtStart)
-        {
-            var loop = await _eventLoop.RestartAsync();
-            if (loop is not { Enabled: true })
-            {
-                _logger.LogWarning(
-                    "Cup {CupName}: the rotation could not be sent back to its beginning (event loop now {Loop})",
-                    run.Name,
-                    loop?.ToString() ?? "unreadable");
-            }
-        }
-
         await ResetAsync(run with { Phase = CupPhase.Starting }, start);
     }
 
     /// <summary>
-    /// <c>/cupreset</c>, then "has started", for a run in <see cref="CupPhase.Starting"/>. Only
-    /// in a lobby the server confirms - never after a timeout, nor with the session unreadable:
-    /// a reset mid-race would wipe that race's points. A reset that fails, or has no lobby to
-    /// go into, stays <c>Starting</c> and is tried again on the next check; from
-    /// <see cref="LobbyWait"/> after the start, the cup starts without it, with a warning.
+    /// <c>/cupreset</c>, then the rotation back to its beginning, then "has started", for a run in
+    /// <see cref="CupPhase.Starting"/>. Only in a lobby the server confirms - never after a
+    /// timeout, nor with the session unreadable: a reset mid-race would wipe that race's points.
+    /// A reset that fails, or has no lobby to go into, stays <c>Starting</c> and is tried again
+    /// on the next check; from <see cref="LobbyWait"/> after the start, the cup starts without
+    /// it, with a warning.
     /// </summary>
+    /// <remarks>
+    /// The reset comes before the rotation: turning the event loop off may move the lobby to the
+    /// game's own track vote for a moment, and on prod (2026-10-05) a <c>/cupreset</c> sent right
+    /// after the toggle left every player's cup points in place. The rotation is sent back once
+    /// the reset has gone through (or been given up), so a retried reset does not toggle it again.
+    /// </remarks>
     private async Task ResetAsync(ActiveCupRun run, DateTime start)
     {
         var session = await _serverManager.ReadHookSessionAsync();
@@ -231,6 +226,18 @@ public sealed class CupRunService : IHostedService, IDisposable
                 run.Name,
                 LobbyWait.TotalMinutes,
                 reset.Message);
+        }
+
+        if (run.RestartRotationAtStart)
+        {
+            var loop = await _eventLoop.RestartAsync();
+            if (loop is not { Enabled: true })
+            {
+                _logger.LogWarning(
+                    "Cup {CupName}: the rotation could not be sent back to its beginning (event loop now {Loop})",
+                    run.Name,
+                    loop?.ToString() ?? "unreadable");
+            }
         }
 
         if (!await _store.SetPhaseAsync(run.Id, start, CupPhase.Starting, CupPhase.Running))
