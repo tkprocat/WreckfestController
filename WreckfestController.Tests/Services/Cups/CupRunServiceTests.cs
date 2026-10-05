@@ -555,6 +555,36 @@ public sealed class CupRunServiceTests : IDisposable
         Assert.Equal(["<rotation back to the beginning>", "/message Friday Derby has started - good luck!"], _sent);
     }
 
+    // The phase is Running before the rotation is touched: a run read as Running (a controller
+    // that stopped right after the phase change) never toggles the loop again.
+    [Fact]
+    public async Task ARunAlreadyRunning_DoesNotSendTheRotationBackAgain()
+    {
+        var (_, start, _) = await ActiveAsync(CupPhase.Running, restartRotation: true);
+        At(start.AddMinutes(1));
+
+        await _runs.TickAsync();
+
+        _eventLoop.Verify(l => l.RestartAsync(), Times.Never);
+        Assert.Empty(_sent);
+    }
+
+    // Given up after the wait: no reset, but the rotation still goes back, once.
+    [Fact]
+    public async Task AGivenUpReset_StillSendsTheRotationBack_Once()
+    {
+        var (cup, start, _) = await ActiveAsync(restartRotation: true);
+        _session = ServerSessionPhase.Racing;
+        At(start + CupRunService.LobbyWait);
+
+        await _runs.TickAsync();
+        await _runs.TickAsync();
+
+        _eventLoop.Verify(l => l.RestartAsync(), Times.Once);
+        Assert.DoesNotContain("/cupreset", _sent);
+        Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
+    }
+
     // Shown and recorded as the warmup: the warmup's points are still on the board.
     [Fact]
     public void Starting_IsShownAsTheWarmup() =>

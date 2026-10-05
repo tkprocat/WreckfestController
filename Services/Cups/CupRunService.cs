@@ -202,10 +202,19 @@ public sealed class CupRunService : IHostedService, IDisposable
     /// it, with a warning.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The reset comes before the rotation: turning the event loop off may move the lobby to the
     /// game's own track vote for a moment, and on prod (2026-10-05) a <c>/cupreset</c> sent right
-    /// after the toggle left every player's cup points in place. The rotation is sent back once
-    /// the reset has gone through (or been given up), so a retried reset does not toggle it again.
+    /// after the toggle left every player's cup points in place.
+    /// </para>
+    /// <para>
+    /// The phase moves to <c>Running</c> right after the reset and before the rotation, so the
+    /// rotation is sent back at most once: a controller stopping in between skips it rather than
+    /// repeating it. The reset itself cannot be made exactly-once - the game never confirms it -
+    /// so a stop between the reset and the phase change repeats it on the next start. That can
+    /// only happen in a lobby within <see cref="LobbyWait"/> of the start, so at worst it clears
+    /// the cup's first race or two, and only after a controller crash.
+    /// </para>
     /// </remarks>
     private async Task ResetAsync(ActiveCupRun run, DateTime start)
     {
@@ -228,6 +237,11 @@ public sealed class CupRunService : IHostedService, IDisposable
                 reset.Message);
         }
 
+        if (!await _store.SetPhaseAsync(run.Id, start, CupPhase.Starting, CupPhase.Running))
+        {
+            return;
+        }
+
         if (run.RestartRotationAtStart)
         {
             var loop = await _eventLoop.RestartAsync();
@@ -238,11 +252,6 @@ public sealed class CupRunService : IHostedService, IDisposable
                     run.Name,
                     loop?.ToString() ?? "unreadable");
             }
-        }
-
-        if (!await _store.SetPhaseAsync(run.Id, start, CupPhase.Starting, CupPhase.Running))
-        {
-            return;
         }
 
         _logger.LogInformation("Cup {CupName} (ID {CupId}) has started", run.Name, run.Id);
