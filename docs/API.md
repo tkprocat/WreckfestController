@@ -356,9 +356,6 @@ Nothing is retried. Every outcome is sent to signed-in clients as
 Running a missed or failed cup anyway is the admin's call, with `activate`. At most one cup is active; activating another deactivates it. A manual
 activation within the 5 minutes before an occurrence counts as that occurrence.
 
-1.x's `POST schedule` (the Laravel bulk push) is gone, and 2.0 starts with no cups:
-`event-schedule.json` is neither read nor deleted.
-
 `activate` answers 409 when the cup is already active, another restart is running,
 or the cup's settings cannot be written to the server config (with a `reason`).
 
@@ -388,7 +385,7 @@ does not exist has no route (404).
   change ends a `!voting` override.
 - The startup settings (`Api:*`, `Database:Path`) are not here and have no route. They stay
   in user-settings.json, edited by hand, so a lockout can be fixed without the web UI.
-  2.0 never writes that file.
+  The controller never writes that file.
 - The launch settings are not here either, neither read nor written, and have no route:
   the server's `serverPath`, `serverArguments`, `workingDirectory` and `logFilePath` (no
   `wreckfestServer` section), and SteamCMD's `steamCmdPath`, which is **hidden** - not
@@ -401,8 +398,8 @@ does not exist has no route (404).
 ### Catalogue — `api/catalogue`
 
 The tracks, variants, tags, weather and mods the controller knows. The database ships
-with a built-in catalogue: the base-game tracks, plus the workshop tracks from 1.x's
-default vote list. Every built-in variant starts allowed for voting. Built-in rows are fully editable,
+with a built-in catalogue: the base-game tracks, plus a set of popular workshop
+tracks. Every built-in variant starts allowed for voting. Built-in rows are fully editable,
 but a built-in track's `key` and a built-in variant's `variantId` are fixed, and they
 cannot be deleted: hide them instead, and `reset` restores what shipped.
 
@@ -411,8 +408,7 @@ readable by id.
 
 **Voting.** In-game `!track`, `!vote` and `!lucky` pick from the catalogue: every variant
 allowed for voting (`PUT variants/{id}/voting`), except hidden ones and those of a hidden
-track, named "Track - Variant". A change counts at once. 1.x's `Vote:AllowedTracks`
-list is no longer read.
+track, named "Track - Variant". A change counts at once.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -476,7 +472,7 @@ Concurrency works as for the catalogue: `version`, `ETag`, `If-Match`, 428 and 4
 
 ## Live updates — `/hubs/server`
 
-A SignalR hub pushes server events to the web UI, replacing the outbound webhooks.
+A SignalR hub pushes server events to the web UI.
 Clients only listen; the hub has no methods to call. It is outside `api/` and answers
 anonymously, but what a connection receives depends on its group:
 
@@ -511,19 +507,3 @@ await connection.start();
 ```
 
 While the database is unavailable (recovery mode) the hub answers 503, like the API.
-
-## Changes from 1.x
-
-Clients written for 1.x need updating:
-
-- The API is off until `Api:Enabled` is `true`, and every `api/*` request apart from
-  the [anonymous endpoints](#anonymous-endpoints) needs credentials: `X-Api-Key` for
-  scripts. With `AllowRemote: false` a client must also run
-  on the same PC.
-- The webhooks are gone; the [live-update hub](#live-updates--hubsserver) replaces them.
-  So are the `/ws/*` WebSockets and Swagger UI.
-- Scheduled events are now [cups](#cups--apicups), stored in the database. `POST
-  schedule` is gone.
-- Voting picks from the [catalogue](#catalogue--apicatalogue), not `Vote:AllowedTracks`.
-- The launch settings (server path, arguments, SteamCMD) cannot be read or set over the
-  API; see [What the web can reach](#what-the-web-can-reach).

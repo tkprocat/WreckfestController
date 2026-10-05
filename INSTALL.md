@@ -3,10 +3,6 @@
 This guide covers installing WreckfestController 2.0, connecting it to a Wreckfest
 dedicated server, and opening its web site to admins and players.
 
-**Upgrading from 1.x?** 2.0 starts with an empty database and does not import 1.x
-settings, cups or WreckfestWeb data. The 2.0 release notes list what to set up again.
-1.x's files are left as they are, so you can go back by reinstalling `v1-final`.
-
 ## Requirements
 
 - Windows 10 or 11, or Windows Server. The controller is a desktop app and runs in a
