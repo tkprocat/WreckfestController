@@ -101,8 +101,12 @@ public sealed class CupActivator
             return ActivationResult.AlreadyActive;
         }
 
+        // From the lead-in before its warmup (its start, without one), an activation is that
+        // occurrence: the scheduler would otherwise start the same cup again minutes later.
         var dueBy = _time.GetUtcNow().UtcDateTime + LeadIn;
-        var occurrence = cup.NextOccurrence <= dueBy ? cup.NextOccurrence : null;
+        var occurrence = CupStore.WindowOf(cup, cup.NextOccurrence) is { } window && window.Warmup <= dueBy
+            ? cup.NextOccurrence
+            : null;
         return StartClaimed(cup, occurrence, onActivated, onFinished: null);
     }
 
@@ -146,10 +150,19 @@ public sealed class CupActivator
         bool started;
         try
         {
-            started = _restart.InitiateRestart(
-                CupStore.ToRestartEvent(cup),
-                _ => MarkActive(cup, onActivated),
-                (_, outcome) => Finish(cup, occurrence, outcome, onFinished));
+            // Applying the cup's settings is part of this: not in the middle of a run step.
+            _store.RunGate.Wait();
+            try
+            {
+                started = _restart.InitiateRestart(
+                    CupStore.ToRestartEvent(cup),
+                    _ => MarkActive(cup, occurrence, onActivated),
+                    (_, outcome) => Finish(cup, occurrence, outcome, onFinished));
+            }
+            finally
+            {
+                _store.RunGate.Release();
+            }
         }
         catch
         {
@@ -176,11 +189,25 @@ public sealed class CupActivator
     // SmartRestartService calls back on a pool thread and expects the work done when
     // the callback returns: the scheduler must not look for the next due cup before
     // this one has been marked. Hence the blocking waits.
-    private void MarkActive(Cup cup, Action<Cup>? onActivated)
+    private void MarkActive(Cup cup, DateTime? occurrence, Action<Cup>? onActivated)
     {
         try
         {
-            if (_store.SetActiveAsync(cup.Id).GetAwaiter().GetResult())
+            // Replaces the active run: not in the middle of a run step for the old one, which
+            // could otherwise act on a run this has just ended.
+            bool activated;
+            _store.RunGate.Wait();
+            try
+            {
+                activated = _store.SetActiveAsync(cup.Id, occurrence, PhaseFor(occurrence), CupStore.WindowOf(cup, occurrence)?.End)
+                    .GetAwaiter().GetResult();
+            }
+            finally
+            {
+                _store.RunGate.Release();
+            }
+
+            if (activated)
             {
                 _logger.LogInformation("Cup {CupName} (ID {CupId}) is now the active cup", cup.Name, cup.Id);
             }
@@ -200,6 +227,16 @@ public sealed class CupActivator
             _logger.LogError(ex, "Could not mark cup {CupName} (ID {CupId}) active", cup.Name, cup.Id);
         }
     }
+
+    /// <summary>
+    /// The phase a run of <paramref name="occurrence"/> begins in. Always the warmup, even when
+    /// the start has already passed - a restart that ran long, say: <see cref="CupRunService"/>
+    /// then carries out the start at once (the reset, the rotation, the announcement), which
+    /// only happens on the way out of the warmup. A run that stands for no occurrence has no
+    /// start to carry out, so it runs.
+    /// </summary>
+    public static CupPhase PhaseFor(DateTime? occurrence) =>
+        occurrence is null ? CupPhase.Running : CupPhase.Warmup;
 
     /// <summary>
     /// Records how <paramref name="occurrence"/> ended and moves the cup past it. Anything

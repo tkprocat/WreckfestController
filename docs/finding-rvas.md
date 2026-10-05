@@ -349,6 +349,13 @@ __hook_read 122B270 4      -> ffffffff  (-1, disabled)
 __hook_session             -> state=0 in lobby, 1 counting down, 2 racing, 3 on results
 ```
 
+`0x122B270` is the index of the event currently loaded, little-endian (`01000000` is
+entry 1). The count is at `0x1857630`. Confirmed live on 2026-10-05 (#204), in a lobby
+with a four-entry loop: `/rotate` loads the next entry at once, and wraps from the last
+entry to 0. `/eventloop` off sets the index to -1, and on again sets it to 0 *without
+loading anything*, so the next `/rotate` or event is entry 1. `/rotate` with the loop off
+does nothing. An `el_add` the game does not know loads `track=` instead, as at startup.
+
 Read more than once per state, and across more than one cycle: a single reading per
 state is how the parity bit passed for a lobby flag.
 

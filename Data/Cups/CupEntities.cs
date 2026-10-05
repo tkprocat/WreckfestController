@@ -51,6 +51,27 @@ public class Cup : IVersioned
     /// <summary>IANA (or Windows) zone the repeat's wall-clock time is in.</summary>
     public string TimeZone { get; set; } = DefaultTimeZone;
 
+    /// <summary>
+    /// Wall-clock time in <see cref="TimeZone"/> when the warmup begins: the restart that
+    /// applies the cup's settings happens then, not at the start, so players can join before
+    /// the cup without being disconnected as it begins. Null: no warmup, the restart is at the
+    /// start. Resolved per occurrence by <see cref="Services.Cups.CupRecurrence.Window"/>.
+    /// </summary>
+    public TimeOnly? WarmupTime { get; set; }
+
+    /// <summary>
+    /// Wall-clock time in <see cref="TimeZone"/> when the cup ends: players are told, it stops
+    /// being the active cup, and cup points are turned off. Null: it runs until another cup
+    /// replaces it.
+    /// </summary>
+    public TimeOnly? EndTime { get; set; }
+
+    /// <summary>
+    /// At the start, turn the event loop off and on, which sends it back to the beginning of
+    /// the rotation instead of wherever the warmup left it.
+    /// </summary>
+    public bool RestartRotationAtStart { get; set; }
+
     /// <summary>Null for a one-off cup. Stored as JSON.</summary>
     public RepeatSchedule? Repeat { get; set; }
 
@@ -114,6 +135,55 @@ public class Cup : IVersioned
 
     /// <summary>UTC. When the cup last became active.</summary>
     public DateTime? ActivatedAt { get; set; }
+
+    /// <summary>For the active cup: warming up, or running. Null when inactive.</summary>
+    public CupPhase? Phase { get; set; }
+
+    /// <summary>
+    /// UTC. For the active cup, the start of the occurrence it is running, from which its
+    /// start and end instants are worked out. Null for an activation that stood for no
+    /// occurrence: it has no start to wait for and no end.
+    /// </summary>
+    public DateTime? CurrentOccurrence { get; set; }
+
+    /// <summary>
+    /// UTC. When the active cup's run ends, resolved when it began, so an edit to the
+    /// schedule while it runs moves later occurrences, not this one. Null: no end.
+    /// </summary>
+    public DateTime? CurrentEnd { get; set; }
+}
+
+/// <summary>
+/// An ended run whose cup points still have to be turned off at the next lobby. Its own
+/// table, not a column of the cup, so deleting the cup does not lose it. Removed once done,
+/// or by any activation: the activated cup's settings are what the server runs then.
+/// </summary>
+public class CupPointsOff
+{
+    public int Id { get; set; }
+
+    public string CupName { get; set; } = string.Empty;
+
+    /// <summary>UTC. When the run ended.</summary>
+    public DateTime Since { get; set; }
+}
+
+/// <summary>Where the active cup is in its occurrence.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<CupPhase>))]
+public enum CupPhase
+{
+    /// <summary>Restarted into the cup's settings; the start is still to come.</summary>
+    Warmup,
+
+    /// <summary>
+    /// The start is under way: claimed, but cup points not yet reset (no hook at that moment,
+    /// say). Kept so a controller restart picks it up. Counts as the warmup everywhere it is
+    /// shown or recorded: the warmup's points are still on the board.
+    /// </summary>
+    Starting,
+
+    /// <summary>Started: cup points reset, the cup counts.</summary>
+    Running,
 }
 
 /// <summary>

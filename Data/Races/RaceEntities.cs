@@ -44,6 +44,9 @@ public class Race
     /// </summary>
     public DateTime? CupActivatedAt { get; set; }
 
+    /// <summary>Whether the race ended in that cup's warmup or while it ran; null without a cup.</summary>
+    public CupPhase? CupPhase { get; set; }
+
     public List<RaceEntry> Entries { get; set; } = new();
 }
 

@@ -4291,6 +4291,14 @@
           }
         }
       },
+      "CupPhase": {
+        "enum": [
+          "Warmup",
+          "Starting",
+          "Running",
+          null
+        ]
+      },
       "CupRequest": {
         "type": "object",
         "properties": {
@@ -4351,6 +4359,24 @@
               "string"
             ]
           },
+          "warmupTime": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "endTime": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "restartRotationAtStart": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
           "collectionId": {
             "type": [
               "null",
@@ -4395,6 +4421,14 @@
           "lastOutcome",
           "isActive",
           "activatedAt",
+          "warmupTime",
+          "endTime",
+          "restartRotationAtStart",
+          "nextWarmup",
+          "nextEnd",
+          "phase",
+          "currentStart",
+          "currentEnd",
           "createdBy",
           "createdAt",
           "updatedAt",
@@ -4498,6 +4532,59 @@
             "type": "boolean"
           },
           "activatedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "warmupTime": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "endTime": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "restartRotationAtStart": {
+            "type": "boolean"
+          },
+          "nextWarmup": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "nextEnd": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "phase": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CupPhase"
+              }
+            ]
+          },
+          "currentStart": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "currentEnd": {
             "type": [
               "null",
               "string"
@@ -5048,7 +5135,10 @@
       "PublicActiveCup": {
         "required": [
           "name",
-          "activatedAt"
+          "activatedAt",
+          "phase",
+          "startsAt",
+          "endsAt"
         ],
         "type": "object",
         "properties": {
@@ -5056,6 +5146,30 @@
             "type": "string"
           },
           "activatedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "phase": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CupPhase"
+              }
+            ]
+          },
+          "startsAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "endsAt": {
             "type": [
               "null",
               "string"
@@ -5261,7 +5375,9 @@
           "name",
           "description",
           "nextOccurrence",
-          "repeat"
+          "repeat",
+          "warmupAt",
+          "endsAt"
         ],
         "type": "object",
         "properties": {
@@ -5280,6 +5396,20 @@
               "null",
               "string"
             ]
+          },
+          "warmupAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "endsAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
           }
         }
       },

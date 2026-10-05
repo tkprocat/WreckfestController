@@ -105,13 +105,17 @@ public class PublicController : ControllerBase
             new PublicRotation(
                 string.IsNullOrWhiteSpace(rotationName) ? null : rotationName,
                 rotation.Select(t => new PublicRotationTrack(t.Track, Name(t.Track, names), t.Gamemode, t.Laps)).ToList()),
-            cups.Active is { } active ? new PublicActiveCup(active.Name, active.ActivatedAt) : null,
+            cups.Active is { } active
+                ? new PublicActiveCup(active.Name, active.ActivatedAt, active.Phase, active.StartsAt, active.EndsAt)
+                : null,
             cups.Upcoming
                 .Select(c => new PublicUpcomingCup(
                     c.Name,
                     c.Description,
                     c.NextOccurrence!.Value,
-                    c.Repeat is null ? null : CupRecurrence.Describe(c.Repeat)))
+                    c.Repeat is null ? null : CupRecurrence.Describe(c.Repeat),
+                    c.WarmupAt,
+                    c.EndsAt))
                 .ToList(),
             _time.GetUtcNow());
     }

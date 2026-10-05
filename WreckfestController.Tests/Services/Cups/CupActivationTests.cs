@@ -93,6 +93,47 @@ public sealed class CupActivationTests : IDisposable
             _publisher.Verify(p => p.CupOccurrenceEndedAsync(cup.Id, "Race night", start, OccurrenceOutcome.Activated), Times.Once));
     }
 
+    // #204: the restart happens at the warmup, so players who join early are not
+    // disconnected when the cup begins. The cup is then active, warming up for that start.
+    [Fact]
+    public async Task WithAWarmup_TheRestartIsAtTheWarmup_AndTheCupWarmsUp()
+    {
+        var start = Now.AddMinutes(40);
+        var cup = await _db.CreateAsync(CupTestDatabase.Definition(
+            "Race night", start, warmup: TimeOnly.FromDateTime(start.AddMinutes(-30))));
+
+        // Warmup in ten minutes: outside the lead-in, so not yet.
+        await _scheduler.CheckAsync();
+        Assert.Equal(SmartRestartState.Idle, _restart.GetState());
+        Assert.False((await _db.ReloadAsync(cup.Id)).IsActive);
+
+        // Warmup in four minutes: due, though the start is 34 minutes away.
+        _db.Clock.Now = _db.Clock.Now.AddMinutes(6);
+        await _scheduler.CheckAsync();
+        var active = await EventuallyAsync(cup.Id, e => e.IsActive && e.NextOccurrence is null);
+
+        Assert.Equal(CupPhase.Warmup, active.Phase);
+        Assert.Equal(start, active.CurrentOccurrence);
+        Assert.Equal(start, active.LastOccurrence);
+        Assert.Equal(OccurrenceOutcome.Activated, active.LastOutcome);
+    }
+
+    // Activated after its start, it still begins in warmup, so CupRunService carries out the
+    // start (reset, rotation, announcement) at once rather than skipping it.
+    [Fact]
+    public async Task ACupActivatedAfterItsStart_BeginsInWarmup_ForItsStartToBeCarriedOut()
+    {
+        var start = Now.AddMinutes(-1);
+        var cup = await _db.CreateAsync(CupTestDatabase.Definition("Late", start, end: TimeOnly.FromDateTime(start.AddHours(1))));
+
+        await _scheduler.CheckAsync();
+        var active = await EventuallyAsync(cup.Id, e => e.IsActive);
+
+        Assert.Equal(CupPhase.Warmup, active.Phase);
+        Assert.Equal(start, active.CurrentOccurrence);
+        Assert.Equal(start.AddHours(1), active.CurrentEnd);
+    }
+
     [Fact]
     public async Task ARecurringCup_MovesToItsNextOccurrence()
     {

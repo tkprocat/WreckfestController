@@ -102,6 +102,16 @@ public sealed class HubServerEventPublisher : IServerEventPublisher, IDisposable
             nameof(IServerHubClient.CupActivated),
             c => c.CupActivated(new CupActivatedMessage(cupId, cupName, DateTime.UtcNow)));
 
+    public Task CupStartedAsync(int cupId, string cupName) =>
+        PublishAsync(
+            nameof(IServerHubClient.CupStarted),
+            c => c.CupStarted(new CupStartedMessage(cupId, cupName, DateTime.UtcNow)));
+
+    public Task CupEndedAsync(int cupId, string cupName) =>
+        PublishAsync(
+            nameof(IServerHubClient.CupEnded),
+            c => c.CupEnded(new CupEndedMessage(cupId, cupName, DateTime.UtcNow)));
+
     public Task CupOccurrenceEndedAsync(int cupId, string cupName, DateTime occurrence, OccurrenceOutcome outcome) =>
         PublishAsync(
             nameof(IServerHubClient.CupOccurrenceEnded),

@@ -511,4 +511,75 @@ describe('CupsView', () => {
       vi.useRealTimers()
     }
   })
+
+  // #204: warmup and end are clock times in the cup's zone; the form shows how they line up.
+  it('sends the warmup, end and rotation choice, and shows the timeline', async () => {
+    api.GET.mockImplementation((path: string) => {
+      if (path === '/api/cups') {
+        return Promise.resolve(answer({ count: 1, cups: [{ ...friday(), warmupTime: '19:30', endTime: '21:30', restartRotationAtStart: false }] }))
+      }
+      return Promise.resolve(answer([]))
+    })
+    api.PUT.mockResolvedValue(answer({ ...friday(), version: 4 }))
+    await mountPage()
+
+    await labelled('Edit Friday Derby').trigger('click')
+    await flushPromises()
+    expect(dialog().find('[data-testid="cup-timeline"]').text()).toBe('19:30 warmup → 20:00 start → 21:30 end (Europe/Copenhagen)')
+
+    await dialog().find('input[aria-label="Ends (optional)"]').setValue('22:00')
+    expect(dialog().find('[data-testid="cup-timeline"]').text()).toBe('19:30 warmup → 20:00 start → 22:00 end (Europe/Copenhagen)')
+    await click('Save', dialog())
+
+    expect(api.PUT.mock.calls[0]![1].body).toEqual(
+      expect.objectContaining({ warmupTime: '19:30', endTime: '22:00', restartRotationAtStart: false }),
+    )
+  })
+
+  it('starts a new cup\'s rotation from its beginning unless told otherwise, with no warmup or end', async () => {
+    api.POST.mockResolvedValue(answer(cup(9, 'One-off'), 201))
+    await mountPage()
+
+    await click('Add cup')
+    await dialog().find('input[aria-label="Name"]').setValue('One-off')
+    await dialog().find('input[aria-label="Starts (your local time)"]').setValue('2026-10-02T20:00')
+    editor().draft.source = 'server'
+    expect(dialog().find('[data-testid="cup-timeline"]').exists()).toBe(false)
+    await click('Add', dialog())
+
+    expect(api.POST.mock.calls[0]![1].body).toEqual(
+      expect.objectContaining({ warmupTime: null, endTime: null, restartRotationAtStart: true }),
+    )
+  })
+
+  it('marks a warming-up cup, and shows a cup\'s next warmup and end', async () => {
+    api.GET.mockImplementation((path: string) => {
+      if (path === '/api/cups') {
+        return Promise.resolve(answer({
+          count: 2,
+          cups: [
+            { ...friday(), warmupTime: '19:30', endTime: '21:30', nextWarmup: '2026-10-02T17:30:00Z', nextEnd: '2026-10-02T19:30:00Z' },
+            { ...sunday(), phase: 'Warmup', currentStart: when },
+          ],
+        }))
+      }
+      return Promise.resolve(answer([]))
+    })
+    await mountPage()
+
+    expect(wrapper!.text()).toContain('(warmup 19:30, ends 21:30)')
+    expect(wrapper!.find('.flag').text()).toBe('Warmup')
+  })
+
+  it('refreshes when the hub says a cup started or ended', async () => {
+    await mountPage()
+    api.GET.mockClear()
+
+    hub.get('CupStarted')!({ cupId: 2, cupName: 'Sunday Race', timestamp: when })
+    await flushPromises()
+    hub.get('CupEnded')!({ cupId: 2, cupName: 'Sunday Race', timestamp: when })
+    await flushPromises()
+
+    expect(api.GET.mock.calls.filter(([path]) => path === '/api/cups')).toHaveLength(2)
+  })
 })

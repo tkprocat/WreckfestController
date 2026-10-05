@@ -102,6 +102,7 @@ public class CupSchedulerService : IHostedService, IDisposable
     private async Task<bool> HandleNextDueAsync()
     {
         var now = _time.GetUtcNow().UtcDateTime;
+        // Due from the lead-in before its warmup, or before its start without one.
         var due = await _store.NextDueAsync(now + CupActivator.LeadIn);
         if (due is null)
         {
@@ -148,11 +149,24 @@ public class CupSchedulerService : IHostedService, IDisposable
 
         if (cup.IsActive)
         {
+            // Still active from an earlier run (no end time): no restart, but this occurrence
+            // is the run now, so its start resets the cup points as a restart would have.
             _logger.LogInformation(
                 "Cup {CupName} (ID {CupId}) is already active; its {Occurrence:u} occurrence needs no restart",
                 cup.Name,
                 cup.Id,
                 occurrence);
+            // Replaces the run: not in the middle of a run step for the old one.
+            await _store.RunGate.WaitAsync();
+            try
+            {
+                await _store.SetActiveAsync(
+                    cup.Id, occurrence, CupActivator.PhaseFor(occurrence), CupStore.WindowOf(cup, occurrence)?.End);
+            }
+            finally
+            {
+                _store.RunGate.Release();
+            }
             await _activator.EndOccurrenceAsync(cup, occurrence, OccurrenceOutcome.Activated);
             return true;
         }

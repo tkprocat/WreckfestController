@@ -14,6 +14,7 @@ public class VotingService
     private enum VotePlayerRefreshResult { UnavailableOrFailed, Refreshed, RefreshedNoHumans }
 
     private readonly ServerManager _serverManager;
+    private readonly EventLoopControl _eventLoop;
     private readonly PlayerTracker _playerTracker;
     private readonly ConfigService _configService;
     private readonly ILogger<VotingService> _logger;
@@ -90,6 +91,7 @@ public class VotingService
         IVotableTracks votableTracks)
     {
         _serverManager = serverManager;
+        _eventLoop = new EventLoopControl(serverManager);
         _playerTracker = playerTracker;
         _configService = configService;
         _logger = logger;
@@ -1195,22 +1197,12 @@ public class VotingService
     /// Moderators and admins alike bypass the direct-change cooldown and may override
     /// a change someone else just made.
     /// </summary>
-    // Server-state globals, module-relative. Found by decoding the RIP-relative
-    // operands inside the game's own "is the event loop enabled" getter
-    // (FUN_1402dd490 at RVA 0x002DD490), then confirmed live by toggling
-    // /eventloop and watching them move. Build-specific: a Wreckfest patch will
-    // shift them, which is why every read is sanity-checked and falls open.
-    private const uint RvaEventLoopCount = 0x1857630;   // int32: number of el_add entries
-    private const uint RvaEventLoopIndex = 0x122B270;   // int32: current entry, -1 when off
-
     private static readonly TimeSpan ServerStateCacheWindow = TimeSpan.FromSeconds(2);
     private readonly object _serverStateLock = new();
     private static readonly TimeSpan RaceRefusalWindow = TimeSpan.FromSeconds(30);
     private DateTime _lastRaceRefusalUtc = DateTime.MinValue;
     private DateTime _serverStateReadUtc = DateTime.MinValue;
     private (bool? EventLoopEnabled, int Index, int Count, bool? Racing) _serverState;
-
-    private sealed record EventLoopState(bool Enabled, int Index, int Count);
 
     /// <summary>
     /// Reads event-loop and session state from the running server. Every field is
@@ -1230,24 +1222,8 @@ public class VotingService
             }
         }
 
-        EventLoopState? loop = null;
         bool? racing = null;
-
-        var countBytes = await _serverManager.ReadHookMemoryAsync(RvaEventLoopCount, 4);
-        var indexBytes = await _serverManager.ReadHookMemoryAsync(RvaEventLoopIndex, 4);
-        if (countBytes?.Length == 4 && indexBytes?.Length == 4)
-        {
-            var count = BitConverter.ToInt32(countBytes);
-            var index = BitConverter.ToInt32(indexBytes);
-
-            // Reject implausible values rather than trusting a stale offset after a
-            // game patch: an entry count outside 0..256, or an index that is neither
-            // -1 nor a valid position, means we are not reading what we think.
-            if (count >= 0 && count <= 256 && index >= -1 && index < Math.Max(count, 1))
-            {
-                loop = new EventLoopState(count > 0 && index > -1, index, count);
-            }
-        }
+        var loop = await _eventLoop.ReadAsync();
 
         // Only the game's own racing state counts. Lobby, countdown, the results
         // screen and any value the game is not known to use fall through as "not
@@ -1356,7 +1332,8 @@ public class VotingService
         // worked. The game does not apply it synchronously, so poll briefly instead
         // of reading once - a single immediate read sees the old value and wrongly
         // reports failure.
-        var after = await WaitForEventLoopStateAsync(desired);
+        var after = await _eventLoop.WaitForStateAsync(desired);
+        InvalidateServerState();
         if (after is null || after.Enabled != desired)
         {
             await BroadcastMessage($"Event loop did not change - it is still {(after?.Enabled == true ? "on" : "off")}.");
@@ -1364,27 +1341,6 @@ public class VotingService
         }
 
         await BroadcastMessage(FormatEventLoopStatus(after));
-    }
-
-    private async Task<EventLoopState?> WaitForEventLoopStateAsync(bool desired)
-    {
-        EventLoopState? latest = null;
-
-        for (var attempt = 0; attempt < 8; attempt++)
-        {
-            await Task.Delay(250);
-            InvalidateServerState();
-
-            var (loop, _) = await ReadServerStateAsync();
-            latest = loop ?? latest;
-
-            if (loop?.Enabled == desired)
-            {
-                return loop;
-            }
-        }
-
-        return latest;
     }
 
     /// <summary>

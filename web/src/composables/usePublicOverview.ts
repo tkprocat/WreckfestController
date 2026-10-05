@@ -15,6 +15,8 @@ const POLL_INTERVAL_MS = 60_000
 const REFETCH_ON: (keyof HubEvents)[] = [
   'TrackChanged',
   'CupActivated',
+  'CupStarted',
+  'CupEnded',
   'ServerStarted',
   'ServerStopped',
   'ServerRestarted',

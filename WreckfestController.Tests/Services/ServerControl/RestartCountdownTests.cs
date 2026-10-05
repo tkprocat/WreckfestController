@@ -231,6 +231,8 @@ public class RestartCountdownTests : IDisposable
         public Task PlayerLeftAsync(string playerName) => Task.CompletedTask;
         public Task TrackChangedAsync(string trackId) => Task.CompletedTask;
         public Task CupActivatedAsync(int cupId, string cupName) => Task.CompletedTask;
+        public Task CupStartedAsync(int cupId, string cupName) => Task.CompletedTask;
+        public Task CupEndedAsync(int cupId, string cupName) => Task.CompletedTask;
         public Task CupOccurrenceEndedAsync(int cupId, string cupName, DateTime occurrence, OccurrenceOutcome outcome) => Task.CompletedTask;
         public Task ServerStartedAsync(ServerStartedEvent serverEvent) => Task.CompletedTask;
         public Task ServerStoppedAsync(ServerStoppedEvent serverEvent) => Task.CompletedTask;

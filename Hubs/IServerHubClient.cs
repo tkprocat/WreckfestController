@@ -14,6 +14,8 @@ public interface IServerHubClient
     Task PlayerLeft(PlayerLeftMessage message);
     Task TrackChanged(TrackChangedMessage message);
     Task CupActivated(CupActivatedMessage message);
+    Task CupStarted(CupStartedMessage message);
+    Task CupEnded(CupEndedMessage message);
     Task ServerStarted(ServerStartedMessage message);
     Task ServerStopped(ServerStoppedMessage message);
     Task ServerRestarted(ServerRestartedMessage message);
@@ -43,6 +45,12 @@ public sealed record PlayerLeftMessage(string PlayerName);
 public sealed record TrackChangedMessage(string TrackId);
 
 public sealed record CupActivatedMessage(int CupId, string CupName, DateTime Timestamp);
+
+/// <summary>The active cup's warmup is over: cup points were reset and the cup counts.</summary>
+public sealed record CupStartedMessage(int CupId, string CupName, DateTime Timestamp);
+
+/// <summary>The active cup reached its end time and is no longer the active cup.</summary>
+public sealed record CupEndedMessage(int CupId, string CupName, DateTime Timestamp);
 
 public sealed record CupOccurrenceEndedMessage(
     int CupId,

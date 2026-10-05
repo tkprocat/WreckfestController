@@ -109,7 +109,60 @@ public class CupEndpointsTests
         { CupBody(extra: new { tracks = new[] { new { track = "bad id" } } }), "tracks[0].track" },
         { CupBody(extra: new { collectionId = 1, tracks = new[] { new { track = "urban09_1" } } }), "tracks" },
         { CupBody(extra: new { collectionId = 999 }), "collectionId" },
+        { CupBody(extra: new { repeat = new { frequency = "daily", time = "20:00" }, warmupTime = "7:30pm" }), "warmupTime" },
+        { CupBody(extra: new { repeat = new { frequency = "daily", time = "20:00" }, warmupTime = "07:59" }), "warmupTime" },
+        { CupBody(extra: new { repeat = new { frequency = "daily", time = "20:00" }, endTime = "24:00" }), "endTime" },
+        { CupBody(extra: new { repeat = new { frequency = "daily", time = "20:00" }, endTime = "20:00" }), "endTime" },
     };
+
+    // #204: warmup and end as clock times in the cup's zone around its start, and the next
+    // occurrence's window worked out from them.
+    [Fact]
+    public async Task Create_WithWarmupAndEnd_ReturnsTheWindow()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+
+        // A past start is only the repeat's anchor, so the next occurrence is at 20:00.
+        using var created = await client.PostAsJsonAsync("/api/cups", CupBody(startTime: "2026-01-01T12:00:00Z", extra: new
+        {
+            timeZone = "Europe/Copenhagen",
+            repeat = new { frequency = "daily", time = "20:00" },
+            warmupTime = "19:30",
+            endTime = "21:30",
+            restartRotationAtStart = true,
+        }), Ct);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var body = await created.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal("19:30", body.GetProperty("warmupTime").GetString());
+        Assert.Equal("21:30", body.GetProperty("endTime").GetString());
+        Assert.True(body.GetProperty("restartRotationAtStart").GetBoolean());
+
+        var next = body.GetProperty("nextOccurrence").GetDateTime();
+        Assert.Equal(next.AddMinutes(-30), body.GetProperty("nextWarmup").GetDateTime());
+        Assert.Equal(next.AddMinutes(90), body.GetProperty("nextEnd").GetDateTime());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("phase").ValueKind);
+    }
+
+    [Fact]
+    public async Task Create_WithTheWarmupAtTheStart_HasNoWarmup()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+
+        using var created = await client.PostAsJsonAsync("/api/cups", CupBody(startTime: "2026-01-01T12:00:00Z", extra: new
+        {
+            repeat = new { frequency = "daily", time = "20:00" },
+            warmupTime = "20:00",
+        }), Ct);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var body = await created.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("warmupTime").ValueKind);
+        Assert.Equal(body.GetProperty("nextOccurrence").GetDateTime(), body.GetProperty("nextWarmup").GetDateTime());
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("nextEnd").ValueKind);
+    }
 
     [Theory]
     [MemberData(nameof(InvalidCups))]

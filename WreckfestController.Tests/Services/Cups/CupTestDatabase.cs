@@ -54,8 +54,12 @@ public sealed class CupTestDatabase : IDisposable
         IReadOnlyList<EventLoopTrack>? tracks = null,
         EventServerConfig? serverConfig = null,
         string? sessionMode = null,
-        string? gridOrder = null) =>
-        new(name, string.Empty, startTime, timeZone, repeat, serverConfig, collectionId, tracks ?? [], string.Empty, sessionMode, gridOrder);
+        string? gridOrder = null,
+        TimeOnly? warmup = null,
+        TimeOnly? end = null,
+        bool restartRotation = false) =>
+        new(name, string.Empty, startTime, timeZone, repeat, serverConfig, collectionId, tracks ?? [], string.Empty, sessionMode, gridOrder,
+            warmup, end, restartRotation);
 
     public async Task<Cup> CreateAsync(CupDefinition definition)
     {
