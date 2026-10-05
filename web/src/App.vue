@@ -50,7 +50,7 @@ async function signOut() {
             <RouterLink v-else to="/login">Sign in</RouterLink>
           </nav>
         </header>
-        <main id="main-content" class="app-main" :class="{ 'app-main-admin': isAdmin }" tabindex="-1">
+        <main id="main-content" class="app-main" :class="{ 'app-main-admin': isAdmin, 'app-main-spectator': route.name === 'home' }" tabindex="-1">
           <RouterView />
         </main>
       </NDialogProvider>
