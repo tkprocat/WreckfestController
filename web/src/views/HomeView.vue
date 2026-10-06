@@ -30,7 +30,7 @@ const players = computed(() =>
   ),
 )
 const statusLabel = computed(() =>
-  error.value ? 'STATUS UNCONFIRMED' : overview.value?.status.isRunning ? 'UP' : 'DOWN',
+  error.value ? 'NO CONNECTION' : overview.value?.status.isRunning ? 'UP' : 'DOWN',
 )
 </script>
 
@@ -58,10 +58,11 @@ const statusLabel = computed(() =>
       <section class="race-hero" aria-labelledby="server-title">
         <div class="hero-content">
           <div class="hero-topline">
-            <span class="server-status" :class="error ? 'status-unknown' : overview.status.isRunning ? 'status-up' : 'status-down'" role="status">{{ statusLabel }}</span>
+            <span class="server-status" :class="error ? 'status-down' : overview.status.isRunning ? 'status-up' : 'status-down'" role="status">{{ statusLabel }}</span>
             <h1 id="server-title"><span v-for="(part, index) in titleParts" :key="index" :class="part.code ? 'game-color-' + part.code : undefined">{{ part.text }}</span></h1>
           </div>
           <div class="current-race">
+            <p v-if="error" class="stale-label">Last known · connection unavailable</p>
             <h2 v-if="overview.status.isRunning && overview.currentTrack">{{ overview.currentTrack.name }}</h2>
             <h2 v-else-if="overview.status.isRunning">In lobby</h2>
             <h2 v-else>Server offline</h2>
@@ -136,7 +137,7 @@ const statusLabel = computed(() =>
 .server-status::before { content: ''; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
 .status-up { color: #fff; background: #18733b; }
 .status-down { color: #fff; background: #be2535; }
-.status-unknown { color: var(--page-text); background: var(--surface); border: 1px solid var(--border-color); }
+.stale-label { margin: 0 0 12px; color: var(--text-secondary); font-size: 18px; font-weight: 600; }
 .game-color-1 { color: #d63030; } .game-color-2 { color: #218739; }
 .game-color-3 { color: #c56a00; } .game-color-4 { color: #2355cf; }
 .game-color-5 { color: #16849b; } .game-color-6 { color: #a33cc1; }

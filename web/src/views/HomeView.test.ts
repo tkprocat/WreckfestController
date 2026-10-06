@@ -91,6 +91,8 @@ describe('HomeView', () => {
     expect(text).toContain("The controller's database is unavailable.")
     expect(text).toContain('it may be out of date')
     expect(text).toContain('Big Valley')
+    expect(text).toContain('Last known · connection unavailable')
+    expect(text).toContain('NO CONNECTION')
     expect(text).not.toContain('Racing now')
   })
 
@@ -118,6 +120,10 @@ describe('HomeView', () => {
     state.overview = overview
     state.error = null
 
-    expect(mount(HomeView).text()).not.toContain('out of date')
+    const wrapper = mount(HomeView)
+    expect(wrapper.text()).not.toContain('out of date')
+    expect(wrapper.text()).not.toContain('NO CONNECTION')
+    expect(wrapper.text()).not.toContain('Last known · connection unavailable')
+    expect(wrapper.find('.server-status').text()).toBe('UP')
   })
 })
