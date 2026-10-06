@@ -4,12 +4,13 @@ import { mount } from '@vue/test-utils'
 import HomeView from './HomeView.vue'
 import type { PublicOverview } from '@/composables/usePublicOverview'
 
-const state = vi.hoisted(() => ({ overview: null as unknown, error: null as string | null, loading: false }))
+const state = vi.hoisted(() => ({ overview: null as unknown, error: null as string | null, loading: false, connectionUnavailable: false }))
 
 vi.mock('@/composables/usePublicOverview', () => ({
   usePublicOverview: () => ({
     overview: ref(state.overview),
     error: ref(state.error),
+    connectionUnavailable: ref(state.connectionUnavailable),
     loading: ref(state.loading),
     reload: vi.fn(),
   }),
@@ -28,6 +29,35 @@ const overview: PublicOverview = {
 } as unknown as PublicOverview
 
 describe('HomeView', () => {
+  it('marks a retained snapshot as disconnected only for a transport failure', () => {
+    state.overview = overview
+    state.error = 'The controller cannot be reached.'
+    state.connectionUnavailable = true
+    const wrapper = mount(HomeView)
+    expect(wrapper.find('.server-status').text()).toBe('NO CONNECTION')
+    expect(wrapper.text()).toContain('Last known · connection unavailable')
+    expect(wrapper.text()).toContain('Big Valley')
+    state.connectionUnavailable = false
+    state.error = null
+  })
+  it('renders game color segments as escaped text and compacts occupancy', () => {
+    state.overview = { ...overview, serverName: '^5Monday ^2Night ^6Wrecking ^5EU ^8- ^3Development Server', players: { humans: 3, bots: 10, list: [] } }
+    state.error = null
+    const wrapper = mount(HomeView)
+    expect(wrapper.find('h1').text()).toBe('Monday Night Wrecking EU - Development Server')
+    expect(wrapper.findAll('.game-color-5')).toHaveLength(2)
+    expect(wrapper.text()).toContain('3 players, 10 bots / 24 total')
+    expect(wrapper.find('.server-status').text()).toBe('UP')
+    state.overview = overview
+  })
+  it('shows DOWN and singular zero/one counts without inventing capacity', () => {
+    state.overview = { ...overview, maxPlayers: null, status: { isRunning: false }, players: { humans: 0, bots: 1, list: [] } }
+    state.error = null
+    const wrapper = mount(HomeView)
+    expect(wrapper.find('.status-down').text()).toBe('DOWN')
+    expect(wrapper.find('.occupancy').text()).toBe('0 player, 1 bot')
+    state.overview = overview
+  })
   it('shows a clear loading state before the first snapshot', () => {
     state.overview = null
     state.error = null
@@ -72,19 +102,21 @@ describe('HomeView', () => {
     expect(text).toContain('Test server')
     expect(text).toContain("The controller's database is unavailable.")
     expect(text).toContain('it may be out of date')
-    expect(text).toContain('Last known track')
+    expect(text).toContain('Big Valley')
+    expect(text).toContain('Last known · updates paused')
+    expect(text).toContain('NOT UPDATING')
     expect(text).not.toContain('Racing now')
   })
 
-  it('labels the player counts and uptime as last known when a refresh failed', () => {
+  it('labels player counts as last known when a refresh failed', () => {
     state.overview = { ...overview, players: { humans: 2, bots: 1, list: [] } }
     state.error = 'The controller cannot be reached.'
 
     const text = mount(HomeView).text()
 
-    expect(text).toContain('human players at last check')
-    expect(text).toContain('1 bot at last check')
-    expect(text).toContain('Was up 1m at last check')
+    expect(text).toContain('2 players, 1 bot / 24 total · at last check')
+
+    expect(text).not.toContain('Was up')
     expect(text).not.toContain('on the server')
   })
 
@@ -100,6 +132,10 @@ describe('HomeView', () => {
     state.overview = overview
     state.error = null
 
-    expect(mount(HomeView).text()).not.toContain('out of date')
+    const wrapper = mount(HomeView)
+    expect(wrapper.text()).not.toContain('out of date')
+    expect(wrapper.text()).not.toContain('NO CONNECTION')
+    expect(wrapper.text()).not.toContain('Last known · connection unavailable')
+    expect(wrapper.find('.server-status').text()).toBe('UP')
   })
 })

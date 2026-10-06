@@ -31,6 +31,7 @@ export function usePublicOverview() {
 
   /** Why the last load failed. Kept alongside the last good overview, which may be stale. */
   const error = ref<string | null>(null)
+  const connectionUnavailable = ref(false)
   const loading = ref(true)
 
   let refetchTimer: ReturnType<typeof setTimeout> | undefined
@@ -50,6 +51,7 @@ export function usePublicOverview() {
     const id = ++started
     let data: PublicOverview | undefined
     let failure: string | null = null
+    let unreachable = false
     try {
       const result = await api.GET('/api/public/overview')
       data = result.data
@@ -63,6 +65,7 @@ export function usePublicOverview() {
       }
     } catch {
       failure = 'The controller cannot be reached.'
+      unreachable = true
     }
 
     if (id < settled) {
@@ -72,6 +75,7 @@ export function usePublicOverview() {
     settled = id
     loading.value = false
     error.value = failure
+    connectionUnavailable.value = unreachable
     if (data) {
       if (hubPlayers && hubPlayers.afterLoad >= id) {
         data.players = hubPlayers.players
@@ -115,5 +119,5 @@ export function usePublicOverview() {
     unsubscribe.forEach((stop) => stop())
   })
 
-  return { overview, error, loading, reload: load }
+  return { overview, error, connectionUnavailable, loading, reload: load }
 }

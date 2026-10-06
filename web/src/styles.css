@@ -181,3 +181,9 @@ a { color: var(--accent); }
 /* A row of radio buttons wraps on a narrow screen instead of pushing the form sideways. */
 /* Naive UI gives a button group one row's height; auto lets the wrapped row take space. */
 .n-form .n-radio-group { display: inline-flex; flex-wrap: wrap; row-gap: var(--space-1); max-width: 100%; height: auto; }
+
+.app-main-spectator {
+  box-sizing: border-box;
+  max-width: 1600px;
+  padding: 32px clamp(16px, 3vw, 48px);
+}
