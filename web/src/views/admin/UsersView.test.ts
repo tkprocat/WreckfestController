@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { NDialogProvider, NMessageProvider } from 'naive-ui'
+import StatusBadge from '@/components/StatusBadge.vue'
 import UsersView from './UsersView.vue'
 
 const api = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() }))
@@ -67,6 +68,16 @@ afterEach(() => {
 })
 
 describe('UsersView', () => {
+  it('shows active and locked accounts with the correct static status tones', async () => {
+    api.GET.mockResolvedValue(answer([me, { ...other, isLockedOut: true }]))
+    mountPage()
+    await flushPromises()
+    const badges = wrapper!.findAllComponents(StatusBadge)
+    expect(badges.map((badge) => [badge.text(), badge.props('tone')])).toEqual([
+      ['Active', 'positive'], ['Locked', 'negative'],
+    ])
+    expect(badges.every((badge) => badge.attributes('role') === undefined)).toBe(true)
+  })
   // The server refuses it too; the page does not offer it.
   it('does not offer to lock or delete your own account', async () => {
     mountPage()

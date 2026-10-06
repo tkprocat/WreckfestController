@@ -60,7 +60,7 @@ const statusLabel = computed(() =>
       <section class="race-hero" aria-labelledby="server-title">
         <div class="hero-content">
           <div class="hero-topline">
-            <StatusBadge class="server-status" :tone="error || !overview.status.isRunning ? 'negative' : 'positive'">{{ statusLabel }}</StatusBadge>
+            <StatusBadge live class="server-status" :tone="error || !overview.status.isRunning ? 'negative' : 'positive'">{{ statusLabel }}</StatusBadge>
             <h1 id="server-title"><span v-for="(part, index) in titleParts" :key="index" :class="part.code ? 'game-color-' + part.code : undefined">{{ part.text }}</span></h1>
           </div>
           <div class="current-race">

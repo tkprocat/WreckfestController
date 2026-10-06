@@ -1,7 +1,8 @@
 <script setup lang="ts">
+import StatusBadge from '@/components/StatusBadge.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { h, onBeforeUnmount, onMounted, ref, useId } from 'vue'
-import { NButton, NCard, NSpace, NTag, useMessage, type DataTableColumns } from 'naive-ui'
+import { NButton, NCard, NSpace, useMessage, type DataTableColumns } from 'naive-ui'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
 import ResourceTable from '@/crud/ResourceTable.vue'
@@ -117,7 +118,7 @@ function activeTag(c: Cup) {
   if (!c.isActive) return null
   const label = c.phase === 'Warmup' ? 'Warmup' : 'Active'
   const title = c.phase === 'Warmup' && c.currentStart ? `Starts ${formatWhen(c.currentStart)}` : c.currentEnd ? `Ends ${formatWhen(c.currentEnd)}` : undefined
-  return h(NTag, { size: 'small', type: c.phase === 'Warmup' ? 'warning' : 'success', class: 'flag', title }, () => label)
+  return h(StatusBadge, { compact: true, tone: c.phase === 'Warmup' ? 'warning' : 'positive', class: 'flag', title }, () => label)
 }
 
 /** The next occurrence, with its warmup and end when it has them. */
@@ -148,7 +149,7 @@ const columns: DataTableColumns<Cup> = [
   {
     title: 'Actions',
     key: 'actions',
-    width: 205,
+    width: 245,
     render: (c) =>
       h(NSpace, { size: 'small', wrap: false }, () => [
         h(NButton, { size: 'small', disabled: busy.value !== null, 'aria-label': 'Edit ' + c.name, onClick: () => void cupEditor.value?.start(c) }, () => 'Edit'),
@@ -217,11 +218,11 @@ onBeforeUnmount(() => {
         </NButton>
         <!-- A failed reload keeps the draft and its notices: show them beside the failure. -->
         <span v-if="rotation" class="rotation-summary" role="status">
-          <NTag v-if="rotation.status === 'failed'" size="small" type="warning" :bordered="false">Could not be read</NTag>
-          <NTag v-if="rotation.notice === 'conflict'" size="small" type="error" :bordered="false">Changed elsewhere</NTag>
-          <NTag v-else-if="rotation.notice === 'stale'" size="small" type="info" :bordered="false">Changed on the server</NTag>
-          <NTag v-else-if="rotation.notice === 'offer'" size="small" type="info" :bordered="false">Save to the cup too?</NTag>
-          <NTag v-if="rotation.dirty" size="small" type="warning" :bordered="false">Unsaved changes</NTag>
+          <StatusBadge v-if="rotation.status === 'failed'" compact tone="negative">Could not be read</StatusBadge>
+          <StatusBadge v-if="rotation.notice === 'conflict'" compact tone="negative">Changed elsewhere</StatusBadge>
+          <StatusBadge v-else-if="rotation.notice === 'stale'" compact tone="warning">Changed on the server</StatusBadge>
+          <StatusBadge v-else-if="rotation.notice === 'offer'" compact tone="neutral">Save to the cup too?</StatusBadge>
+          <StatusBadge v-if="rotation.dirty" compact tone="warning">Unsaved changes</StatusBadge>
           <template v-if="rotation.loaded">
             {{ rotation.tracks }} {{ rotation.tracks === 1 ? 'track' : 'tracks' }} ·
             {{ rotation.cupName ? `set by ${rotation.cupName}` : "the server's own" }}

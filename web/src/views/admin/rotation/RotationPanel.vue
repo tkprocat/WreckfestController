@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import StatusBadge from '@/components/StatusBadge.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, useId, watch } from 'vue'
-import { NAlert, NButton, NInput, NSelect, NSkeleton, NSpace, NTag, useMessage } from 'naive-ui'
+import { NAlert, NButton, NInput, NSelect, NSkeleton, NSpace, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
 import ConflictDialog from '@/crud/ConflictDialog.vue'
@@ -383,11 +384,11 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
       <div class="summary">
         <p class="source">
           <template v-if="cup">
-            <NTag type="success" size="small">Cup</NTag>
+            <StatusBadge compact tone="positive">Cup</StatusBadge>
             <span>Set by <strong>{{ cup.name }}</strong><template v-if="cup.activatedAt">, active since {{ formatWhen(cup.activatedAt) }}</template>.</span>
           </template>
           <template v-else>
-            <NTag size="small">No cup</NTag>
+            <StatusBadge compact tone="neutral">No cup</StatusBadge>
             <span>The server's own rotation.</span>
           </template>
         </p>

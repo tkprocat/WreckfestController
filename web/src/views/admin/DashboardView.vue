@@ -171,8 +171,8 @@ const columns: DataTableColumns<PlayerSummary> = [
 .metric-card { min-width: 0; }
 .metric-suffix { margin-left: 8px; color: var(--text-muted); font-size: var(--font-meta); }
 .track-card { margin-bottom: var(--space-6); min-width: 0; }
-.eyebrow { margin: 0; color: var(--text-muted); font-size: var(--font-meta); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
-.track-card h2 { margin: 10px 0 0; font-size: clamp(25px, 3vw, 38px); line-height: 1.15; letter-spacing: -.03em; overflow-wrap: anywhere; }
+.eyebrow { margin: 0; color: var(--text-secondary); font-size: var(--font-label); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.track-card h2 { margin: 10px 0 0; font-size: var(--font-title); line-height: 1.15; letter-spacing: -.03em; overflow-wrap: anywhere; }
 .track-caption { margin: 12px 0 0; color: var(--text-muted); }
 .roster-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
 .roster-heading h2 { margin: 3px 0 0; font-size: var(--font-section); }
