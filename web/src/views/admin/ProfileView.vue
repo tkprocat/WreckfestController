@@ -217,6 +217,6 @@ function status(errors: Record<string, string>, field: string) {
 
 <style scoped>
 .gap {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-6);
 }
 </style>

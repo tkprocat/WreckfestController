@@ -54,7 +54,7 @@ describe('HomeView', () => {
     state.overview = { ...overview, maxPlayers: null, status: { isRunning: false }, players: { humans: 0, bots: 1, list: [] } }
     state.error = null
     const wrapper = mount(HomeView)
-    expect(wrapper.find('.status-down').text()).toBe('DOWN')
+    expect(wrapper.find('.server-status').text()).toBe('DOWN')
     expect(wrapper.find('.occupancy').text()).toBe('0 player, 1 bot')
     state.overview = overview
   })

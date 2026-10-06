@@ -7,8 +7,12 @@
   --space-4: 16px;
   --space-6: 24px;
   --space-8: 32px;
+  --space-9: 36px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --panel-padding: 32px;
   --radius-control: 8px;
-  --radius-panel: 12px;
+  --radius-panel: 16px;
   /* Pre-Vue fallbacks; useAppearance then sets every variable from theme/tokens.ts. */
   --page-background: #f4f5f7;
   --page-text: #202631;
@@ -25,7 +29,8 @@ body {
   margin: 0;
   background: var(--page-background);
   color: var(--page-text);
-  line-height: 1.6;
+  font-size: var(--font-body, 18px);
+  line-height: var(--line-reading, 1.65);
 }
 
 a { color: var(--accent); }
@@ -70,7 +75,7 @@ a { color: var(--accent); }
   align-items: center;
   gap: var(--space-2);
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-meta);
 }
 
 .appearance-control select {
@@ -86,7 +91,7 @@ a { color: var(--accent); }
 
 @media (max-width: 599px) {
   .app-header { padding: var(--space-4); gap: var(--space-3); }
-  .app-user { width: 100%; gap: var(--space-3); font-size: 13px; }
+  .app-user { width: 100%; gap: var(--space-3); font-size: var(--font-meta); }
   .appearance-control { margin-right: auto; }
 }
 
@@ -103,7 +108,7 @@ a { color: var(--accent); }
 }
 
 /* Application composition is separate from the component theme. */
-.app-main-admin { max-width: 1480px; padding: 32px; }
+.app-main-admin { box-sizing: border-box; max-width: var(--content-wide); padding: var(--space-8) clamp(16px, 3vw, 48px); }
 .app-title { display: inline-flex; align-items: center; gap: 12px; font-size: 16px; line-height: 1.2; }
 .brand-mark { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--accent); color: var(--surface); font-weight: 800; font-style: italic; }
 .brand-subtitle { display: block; margin-top: 3px; color: var(--text-muted); font-size: 10px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; }
@@ -116,15 +121,15 @@ a { color: var(--accent); }
 
 .row-identity { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; }
 .row-name { font-weight: 600; overflow-wrap: anywhere; }
-.row-id { color: var(--text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.row-id { color: var(--text-muted); font-size: var(--font-meta); overflow-wrap: anywhere; }
 
 /*
  * Forms, on pages and in dialogs. Labels sit above their control everywhere, so a form
  * reads the same at any width. Sections group fields under a short heading; a grid lets
  * short fields share a row and stack on a phone. Actions end the form, Save last.
  */
-.form-page { max-width: 760px; }
-.form-page-wide { max-width: 1040px; }
+.form-page { max-width: var(--content-form); }
+.form-page-wide { max-width: var(--content-form-wide); }
 .form-section + .form-section {
   margin-top: var(--space-2);
   padding-top: var(--space-4);
@@ -134,12 +139,12 @@ a { color: var(--accent); }
 .form-section-title {
   margin: 0 0 var(--space-3);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-label);
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
-.form-section-help { margin: 0 0 var(--space-3); color: var(--text-muted); font-size: 13px; }
+.form-section-help { margin: 0 0 var(--space-3); color: var(--text-muted); font-size: var(--font-meta); }
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
@@ -162,7 +167,7 @@ a { color: var(--accent); }
   border-top: 1px solid var(--border-color);
 }
 .n-modal .form-actions { background: var(--n-color-modal, var(--n-color, var(--surface))); }
-.form-actions .form-actions-note { margin-right: auto; align-self: center; color: var(--text-muted); font-size: 13px; }
+.form-actions .form-actions-note { margin-right: auto; align-self: center; color: var(--text-muted); font-size: var(--font-meta); }
 /* Native date and time inputs, in the theme's colours (color-scheme follows the theme). */
 .native-control {
   box-sizing: border-box;
@@ -184,6 +189,11 @@ a { color: var(--accent); }
 
 .app-main-spectator {
   box-sizing: border-box;
-  max-width: 1600px;
+  max-width: var(--content-wide);
   padding: 32px clamp(16px, 3vw, 48px);
 }
+
+
+/* Mobile gutters apply to pages and teleported editors alike. */
+@media (max-width: 600px) { :root { --panel-padding: 20px; } }
+.admin-content > section > .n-card + .n-card { margin-top: var(--space-6); }

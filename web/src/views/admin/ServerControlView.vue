@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import StatusBadge from '@/components/StatusBadge.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
@@ -7,7 +8,6 @@ import {
   NCard,
   NInput,
   NSpace,
-  NTag,
   useDialog,
   useMessage,
 } from 'naive-ui'
@@ -202,11 +202,11 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
   <section>
     <PageHeader title="Server control" description="Manage the server and follow its console output.">
       <template #status>
-        <NTag :type="running === true ? 'success' : 'default'" round size="small">
+        <StatusBadge :tone="running === null ? 'neutral' : running ? 'positive' : 'negative'">
           {{ refreshing
             ? (status ? 'Checking… (last known ' + (status.isRunning ? 'Running' : 'Stopped') + ')' : 'Checking…')
             : status === null ? 'Unknown' : status.isRunning ? 'Running (PID ' + status.processId + ')' : 'Stopped' }}
-        </NTag>
+        </StatusBadge>
       </template>
     </PageHeader>
 
@@ -266,15 +266,15 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
 </template>
 
 <style scoped>
-.gap { margin-bottom: 16px; }
+.gap { margin-bottom: var(--space-6); }
 .state-note { margin: 0 0 16px; color: var(--text-muted); }
 .action-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 28px; }
 .action-group { min-width: 0; }
-.action-group h3 { margin: 0 0 6px; font-size: 15px; }
-.action-group p { min-height: 3.2em; margin: 0 0 14px; color: var(--text-muted); font-size: 13px; }
+.action-group h3 { margin: 0 0 6px; font-size: var(--font-meta); }
+.action-group p { min-height: 3.2em; margin: 0 0 14px; color: var(--text-muted); font-size: var(--font-meta); }
 .recovery { grid-column: 1 / -1; padding-top: 20px; border-top: 1px solid var(--border-color); }
 .recovery p { min-height: 0; }
-.console-intro { margin: 0 0 12px; color: var(--text-muted); font-size: 13px; }
+.console-intro { margin: 0 0 12px; color: var(--text-muted); font-size: var(--font-meta); }
 .console {
   box-sizing: border-box;
   width: 100%;
@@ -287,7 +287,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
   border-radius: var(--radius-control);
   background: #111317;
   color: #e5e9ee;
-  font: 12px/1.55 var(--font-family-mono, Consolas, monospace);
+  font: 16px/1.65 var(--font-family-mono, Consolas, monospace);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import StatusBadge from '@/components/StatusBadge.vue'
+import ContentSection from '@/components/ContentSection.vue'
 import { computed } from 'vue'
 import { NAlert, NButton, NCard, NEmpty, NSkeleton, NTag } from 'naive-ui'
 import { usePublicOverview } from '@/composables/usePublicOverview'
@@ -58,7 +60,7 @@ const statusLabel = computed(() =>
       <section class="race-hero" aria-labelledby="server-title">
         <div class="hero-content">
           <div class="hero-topline">
-            <span class="server-status" :class="error ? 'status-down' : overview.status.isRunning ? 'status-up' : 'status-down'" role="status">{{ statusLabel }}</span>
+            <StatusBadge class="server-status" :tone="error || !overview.status.isRunning ? 'negative' : 'positive'">{{ statusLabel }}</StatusBadge>
             <h1 id="server-title"><span v-for="(part, index) in titleParts" :key="index" :class="part.code ? 'game-color-' + part.code : undefined">{{ part.text }}</span></h1>
           </div>
           <div class="current-race">
@@ -77,22 +79,7 @@ const statusLabel = computed(() =>
       </section>
 
       <div class="home-panels">
-        <NCard class="panel players-panel">
-          <div class="panel-heading">
-            <div><p class="eyebrow">{{ error ? 'Last known roster' : 'On the server' }}</p><h2>Players</h2></div>
-            <NTag size="small" :bordered="false">{{ overview.players.humans }} player{{ overview.players.humans === 1 ? '' : 's' }}</NTag>
-          </div>
-          <ul v-if="players.length" class="player-list">
-            <li v-for="(player, index) in players" :key="index + '-' + player.name">
-              <span class="player-avatar" aria-hidden="true">{{ player.name.charAt(0).toUpperCase() }}</span>
-              <span class="player-name">{{ player.name }}</span>
-              <NTag v-if="player.isBot" size="small" :bordered="false">Bot</NTag>
-            </li>
-          </ul>
-          <NEmpty v-else :description="overview.status.isRunning ? 'No players connected yet' : 'No players connected'" />
-        </NCard>
-
-        <NCard class="panel rotation-panel">
+        <ContentSection class="panel rotation-panel">
           <div class="panel-heading">
             <div><p class="eyebrow">{{ error ? 'Last known rotation' : 'Next on track' }}</p><h2>Rotation</h2></div>
             <span v-if="overview.rotation.tracks.length" class="panel-count">{{ overview.rotation.tracks.length }} tracks</span>
@@ -112,9 +99,24 @@ const statusLabel = computed(() =>
             </li>
           </ol>
           <NEmpty v-else description="No rotation set" />
-        </NCard>
+        </ContentSection>
 
-        <NCard class="panel events-panel">
+        <ContentSection class="panel players-panel">
+          <div class="panel-heading">
+            <div><p class="eyebrow">{{ error ? 'Last known roster' : 'On the server' }}</p><h2>Players</h2></div>
+            <NTag size="small" :bordered="false">{{ overview.players.humans }} player{{ overview.players.humans === 1 ? '' : 's' }}</NTag>
+          </div>
+          <ul v-if="players.length" class="player-list">
+            <li v-for="(player, index) in players" :key="index + '-' + player.name">
+              <span class="player-avatar" aria-hidden="true">{{ player.name.charAt(0).toUpperCase() }}</span>
+              <span class="player-name">{{ player.name }}</span>
+              <NTag v-if="player.isBot" size="small" :bordered="false">Bot</NTag>
+            </li>
+          </ul>
+          <NEmpty v-else :description="overview.status.isRunning ? 'No players connected yet' : 'No players connected'" />
+        </ContentSection>
+
+        <ContentSection class="panel events-panel">
           <div class="panel-heading"><div><p class="eyebrow">{{ error ? 'Last known schedule' : 'Scheduled events' }}</p><h2>Coming up</h2></div></div>
           <ul v-if="overview.upcomingCups.length" class="cup-list">
             <li v-for="cup in overview.upcomingCups" :key="cup.name + '-' + cup.nextOccurrence">
@@ -125,7 +127,7 @@ const statusLabel = computed(() =>
             </li>
           </ul>
           <NEmpty v-else description="No cups scheduled" />
-        </NCard>
+        </ContentSection>
       </div>
       <footer class="snapshot-time">Last confirmed <time :datetime="overview.updatedAt">{{ formatWhen(overview.updatedAt) }}</time></footer>
     </template>
@@ -133,11 +135,7 @@ const statusLabel = computed(() =>
 </template>
 
 <style scoped>
-.server-status { display: inline-flex; align-items: center; gap: 10px; border-radius: 8px; padding: 6px 16px; font-size: 18px; font-weight: 800; letter-spacing: .06em; }
-.server-status::before { content: ''; width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
-.status-up { color: #fff; background: #18733b; }
-.status-down { color: #fff; background: #be2535; }
-.stale-label { margin: 0 0 12px; color: var(--text-secondary); font-size: 18px; font-weight: 600; }
+.stale-label { margin: 0 0 12px; color: var(--text-secondary); font-size: var(--font-body); font-weight: 600; }
 .game-color-1 { color: #d63030; } .game-color-2 { color: #218739; }
 .game-color-3 { color: #c56a00; } .game-color-4 { color: #2355cf; }
 .game-color-5 { color: #16849b; } .game-color-6 { color: #a33cc1; }
@@ -152,55 +150,50 @@ const statusLabel = computed(() =>
 :global([data-theme='dark'] .game-color-6) { color: #dc8cf4; }
 :global([data-theme='dark'] .game-color-8) { color: #a5a5a5; }
 
-.spectator { color: var(--page-text); font-size: 18px; line-height: 1.65; }
+.spectator { color: var(--page-text); font-size: var(--font-body); line-height: var(--line-reading); }
 .notice { margin-bottom: 32px; }
 .retry { margin-left: 16px; }
-.eyebrow, .section-label { font-size: 15px; font-weight: 650; color: var(--text-secondary); margin: 0; }
+.eyebrow, .section-label { font-size: var(--font-label); font-weight: 650; color: var(--text-secondary); margin: 0; }
 .eyebrow { letter-spacing: .06em; text-transform: uppercase; }
 .loading-panel, .unavailable { padding: 32px; }
 .race-hero { border-bottom: 1px solid var(--border-color); padding-bottom: 36px; }
 .hero-topline { display: flex; align-items: center; gap: 20px; margin-bottom: 36px; }
 .server-status { flex-shrink: 0; }
-.race-hero h1 { margin: 0; min-width: 0; font-size: clamp(24px, 3vw, 36px); font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.race-hero h1 { margin: 0; min-width: 0; font-size: var(--font-title); font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
 .current-race { padding: 32px 36px; border-left: 5px solid var(--accent); background: var(--surface); border-radius: 0 16px 16px 0; }
-.current-race h2 { font-size: clamp(36px, 5vw, 64px); line-height: 1.15; letter-spacing: -.035em; margin: 14px 0 0; overflow-wrap: anywhere; }
+.current-race h2 { font-size: var(--font-display); line-height: 1.15; letter-spacing: -.035em; margin: 14px 0 0; overflow-wrap: anywhere; }
 .cup-name { margin: 20px 0 0; color: var(--text-secondary); }
 .hero-details { display: flex; align-items: baseline; flex-wrap: wrap; gap: 20px 40px; padding: 28px 0 0; }
-.occupancy { margin: 0; font-size: 22px; font-weight: 600; overflow-wrap: anywhere; }
-.metric { font-size: 36px; font-weight: 700; }
-.metric small { font-size: 22px; color: var(--text-secondary); }
-.detail-line { margin: 0; }
-.snapshot-time { color: var(--text-secondary); font-size: 16px; margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--border-color); }
-.home-panels { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: 48px; margin-top: 44px; align-items: start; }
-.panel { min-width: 0; background: transparent; border: 0; }
-.panel :deep(.n-card__content) { padding: 0; }
+.occupancy { margin: 0; font-size: var(--font-item); font-weight: 600; overflow-wrap: anywhere; }
+.snapshot-time { color: var(--text-secondary); font-size: var(--font-meta); margin-top: 40px; padding-top: 24px; border-top: 1px solid var(--border-color); }
+.home-panels { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(0, 1fr); gap: var(--space-12); margin-top: 44px; align-items: start; }
+.panel { min-width: 0; }
 .rotation-panel { grid-column: 1; grid-row: 1; }
 .players-panel { grid-column: 2; grid-row: 1; }
 .events-panel { grid-column: 1 / -1; border-top: 1px solid var(--border-color); padding-top: 36px; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px; margin-bottom: 24px; }
-.panel-heading h2 { margin: 8px 0 0; font-size: 30px; line-height: 1.3; }
-.panel-count, .rotation-name { font-size: 17px; color: var(--text-secondary); }
+.panel-heading h2 { margin: 8px 0 0; font-size: var(--font-section); line-height: 1.3; }
+.panel-count, .rotation-name { font-size: var(--font-support); color: var(--text-secondary); }
 .rotation-name { margin: 0 0 24px; }
 .player-list, .rotation-list, .cup-list { padding: 0; margin: 0; list-style: none; }
 .rotation-list li { display: flex; gap: 24px; padding: 24px 0; border-top: 1px solid var(--border-color); }
-.rotation-number { font-size: 20px; font-weight: 700; color: var(--accent); padding-top: 2px; }
+.rotation-number { font-size: var(--font-count); font-weight: 700; color: var(--accent); padding-top: 2px; }
 .rotation-track { display: flex; flex-direction: column; gap: 10px; min-width: 0; overflow-wrap: anywhere; }
-.rotation-track strong { font-size: 22px; font-weight: 600; line-height: 1.4; }
-.rotation-track small, .cup-list small { font-size: 17px; color: var(--text-secondary); }
+.rotation-track strong { font-size: var(--font-item); font-weight: 600; line-height: 1.4; }
+.rotation-track small, .cup-list small { font-size: var(--font-support); color: var(--text-secondary); }
 .player-list li { display: flex; align-items: center; gap: 16px; padding: 18px 0; border-top: 1px solid var(--border-color); }
-.player-avatar { display: grid; place-items: center; flex: 0 0 40px; height: 40px; border-radius: 50%; background: var(--surface); color: var(--accent); font-size: 18px; font-weight: 700; }
-.player-name { min-width: 0; flex: 1; font-size: 19px; overflow-wrap: anywhere; }
+.player-avatar { display: grid; place-items: center; flex: 0 0 40px; height: 40px; border-radius: 50%; background: var(--surface); color: var(--accent); font-size: var(--font-body); font-weight: 700; }
+.player-name { min-width: 0; flex: 1; font-size: var(--font-roster); overflow-wrap: anywhere; }
 .cup-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 32px; }
 .cup-list li { display: flex; flex-direction: column; gap: 12px; min-width: 0; overflow-wrap: anywhere; padding: 24px; background: var(--surface); border-radius: 12px; }
-.cup-list strong { font-size: 24px; }
-.cup-list time { font-size: 19px; }
-.cup-list p { font-size: 18px; margin: 0; }
-.spectator :deep(.n-empty__description) { font-size: 18px; color: var(--text-secondary); }
-.spectator :deep(.n-tag) { font-size: 15px; }
+.cup-list strong { font-size: var(--font-event); }
+.cup-list time { font-size: var(--font-roster); }
+.cup-list p { font-size: var(--font-body); margin: 0; }
+.spectator :deep(.n-empty__description) { font-size: var(--font-body); color: var(--text-secondary); }
+.spectator :deep(.n-tag) { font-size: var(--font-label); }
 @media (max-width: 760px) {
  .home-panels { grid-template-columns: 1fr; gap: 40px; margin-top: 36px; }
  .rotation-panel, .players-panel, .events-panel { grid-column: auto; grid-row: auto; }
- .rotation-panel { order: 1; } .players-panel { order: 2; } .events-panel { order: 3; }
  .current-race { padding: 24px; }
  .hero-details { gap: 18px 28px; }
  .cup-list { grid-template-columns: 1fr; }

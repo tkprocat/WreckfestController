@@ -467,7 +467,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
   margin: 12px 0;
 }
 .summary {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-6);
 }
 .source {
   display: flex;
@@ -478,7 +478,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
 }
 .next-start {
   margin: 6px 0 0;
-  font-size: 13px;
+  font-size: var(--font-meta);
 }
 .name {
   display: flex;
@@ -487,15 +487,15 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
   max-width: 360px;
 }
 .name-label {
-  font-size: 13px;
+  font-size: var(--font-meta);
 }
 .offer {
   margin-top: 8px;
 }
 .hint {
   margin: 4px 0 12px;
-  font-size: 12px;
-  opacity: 0.8;
+  font-size: var(--font-meta);
+  color: var(--text-secondary);
 }
 .hint.hidden {
   visibility: hidden;

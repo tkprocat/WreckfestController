@@ -434,7 +434,7 @@ onMounted(() => void list.reload())
   background: none;
   border: none;
   color: inherit;
-  font-size: 18px;
+  font-size: var(--font-body);
   line-height: 1;
   cursor: pointer;
   padding: 0 4px;

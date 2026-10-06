@@ -2,12 +2,26 @@ import type { GlobalThemeOverrides } from 'naive-ui'
 
 export type ColorMode = 'light' | 'dark'
 
+/** Visual foundations extracted from the public spectator page. */
+export const design = {
+  body: '18px', control: '16px', meta: '16px', label: '15px', roster: '19px',
+  support: '17px', count: '20px', event: '24px',
+  item: '22px', section: '30px', title: 'clamp(24px, 3vw, 36px)',
+  display: 'clamp(36px, 5vw, 64px)', lineHeight: '1.65',
+  wide: '1600px', form: '840px', formWide: '1120px',
+  radiusControl: '8px', radiusPanel: '16px',
+  statusPositive: '#18733b', statusNegative: '#be2535', statusText: '#ffffff',
+}
+
 const shared = {
   fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
   fontFamilyMono: "'Cascadia Mono', Consolas, monospace",
-  fontSize: '14px',
+  fontSize: design.body,
+  fontSizeSmall: design.control, fontSizeMedium: design.control, fontSizeLarge: '20px',
+  lineHeight: design.lineHeight,
+  heightSmall: '36px', heightMedium: '42px', heightLarge: '48px',
   fontWeightStrong: '600',
-  borderRadius: '8px',
+  borderRadius: design.radiusControl,
   borderRadiusSmall: '5px',
 }
 
@@ -35,7 +49,17 @@ export const palettes = {
 export function themeOverrides(mode: ColorMode): GlobalThemeOverrides {
   return {
     common: { ...shared, ...palettes[mode] },
-    Card: { borderRadius: '12px' },
+    Card: {
+      borderRadius: design.radiusPanel,
+      fontSizeSmall: design.body, fontSizeMedium: design.body, fontSizeLarge: design.body,
+      paddingSmall: 'var(--panel-padding)', paddingMedium: 'var(--panel-padding)',
+      paddingLarge: 'var(--panel-padding)', paddingHuge: 'var(--panel-padding)',
+      titleFontSizeSmall: '22px', titleFontSizeMedium: '24px', titleFontSizeLarge: design.section,
+    },
+    DataTable: {
+      fontSizeSmall: design.control, fontSizeMedium: design.control, fontSizeLarge: design.body,
+      thPaddingMedium: '16px', tdPaddingMedium: '16px',
+    },
   }
 }
 
@@ -54,5 +78,15 @@ export function themeVariables(mode: ColorMode): Record<string, string> {
     '--accent': p.primaryColor,
     '--error-color': p.errorColor,
     '--font-family': shared.fontFamily,
+    '--font-family-mono': shared.fontFamilyMono,
+    '--font-body': design.body, '--font-control': design.control, '--font-meta': design.meta,
+    '--font-label': design.label, '--font-roster': design.roster, '--font-item': design.item,
+    '--font-support': design.support, '--font-count': design.count, '--font-event': design.event,
+    '--font-section': design.section, '--font-title': design.title, '--font-display': design.display,
+    '--line-reading': design.lineHeight,
+    '--content-wide': design.wide, '--content-form': design.form, '--content-form-wide': design.formWide,
+    '--radius-control': design.radiusControl, '--radius-panel': design.radiusPanel,
+    '--status-positive': design.statusPositive, '--status-negative': design.statusNegative,
+    '--status-text': design.statusText,
   }
 }
