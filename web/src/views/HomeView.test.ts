@@ -4,12 +4,13 @@ import { mount } from '@vue/test-utils'
 import HomeView from './HomeView.vue'
 import type { PublicOverview } from '@/composables/usePublicOverview'
 
-const state = vi.hoisted(() => ({ overview: null as unknown, error: null as string | null, loading: false }))
+const state = vi.hoisted(() => ({ overview: null as unknown, error: null as string | null, loading: false, connectionUnavailable: false }))
 
 vi.mock('@/composables/usePublicOverview', () => ({
   usePublicOverview: () => ({
     overview: ref(state.overview),
     error: ref(state.error),
+    connectionUnavailable: ref(state.connectionUnavailable),
     loading: ref(state.loading),
     reload: vi.fn(),
   }),
@@ -28,6 +29,17 @@ const overview: PublicOverview = {
 } as unknown as PublicOverview
 
 describe('HomeView', () => {
+  it('marks a retained snapshot as disconnected only for a transport failure', () => {
+    state.overview = overview
+    state.error = 'The controller cannot be reached.'
+    state.connectionUnavailable = true
+    const wrapper = mount(HomeView)
+    expect(wrapper.find('.server-status').text()).toBe('NO CONNECTION')
+    expect(wrapper.text()).toContain('Last known · connection unavailable')
+    expect(wrapper.text()).toContain('Big Valley')
+    state.connectionUnavailable = false
+    state.error = null
+  })
   it('renders game color segments as escaped text and compacts occupancy', () => {
     state.overview = { ...overview, serverName: '^5Monday ^2Night ^6Wrecking ^5EU ^8- ^3Development Server', players: { humans: 3, bots: 10, list: [] } }
     state.error = null
@@ -91,8 +103,8 @@ describe('HomeView', () => {
     expect(text).toContain("The controller's database is unavailable.")
     expect(text).toContain('it may be out of date')
     expect(text).toContain('Big Valley')
-    expect(text).toContain('Last known · connection unavailable')
-    expect(text).toContain('NO CONNECTION')
+    expect(text).toContain('Last known · updates paused')
+    expect(text).toContain('NOT UPDATING')
     expect(text).not.toContain('Racing now')
   })
 

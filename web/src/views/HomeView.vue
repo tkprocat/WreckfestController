@@ -4,7 +4,7 @@ import { NAlert, NButton, NCard, NEmpty, NSkeleton, NTag } from 'naive-ui'
 import { usePublicOverview } from '@/composables/usePublicOverview'
 import { formatFromNow, formatWhen } from '@/utils/format'
 
-const { overview, error, loading, reload } = usePublicOverview()
+const { overview, error, connectionUnavailable, loading, reload } = usePublicOverview()
 const title = computed(() => overview.value?.serverName || 'Wreckfest server')
 // Parse only game color markers. Text stays escaped by Vue interpolation.
 const titleParts = computed(() => {
@@ -30,7 +30,7 @@ const players = computed(() =>
   ),
 )
 const statusLabel = computed(() =>
-  error.value ? 'NO CONNECTION' : overview.value?.status.isRunning ? 'UP' : 'DOWN',
+  error.value ? (connectionUnavailable.value ? 'NO CONNECTION' : 'NOT UPDATING') : overview.value?.status.isRunning ? 'UP' : 'DOWN',
 )
 </script>
 
@@ -62,7 +62,7 @@ const statusLabel = computed(() =>
             <h1 id="server-title"><span v-for="(part, index) in titleParts" :key="index" :class="part.code ? 'game-color-' + part.code : undefined">{{ part.text }}</span></h1>
           </div>
           <div class="current-race">
-            <p v-if="error" class="stale-label">Last known · connection unavailable</p>
+            <p v-if="error" class="stale-label">Last known · {{ connectionUnavailable ? 'connection unavailable' : 'updates paused' }}</p>
             <h2 v-if="overview.status.isRunning && overview.currentTrack">{{ overview.currentTrack.name }}</h2>
             <h2 v-else-if="overview.status.isRunning">In lobby</h2>
             <h2 v-else>Server offline</h2>

@@ -72,6 +72,7 @@ describe('usePublicOverview', () => {
 
     expect(state().loading.value).toBe(false)
     expect(state().error.value).toBe('The controller cannot be reached.')
+    expect(state().connectionUnavailable.value).toBe(true)
   })
 
   // A later load that answers first must not be undone by the earlier one.
@@ -126,10 +127,12 @@ describe('usePublicOverview', () => {
 
     expect(state().overview.value?.currentTrack?.name).toBe('Track')
     expect(state().error.value).toBe("The controller's database is unavailable.")
+    expect(state().connectionUnavailable.value).toBe(false)
 
     api.GET.mockResolvedValueOnce(ok(overview('Track')))
     await state().reload()
     expect(state().error.value).toBeNull()
+    expect(state().connectionUnavailable.value).toBe(false)
   })
 
   it('stops listening and polling when unmounted', async () => {
