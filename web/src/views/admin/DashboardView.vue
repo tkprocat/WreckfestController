@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import StatusBadge from '@/components/StatusBadge.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { computed, h, onBeforeUnmount, onMounted, ref } from 'vue'
 import { NAlert, NCard, NDataTable, NStatistic, NTag, type DataTableColumns } from 'naive-ui'
@@ -97,7 +98,7 @@ const trackLabel = computed(() =>
 )
 
 const columns: DataTableColumns<PlayerSummary> = [
-  { title: 'Slot', key: 'slot', width: 70, sorter: (a, b) => (a.slot ?? 99) - (b.slot ?? 99) },
+  { title: 'Slot', key: 'slot', width: 100, sorter: (a, b) => (a.slot ?? 99) - (b.slot ?? 99) },
   {
     title: 'Player',
     key: 'name',
@@ -108,7 +109,7 @@ const columns: DataTableColumns<PlayerSummary> = [
     ]),
   },
   { title: 'Vehicle', key: 'vehicle', render: (p) => h('span', { class: 'vehicle-name' }, p.vehicle ?? '—') },
-  { title: 'Score', key: 'score', width: 90, sorter: (a, b) => (a.score ?? 0) - (b.score ?? 0), render: (p) => p.score ?? '—' },
+  { title: 'Score', key: 'score', width: 120, sorter: (a, b) => (a.score ?? 0) - (b.score ?? 0), render: (p) => p.score ?? '—' },
 ]
 </script>
 
@@ -125,7 +126,7 @@ const columns: DataTableColumns<PlayerSummary> = [
     <div class="metrics">
       <NCard class="metric-card">
         <NStatistic label="Server">
-          <NTag :type="!refreshing && status?.isRunning ? 'success' : 'default'" round>{{ serverLabel }}</NTag>
+          <StatusBadge :tone="refreshing || status === null ? 'neutral' : status.isRunning ? 'positive' : 'negative'">{{ serverLabel }}</StatusBadge>
         </NStatistic>
       </NCard>
       <NCard class="metric-card"><NStatistic label="Uptime" :value="uptimeLabel" /></NCard>
@@ -165,18 +166,18 @@ const columns: DataTableColumns<PlayerSummary> = [
 </template>
 
 <style scoped>
-.gap { margin-bottom: 16px; }
-.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.gap { margin-bottom: var(--space-6); }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-6); margin-bottom: var(--space-6); }
 .metric-card { min-width: 0; }
-.metric-suffix { margin-left: 8px; color: var(--text-muted); font-size: 12px; }
-.track-card { margin-bottom: 16px; min-width: 0; }
-.eyebrow { margin: 0; color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.metric-suffix { margin-left: 8px; color: var(--text-muted); font-size: var(--font-meta); }
+.track-card { margin-bottom: var(--space-6); min-width: 0; }
+.eyebrow { margin: 0; color: var(--text-muted); font-size: var(--font-meta); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
 .track-card h2 { margin: 10px 0 0; font-size: clamp(25px, 3vw, 38px); line-height: 1.15; letter-spacing: -.03em; overflow-wrap: anywhere; }
 .track-caption { margin: 12px 0 0; color: var(--text-muted); }
 .roster-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
-.roster-heading h2 { margin: 3px 0 0; font-size: 20px; }
-.roster-count { color: var(--text-muted); font-size: 12px; }
-.table-hint { display: none; margin: 0 0 8px; color: var(--text-muted); font-size: 12px; }
+.roster-heading h2 { margin: 3px 0 0; font-size: var(--font-section); }
+.roster-count { color: var(--text-muted); font-size: var(--font-meta); }
+.table-hint { display: none; margin: 0 0 8px; color: var(--text-muted); font-size: var(--font-meta); }
 .control-link { align-self: center; color: var(--accent); font-weight: 600; text-decoration: none; }
 .control-link:hover { text-decoration: underline; }
 :deep(.player-identity) { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; overflow-wrap: anywhere; }

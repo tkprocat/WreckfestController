@@ -115,11 +115,11 @@ async function afterDrawerClosed() {
 </template>
 
 <style scoped>
-.admin { display: grid; grid-template-columns: 228px minmax(0, 1fr); gap: 32px; min-height: calc(100vh - 140px); align-items: start; }
+.admin { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: var(--space-12); min-height: calc(100vh - 140px); align-items: start; }
 .admin-sidebar { position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; background: var(--surface); border: 1px solid var(--header-border); border-radius: var(--radius-panel); padding: 20px 0 12px; }
-.sidebar-heading { color: var(--text-muted); font-size: 11px; font-weight: 700; letter-spacing: 0.14em; padding: 0 24px 8px; }
+.sidebar-heading { color: var(--text-muted); font-size: var(--font-meta); font-weight: 700; letter-spacing: 0.14em; padding: 0 24px 8px; }
 .admin-workspace, .admin-content { min-width: 0; }
-.public-link { display: block; margin: 12px 20px 0; padding: 16px 4px 4px; border-top: 1px solid var(--header-border); color: var(--text-muted); text-decoration: none; font-size: 12px; }
+.public-link { display: block; margin: 12px 20px 0; padding: 16px 4px 4px; border-top: 1px solid var(--header-border); color: var(--text-muted); text-decoration: none; font-size: var(--font-meta); }
 .public-link:hover { color: var(--accent); }
 .mobile-navigation { display: none; }
 .admin-content :deep(section) { min-width: 0; }
@@ -128,6 +128,6 @@ async function afterDrawerClosed() {
   .admin { display: block; }
   .admin-sidebar { display: none; }
   .mobile-navigation { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
-  .mobile-navigation > span { color: var(--text-muted); font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  .mobile-navigation > span { color: var(--text-muted); font-size: var(--font-meta); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
 }
 </style>

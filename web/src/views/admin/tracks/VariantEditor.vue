@@ -176,6 +176,6 @@ defineExpose({ start })
 
 <style scoped>
 .gap {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-6);
 }
 </style>

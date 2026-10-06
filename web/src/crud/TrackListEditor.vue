@@ -252,7 +252,7 @@ function errorOf(index: number): string | undefined {
   height: 28px;
   border-radius: 50%;
   background: var(--border-color);
-  font-size: 12px;
+  font-size: var(--font-meta);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
@@ -277,7 +277,7 @@ function errorOf(index: number): string | undefined {
 }
 .setting-label {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-meta);
 }
 .actions {
   display: flex;
@@ -286,7 +286,7 @@ function errorOf(index: number): string | undefined {
 }
 .error {
   color: var(--error-color);
-  font-size: 13px;
+  font-size: var(--font-meta);
 }
 .empty { margin: 0 0 12px; }
 .picker {
@@ -295,7 +295,7 @@ function errorOf(index: number): string | undefined {
   gap: 12px;
 }
 .picker > :first-child { flex: 1 1 auto; min-width: 0; max-width: 480px; }
-.count { margin-left: auto; font-size: 13px; white-space: nowrap; }
+.count { margin-left: auto; font-size: var(--font-meta); white-space: nowrap; }
 /* Narrower: settings under the name, controls under them. */
 @container (max-width: 760px) {
   .row { grid-template-columns: 32px minmax(0, 1fr); align-items: start; }

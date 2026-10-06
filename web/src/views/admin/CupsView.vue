@@ -252,7 +252,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .gap {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-6);
 }
 .rotation-head {
   display: flex;
@@ -281,7 +281,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-meta);
 }
 :deep(.flag) {
   margin-left: 6px;

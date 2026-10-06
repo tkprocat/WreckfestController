@@ -17,10 +17,10 @@ defineProps<{ title: string; description?: string }>()
 </template>
 
 <style scoped>
-.page-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 24px; }
+.page-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-6); margin-bottom: var(--space-9); }
 .page-heading { min-width: 0; flex: 1 1 260px; }
 .page-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-h1 { margin: 0; color: var(--page-text); font-size: clamp(1.5rem, 2.5vw, 1.9rem); font-weight: 700; line-height: 1.25; letter-spacing: -0.035em; overflow-wrap: anywhere; }
-p { margin: 8px 0 0; max-width: 72ch; color: var(--text-muted); line-height: 1.6; }
+h1 { margin: 0; color: var(--page-text); font-size: var(--font-title); font-weight: 700; line-height: 1.35; letter-spacing: -0.035em; overflow-wrap: anywhere; }
+p { margin: 8px 0 0; max-width: 72ch; color: var(--text-secondary); font-size: var(--font-body); line-height: var(--line-reading); }
 .page-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-width: 100%; }
 </style>

@@ -96,7 +96,7 @@ function resetFilters() {
 .search {
   flex: 1 1 240px;
   min-width: 0;
-  max-width: 440px;
+  max-width: 560px;
 }
 .toolbar-status {
   display: flex;
@@ -106,7 +106,7 @@ function resetFilters() {
   flex-wrap: wrap;
   gap: 10px;
   color: var(--text-muted);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .toolbar-filters { flex-basis: 100%; }
 @media (max-width: 600px) {
