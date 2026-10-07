@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { NDialogProvider, NMessageProvider } from 'naive-ui'
+import StatusBadge from '@/components/StatusBadge.vue'
 import CupsView from './CupsView.vue'
 import RotationPanel from './rotation/RotationPanel.vue'
 
@@ -117,6 +118,12 @@ describe('CupsView', () => {
     // Unsaved edits do not hide a notice waiting inside.
     expect(wrapper!.text()).toContain('Changed on the server')
     expect(wrapper!.text()).not.toContain('Now running')
+    expect(wrapper!.findAllComponents(StatusBadge).find((badge) => badge.text() === 'Changed on the server')!.props('tone')).toBe('warning')
+    panel.vm.$emit('state', { status: 'ready', loaded: true, tracks: 3, cupName: 'Friday Derby', dirty: true, notice: 'conflict' })
+    await flushPromises()
+    expect(wrapper!.findAllComponents(StatusBadge).find((badge) => badge.text() === 'Changed elsewhere')!.props('tone')).toBe('negative')
+    panel.vm.$emit('state', { status: 'ready', loaded: true, tracks: 3, cupName: 'Friday Derby', dirty: true, notice: 'stale' })
+    await flushPromises()
 
     // Collapsed, but mounted: opening shows the same panel, edits and all.
     const toggle = wrapper!.find('button[aria-expanded]')
@@ -147,6 +154,7 @@ describe('CupsView', () => {
     expect(wrapper!.text()).toContain('Collection: Evening')
     expect(wrapper!.text()).toContain('1 tracks of its own')
     expect(labelled('Activate Sunday Race').attributes('disabled')).toBeDefined()
+    expect(wrapper!.findAllComponents(StatusBadge).find((badge) => badge.text() === 'Active')!.props('tone')).toBe('positive')
   })
 
   // A linked cup sends its collection, not the collection's tracks; everything else as it was.
@@ -569,6 +577,7 @@ describe('CupsView', () => {
 
     expect(wrapper!.text()).toContain('(warmup 19:30, ends 21:30)')
     expect(wrapper!.find('.flag').text()).toBe('Warmup')
+    expect(wrapper!.findAllComponents(StatusBadge).find((badge) => badge.text() === 'Warmup')!.props('tone')).toBe('warning')
   })
 
   it('refreshes when the hub says a cup started or ended', async () => {

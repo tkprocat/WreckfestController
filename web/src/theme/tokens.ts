@@ -10,6 +10,9 @@ export const design = {
   display: 'clamp(36px, 5vw, 64px)', lineHeight: '1.65',
   wide: '1600px', form: '840px', formWide: '1120px',
   radiusControl: '8px', radiusPanel: '16px',
+  controlSmall: '36px', controlMedium: '42px', controlLarge: '48px',
+  tagSmall: '28px', tagMedium: '32px', tagLarge: '36px',
+  statusWarning: '#855b03',
   statusPositive: '#18733b', statusNegative: '#be2535', statusText: '#ffffff',
 }
 
@@ -17,9 +20,9 @@ const shared = {
   fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif",
   fontFamilyMono: "'Cascadia Mono', Consolas, monospace",
   fontSize: design.body,
-  fontSizeSmall: design.control, fontSizeMedium: design.control, fontSizeLarge: '20px',
+  fontSizeSmall: design.control, fontSizeMedium: design.control, fontSizeLarge: design.count,
   lineHeight: design.lineHeight,
-  heightSmall: '36px', heightMedium: '42px', heightLarge: '48px',
+  heightSmall: design.controlSmall, heightMedium: design.controlMedium, heightLarge: design.controlLarge,
   fontWeightStrong: '600',
   borderRadius: design.radiusControl,
   borderRadiusSmall: '5px',
@@ -54,7 +57,13 @@ export function themeOverrides(mode: ColorMode): GlobalThemeOverrides {
       fontSizeSmall: design.body, fontSizeMedium: design.body, fontSizeLarge: design.body,
       paddingSmall: 'var(--panel-padding)', paddingMedium: 'var(--panel-padding)',
       paddingLarge: 'var(--panel-padding)', paddingHuge: 'var(--panel-padding)',
-      titleFontSizeSmall: '22px', titleFontSizeMedium: '24px', titleFontSizeLarge: design.section,
+      titleFontSizeSmall: design.item, titleFontSizeMedium: design.event, titleFontSizeLarge: design.section,
+    },
+    Tag: {
+      fontSizeTiny: design.label, fontSizeSmall: design.label,
+      fontSizeMedium: design.control, fontSizeLarge: design.control,
+      heightTiny: design.tagSmall, heightSmall: design.tagSmall,
+      heightMedium: design.tagMedium, heightLarge: design.tagLarge,
     },
     DataTable: {
       fontSizeSmall: design.control, fontSizeMedium: design.control, fontSizeLarge: design.body,
@@ -86,6 +95,8 @@ export function themeVariables(mode: ColorMode): Record<string, string> {
     '--line-reading': design.lineHeight,
     '--content-wide': design.wide, '--content-form': design.form, '--content-form-wide': design.formWide,
     '--radius-control': design.radiusControl, '--radius-panel': design.radiusPanel,
+    '--control-height-small': design.controlSmall, '--control-height-medium': design.controlMedium, '--control-height-large': design.controlLarge,
+    '--status-warning': design.statusWarning,
     '--status-positive': design.statusPositive, '--status-negative': design.statusNegative,
     '--status-text': design.statusText,
   }

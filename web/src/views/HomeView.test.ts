@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
+import StatusBadge from '@/components/StatusBadge.vue'
 import HomeView from './HomeView.vue'
 import type { PublicOverview } from '@/composables/usePublicOverview'
 
@@ -28,6 +29,13 @@ const overview: PublicOverview = {
   updatedAt: '2026-09-29T06:00:00Z',
 } as unknown as PublicOverview
 
+beforeEach(() => {
+  state.overview = overview
+  state.error = null
+  state.loading = false
+  state.connectionUnavailable = false
+})
+
 describe('HomeView', () => {
   it('marks a retained snapshot as disconnected only for a transport failure', () => {
     state.overview = overview
@@ -35,6 +43,7 @@ describe('HomeView', () => {
     state.connectionUnavailable = true
     const wrapper = mount(HomeView)
     expect(wrapper.find('.server-status').text()).toBe('NO CONNECTION')
+    expect(wrapper.findComponent(StatusBadge).props('tone')).toBe('negative')
     expect(wrapper.text()).toContain('Last known · connection unavailable')
     expect(wrapper.text()).toContain('Big Valley')
     state.connectionUnavailable = false
@@ -48,6 +57,8 @@ describe('HomeView', () => {
     expect(wrapper.findAll('.game-color-5')).toHaveLength(2)
     expect(wrapper.text()).toContain('3 players, 10 bots / 24 total')
     expect(wrapper.find('.server-status').text()).toBe('UP')
+    expect(wrapper.findComponent(StatusBadge).attributes('role')).toBe('status')
+    expect(wrapper.findComponent(StatusBadge).props('tone')).toBe('positive')
     state.overview = overview
   })
   it('shows DOWN and singular zero/one counts without inventing capacity', () => {
@@ -55,6 +66,7 @@ describe('HomeView', () => {
     state.error = null
     const wrapper = mount(HomeView)
     expect(wrapper.find('.server-status').text()).toBe('DOWN')
+    expect(wrapper.findComponent(StatusBadge).props('tone')).toBe('negative')
     expect(wrapper.find('.occupancy').text()).toBe('0 player, 1 bot')
     state.overview = overview
   })
@@ -137,5 +149,6 @@ describe('HomeView', () => {
     expect(wrapper.text()).not.toContain('NO CONNECTION')
     expect(wrapper.text()).not.toContain('Last known · connection unavailable')
     expect(wrapper.find('.server-status').text()).toBe('UP')
+    expect(wrapper.findComponent(StatusBadge).attributes('role')).toBe('status')
   })
 })

@@ -270,7 +270,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
 .state-note { margin: 0 0 16px; color: var(--text-muted); }
 .action-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 28px; }
 .action-group { min-width: 0; }
-.action-group h3 { margin: 0 0 6px; font-size: var(--font-meta); }
+.action-group h3 { margin: 0 0 12px; font-size: var(--font-item); line-height: 1.35; }
 .action-group p { min-height: 3.2em; margin: 0 0 14px; color: var(--text-muted); font-size: var(--font-meta); }
 .recovery { grid-column: 1 / -1; padding-top: 20px; border-top: 1px solid var(--border-color); }
 .recovery p { min-height: 0; }
@@ -287,7 +287,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
   border-radius: var(--radius-control);
   background: #111317;
   color: #e5e9ee;
-  font: 16px/1.65 var(--font-family-mono, Consolas, monospace);
+  font: var(--font-control)/var(--line-reading) var(--font-family-mono, Consolas, monospace);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

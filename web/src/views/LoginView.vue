@@ -102,7 +102,7 @@ async function submit() {
   font-weight: 800;
   font-style: italic;
 }
-.eyebrow { margin: 0 0 8px; color: var(--text-muted); font-size: var(--font-meta); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.eyebrow { margin: 0 0 8px; color: var(--text-secondary); font-size: var(--font-label); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .login-intro .eyebrow { margin-top: 28px; }
 .login-intro h1 { margin: 0; font-size: var(--font-display); line-height: 1.05; letter-spacing: -.04em; }
 .login-intro > p:last-child { max-width: 36ch; margin-top: 20px; color: var(--text-secondary); font-size: var(--font-body); }
@@ -112,7 +112,6 @@ async function submit() {
 @media (max-width: 700px) {
   .login-page { grid-template-columns: 1fr; gap: 28px; margin: 28px auto; }
   .login-intro .eyebrow { margin-top: 18px; }
-  .login-intro h1 { font-size: 36px; }
   .login-intro > p:last-child { margin: 10px 0 0; font-size: var(--font-meta); }
 }
 </style>

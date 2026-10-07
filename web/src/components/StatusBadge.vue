@@ -1,9 +1,9 @@
 <script setup lang="ts">
-withDefaults(defineProps<{ tone?: 'positive' | 'negative' | 'neutral' }>(), { tone: 'neutral' })
+withDefaults(defineProps<{ tone?: 'positive' | 'negative' | 'warning' | 'neutral'; compact?: boolean; live?: boolean }>(), { tone: 'neutral', compact: false, live: false })
 </script>
 
 <template>
-  <span class="status-badge" :class="'status-' + tone" role="status"><slot /></span>
+  <span class="status-badge" :class="['status-' + tone, { compact }]" :role="live ? 'status' : undefined"><slot /></span>
 </template>
 
 <style scoped>
@@ -11,5 +11,8 @@ withDefaults(defineProps<{ tone?: 'positive' | 'negative' | 'neutral' }>(), { to
 .status-badge::before { content: ''; flex: 0 0 10px; height: 10px; border-radius: 50%; background: currentColor; }
 .status-positive { color: var(--status-text); background: var(--status-positive); }
 .status-negative { color: var(--status-text); background: var(--status-negative); }
+.status-warning { color: var(--status-text); background: var(--status-warning); }
+.compact { padding: 4px 10px; gap: 8px; font-size: var(--font-label); font-weight: 650; letter-spacing: 0; }
+.compact::before { flex-basis: 8px; height: 8px; }
 .status-neutral { color: var(--text-secondary); background: var(--surface); border: 1px solid var(--border-color); }
 </style>

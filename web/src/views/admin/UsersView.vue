@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import StatusBadge from '@/components/StatusBadge.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
@@ -227,12 +228,12 @@ const columns: DataTableColumns<User> = [
     render: (user) => h('span', { class: 'row-name' }, [user.userName, self(user) ? h(NTag, { size: 'small', bordered: false, class: 'flag' }, { default: () => 'you' }) : null]),
   },
   { title: 'Display name', key: 'displayName', render: (user) => user.displayName ?? '' },
-  { title: 'Email', key: 'email', render: (user) => user.email ?? '' },
+  { title: 'Email', key: 'email', width: 240, render: (user) => user.email ?? '' },
   {
     title: 'Status',
     key: 'isLockedOut',
-    width: 100,
-    render: (user) => h(NTag, { type: user.isLockedOut ? 'error' : 'success', size: 'small' }, { default: () => (user.isLockedOut ? 'Locked' : 'Active') }),
+    width: 120,
+    render: (user) => h(StatusBadge, { tone: user.isLockedOut ? 'negative' : 'positive', compact: true }, { default: () => (user.isLockedOut ? 'Locked' : 'Active') }),
   },
   {
     title: 'Actions',
