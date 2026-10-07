@@ -384,7 +384,7 @@ onBeforeUnmount(() => stops.forEach((stop) => stop()))
       <div class="summary">
         <p class="source">
           <template v-if="cup">
-            <StatusBadge compact tone="positive">Cup</StatusBadge>
+            <StatusBadge compact tone="neutral">Cup</StatusBadge>
             <span>Set by <strong>{{ cup.name }}</strong><template v-if="cup.activatedAt">, active since {{ formatWhen(cup.activatedAt) }}</template>.</span>
           </template>
           <template v-else>

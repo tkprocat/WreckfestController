@@ -57,6 +57,7 @@ describe('HomeView', () => {
     expect(wrapper.findAll('.game-color-5')).toHaveLength(2)
     expect(wrapper.text()).toContain('3 players, 10 bots / 24 total')
     expect(wrapper.find('.server-status').text()).toBe('UP')
+    expect(wrapper.findComponent(StatusBadge).attributes('role')).toBe('status')
     expect(wrapper.findComponent(StatusBadge).props('tone')).toBe('positive')
     state.overview = overview
   })
@@ -148,5 +149,6 @@ describe('HomeView', () => {
     expect(wrapper.text()).not.toContain('NO CONNECTION')
     expect(wrapper.text()).not.toContain('Last known · connection unavailable')
     expect(wrapper.find('.server-status').text()).toBe('UP')
+    expect(wrapper.findComponent(StatusBadge).attributes('role')).toBe('status')
   })
 })

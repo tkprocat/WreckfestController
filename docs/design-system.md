@@ -63,3 +63,5 @@ Verified on 6 October 2026: 275 tests in 35 files, production build, 112 route/t
 Controls use 36/42/48px heights from the shared foundation; tag chips use 28/32/36px heights and 15–16px text. Semantic status badges use their own high-contrast fills, while descriptive tag chips use the theme's contextual colors. Form validation colors remain readable theme foreground colors; they are not badge backgrounds.
 
 Use the label style for eyebrows (15px, secondary text, .06em tracking), the item style for server action headings (22px), and metadata style for explanations (16px). Native section attributes such as aria-labelledby pass through ContentSection without an extra component API.
+
+Review polish verified on 7 October 2026: Home retains its opt-in status live region; cup rotation source badges are neutral context rather than health indicators; account status/email columns have room for readable text. The 68 affected tests, production build, and 16 additional Users/Rotation theme/viewport cases passed.

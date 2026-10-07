@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { DOMWrapper, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { NDialogProvider, NMessageProvider } from 'naive-ui'
+import StatusBadge from '@/components/StatusBadge.vue'
 import RotationPanel, { type RotationState } from './RotationPanel.vue'
 
 const api = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() }))
@@ -126,6 +127,7 @@ describe('RotationPanel', () => {
     await mountPanel()
 
     expect(wrapper!.text()).toContain('Set by Friday Derby')
+    expect(wrapper!.findAllComponents(StatusBadge).find((badge) => badge.text() === 'Cup')!.props('tone')).toBe('neutral')
   })
 
   // The rotation's version guards the file: a save made against it keeps every track setting.
