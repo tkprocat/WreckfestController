@@ -2223,6 +2223,79 @@ export interface paths {
                         "text/json": components["schemas"]["PublicOverview"];
                     };
                 };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/public/races": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["PublicRace"][];
+                        "application/json": components["schemas"]["PublicRace"][];
+                        "text/json": components["schemas"]["PublicRace"][];
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
             };
         };
         put?: never;
@@ -3826,6 +3899,31 @@ export interface components {
             bots: number;
             list: components["schemas"]["PublicPlayer"][];
         };
+        PublicRace: {
+            /** Format: int32 */
+            id: number;
+            /** Format: date-time */
+            startedAt: null | string;
+            /** Format: date-time */
+            endedAt: string;
+            track: components["schemas"]["PublicTrack"];
+            /** Format: int32 */
+            laps: number;
+            cupName: null | string;
+            entries: components["schemas"]["PublicRaceEntry"][];
+        };
+        PublicRaceEntry: {
+            /** Format: int32 */
+            position: null | number;
+            name: string;
+            isBot: boolean;
+            vehicleName: string;
+            outcome: components["schemas"]["RaceOutcome"];
+            /** Format: int32 */
+            timeMs: null | number;
+            /** Format: int32 */
+            bestLapMs: null | number;
+        };
         PublicRotation: {
             name: null | string;
             tracks: components["schemas"]["PublicRotationTrack"][];
@@ -3857,6 +3955,8 @@ export interface components {
             /** Format: date-time */
             endsAt: null | string;
         };
+        /** @enum {unknown} */
+        RaceOutcome: "Finished" | "Projected" | "DidNotFinish" | "Unknown";
         RepeatSchedule: {
             frequency?: string;
             days?: null | number[];

@@ -24,11 +24,19 @@ namespace WreckfestController.Controllers;
 [ApiController]
 [AllowAnonymous]
 [EnableRateLimiting(RateLimits.PublicPolicy)]
+// Declaring any response type stops ASP.NET Core inferring the 200 from ActionResult<T>,
+// so it is declared too; with no type given, each action's own return type is used.
+[ProducesResponseType(StatusCodes.Status200OK)]
+[ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests, "application/problem+json")]
+[ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, "application/problem+json")]
 [Route("api/public")]
 public class PublicController : ControllerBase
 {
     /// <summary>How many upcoming cups the overview lists.</summary>
     public const int UpcomingCupLimit = 5;
+
+    /// <summary>How many finished races the race list returns.</summary>
+    public const int RaceLimit = 10;
 
     private readonly ServerManager _serverManager;
     private readonly ConfigService _config;
@@ -118,6 +126,54 @@ public class PublicController : ControllerBase
                     c.EndsAt))
                 .ToList(),
             _time.GetUtcNow());
+    }
+
+    /// <summary>The latest <see cref="RaceLimit"/> finished races, newest first, bots included.</summary>
+    [HttpGet("races")]
+    public async Task<ActionResult<List<PublicRace>>> Races(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var races = await _db.Races
+                .AsNoTracking()
+                .OrderByDescending(r => r.EndedAt)
+                .ThenByDescending(r => r.Id)
+                .Take(RaceLimit)
+                .Select(r => new
+                {
+                    r.Id,
+                    r.StartedAt,
+                    r.EndedAt,
+                    r.TrackId,
+                    r.Laps,
+                    r.CupName,
+                    Entries = r.Entries
+                        .OrderBy(e => e.Position == null)
+                        .ThenBy(e => e.Position)
+                        .ThenBy(e => e.Id)
+                        .Select(e => new PublicRaceEntry(e.Position, e.Name, e.IsBot, e.VehicleName, e.Outcome, e.TimeMs, e.BestLapMs))
+                        .ToList(),
+                })
+                .ToListAsync(cancellationToken);
+
+            var names = await TrackNamesAsync(races.Select(r => r.TrackId).Distinct().ToList(), cancellationToken);
+            return races
+                .Select(r => new PublicRace(
+                    r.Id,
+                    r.StartedAt,
+                    r.EndedAt,
+                    Track(r.TrackId, names),
+                    r.Laps,
+                    string.IsNullOrEmpty(r.CupName) ? null : r.CupName,
+                    r.Entries))
+                .ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Anonymous callers get no detail, as for the overview.
+            _logger.LogError(ex, "The public race list could not read the database");
+            return Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Recent races are unavailable right now.");
+        }
     }
 
     /// <summary>

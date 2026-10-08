@@ -50,3 +50,14 @@ export function formatFromNow(iso: string, now: Date = new Date(), locale?: stri
 
   return 'now'
 }
+
+/** "3:05.120", "59.800": a race or lap time in milliseconds. */
+export function formatRaceTime(ms: number | null | undefined): string {
+  if (ms == null || ms < 0) {
+    return ''
+  }
+
+  const minutes = Math.floor(ms / 60_000)
+  const seconds = ((ms % 60_000) / 1000).toFixed(3)
+  return minutes > 0 ? `${minutes}:${seconds.padStart(6, '0')}` : seconds
+}

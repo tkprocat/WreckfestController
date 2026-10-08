@@ -31,6 +31,7 @@ public class EndpointAuthorizationTests
         "* /hubs/server",
         // The public home page. A dedicated DTO of public fields, and rate-limited.
         "GET /api/public/overview",
+        "GET /api/public/races",
     };
 
     [Fact]

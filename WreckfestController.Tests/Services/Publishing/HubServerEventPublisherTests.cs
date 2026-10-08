@@ -54,10 +54,12 @@ public class HubServerEventPublisherTests : IDisposable
         _publisher.Attach(Hub());
 
         await _publisher.TrackChangedAsync("fields14");
+        await _publisher.RaceRecordedAsync(7, "fields14", new DateTime(2026, 10, 8, 20, 0, 0, DateTimeKind.Utc));
         await _publisher.ServerStoppedAsync(new ServerStoppedEvent { ProcessId = 42, StopMethod = "Force" });
         await _publisher.PlayersUpdatedAsync([new Player { Name = "Procat", IsBot = false, Slot = 3 }]);
 
         _public.Verify(c => c.TrackChanged(new TrackChangedMessage("fields14")));
+        _public.Verify(c => c.RaceRecorded(new RaceRecordedMessage(7, "fields14", new DateTime(2026, 10, 8, 20, 0, 0, DateTimeKind.Utc))));
         _public.Verify(c => c.ServerStopped(It.Is<ServerStoppedMessage>(m => m.ProcessId == 42 && m.StopMethod == "Force")));
         _public.Verify(c => c.PlayersUpdated(It.Is<PlayersUpdatedMessage>(m =>
             m.Players.Single().Name == "Procat" && m.Players.Single().Slot == 3)));

@@ -237,7 +237,7 @@ public sealed class RaceResultStoreTests : IDisposable
             tracks,
             new ServerInfoTracker(NullLogger<ServerInfoTracker>.Instance),
             events);
-        using var recorder = new RaceResultRecorder(serverManager, _store, _database.Store, tracks, NullLogger<RaceResultRecorder>.Instance);
+        using var recorder = new RaceResultRecorder(serverManager, _store, _database.Store, tracks, events, NullLogger<RaceResultRecorder>.Instance);
         await recorder.StartAsync(CancellationToken.None);
 
         Assert.True(serverManager.TryProcessHookRaceRecord(InjectedHookOutputReader.PrepareForFanout(HookRaceRecordTests.LiveRecord), serverManager.CurrentAttachmentGeneration));
@@ -262,7 +262,7 @@ public sealed class RaceResultStoreTests : IDisposable
             tracks,
             new ServerInfoTracker(NullLogger<ServerInfoTracker>.Instance),
             events);
-        using var recorder = new RaceResultRecorder(serverManager, _store, _database.Store, tracks, NullLogger<RaceResultRecorder>.Instance);
+        using var recorder = new RaceResultRecorder(serverManager, _store, _database.Store, tracks, events, NullLogger<RaceResultRecorder>.Instance);
         await recorder.StartAsync(CancellationToken.None);
 
         Assert.True(serverManager.TryProcessHookRaceRecord(HookRaceRecord.Marker + "\u001Fgarbage\u0013", serverManager.CurrentAttachmentGeneration));

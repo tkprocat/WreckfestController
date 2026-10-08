@@ -21,6 +21,7 @@ public interface IServerHubClient
     Task ServerRestarted(ServerRestartedMessage message);
     Task ServerAttached(ServerAttachedMessage message);
     Task ServerRestartPending(ServerRestartPendingMessage message);
+    Task RaceRecorded(RaceRecordedMessage message);
 
     // admin group
     Task ConsoleLog(ConsoleLogMessage message);
@@ -73,6 +74,9 @@ public sealed record ServerRestartPendingMessage(
     int? CupId,
     DateTime? ScheduledRestartTime,
     DateTime Timestamp);
+
+/// <summary>A finished race was saved: GET /api/public/races now lists it.</summary>
+public sealed record RaceRecordedMessage(int RaceId, string TrackId, DateTime EndedAt);
 
 /// <summary>Console lines in arrival order, batched about once a second.</summary>
 public sealed record ConsoleLogMessage(IReadOnlyList<string> Logs);

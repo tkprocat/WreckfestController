@@ -35,6 +35,7 @@ export interface HubEvents {
     scheduledRestartTime: string | null
     timestamp: string
   }
+  RaceRecorded: { raceId: number; trackId: string; endedAt: string }
   // Admin group only.
   ConsoleLog: { logs: string[] }
   CupOccurrenceEnded: { cupId: number; cupName: string; occurrence: string; outcome: string; timestamp: string }

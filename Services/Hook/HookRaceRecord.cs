@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json.Serialization;
 
 namespace WreckfestController.Services.Hook;
 
@@ -111,6 +112,7 @@ public sealed record HookRaceRecord(
 }
 
 /// <summary>How a car's race ended, as far as the game's flags tell us.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<RaceOutcome>))]
 public enum RaceOutcome
 {
     /// <summary>Crossed the line.</summary>

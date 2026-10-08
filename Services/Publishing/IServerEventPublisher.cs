@@ -27,6 +27,9 @@ public interface IServerEventPublisher
     Task ServerAttachedAsync(ServerAttachedEvent serverEvent);
     Task ServerRestartPendingAsync(ServerRestartPendingEvent serverEvent);
 
+    /// <summary>A finished race was saved.</summary>
+    Task RaceRecordedAsync(int raceId, string trackId, DateTime endedAt);
+
     /// <summary>Queues one console line. Lines go out in batches, to signed-in clients only.</summary>
     void AddConsoleLog(string line);
 }

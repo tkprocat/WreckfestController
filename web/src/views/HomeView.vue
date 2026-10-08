@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import StatusBadge from '@/components/StatusBadge.vue'
 import ContentSection from '@/components/ContentSection.vue'
+import RecentRaces from '@/components/RecentRaces.vue'
 import { computed } from 'vue'
 import { NAlert, NButton, NCard, NEmpty, NSkeleton, NTag } from 'naive-ui'
 import { usePublicOverview } from '@/composables/usePublicOverview'
@@ -116,6 +117,8 @@ const statusLabel = computed(() =>
           <NEmpty v-else :description="overview.status.isRunning ? 'No players connected yet' : 'No players connected'" />
         </ContentSection>
 
+        <RecentRaces class="panel races-panel" />
+
         <ContentSection class="panel events-panel">
           <div class="panel-heading"><div><p class="eyebrow">{{ error ? 'Last known schedule' : 'Scheduled events' }}</p><h2>Coming up</h2></div></div>
           <ul v-if="overview.upcomingCups.length" class="cup-list">
@@ -170,7 +173,7 @@ const statusLabel = computed(() =>
 .panel { min-width: 0; }
 .rotation-panel { grid-column: 1; grid-row: 1; }
 .players-panel { grid-column: 2; grid-row: 1; }
-.events-panel { grid-column: 1 / -1; border-top: 1px solid var(--border-color); padding-top: 36px; }
+.races-panel, .events-panel { grid-column: 1 / -1; border-top: 1px solid var(--border-color); padding-top: 36px; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px; margin-bottom: 24px; }
 .panel-heading h2 { margin: 8px 0 0; font-size: var(--font-section); line-height: 1.3; }
 .panel-count, .rotation-name { font-size: var(--font-support); color: var(--text-secondary); }
@@ -193,7 +196,7 @@ const statusLabel = computed(() =>
 .spectator :deep(.n-tag) { font-size: var(--font-label); }
 @media (max-width: 760px) {
  .home-panels { grid-template-columns: 1fr; gap: 40px; margin-top: 36px; }
- .rotation-panel, .players-panel, .events-panel { grid-column: auto; grid-row: auto; }
+ .rotation-panel, .players-panel, .races-panel, .events-panel { grid-column: auto; grid-row: auto; }
  .current-race { padding: 24px; }
  .hero-details { gap: 18px 28px; }
  .cup-list { grid-template-columns: 1fr; }

@@ -97,6 +97,11 @@ public sealed class HubServerEventPublisher : IServerEventPublisher, IDisposable
     public Task TrackChangedAsync(string trackId) =>
         PublishAsync(nameof(IServerHubClient.TrackChanged), c => c.TrackChanged(new TrackChangedMessage(trackId)));
 
+    public Task RaceRecordedAsync(int raceId, string trackId, DateTime endedAt) =>
+        PublishAsync(
+            nameof(IServerHubClient.RaceRecorded),
+            c => c.RaceRecorded(new RaceRecordedMessage(raceId, trackId, endedAt)));
+
     public Task CupActivatedAsync(int cupId, string cupName) =>
         PublishAsync(
             nameof(IServerHubClient.CupActivated),
