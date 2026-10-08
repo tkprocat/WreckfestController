@@ -21,6 +21,7 @@ public partial class ConfigurationTab : UserControl
     private readonly AccountService _accountService;
     private readonly DatabaseState _databaseState;
     private string? _lastBackupPath;
+    private string? _backupError;
     private readonly ILogger<ConfigurationTab> _logger;
     private UserSettings _currentSettings;
 
@@ -147,11 +148,17 @@ public partial class ConfigurationTab : UserControl
         var folder = DatabaseBackup.FolderFor(_databaseState.DatabasePath);
         BackupButton.IsEnabled = _databaseState.IsReady;
         OpenBackupFolderButton.IsEnabled = Directory.Exists(folder);
+        // Shown in the panel, not a dialog: another dialog (Reset, Create Account) may be
+        // open when a slow backup ends, and the dialog host takes one at a time.
         BackupStatusText.Text = !_databaseState.IsReady
             ? "Unavailable until the database is ready."
-            : _lastBackupPath is not null
-                ? $"Backed up to {_lastBackupPath}"
-                : $"A consistent copy, made while the controller runs, in {folder}. It holds every account's password hash: keep it private.";
+            : _backupError is not null
+                ? _backupError
+                : _lastBackupPath is not null
+                    ? $"Backed up to {_lastBackupPath}"
+                    : $"A consistent copy, made while the controller runs, in {folder}. It holds every account's password hash: keep it private.";
+        BackupStatusText.Foreground = (System.Windows.Media.Brush)FindResource(
+            _databaseState.IsReady && _backupError is not null ? "RedColor" : "TextSecondary");
     }
 
     private async void OnBackupClicked(object sender, RoutedEventArgs e)
@@ -161,12 +168,13 @@ public partial class ConfigurationTab : UserControl
         {
             var path = _databaseState.DatabasePath;
             _lastBackupPath = await Task.Run(() => DatabaseBackup.Create(path, "manual", DateTimeOffset.Now));
+            _backupError = null;
             _logger.LogInformation("Backed up the database to {BackupPath}", _lastBackupPath);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Database backup failed");
-            await DialogService.ShowErrorAsync($"The backup failed: {ex.Message}");
+            _backupError = $"Backup failed: {ex.Message}";
         }
         finally
         {
@@ -183,11 +191,21 @@ public partial class ConfigurationTab : UserControl
             return;
         }
 
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        try
         {
-            FileName = folder,
-            UseShellExecute = true,
-        });
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = folder,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            // Deleted since the check, or the shell refused: report it, never crash.
+            _logger.LogError(ex, "Could not open the backup folder {Folder}", folder);
+            _backupError = $"Could not open {folder}: {ex.Message}";
+            ShowBackupState();
+        }
     }
 
     private void LoadSettings()
