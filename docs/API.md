@@ -364,6 +364,13 @@ occurrence of the new schedule that has not already run, failed, been cancelled 
 been missed: every occurrence dealt with is kept in the cup's history, so an edit
 never runs one twice.
 
+**The restart itself** (a cup's, from its schedule or `activate`) depends on who is on
+the server. With no real players (empty, or bots only) it restarts at once, without a
+countdown. With players online, they get a 5-minute countdown in chat
+(`ServerRestartPending` each minute), then "Server will restart at the next lobby." The
+restart happens at the next track change, or as soon as every player has left. After 10
+minutes of waiting for a lobby it is forced ("Server restarting now (timeout).").
+
 **Scheduling.** An occurrence's restart begins 5 minutes before its warmup (its start,
 without one), for the players' countdown. Restarting at the warmup rather than the start
 lets players join before the cup without being disconnected as it begins. From the
