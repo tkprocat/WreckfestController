@@ -1223,21 +1223,22 @@ public class ServerManager
     }
 
     /// <summary>
-    /// Reads the server's session state through the hook. Null when the hook is
-    /// unavailable or the read fails, so callers can fail open.
+    /// Reads the server's session state through the hook, from the process attached
+    /// under <paramref name="attachment"/>. Null when the hook is unavailable, the read
+    /// fails, or that attachment has been replaced - before the read or while it was in
+    /// flight - so callers fail open and never act on another server's state (#40).
     /// </summary>
-    public virtual async Task<HookSessionState?> ReadHookSessionAsync()
+    public virtual async Task<HookSessionState?> ReadHookSessionAsync(AttachmentSession? attachment)
     {
-        var processId = GetActualServerPid();
-        if (processId == null || _serverInputWriter is not IHookSessionReader reader)
+        if (!IsCurrentSession(attachment) || _serverInputWriter is not IHookSessionReader reader)
         {
             return null;
         }
 
         try
         {
-            var result = await reader.ReadSessionStateAsync(processId.Value);
-            return result.Success ? result.Session : null;
+            var result = await reader.ReadSessionStateAsync(attachment!.ProcessId);
+            return result.Success && IsCurrentSession(attachment) ? result.Session : null;
         }
         catch (Exception ex)
         {
@@ -1247,22 +1248,22 @@ public class ServerManager
     }
 
     /// <summary>
-    /// Reads module-relative memory from the running server through the hook.
-    /// Returns null when the hook is unavailable, so callers can fail open rather
-    /// than treating "cannot read" as a definite state.
+    /// Reads module-relative memory through the hook, from the process attached under
+    /// <paramref name="attachment"/>. Returns null when the hook is unavailable or that
+    /// attachment has been replaced, so callers can fail open rather than treating
+    /// "cannot read" as a definite state.
     /// </summary>
-    public virtual async Task<byte[]?> ReadHookMemoryAsync(uint rva, int size)
+    public virtual async Task<byte[]?> ReadHookMemoryAsync(AttachmentSession? attachment, uint rva, int size)
     {
-        var processId = GetActualServerPid();
-        if (processId == null || _serverInputWriter is not IHookMemoryReader reader)
+        if (!IsCurrentSession(attachment) || _serverInputWriter is not IHookMemoryReader reader)
         {
             return null;
         }
 
         try
         {
-            var result = await reader.ReadModuleMemoryAsync(processId.Value, rva, size);
-            return result.Success ? result.Data : null;
+            var result = await reader.ReadModuleMemoryAsync(attachment!.ProcessId, rva, size);
+            return result.Success && IsCurrentSession(attachment) ? result.Data : null;
         }
         catch (Exception ex)
         {
@@ -1549,6 +1550,21 @@ public class ServerManager
         _ = ended?.CancelAsync();
     }
 
+    // True while attachment is still the current one. Cheap enough for every hook read:
+    // it opens no process handle. A read from a process that has exited fails on its own.
+    private bool IsCurrentSession(AttachmentSession? attachment)
+    {
+        if (attachment == null || attachment.Ended.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        lock (_lock)
+        {
+            return _session?.Id == attachment.Id;
+        }
+    }
+
     // Everything here describes one attached process and means nothing about the
     // next one. Called while holding _lock.
     private void ClearProcessScopedState()
@@ -1710,24 +1726,35 @@ public class ServerManager
 
     private void StartServerEventPolling()
     {
-        StopServerEventPolling();
+        // One step under the lock attachment changes take. The session, the reader
+        // bound to it and the generation the timer carries must all describe the same
+        // attachment: a restart starting monitoring late, after another attach, would
+        // otherwise pair the old session's reader with the new generation, and every
+        // poll would then pass its generation check yet read nothing.
+        lock (_lock)
+        {
+            StopServerEventPolling();
 
-        _serverEventReader = new ServerEventReader(
-            ReadHookMemoryAsync,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<ServerEventReader>.Instance);
+            // Polling reads only from the attachment it was started for: a poll still
+            // in flight after a switch reads nothing rather than the next server's ring.
+            var attachment = _session;
+            _serverEventReader = new ServerEventReader(
+                (rva, size) => ReadHookMemoryAsync(attachment, rva, size),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<ServerEventReader>.Instance);
 
-        // Every poll carries the generation it was started under. Disposing the timer
-        // does not cancel a poll already awaiting a hook read, so the generation is
-        // what lets that poll notice its results belong to a process we have since
-        // stopped watching, and drop them instead of feeding another process's
-        // tracker.
-        var generation = Volatile.Read(ref _serverEventGeneration);
+            // Every poll carries the generation it was started under. Disposing the
+            // timer does not cancel a poll already awaiting a hook read, so the
+            // generation is what lets that poll notice its results belong to a process
+            // we have since stopped watching, and drop them instead of feeding another
+            // process's tracker.
+            var generation = Volatile.Read(ref _serverEventGeneration);
 
-        _serverEventTimer = new System.Threading.Timer(
-            _ => _ = PollServerEventsAsync(generation),
-            null,
-            ServerEventPollInterval,
-            ServerEventPollInterval);
+            _serverEventTimer = new System.Threading.Timer(
+                _ => _ = PollServerEventsAsync(generation),
+                null,
+                ServerEventPollInterval,
+                ServerEventPollInterval);
+        }
     }
 
     private void StopServerEventPolling()

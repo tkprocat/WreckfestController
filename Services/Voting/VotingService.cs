@@ -150,7 +150,7 @@ public class VotingService
         // puts several lines across everyone's screen while they are driving. Suppress
         // the lot until the race is over. Blocking here is safe: this runs on
         // ServerManager's chat worker, not on the thread draining the hook pipe.
-        if (SuppressCommandsDuringRace && IsRacingBlocking())
+        if (SuppressCommandsDuringRace && IsRacingBlocking(session))
         {
             // The refusal is itself a broadcast, so rate-limit it - otherwise a few
             // players typing commands reproduces the spam we are preventing.
@@ -201,7 +201,7 @@ public class VotingService
         // first, so gating later let an ambiguous query print a five-option list and
         // only fail at !confirm - maximum chat for a command that was never going to
         // be allowed.
-        if (IsTrackChangeCommand(lower) && ReadEventLoopBlocking() is { Enabled: true })
+        if (IsTrackChangeCommand(lower) && ReadEventLoopBlocking(session) is { Enabled: true })
         {
             _ = BroadcastMessage(session, "Track changes are disabled while the event loop is running.");
             return;
@@ -1126,7 +1126,7 @@ public class VotingService
         // The event loop owns track selection when it is running - Wreckfest rotates
         // and runs its own end-of-race track vote - so a track set here would just be
         // overwritten, or fight it. Refuse rather than race the rotation.
-        var loop = ReadEventLoopBlocking();
+        var loop = ReadEventLoopBlocking(session);
         if (loop is { Enabled: true })
         {
             _ = BroadcastMessage(session, 
@@ -1158,7 +1158,7 @@ public class VotingService
     private void StartLapsChange(AttachmentSession session, string playerName, int laps)
     {
         // The loop sets each entry's laps as it rotates, so a change here would not last.
-        if (ReadEventLoopBlocking() is { Enabled: true })
+        if (ReadEventLoopBlocking(session) is { Enabled: true })
         {
             _ = BroadcastMessage(session, 
                 "Track changes are disabled while the event loop is running.");
@@ -1267,17 +1267,21 @@ public class VotingService
     private DateTime _lastRaceRefusalUtc = DateTime.MinValue;
     private DateTime _serverStateReadUtc = DateTime.MinValue;
     private (bool? EventLoopEnabled, int Index, int Count, bool? Racing) _serverState;
+    // The attachment session the cached state was read from: it answers for that
+    // server only, so a read still in flight from a replaced one cannot fill the
+    // cache for the next (#40).
+    private long _serverStateSessionId;
 
     /// <summary>
     /// Reads event-loop and session state from the running server. Every field is
     /// nullable-by-convention: a failed or implausible read yields null so callers
     /// fail open rather than acting on a state we do not actually know.
     /// </summary>
-    private async Task<(EventLoopState? Loop, bool? Racing)> ReadServerStateAsync()
+    private async Task<(EventLoopState? Loop, bool? Racing)> ReadServerStateAsync(AttachmentSession session)
     {
         lock (_serverStateLock)
         {
-            if (DateTime.UtcNow - _serverStateReadUtc < ServerStateCacheWindow)
+            if (_serverStateSessionId == session.Id && DateTime.UtcNow - _serverStateReadUtc < ServerStateCacheWindow)
             {
                 var cachedLoop = _serverState.EventLoopEnabled is bool enabled
                     ? new EventLoopState(enabled, _serverState.Index, _serverState.Count)
@@ -1287,21 +1291,22 @@ public class VotingService
         }
 
         bool? racing = null;
-        var loop = await _eventLoop.ReadAsync();
+        var loop = await _eventLoop.ReadAsync(session);
 
         // Only the game's own racing state counts. Lobby, countdown, the results
         // screen and any value the game is not known to use fall through as "not
         // racing", so an unknown state never silences chat (issue #189).
-        var session = await _serverManager.ReadHookSessionAsync();
-        if (session is not null)
+        var hookSession = await _serverManager.ReadHookSessionAsync(session);
+        if (hookSession is not null)
         {
-            racing = session.Phase == ServerSessionPhase.Racing;
+            racing = hookSession.Phase == ServerSessionPhase.Racing;
         }
 
         lock (_serverStateLock)
         {
             _serverState = (loop?.Enabled, loop?.Index ?? 0, loop?.Count ?? 0, racing);
             _serverStateReadUtc = DateTime.UtcNow;
+            _serverStateSessionId = session.Id;
         }
 
         return (loop, racing);
@@ -1311,11 +1316,11 @@ public class VotingService
     /// True only when the server is positively identified as racing. An unreadable
     /// or unmapped state returns false so chat keeps working.
     /// </summary>
-    private bool IsRacingBlocking()
+    private bool IsRacingBlocking(AttachmentSession session)
     {
         try
         {
-            var (_, racing) = ReadServerStateAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            var (_, racing) = ReadServerStateAsync(session).ConfigureAwait(false).GetAwaiter().GetResult();
             return racing == true;
         }
         catch (Exception ex)
@@ -1325,11 +1330,11 @@ public class VotingService
         }
     }
 
-    private EventLoopState? ReadEventLoopBlocking()
+    private EventLoopState? ReadEventLoopBlocking(AttachmentSession session)
     {
         try
         {
-            var (loop, _) = ReadServerStateAsync().ConfigureAwait(false).GetAwaiter().GetResult();
+            var (loop, _) = ReadServerStateAsync(session).ConfigureAwait(false).GetAwaiter().GetResult();
             return loop;
         }
         catch (Exception ex)
@@ -1353,7 +1358,7 @@ public class VotingService
         var argument = lower.Length > prefix.Length ? lower[prefix.Length..].Trim() : string.Empty;
 
         InvalidateServerState();
-        var (loop, _) = await ReadServerStateAsync();
+        var (loop, _) = await ReadServerStateAsync(session);
         if (loop is null)
         {
             await BroadcastMessage(session, "Event loop state unavailable - is the console hook injected?");
@@ -1396,7 +1401,7 @@ public class VotingService
         // worked. The game does not apply it synchronously, so poll briefly instead
         // of reading once - a single immediate read sees the old value and wrongly
         // reports failure.
-        var after = await _eventLoop.WaitForStateAsync(desired);
+        var after = await _eventLoop.WaitForStateAsync(session, desired);
         InvalidateServerState();
         if (after is null || after.Enabled != desired)
         {

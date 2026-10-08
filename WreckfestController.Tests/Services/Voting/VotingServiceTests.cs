@@ -1801,9 +1801,9 @@ public class VotingServiceTests
 
     private static void StubServerState(Mock<ServerManager> server, int count, int index, int sessionState)
     {
-        server.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopCount, 4)).ReturnsAsync(BitConverter.GetBytes(count));
-        server.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopIndex, 4)).ReturnsAsync(BitConverter.GetBytes(index));
-        server.Setup(m => m.ReadHookSessionAsync())
+        server.Setup(m => m.ReadHookMemoryAsync(It.IsAny<AttachmentSession?>(), RvaEventLoopCount, 4)).ReturnsAsync(BitConverter.GetBytes(count));
+        server.Setup(m => m.ReadHookMemoryAsync(It.IsAny<AttachmentSession?>(), RvaEventLoopIndex, 4)).ReturnsAsync(BitConverter.GetBytes(index));
+        server.Setup(m => m.ReadHookSessionAsync(It.IsAny<AttachmentSession?>()))
             .ReturnsAsync(new HookSessionState(sessionState, -100000, EventCounter: 1, Ended: false));
     }
 
@@ -1836,7 +1836,7 @@ public class VotingServiceTests
         var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Direct);
         config["Vote:SuppressCommandsDuringRace"] = "true";
         StubServerState(serverMock, count: 4, index: -1, racing: true);
-        serverMock.Setup(m => m.ReadHookSessionAsync()).ReturnsAsync((HookSessionState?)null);
+        serverMock.Setup(m => m.ReadHookSessionAsync(It.IsAny<AttachmentSession?>())).ReturnsAsync((HookSessionState?)null);
         Join(tracker, "Alice");
 
         service.ProcessChatCommand(TestSession, "Alice", false, "!help");
@@ -2168,10 +2168,10 @@ public class VotingServiceTests
         // Starts enabled (index 0); the game applies the toggle a beat after the
         // command returns, which an immediate read-back would miss.
         var index = 0;
-        serverMock.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopCount, 4)).ReturnsAsync(BitConverter.GetBytes(4));
-        serverMock.Setup(m => m.ReadHookMemoryAsync(RvaEventLoopIndex, 4))
+        serverMock.Setup(m => m.ReadHookMemoryAsync(It.IsAny<AttachmentSession?>(), RvaEventLoopCount, 4)).ReturnsAsync(BitConverter.GetBytes(4));
+        serverMock.Setup(m => m.ReadHookMemoryAsync(It.IsAny<AttachmentSession?>(), RvaEventLoopIndex, 4))
             .ReturnsAsync(() => BitConverter.GetBytes(index));
-        serverMock.Setup(m => m.ReadHookSessionAsync())
+        serverMock.Setup(m => m.ReadHookSessionAsync(It.IsAny<AttachmentSession?>()))
             .ReturnsAsync(new HookSessionState((int)ServerSessionPhase.Lobby, -100000, EventCounter: 0, Ended: false));
 
         serverMock.Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/eventloop"))
@@ -2471,6 +2471,46 @@ public class VotingServiceTests
     }
 
     // ---- Attachment sessions (#40) ----------------------------------------------
+
+    // The race check is cached briefly. A read made for an earlier attachment can finish
+    // after the next one has been adopted; it must not answer for the new server.
+    [Fact]
+    public async Task ServerStateRead_ForAnEarlierAttachment_DoesNotAnswerForTheNext()
+    {
+        var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Direct);
+        config["Vote:SuppressCommandsDuringRace"] = "true";
+        StubServerState(serverMock, count: 4, index: -1, racing: false);
+        var first = new AttachmentSession(1, 4242, CancellationToken.None);
+        var second = new AttachmentSession(2, 4343, CancellationToken.None);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        serverMock.Setup(m => m.ReadHookSessionAsync(It.Is<AttachmentSession?>(s => s != null && s.Id == 1))).Returns(async () =>
+        {
+            started.TrySetResult();
+            await release.Task;
+            return new HookSessionState((int)ServerSessionPhase.Racing, -100000, EventCounter: 1, Ended: false);
+        });
+        Join(tracker, "Alice");
+
+        // The first server is racing, and its read is slow.
+        var onFirst = Task.Run(() => service.ProcessChatCommand(first, "Alice", false, "!help"), TestContext.Current.CancellationToken);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        // The second, in its lobby, is adopted and read meanwhile; then the first read lands.
+        service.ProcessChatCommand(second, "Alice", false, "!help");
+        release.TrySetResult();
+        await onFirst.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+        // Still within the cache window: the second server must be read again, not
+        // answered with the first server's race.
+        service.ProcessChatCommand(second, "Alice", false, "!help");
+        await Task.Delay(80, TestContext.Current.CancellationToken);
+
+        // Both commands on the second server got help; the first server's got none.
+        // Help spans several lines, so count its first.
+        var helpStart = messages.First(m => m.StartsWith("Help:", StringComparison.Ordinal));
+        Assert.Equal(2, messages.Count(m => m == helpStart));
+    }
 
     [Fact]
     public void Vote_IsDroppedWhenItsAttachmentEnds_AndNeverApplied()
