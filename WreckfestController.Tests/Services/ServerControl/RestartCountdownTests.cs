@@ -17,23 +17,32 @@ public class RestartCountdownTests : IDisposable
     private readonly ManualClock _clock = new();
     private readonly CapturePublisher _published = new();
     private readonly List<string> _messages = [];
+    private readonly List<AttachmentSession?> _messageSessions = [];
     private readonly SmartRestartService _restart;
     private readonly Mock<ServerManager> _server;
+    private readonly PlayerTracker _players;
+    private readonly TrackChangeTracker _tracks;
+    private readonly Mock<ConfigService> _config;
+    // The attachment the restart is asked for under, and one attached since.
+    private readonly AttachmentSession _asked = new(1, 100, CancellationToken.None);
+    private readonly AttachmentSession _later = new(2, 200, CancellationToken.None);
 
     public RestartCountdownTests()
     {
         var settings = new ConfigurationBuilder().Build();
         var events = _published;
-        var players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events);
+        var players = _players = new PlayerTracker(Mock.Of<ILogger<PlayerTracker>>(), events);
         players.ProcessHookPlayerSnapshot([new Player { PlayerId = 1, Name = "Player", IsBot = false }]);
-        var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), events);
+        var tracks = _tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), events);
         _server = new Mock<ServerManager>(settings, TestSettings.Server(), TestSettings.SteamCmd(), Mock.Of<ILogger<ServerManager>>(), players, tracks,
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), events);
-        _server.Setup(s => s.SendCommandAsync(It.IsAny<string>())).Returns((string command) => {
+        _server.SetupGet(s => s.CurrentSession).Returns(_asked);
+        _server.Setup(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>())).Returns((AttachmentSession? session, string command) => {
             _messages.Add(command);
+            _messageSessions.Add(session);
             return Task.FromResult((true, "Sent"));
         });
-        var config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>());
+        var config = _config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>());
         config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig());
         _restart = new SmartRestartService(_server.Object, players, tracks, config.Object, events,
             Mock.Of<ILogger<SmartRestartService>>(), _clock);
@@ -59,7 +68,7 @@ public class RestartCountdownTests : IDisposable
             "/message Server will restart in 3 minutes.", "/message Server will restart in 2 minutes.",
             "/message Server will restart in 1 minute.", "/message Server will restart at the next lobby."
         }, _messages);
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
     }
 
     [Fact]
@@ -112,7 +121,7 @@ public class RestartCountdownTests : IDisposable
     public async Task PendingTimeoutUsesTenElapsedMinutesDespiteWallClockChanges(int hours)
     {
         var restarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _server.Setup(s => s.RestartServerViaCommandAsync()).Returns(() => {
+        _server.Setup(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>())).Returns(() => {
             restarted.TrySetResult();
             return Task.FromResult((false, "Test finished"));
         });
@@ -124,18 +133,18 @@ public class RestartCountdownTests : IDisposable
         _clock.Timer.Fire();
         Assert.Equal(SmartRestartState.Pending, _restart.GetState());
         Assert.Equal(TimeSpan.FromSeconds(30), _clock.Timer.DueTime);
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
 
         _clock.Elapsed = TimeSpan.FromMinutes(15) - TimeSpan.FromMilliseconds(2);
         _clock.Timer.Fire();
         Assert.Equal(SmartRestartState.Pending, _restart.GetState());
         Assert.Equal(TimeSpan.FromMilliseconds(2), _clock.Timer.DueTime);
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
 
         _clock.Elapsed += _clock.Timer.DueTime;
         _clock.Timer.Fire();
         await restarted.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Once);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Once);
         Assert.Contains("/message Server restarting now (timeout).", _messages);
     }
 
@@ -185,6 +194,51 @@ public class RestartCountdownTests : IDisposable
     }
 
     public void Dispose() => _restart.CancelRestart();
+
+    // #40: the countdown runs for minutes, so a server attached meanwhile must get
+    // neither its announcements nor its restart.
+    [Fact]
+    public async Task AnnouncementsAndRestartGoToTheAttachmentTheRestartWasAskedUnder()
+    {
+        var restartedOn = new TaskCompletionSource<AttachmentSession?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _server.Setup(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>())).Returns((AttachmentSession? session) => {
+            restartedOn.TrySetResult(session);
+            return Task.FromResult((false, "Test finished"));
+        });
+        _server.SetupGet(s => s.CurrentSession).Returns(_later);
+
+        for (var minute = 0; minute <= 5; minute++)
+        {
+            _clock.Elapsed = TimeSpan.FromMinutes(minute);
+            _clock.Timer!.Fire();
+            await _published.Next();
+        }
+        _clock.Elapsed = TimeSpan.FromMinutes(15);
+        _clock.Timer!.Fire();
+
+        Assert.Same(_asked, await restartedOn.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        Assert.Equal(7, _messageSessions.Count);
+        Assert.All(_messageSessions, session => Assert.Same(_asked, session));
+    }
+
+    // CurrentSession takes ServerManager's lock, which is held while track changes are
+    // raised to the service, which then takes its own. Reading it under the service's
+    // lock would deadlock against a track change.
+    [Fact]
+    public void InitiateRestart_ReadsTheAttachmentWithoutHoldingItsStateLock()
+    {
+        SmartRestartService? second = null;
+        bool? stateReadable = null;
+        _server.SetupGet(s => s.CurrentSession).Returns(() => {
+            stateReadable = Task.Run(() => second!.GetState()).Wait(TimeSpan.FromSeconds(2));
+            return _asked;
+        });
+        second = new SmartRestartService(_server.Object, _players, _tracks, _config.Object, _published,
+            Mock.Of<ILogger<SmartRestartService>>(), _clock);
+
+        Assert.True(second.InitiateRestart(new Event { Id = 8, Name = "Second" }, _ => { }));
+        Assert.True(stateReadable);
+    }
 
     private sealed class ManualClock : TimeProvider
     {

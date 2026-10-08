@@ -339,7 +339,7 @@ public partial class ServerControlTab : UserControl
         try
         {
             AddEventLogItem($"Command sent: {command}", "#FFD43B");
-            var result = await _serverManager.SendCommandAsync(command);
+            var result = await _serverManager.SendCommandAsync(_serverManager.CurrentSession, command);
 
             if (result.Success)
             {

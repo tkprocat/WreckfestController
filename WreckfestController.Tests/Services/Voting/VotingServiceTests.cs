@@ -17,6 +17,10 @@ namespace WreckfestController.Tests.Services.Voting;
 
 public class VotingServiceTests
 {
+    // Every chat command arrives under an attachment session. One stands in for a
+    // server attached for the whole test; the mocked dispatch accepts any session.
+    private static readonly AttachmentSession TestSession = new(1, 4242, CancellationToken.None);
+
     private readonly Mock<ILogger<VotingService>> _mockLogger;
     private readonly IConfiguration _config;
     private readonly Mock<ServerManager> _mockServerManager;
@@ -46,8 +50,8 @@ public class VotingServiceTests
             mockEvents.Object);
 
         _mockServerManager
-            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
-            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) _broadcastMessages.Add(cmd[9..]); })
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .Callback<AttachmentSession?, string>((_, cmd) => { if (cmd.StartsWith("/message ")) _broadcastMessages.Add(cmd[9..]); })
             .ReturnsAsync((true, "ok"));
 
         _mockConfigService = new Mock<ConfigService>(
@@ -70,7 +74,7 @@ public class VotingServiceTests
 
     private void SendChat(string playerName, string message, bool isBot = false)
     {
-        _votingService.ProcessChatCommand(playerName, isBot, message);
+        _votingService.ProcessChatCommand(TestSession, playerName, isBot, message);
     }
 
     private void JoinPlayer(string name) =>
@@ -96,7 +100,7 @@ public class VotingServiceTests
         var (service, tracker, messages, _) = CreateLongTrackNameSetup();
         tracker.Seed("Alice", "Bob");
 
-        service.ProcessChatCommand("Alice", isBot: false, "!vote long_track 99");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote long_track 99");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var firstLine = Assert.Single(messages, m => m.StartsWith("Vote: ", StringComparison.Ordinal));
@@ -153,7 +157,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, configMock) = CreateDisabledVotingSetup();
 
-        service.ProcessChatCommand("Alice", isBot: false, "!vote wrecknado_02 5");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote wrecknado_02 5");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("Voting is currently disabled"));
@@ -167,7 +171,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateDisabledVotingSetup();
 
-        service.ProcessChatCommand("Alice", isBot: false, "!search wreck");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!search wreck");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("Voting is currently disabled"));
@@ -179,7 +183,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateDisabledVotingSetup();
 
-        service.ProcessChatCommand("Alice", isBot: false, "!more");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!more");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("Voting is currently disabled"));
@@ -191,7 +195,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateDisabledVotingSetup();
 
-        service.ProcessChatCommand("Alice", isBot: false, "!help");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!help");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("Voting is currently disabled"));
@@ -220,8 +224,8 @@ public class VotingServiceTests
         SendChat("Bob", "!yes");   // Bob yes (2/3) → majority
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
-        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync("laps=10"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=10"), Times.Once);
         _mockConfigService.Verify(c => c.WriteEventLoopTracks(
             It.IsAny<string>(), It.IsAny<List<EventLoopTrack>>()), Times.Never);
 
@@ -236,8 +240,8 @@ public class VotingServiceTests
         SendChat("Alice", "!vote wrecknado_02 10");
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
-        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync("laps=10"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=10"), Times.Once);
         Assert.Contains(_broadcastMessages, m => m.StartsWith("Next race:", StringComparison.Ordinal));
     }
 
@@ -247,7 +251,7 @@ public class VotingServiceTests
         var (service, tracker, messages, _) = CreateIsolatedSetup(timeoutSeconds: 30, messageDelayMs: 50);
         tracker.Seed("Alice");
 
-        service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote timeout_track 3");
         await Task.Delay(250, TestContext.Current.CancellationToken);
 
         // A vote with one participant is not a vote: no announcement, no invitation to
@@ -266,8 +270,8 @@ public class VotingServiceTests
         SendChat("Bob", "!yes");
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
-        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsRegex("^track=(wrecknado_02|new_track|other_track)$")), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsRegex("^laps=([1-9]|10)$")), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsRegex("^track=(wrecknado_02|new_track|other_track)$")), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsRegex("^laps=([1-9]|10)$")), Times.Once);
         Assert.Contains(_broadcastMessages, m => m.Contains("Lucky pick:"));
     }
 
@@ -292,8 +296,8 @@ public class VotingServiceTests
         SendChat("Bob", "!yes");
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
-        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsRegex("^track=(wrecknado_02|new_track|other_track)$")), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsRegex("^laps=([1-9]|10)$")), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsRegex("^track=(wrecknado_02|new_track|other_track)$")), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsRegex("^laps=([1-9]|10)$")), Times.Once);
         Assert.Contains(_broadcastMessages, m => m.Contains("Lucky pick:"));
     }
 
@@ -302,7 +306,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateNoAllowedTracksSetup();
 
-        service.ProcessChatCommand("Alice", isBot: false, "!ifeellucky");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!ifeellucky");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("No tracks configured for lucky vote"));
@@ -342,7 +346,7 @@ public class VotingServiceTests
     {
         var (service, tracker, messages, configMock) = CreateIsolatedSetup(timeoutSeconds: 1);
         tracker.Seed("Alice", "Bob");
-        service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote timeout_track 3");
 
         await Task.Delay(1500, TestContext.Current.CancellationToken);
 
@@ -355,7 +359,7 @@ public class VotingServiceTests
     {
         var (service, tracker, messages, configMock) = CreateIsolatedSetup(timeoutSeconds: 1);
         tracker.Seed("Alice", "Bob");
-        service.ProcessChatCommand("Bob", isBot: false, "!vote only_initiator_track 3");
+        service.ProcessChatCommand(TestSession, "Bob", isBot: false, "!vote only_initiator_track 3");
         // Bob's auto-yes is the only cast vote; Alice abstains.
 
         await Task.Delay(1500, TestContext.Current.CancellationToken);
@@ -370,8 +374,8 @@ public class VotingServiceTests
     {
         var (service, tracker, messages, configMock) = CreateIsolatedSetup(timeoutSeconds: 1);
         tracker.Seed("Alice", "Bob");
-        service.ProcessChatCommand("Alice", isBot: false, "!vote tie_track 3"); // Alice auto-yes
-        service.ProcessChatCommand("Bob", isBot: false, "!no"); // 1 yes, 1 no → tie
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote tie_track 3"); // Alice auto-yes
+        service.ProcessChatCommand(TestSession, "Bob", isBot: false, "!no"); // 1 yes, 1 no → tie
 
         await Task.Delay(1500, TestContext.Current.CancellationToken);
 
@@ -387,7 +391,7 @@ public class VotingServiceTests
         var (service, tracker, messages, _) = CreateIsolatedSetup(timeoutSeconds: 21);
         tracker.Seed("Alice", "Bob");
 
-        service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote timeout_track 3");
         await Task.Delay(1500, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m =>
@@ -402,8 +406,8 @@ public class VotingServiceTests
         var (service, tracker, messages, _) = CreateIsolatedSetup(timeoutSeconds: 11);
         tracker.Seed("Alice", "Bob");
 
-        service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
-        service.ProcessChatCommand("Bob", isBot: false, "!no");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote timeout_track 3");
+        service.ProcessChatCommand(TestSession, "Bob", isBot: false, "!no");
         await Task.Delay(1500, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m =>
@@ -418,8 +422,8 @@ public class VotingServiceTests
         var (service, tracker, messages, _) = CreateIsolatedSetup(timeoutSeconds: 21);
         tracker.Seed("Alice", "Bob", "Charlie");
 
-        service.ProcessChatCommand("Alice", isBot: false, "!vote timeout_track 3");
-        service.ProcessChatCommand("Bob", isBot: false, "!yes");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote timeout_track 3");
+        service.ProcessChatCommand(TestSession, "Bob", isBot: false, "!yes");
         await Task.Delay(1500, TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain(messages, m => m.Contains("20 seconds left for voting"));
@@ -435,8 +439,8 @@ public class VotingServiceTests
         SendChat("Bob", "!yes"); // Bob yes (2/2) → early majority
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
-        _mockServerManager.Verify(m => m.SendCommandAsync("track=new_track"), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync("laps=7"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=new_track"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=7"), Times.Once);
         _mockConfigService.Verify(c => c.WriteEventLoopTracks(
             It.IsAny<string>(), It.IsAny<List<EventLoopTrack>>()), Times.Never);
     }
@@ -447,17 +451,17 @@ public class VotingServiceTests
         JoinPlayer("Alice");
 
         _mockServerManager
-            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
-            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) _broadcastMessages.Add(cmd[9..]); })
-            .ReturnsAsync((string cmd) => cmd == "track=wrecknado_02"
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .Callback<AttachmentSession?, string>((_, cmd) => { if (cmd.StartsWith("/message ")) _broadcastMessages.Add(cmd[9..]); })
+            .ReturnsAsync((AttachmentSession? _, string cmd) => cmd == "track=wrecknado_02"
                 ? (false, "track failed")
                 : (true, "ok"));
 
         SendChat("Alice", "!vote wrecknado_02 3");
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
-        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync("laps=3"), Times.Never);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=3"), Times.Never);
         Assert.DoesNotContain(_broadcastMessages, m => m.StartsWith("Next race:", StringComparison.Ordinal));
         Assert.Contains(_broadcastMessages, m => m.Contains("Failed to change track"));
     }
@@ -472,8 +476,8 @@ public class VotingServiceTests
         SendChat("Bob", "!yes");
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
-        _mockServerManager.Verify(m => m.SendCommandAsync("track=new_track"), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync("laps=7"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=new_track"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=7"), Times.Once);
     }
 
     [Fact]
@@ -481,7 +485,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateBirkelandSetup();
 
-        service.ProcessChatCommand("Alice", isBot: false, "!vote Birkeland 1");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote Birkeland 1");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("Multiple matches for 'Birkeland'"));
@@ -497,9 +501,9 @@ public class VotingServiceTests
         var (service, tracker, messages, _) = CreateBirkelandSetup();
         tracker.Seed("Alice", "Bob");
 
-        service.ProcessChatCommand("Alice", isBot: false, "!vote Birkeland 1");
-        service.ProcessChatCommand("Alice", isBot: false, "!confirm 2");
-        service.ProcessChatCommand("Bob", isBot: false, "!yes");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote Birkeland 1");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!confirm 2");
+        service.ProcessChatCommand(TestSession, "Bob", isBot: false, "!yes");
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m == "Vote: TVTP Misc Birkeland Reverse - 1 laps");
@@ -511,7 +515,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateBirkelandSetup();
 
-        service.ProcessChatCommand("Alice", isBot: false, "!vote Birkland 1");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!vote Birkland 1");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("Possible matches for 'Birkland'"));
@@ -624,7 +628,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateSearchSetup();
 
-        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!search circuit");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var combined = string.Join(" ", messages);
@@ -641,7 +645,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateSearchSetup(matchCount: 12);
 
-        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!search circuit");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.True(messages.Count >= 2);
@@ -653,7 +657,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateSearchSetup();
 
-        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!search circuit");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m == "Matches: track_1 - Track 1 Circuit");
@@ -665,8 +669,8 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateSearchSetup(matchCount: 12);
 
-        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
-        service.ProcessChatCommand("Alice", isBot: false, "!more");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!search circuit");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!more");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var combined = string.Join(" ", messages);
@@ -683,9 +687,9 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateSearchSetup(matchCount: 12);
 
-        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
-        service.ProcessChatCommand("Alice", isBot: false, "!more");
-        service.ProcessChatCommand("Alice", isBot: false, "!more");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!search circuit");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!more");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!more");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m == "More matches: track_11 - Track 11 Circuit");
@@ -698,7 +702,7 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateSearchSetup(matchCount: 12);
 
-        service.ProcessChatCommand("Alice", isBot: false, "!more");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!more");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("No more search results"));
@@ -709,8 +713,8 @@ public class VotingServiceTests
     {
         var (service, _, messages, _) = CreateSearchSetup(matchCount: 12);
 
-        service.ProcessChatCommand("Alice", isBot: false, "!search circuit");
-        service.ProcessChatCommand("Bob", isBot: false, "!more");
+        service.ProcessChatCommand(TestSession, "Alice", isBot: false, "!search circuit");
+        service.ProcessChatCommand(TestSession, "Bob", isBot: false, "!more");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m =>
@@ -792,8 +796,8 @@ public class VotingServiceTests
         SendChat("Procat", "!vote wrecknado_02 3");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync("laps=3"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=3"), Times.Once);
         Assert.Contains(_broadcastMessages, m => m == "Next race: Wrecknado (3 laps)");
         Assert.DoesNotContain(_broadcastMessages, m => m.Contains("!yes", StringComparison.Ordinal));
     }
@@ -814,7 +818,7 @@ public class VotingServiceTests
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         _mockServerManager.Verify(m => m.TryRefreshPlayersFromHookAsync(), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
         Assert.Contains(_broadcastMessages, m => m == "Vote: Wrecknado - 3 laps");
         Assert.DoesNotContain(_broadcastMessages, m => m.StartsWith("Vote passed!", StringComparison.Ordinal));
     }
@@ -831,7 +835,7 @@ public class VotingServiceTests
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         _mockServerManager.Verify(m => m.TryRefreshPlayersFromHookAsync(), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
         Assert.Contains(_broadcastMessages, m => m.Contains("no human players found"));
         Assert.DoesNotContain(_broadcastMessages, m => m == "Vote: Wrecknado - 3 laps");
     }
@@ -860,8 +864,8 @@ public class VotingServiceTests
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         _mockServerManager.Verify(m => m.TryRefreshPlayersFromHookAsync(), Times.Exactly(2));
-        _mockServerManager.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
-        _mockServerManager.Verify(m => m.SendCommandAsync("laps=3"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
+        _mockServerManager.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=3"), Times.Once);
     }
 
     [Fact]
@@ -915,8 +919,8 @@ public class VotingServiceTests
             mockEvents.Object);
 
         serverMock
-            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
-            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .Callback<AttachmentSession?, string>((_, cmd) => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
@@ -987,8 +991,8 @@ public class VotingServiceTests
             mockEvents.Object);
 
         serverMock
-            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
-            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .Callback<AttachmentSession?, string>((_, cmd) => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
@@ -1032,8 +1036,8 @@ public class VotingServiceTests
             mockEvents.Object);
 
         serverMock
-            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
-            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .Callback<AttachmentSession?, string>((_, cmd) => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
@@ -1083,8 +1087,8 @@ public class VotingServiceTests
             mockEvents.Object);
 
         serverMock
-            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
-            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .Callback<AttachmentSession?, string>((_, cmd) => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
@@ -1126,8 +1130,8 @@ public class VotingServiceTests
             mockEvents.Object);
 
         serverMock
-            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
-            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .Callback<AttachmentSession?, string>((_, cmd) => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
@@ -1172,8 +1176,8 @@ public class VotingServiceTests
             mockEvents.Object);
 
         serverMock
-            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
-            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .Callback<AttachmentSession?, string>((_, cmd) => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
             .ReturnsAsync((true, "ok"));
 
         var configMock = new Mock<ConfigService>(
@@ -1222,8 +1226,8 @@ public class VotingServiceTests
             mockEvents.Object);
 
         serverMock
-            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
-            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .Callback<AttachmentSession?, string>((_, cmd) => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
             .ReturnsAsync((true, "ok"));
 
         var service = new VotingService(
@@ -1249,16 +1253,16 @@ public class VotingServiceTests
     {
         var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Voting);
         tracker.Seed("Alice", "Bob", "Carol");
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02");
         var firstVote = CurrentVoteId(service);
-        service.ProcessChatCommand("Bob", false, "!yes");
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_03");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_03");
         var secondVote = CurrentVoteId(service);
 
         ExpireVote(service, firstVote);
         Assert.DoesNotContain(messages, m => m.StartsWith("Vote timed out:"));
-        service.ProcessChatCommand("Bob", false, "!yes");
-        server.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+        service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_03"), Times.Once);
         Assert.NotEqual(firstVote, secondVote);
     }
 
@@ -1272,13 +1276,13 @@ public class VotingServiceTests
     {
         var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Voting);
         tracker.Seed("Alice", "Bob", "Carol", "Dave", "Eve", "Frank");
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02");
         if (yesVotes > 1)
-            service.ProcessChatCommand("Bob", false, "!yes");
+            service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
         if (noVotes > 0)
-            service.ProcessChatCommand("Carol", false, "!no");
+            service.ProcessChatCommand(TestSession, "Carol", false, "!no");
         if (noVotes > 1)
-            service.ProcessChatCommand("Dave", false, "!no");
+            service.ProcessChatCommand(TestSession, "Dave", false, "!no");
         if (yesVotes == 0)
         {
             tracker.Clear();
@@ -1286,10 +1290,10 @@ public class VotingServiceTests
         }
 
         // Leave time for abstaining players to vote before deciding the result.
-        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
         ExpireVote(service, CurrentVoteId(service));
 
-        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"),
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"),
             passes ? Times.Once() : Times.Never());
         Assert.Contains(messages, m => m.StartsWith(passes ? "Vote passed!" : "Vote timed out:"));
     }
@@ -1299,15 +1303,15 @@ public class VotingServiceTests
     {
         var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Voting);
         tracker.Seed("Alice", "Bob", "Carol", "Dave");
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
-        service.ProcessChatCommand("Bob", false, "!yes");
-        service.ProcessChatCommand("Carol", false, "!no");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
+        service.ProcessChatCommand(TestSession, "Carol", false, "!no");
         tracker.Clear();
         tracker.Seed("Alice", "Carol", "Dave");
 
         ExpireVote(service, CurrentVoteId(service));
 
-        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
         Assert.Contains(messages, m => m.StartsWith("Vote timed out:"));
     }
 
@@ -1316,13 +1320,13 @@ public class VotingServiceTests
     {
         var (service, tracker, _, server, _) = CreateModeSetup(VoteModes.Voting);
         tracker.Seed("Alice", "Bob", "Carol", "Dave", "Eve");
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
-        service.ProcessChatCommand("Bob", false, "!yes");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
         tracker.Clear();
         tracker.Seed("Alice", "Carol", "Dave", "Eve");
-        service.ProcessChatCommand("Carol", false, "!yes");
+        service.ProcessChatCommand(TestSession, "Carol", false, "!yes");
 
-        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
         ExpireVote(service, CurrentVoteId(service));
     }
 
@@ -1335,10 +1339,10 @@ public class VotingServiceTests
         var (service, tracker, messages, _, config) = CreateModeSetup(VoteModes.Voting);
         config["Vote:VoteTimeoutSeconds"] = configured.ToString();
         tracker.Seed("Alice", "Bob");
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02");
         Assert.Contains(messages, m => m.EndsWith($"Ends in {expected}s."));
         ExpireVote(service, CurrentVoteId(service));
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_03");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_03");
         Assert.Contains(messages, m => m == "Vote: Wrecknado Reverse");
         ExpireVote(service, CurrentVoteId(service));
     }
@@ -1349,19 +1353,19 @@ public class VotingServiceTests
         var (service, tracker, messages, server, config) = CreateModeSetup(VoteModes.Direct);
         tracker.Seed("Alice", "Bob", "Carol");
         var pending = new TaskCompletionSource<(bool Success, string Message)>();
-        server.Setup(m => m.SendCommandAsync("track=wrecknado_02")).Returns(pending.Task);
+        server.Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02")).Returns(pending.Task);
         var apply = typeof(VotingService).GetMethod("ApplyDirectTrackChangeAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
-        var first = (Task)apply.Invoke(service, ["Alice", "wrecknado_02", null])!;
+        var first = (Task)apply.Invoke(service, [TestSession, "Alice", "wrecknado_02", null])!;
         config["Vote:DirectCooldownSeconds"] = "0";
-        service.ProcessChatCommand("Bob", false, "!track wrecknado_03");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!track wrecknado_03");
         config["Vote:DirectCooldownSeconds"] = "30";
         pending.SetResult((false, "failed"));
         await first;
 
-        service.ProcessChatCommand("Carol", false, "!track wrecknado_03");
+        service.ProcessChatCommand(TestSession, "Carol", false, "!track wrecknado_03");
 
-        server.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_03"), Times.Once);
         Assert.Contains(messages, m => m.Contains("Try again in"));
     }
 
@@ -1369,7 +1373,7 @@ public class VotingServiceTests
     public void Broadcast_LongUnknownTrack_RespectsChatLimit()
     {
         var (service, _, messages, _, _) = CreateModeSetup(VoteModes.Voting);
-        service.ProcessChatCommand("Alice", false, "!track " + new string('z', 300));
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track " + new string('z', 300));
         Assert.NotEmpty(messages);
         Assert.All(messages, m => Assert.True(m.Length <= 127, m));
     }
@@ -1385,7 +1389,7 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 10");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 10");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m == "Vote: Wrecknado - 10 laps");
@@ -1398,11 +1402,11 @@ public class VotingServiceTests
         var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Off);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 10");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 10");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("disabled", StringComparison.OrdinalIgnoreCase));
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
     }
 
     // --- direct mode --------------------------------------------------------
@@ -1414,11 +1418,11 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 6");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 6");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
-        serverMock.Verify(m => m.SendCommandAsync("laps=6"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=6"), Times.Once);
         Assert.DoesNotContain(messages, m => m.Contains("!yes", StringComparison.Ordinal));
         // Two humans online, so the change is attributed.
         Assert.Contains(messages, m => m == "Next race: Wrecknado (6 laps) - set by Alice");
@@ -1431,11 +1435,11 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
     }
 
     [Fact]
@@ -1444,11 +1448,11 @@ public class VotingServiceTests
         var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 99");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 99");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("Invalid laps", StringComparison.Ordinal));
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
     }
 
     [Fact]
@@ -1459,18 +1463,18 @@ public class VotingServiceTests
         Join(tracker, "Bob");
 
         // "wreckn" is a substring of both allowed tracks but equals neither name.
-        service.ProcessChatCommand("Alice", false, "!track wreckn 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wreckn 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("!confirm", StringComparison.Ordinal));
         Assert.Contains(messages, m => m.Contains("change track", StringComparison.Ordinal));
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("track="))), Times.Never);
 
-        service.ProcessChatCommand("Alice", false, "!confirm 1");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!confirm 1");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Once);
-        serverMock.Verify(m => m.SendCommandAsync("laps=4"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("track="))), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=4"), Times.Once);
     }
 
     [Fact]
@@ -1479,16 +1483,16 @@ public class VotingServiceTests
         var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Direct);
         Join(tracker, "Alice");
         Join(tracker, "Bob");
-        service.ProcessChatCommand("Alice", false, "!track wreckn 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wreckn 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         // An admin takes both offered variants out of voting.
         config["Vote:AllowedTracks:0:Id"] = "retired_one";
         config["Vote:AllowedTracks:1:Id"] = "retired_two";
-        service.ProcessChatCommand("Alice", false, "!confirm 1");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!confirm 1");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("track="))), Times.Never);
         Assert.Contains(messages, m => m.Contains("no longer available", StringComparison.Ordinal));
     }
 
@@ -1498,14 +1502,14 @@ public class VotingServiceTests
         var (service, tracker, messages, serverMock, config) = CreateModeSetup(VoteModes.Voting);
         Join(tracker, "Alice");
         Join(tracker, "Bob");
-        service.ProcessChatCommand("Alice", false, "!vote wrecknado_02");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!vote wrecknado_02");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         config["Vote:AllowedTracks:0:Id"] = "retired_one";
-        service.ProcessChatCommand("Bob", false, "!yes");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("track="))), Times.Never);
         Assert.Contains(messages, m => m.Contains("wrecknado_02 is no longer available", StringComparison.Ordinal));
     }
 
@@ -1516,10 +1520,10 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!lucky");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!lucky");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("track="))), Times.Once);
         Assert.DoesNotContain(messages, m => m.Contains("!yes", StringComparison.Ordinal));
     }
 
@@ -1532,18 +1536,18 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
         messages.Clear();
 
-        service.ProcessChatCommand("Bob", false, "!track wrecknado_03 4");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!track wrecknado_03 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var refusal = Assert.Single(messages);
         Assert.StartsWith("Bob: track was just changed by Alice.", refusal);
         Assert.Matches(@"Try again in \d+s\.$", refusal);
         Assert.DoesNotContain("in 0s", refusal);
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_03"), Times.Never);
     }
 
     [Fact]
@@ -1553,11 +1557,11 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
         messages.Clear();
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_03 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_03 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.StartsWith("Alice: you just changed the track.", Assert.Single(messages));
@@ -1569,14 +1573,14 @@ public class VotingServiceTests
         var (service, tracker, _, serverMock, _) = CreateModeSetup(VoteModes.Direct);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_03 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_03 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         // Nobody to fight with, so back-to-back changes are fine.
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_03"), Times.Once);
     }
 
     [Fact]
@@ -1588,13 +1592,13 @@ public class VotingServiceTests
         Join(tracker, "Admin");
         tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        service.ProcessChatCommand("Admin", false, "!track wrecknado_03 4");
+        service.ProcessChatCommand(TestSession, "Admin", false, "!track wrecknado_03 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_03"), Times.Once);
     }
 
     [Fact]
@@ -1605,12 +1609,12 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
-        service.ProcessChatCommand("Bob", false, "!track wrecknado_03 4");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!track wrecknado_03 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_03"), Times.Once);
     }
 
     [Fact]
@@ -1621,17 +1625,17 @@ public class VotingServiceTests
         Join(tracker, "Bob");
 
         serverMock
-            .Setup(m => m.SendCommandAsync("track=wrecknado_02"))
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"))
             .ReturnsAsync((false, "server said no"));
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         // Alice's attempt failed, so Bob must not be locked out by it.
-        service.ProcessChatCommand("Bob", false, "!track wrecknado_03 4");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!track wrecknado_03 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_03"), Times.Once);
     }
 
     // --- live config-reload interlocks --------------------------------------
@@ -1644,18 +1648,18 @@ public class VotingServiceTests
         Join(tracker, "Bob");
         Join(tracker, "Carol");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
         messages.Clear();
 
         // Configuration is re-read per access, so this takes effect immediately.
         config["Vote:Mode"] = VoteModes.Off;
 
-        service.ProcessChatCommand("Bob", false, "!yes");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("Vote cancelled", StringComparison.Ordinal));
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
     }
 
     [Fact]
@@ -1666,21 +1670,21 @@ public class VotingServiceTests
         Join(tracker, "Bob");
         Join(tracker, "Carol");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         config["Vote:Mode"] = VoteModes.Direct;
         messages.Clear();
 
-        service.ProcessChatCommand("Bob", false, "!track wrecknado_03 4");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!track wrecknado_03 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         // The orphaned vote is retired first - leaving it running would let its timer
         // apply a track change under a mode that no longer votes - and only then does
         // the direct change go through.
         Assert.Contains(messages, m => m.Contains("Vote cancelled", StringComparison.Ordinal));
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_03"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_03"), Times.Once);
     }
 
     [Fact]
@@ -1689,7 +1693,7 @@ public class VotingServiceTests
         var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Direct);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!config");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!config");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("mode=direct", StringComparison.Ordinal));
@@ -1702,7 +1706,7 @@ public class VotingServiceTests
         var (service, tracker, messages, _, _) = CreateModeSetup(VoteModes.Direct);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!help");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!help");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("change the track now", StringComparison.Ordinal));
@@ -1720,20 +1724,20 @@ public class VotingServiceTests
         Join(tracker, "Carol");
 
         // Alice starts the vote and is auto-counted as a yes, so yes=1.
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        service.ProcessChatCommand("Bob", false, "!no");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!no");
         await Task.Delay(50, TestContext.Current.CancellationToken);
         Assert.DoesNotContain(messages, m => m.Contains("Vote failed", StringComparison.Ordinal));
 
         // no=2 of 3 online is a strict majority, so this ends it without waiting
         // for the 30s timeout.
-        service.ProcessChatCommand("Carol", false, "!no");
+        service.ProcessChatCommand(TestSession, "Carol", false, "!no");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("Vote failed: majority voted no", StringComparison.Ordinal));
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
     }
 
     /// <summary>
@@ -1750,15 +1754,15 @@ public class VotingServiceTests
         Join(tracker, "Bob");
         Join(tracker, "Carol");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         // Alice's auto-yes plus Bob's makes yes=2 of 3 - a strict majority.
-        service.ProcessChatCommand("Bob", false, "!yes");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("Vote passed", StringComparison.Ordinal));
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
     }
 
     [Fact]
@@ -1769,15 +1773,15 @@ public class VotingServiceTests
         Join(tracker, "Bob");
         Join(tracker, "Carol");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
-        service.ProcessChatCommand("Bob", false, "!no");
-        service.ProcessChatCommand("Carol", false, "!no");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!no");
+        service.ProcessChatCommand(TestSession, "Carol", false, "!no");
         await Task.Delay(50, TestContext.Current.CancellationToken);
         messages.Clear();
 
         // The vote is over; a straggler must not restart or re-tally it.
-        service.ProcessChatCommand("Bob", false, "!yes");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Empty(messages);
@@ -1820,7 +1824,7 @@ public class VotingServiceTests
         StubServerState(serverMock, count: 4, index: -1, sessionState);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!help");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!help");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
         Assert.Equal(!suppressed, messages.Any(m => m.StartsWith("Help:", StringComparison.Ordinal)));
@@ -1835,7 +1839,7 @@ public class VotingServiceTests
         serverMock.Setup(m => m.ReadHookSessionAsync()).ReturnsAsync((HookSessionState?)null);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!help");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!help");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.StartsWith("Help:", StringComparison.Ordinal));
@@ -1849,7 +1853,7 @@ public class VotingServiceTests
         StubServerState(serverMock, count: 4, index: -1, racing: true);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!help");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!help");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
         Assert.DoesNotContain(messages, m => m.StartsWith("Help:", StringComparison.Ordinal));
@@ -1866,7 +1870,7 @@ public class VotingServiceTests
 
         for (var i = 0; i < 4; i++)
         {
-            service.ProcessChatCommand("Alice", false, "!help");
+            service.ProcessChatCommand(TestSession, "Alice", false, "!help");
             await Task.Delay(40, TestContext.Current.CancellationToken);
         }
 
@@ -1880,7 +1884,7 @@ public class VotingServiceTests
         StubServerState(serverMock, count: 4, index: -1, racing: false);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!help");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!help");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.StartsWith("Help:", StringComparison.Ordinal));
@@ -1893,11 +1897,11 @@ public class VotingServiceTests
         StubServerState(serverMock, count: 4, index: 0, racing: false);   // index 0 => enabled
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("event loop is running", StringComparison.Ordinal));
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
     }
 
     [Fact]
@@ -1907,10 +1911,10 @@ public class VotingServiceTests
         StubServerState(serverMock, count: 4, index: -1, racing: false);  // index -1 => off
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
     }
 
     [Theory]
@@ -1927,7 +1931,7 @@ public class VotingServiceTests
         player.IsAdmin = !moderator;
         player.IsModerator = moderator;
 
-        service.ProcessChatCommand("Admin", false, command);
+        service.ProcessChatCommand(TestSession, "Admin", false, command);
 
         Assert.Contains(expectedMode == VoteModes.Direct ? "Voting disabled." : "Voting enabled.", messages);
         AssertReportedMode(service, messages, expectedMode);
@@ -1942,7 +1946,7 @@ public class VotingServiceTests
         Join(tracker, "Admin");
         tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
 
-        service.ProcessChatCommand("Admin", false, "!voting off");
+        service.ProcessChatCommand(TestSession, "Admin", false, "!voting off");
         AssertReportedMode(service, messages, VoteModes.Direct);
 
         // A reload that changes nothing is not a saved change.
@@ -1970,7 +1974,7 @@ public class VotingServiceTests
         Join(tracker, "Admin");
         tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
 
-        service.ProcessChatCommand("Admin", false, "!voting off");
+        service.ProcessChatCommand(TestSession, "Admin", false, "!voting off");
         AssertReportedMode(service, messages, VoteModes.Direct);
 
         // Saving Vote unchanged, or another section, leaves the chat override in place.
@@ -1991,7 +1995,7 @@ public class VotingServiceTests
     private static void AssertReportedMode(VotingService service, List<string> messages, string mode)
     {
         messages.Clear();
-        service.ProcessChatCommand("Observer", false, "!config");
+        service.ProcessChatCommand(TestSession, "Observer", false, "!config");
         Assert.Contains(messages, m => m.Contains($"mode={mode.ToLowerInvariant()},", StringComparison.Ordinal));
     }
 
@@ -2004,12 +2008,12 @@ public class VotingServiceTests
         Join(tracker, "Bob");
         tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
 
-        service.ProcessChatCommand("Admin", false, "!voting off");
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Admin", false, "!voting off");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
-        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Once);
-        server.Verify(m => m.SendCommandAsync("laps=4"), Times.Once);
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Once);
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=4"), Times.Once);
         Assert.DoesNotContain(messages, m => m.Contains("Vote started", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -2022,7 +2026,7 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         tracker.GetPlayers().Single(p => p.Name == "Alice").IsAdmin = isBot;
 
-        service.ProcessChatCommand("Alice", isBot, "!voting off");
+        service.ProcessChatCommand(TestSession, "Alice", isBot, "!voting off");
 
         Assert.Empty(messages);
         AssertReportedMode(service, messages, VoteModes.Voting);
@@ -2038,7 +2042,7 @@ public class VotingServiceTests
         Join(tracker, "Admin");
         tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
 
-        service.ProcessChatCommand("Admin", false, command);
+        service.ProcessChatCommand(TestSession, "Admin", false, command);
 
         Assert.Contains("Usage: !voting on|off", messages);
         AssertReportedMode(service, messages, VoteModes.Off);
@@ -2052,17 +2056,17 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
         tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         var voteId = CurrentVoteId(service);
 
-        service.ProcessChatCommand("Admin", false, "!voting off");
-        service.ProcessChatCommand("Bob", false, "!yes");
-        service.ProcessChatCommand("Admin", false, "!voting on");
+        service.ProcessChatCommand(TestSession, "Admin", false, "!voting off");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
+        service.ProcessChatCommand(TestSession, "Admin", false, "!voting on");
         ExpireVote(service, voteId);
 
         Assert.Contains(messages, m => m.Contains("Vote cancelled", StringComparison.Ordinal));
         Assert.Contains("Voting disabled.", messages);
-        server.Verify(m => m.SendCommandAsync("track=wrecknado_02"), Times.Never);
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
     }
 
     // --- !eventloop ---------------------------------------------------------
@@ -2074,7 +2078,7 @@ public class VotingServiceTests
         StubServerState(serverMock, count: 4, index: 0, racing: false);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!eventloop");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!eventloop");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
         // Hidden from !help, so answering back would advertise that it exists.
@@ -2089,7 +2093,7 @@ public class VotingServiceTests
         Join(tracker, "Mod");
         tracker.GetPlayers().Single(p => p.Name == "Mod").IsModerator = true;
 
-        service.ProcessChatCommand("Mod", false, "!eventloop");
+        service.ProcessChatCommand(TestSession, "Mod", false, "!eventloop");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m == "Event loop: on (entry 3/4)");
@@ -2103,11 +2107,11 @@ public class VotingServiceTests
         Join(tracker, "Admin");
         tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
 
-        service.ProcessChatCommand("Admin", false, "!eventloop on");
+        service.ProcessChatCommand(TestSession, "Admin", false, "!eventloop on");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("already on", StringComparison.Ordinal));
-        serverMock.Verify(m => m.SendCommandAsync("/eventloop"), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/eventloop"), Times.Never);
     }
 
     [Fact]
@@ -2120,11 +2124,11 @@ public class VotingServiceTests
         Join(tracker, "Admin");
         tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
 
-        service.ProcessChatCommand("Admin", false, "!eventloop off");
+        service.ProcessChatCommand(TestSession, "Admin", false, "!eventloop off");
         // The toggle is polled for up to 8 x 250ms before giving up.
         await Task.Delay(2600, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync("/eventloop"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/eventloop"), Times.Once);
         Assert.Contains(messages, m => m.Contains("did not change", StringComparison.Ordinal));
     }
 
@@ -2148,7 +2152,7 @@ public class VotingServiceTests
             ]))
             .ReturnsAsync(true);
 
-        service.ProcessChatCommand("Admin", false, "!eventloop");
+        service.ProcessChatCommand(TestSession, "Admin", false, "!eventloop");
         await Task.Delay(120, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.StartsWith("Event loop:", StringComparison.Ordinal));
@@ -2170,11 +2174,11 @@ public class VotingServiceTests
         serverMock.Setup(m => m.ReadHookSessionAsync())
             .ReturnsAsync(new HookSessionState((int)ServerSessionPhase.Lobby, -100000, EventCounter: 0, Ended: false));
 
-        serverMock.Setup(m => m.SendCommandAsync("/eventloop"))
+        serverMock.Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/eventloop"))
             .Callback(() => _ = Task.Run(async () => { await Task.Delay(400); index = -1; }))
             .ReturnsAsync((true, "ok"));
 
-        service.ProcessChatCommand("Admin", false, "!eventloop off");
+        service.ProcessChatCommand(TestSession, "Admin", false, "!eventloop off");
         await Task.Delay(2000, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m == "Event loop: off (4 entries)");
@@ -2191,7 +2195,7 @@ public class VotingServiceTests
         StubServerState(serverMock, count: 4, index: 0, racing: false);   // loop on
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!track wreckn");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wreckn");
         await Task.Delay(120, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("event loop is running", StringComparison.Ordinal));
@@ -2206,7 +2210,7 @@ public class VotingServiceTests
         StubServerState(serverMock, count: 4, index: 0, racing: false);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!lucky");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!lucky");
         await Task.Delay(120, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("event loop is running", StringComparison.Ordinal));
@@ -2223,7 +2227,7 @@ public class VotingServiceTests
         StubServerState(serverMock, count: 4, index: -1, racing: true);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!help");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!help");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.StartsWith("Help:", StringComparison.Ordinal));
@@ -2233,7 +2237,7 @@ public class VotingServiceTests
     // --- !laps ----------------------------------------------------------------
 
     private static void VerifyNoTrackSent(Mock<ServerManager> serverMock) =>
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("track="))), Times.Never);
 
     [Fact]
     public async Task LapsCommand_InDirectMode_SendsOnlyLaps()
@@ -2242,10 +2246,10 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!laps 6");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!laps 6");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync("laps=6"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=6"), Times.Once);
         VerifyNoTrackSent(serverMock);
         Assert.Contains(messages, m => m == "Next race: 6 laps, same track - set by Alice");
         Assert.DoesNotContain(messages, m => m.Contains("!yes", StringComparison.Ordinal));
@@ -2258,15 +2262,15 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
         messages.Clear();
 
-        service.ProcessChatCommand("Bob", false, "!laps 6");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!laps 6");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.StartsWith("Bob: track was just changed by Alice.", Assert.Single(messages));
-        serverMock.Verify(m => m.SendCommandAsync("laps=6"), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=6"), Times.Never);
     }
 
     [Fact]
@@ -2276,11 +2280,11 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
         serverMock
-            .Setup(m => m.SendCommandAsync(It.IsAny<string>()))
-            .Callback<string>(cmd => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
-            .ReturnsAsync((string cmd) => cmd.StartsWith("laps=") ? (false, "rejected") : (true, "ok"));
+            .Setup(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .Callback<AttachmentSession?, string>((_, cmd) => { if (cmd.StartsWith("/message ")) messages.Add(cmd[9..]); })
+            .ReturnsAsync((AttachmentSession? _, string cmd) => cmd.StartsWith("laps=") ? (false, "rejected") : (true, "ok"));
 
-        service.ProcessChatCommand("Alice", false, "!laps 6");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!laps 6");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m == "Failed to change laps.");
@@ -2288,7 +2292,7 @@ public class VotingServiceTests
 
         // The rejected change did not use the window, so Bob is not told to wait.
         messages.Clear();
-        service.ProcessChatCommand("Bob", false, "!laps 5");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!laps 5");
         await Task.Delay(50, TestContext.Current.CancellationToken);
         Assert.DoesNotContain(messages, m => m.Contains("Try again", StringComparison.Ordinal));
     }
@@ -2301,19 +2305,19 @@ public class VotingServiceTests
         Join(tracker, "Bob");
         Join(tracker, "Carol");
 
-        service.ProcessChatCommand("Alice", false, "!laps 7");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!laps 7");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m == "Vote: 7 laps, same track");
         Assert.Contains(messages, m => m == "By Alice. Type !yes or !no. Ends in 30s.");
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
 
-        service.ProcessChatCommand("Bob", false, "!yes");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!yes");
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m == "Vote for 7 laps: 2 yes, 0 no (3 players online).");
         Assert.Contains(messages, m => m == "Vote passed! Next race: 7 laps, same track.");
-        serverMock.Verify(m => m.SendCommandAsync("laps=7"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=7"), Times.Once);
         VerifyNoTrackSent(serverMock);
     }
 
@@ -2323,10 +2327,10 @@ public class VotingServiceTests
         var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Voting);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!laps 3");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!laps 3");
         await Task.Delay(100, TestContext.Current.CancellationToken);
 
-        serverMock.Verify(m => m.SendCommandAsync("laps=3"), Times.Once);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "laps=3"), Times.Once);
         VerifyNoTrackSent(serverMock);
         Assert.Equal("Next race: 3 laps, same track", Assert.Single(messages));
     }
@@ -2338,17 +2342,17 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!track wrecknado_02 4");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!track wrecknado_02 4");
         await Task.Delay(50, TestContext.Current.CancellationToken);
         messages.Clear();
 
         // Even with an invalid count: the vote guard answers before parsing.
-        service.ProcessChatCommand("Bob", false, "!laps 99");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!laps 99");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var refusal = Assert.Single(messages);
         Assert.StartsWith("Bob: vote in progress - Wrecknado for 4 laps", refusal);
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
     }
 
     [Fact]
@@ -2358,11 +2362,11 @@ public class VotingServiceTests
         Join(tracker, "Alice");
         Join(tracker, "Bob");
 
-        service.ProcessChatCommand("Alice", false, "!laps 5");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!laps 5");
         await Task.Delay(50, TestContext.Current.CancellationToken);
         messages.Clear();
 
-        service.ProcessChatCommand("Bob", false, "!track wrecknado_02");
+        service.ProcessChatCommand(TestSession, "Bob", false, "!track wrecknado_02");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         var refusal = Assert.Single(messages);
@@ -2375,11 +2379,11 @@ public class VotingServiceTests
         var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Off);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!laps 5");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!laps 5");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Equal("Voting is currently disabled.", Assert.Single(messages));
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
     }
 
     [Fact]
@@ -2389,11 +2393,11 @@ public class VotingServiceTests
         StubServerState(serverMock, count: 4, index: 0, racing: false);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!laps 5");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!laps 5");
         await Task.Delay(80, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains("event loop is running", StringComparison.Ordinal));
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
     }
 
     [Theory]
@@ -2405,11 +2409,11 @@ public class VotingServiceTests
         var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, command);
+        service.ProcessChatCommand(TestSession, "Alice", false, command);
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Equal("Invalid laps: must be between 1 and 10.", Assert.Single(messages));
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
     }
 
     [Theory]
@@ -2421,11 +2425,11 @@ public class VotingServiceTests
         var (service, tracker, messages, serverMock, _) = CreateModeSetup(VoteModes.Direct);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, command);
+        service.ProcessChatCommand(TestSession, "Alice", false, command);
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Equal("Usage: !laps <laps> (laps must be between 1 and 10)", Assert.Single(messages));
-        serverMock.Verify(m => m.SendCommandAsync(It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
+        serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("laps="))), Times.Never);
     }
 
     [Theory]
@@ -2436,7 +2440,7 @@ public class VotingServiceTests
         var (service, tracker, messages, _, _) = CreateModeSetup(mode);
         Join(tracker, "Alice");
 
-        service.ProcessChatCommand("Alice", false, "!help");
+        service.ProcessChatCommand(TestSession, "Alice", false, "!help");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(expected, messages);
@@ -2456,13 +2460,99 @@ public class VotingServiceTests
         Join(tracker, "Bob");
 
         // The long name starts the change, then is refused while it is pending.
-        service.ProcessChatCommand(longName, false, "!laps 5");
+        service.ProcessChatCommand(TestSession, longName, false, "!laps 5");
         await Task.Delay(50, TestContext.Current.CancellationToken);
-        service.ProcessChatCommand(longName, false, "!laps 6");
+        service.ProcessChatCommand(TestSession, longName, false, "!laps 6");
         await Task.Delay(50, TestContext.Current.CancellationToken);
 
         Assert.Contains(messages, m => m.Contains(mode == VoteModes.Voting ? "vote in progress" : "Try again", StringComparison.Ordinal));
         Assert.Contains(messages, m => m.StartsWith(mode == VoteModes.Voting ? "By NNN" : "Next race: 5 laps", StringComparison.Ordinal));
         Assert.All(messages, m => Assert.True(m.Length <= 127, m));
+    }
+
+    // ---- Attachment sessions (#40) ----------------------------------------------
+
+    [Fact]
+    public void Vote_IsDroppedWhenItsAttachmentEnds_AndNeverApplied()
+    {
+        var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Voting);
+        tracker.Seed("Alice", "Bob", "Carol");
+        using var attachment = new CancellationTokenSource();
+        var session = new AttachmentSession(7, 4242, attachment.Token);
+
+        service.ProcessChatCommand(session, "Alice", false, "!track wrecknado_02");
+        var vote = CurrentVoteId(service);
+
+        attachment.Cancel();
+        ExpireVote(service, vote);
+
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
+        Assert.DoesNotContain(messages, m => m.StartsWith("Vote passed", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void VoteResult_GoesToTheAttachmentTheVoteStartedUnder()
+    {
+        var (service, tracker, _, server, _) = CreateModeSetup(VoteModes.Voting);
+        tracker.Seed("Alice", "Bob", "Carol");
+        var session = new AttachmentSession(7, 4242, CancellationToken.None);
+
+        service.ProcessChatCommand(session, "Alice", false, "!track wrecknado_02");
+        service.ProcessChatCommand(session, "Bob", false, "!yes");
+
+        server.Verify(m => m.SendCommandAsync(It.Is<AttachmentSession?>(s => s != null && s.Id == 7), "track=wrecknado_02"), Times.Once);
+    }
+
+    [Fact]
+    public void ANewerAttachment_ClearsTheVoteAndThePendingConfirmation()
+    {
+        var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Voting);
+        tracker.Seed("Alice", "Bob", "Carol");
+        var first = new AttachmentSession(1, 4242, CancellationToken.None);
+        var second = new AttachmentSession(2, 4343, CancellationToken.None);
+
+        service.ProcessChatCommand(first, "Alice", false, "!track wrecknado_02");
+        var vote = CurrentVoteId(service);
+
+        // The vote described the first server; a yes on the second is not a vote on it.
+        service.ProcessChatCommand(second, "Bob", false, "!yes");
+        ExpireVote(service, vote);
+
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
+        Assert.DoesNotContain(messages, m => m.StartsWith("Vote for", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AConfirmationOfferedOnAnEarlierAttachment_CannotBeConfirmedOnTheNext()
+    {
+        var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Direct);
+        tracker.Seed("Alice");
+        var first = new AttachmentSession(1, 4242, CancellationToken.None);
+        var second = new AttachmentSession(2, 4343, CancellationToken.None);
+
+        // Matches both Wrecknado tracks, so it offers a choice.
+        service.ProcessChatCommand(first, "Alice", false, "!track wreck");
+        Assert.Contains(messages, m => m.Contains("!confirm", StringComparison.Ordinal));
+
+        service.ProcessChatCommand(second, "Alice", false, "!confirm 1");
+
+        Assert.Contains("No vote confirmation is pending.", messages);
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.Is<string>(c => c.StartsWith("track="))), Times.Never);
+    }
+
+    [Fact]
+    public void AChatCommandFromAReplacedAttachment_IsIgnored()
+    {
+        var (service, tracker, messages, server, _) = CreateModeSetup(VoteModes.Direct);
+        tracker.Seed("Alice");
+        var first = new AttachmentSession(1, 4242, CancellationToken.None);
+        var second = new AttachmentSession(2, 4343, CancellationToken.None);
+        service.ProcessChatCommand(second, "Alice", false, "!help");
+        messages.Clear();
+
+        service.ProcessChatCommand(first, "Alice", false, "!track wrecknado_02");
+
+        Assert.Empty(messages);
+        server.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "track=wrecknado_02"), Times.Never);
     }
 }

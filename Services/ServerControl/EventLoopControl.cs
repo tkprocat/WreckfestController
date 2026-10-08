@@ -85,9 +85,10 @@ public class EventLoopControl
     /// <summary>
     /// Turns the loop on or off. <c>/eventloop</c> is a plain toggle, so it is sent only when
     /// the loop is known to be the other way. Returns the state afterwards; null when it
-    /// cannot be read or the command could not be sent.
+    /// cannot be read or the command could not be sent. The toggle goes to
+    /// <paramref name="session"/> only (#40).
     /// </summary>
-    public async Task<EventLoopState?> SetAsync(bool enabled)
+    public async Task<EventLoopState?> SetAsync(AttachmentSession? session, bool enabled)
     {
         var loop = await ReadAsync();
         if (loop is null || loop.Enabled == enabled)
@@ -95,7 +96,7 @@ public class EventLoopControl
             return loop;
         }
 
-        var sent = await _serverManager.SendCommandAsync("/eventloop");
+        var sent = await _serverManager.SendCommandAsync(session, "/eventloop");
         return sent.Success ? await WaitForStateAsync(enabled) : null;
     }
 
@@ -104,9 +105,9 @@ public class EventLoopControl
     /// first entry. The loop must never be left off, so turning it back on is tried twice.
     /// Returns the state at the end; on means it worked.
     /// </summary>
-    public virtual async Task<EventLoopState?> RestartAsync()
+    public virtual async Task<EventLoopState?> RestartAsync(AttachmentSession? session)
     {
-        var off = await SetAsync(false);
+        var off = await SetAsync(session, false);
         if (off is not { Enabled: false })
         {
             // Could not read it or turn it off: nothing was changed, or it is still on.
@@ -115,7 +116,7 @@ public class EventLoopControl
 
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            var on = await SetAsync(true);
+            var on = await SetAsync(session, true);
             if (on is { Enabled: true })
             {
                 return on;

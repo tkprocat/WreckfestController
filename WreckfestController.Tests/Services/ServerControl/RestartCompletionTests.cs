@@ -34,7 +34,7 @@ public class RestartCompletionTests : IDisposable
     [Fact]
     public async Task SuccessReportsExactlyOneTerminalOutcomeEvenWhenActivationCallbackThrows()
     {
-        _server.Setup(s => s.RestartServerViaCommandAsync()).ReturnsAsync((true, "Restarted"));
+        _server.Setup(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>())).ReturnsAsync((true, "Restarted"));
         var finished = new TaskCompletionSource<RestartOutcome>(TaskCreationOptions.RunContinuationsAsynchronously);
         var calls = 0;
         Assert.True(_restart.InitiateRestart(new Event { Id = 1 }, _ => throw new InvalidOperationException("Consumer failure"),
@@ -65,7 +65,7 @@ public class RestartCompletionTests : IDisposable
             Assert.Equal(SmartRestartState.Warning, _restart.GetState());
             Assert.Equal(2, _restart.GetPendingEvent()!.Id);
             Assert.Equal(RestartOutcome.Cancelled, Assert.Single(outcomes));
-            _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+            _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
         }
         finally { _restart.CancelRestart(); }
     }

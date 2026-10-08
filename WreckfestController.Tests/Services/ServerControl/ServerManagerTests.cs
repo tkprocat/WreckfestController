@@ -346,7 +346,7 @@ public class ServerManagerTests
             // empty list straight after raising the event passes whether or not the
             // output was dropped. Wait for the command that must never arrive.
             var dispatched = new TaskCompletionSource<string>();
-            serverManager.ChatCommandReceived += (_, _, message) => dispatched.TrySetResult(message);
+            serverManager.ChatCommandReceived += (_, _, _, message) => dispatched.TrySetResult(message);
 
             var record = BuildChatRecord("10", "0", "StalePlayer", "!vote");
             outputReader.Raise(r => r.OutputReceivedFrom += null, first.Id, record);
@@ -446,7 +446,7 @@ public class ServerManagerTests
             var firstCommandRunning = new TaskCompletionSource();
             var releaseWorker = new TaskCompletionSource();
             var executed = new List<string>();
-            serverManager.ChatCommandReceived += (_, _, message) =>
+            serverManager.ChatCommandReceived += (_, _, _, message) =>
             {
                 lock (executed) { executed.Add(message); }
                 if (message == "!first")
@@ -509,12 +509,12 @@ public class ServerManagerTests
             var handlerRunning = new TaskCompletionSource();
             var releaseHandler = new TaskCompletionSource();
             var sendResult = new TaskCompletionSource<(bool Success, string Message)>();
-            serverManager.ChatCommandReceived += (_, _, _) =>
+            serverManager.ChatCommandReceived += (session, _, _, _) =>
             {
                 handlerRunning.TrySetResult();
                 // Stand in for any wait a handler makes before dispatching.
                 releaseHandler.Task.GetAwaiter().GetResult();
-                sendResult.TrySetResult(serverManager.SendCommandAsync("/kick 1").GetAwaiter().GetResult());
+                sendResult.TrySetResult(serverManager.SendCommandAsync(session, "/kick 1").GetAwaiter().GetResult());
             };
 
             outputReader.Raise(
@@ -567,11 +567,11 @@ public class ServerManagerTests
             var handlerRunning = new TaskCompletionSource();
             var releaseHandler = new TaskCompletionSource();
             var sendResult = new TaskCompletionSource<(bool Success, string Message)>();
-            serverManager.ChatCommandReceived += (_, _, _) =>
+            serverManager.ChatCommandReceived += (session, _, _, _) =>
             {
                 handlerRunning.TrySetResult();
                 releaseHandler.Task.GetAwaiter().GetResult();
-                sendResult.TrySetResult(serverManager.SendCommandAsync("/kick 1").GetAwaiter().GetResult());
+                sendResult.TrySetResult(serverManager.SendCommandAsync(session, "/kick 1").GetAwaiter().GetResult());
             };
 
             outputReader.Raise(
@@ -592,6 +592,200 @@ public class ServerManagerTests
             inputWriter.Verify(
                 w => w.SendCommandAsync(It.IsAny<string>(), It.IsAny<int>()),
                 Times.Never);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // ---- Attachment sessions (#40) ----------------------------------------------
+
+    [Fact]
+    public void AttachmentSession_IsNewOnEveryAttach_EvenBackToTheSameProcess()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object);
+
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            var onFirst = serverManager.CurrentSession!;
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            var onSecond = serverManager.CurrentSession!;
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            var backOnFirst = serverManager.CurrentSession!;
+
+            Assert.Equal(first.Id, backOnFirst.ProcessId);
+            Assert.True(onFirst.Id < onSecond.Id && onSecond.Id < backOnFirst.Id);
+            Assert.True(onFirst.Ended.IsCancellationRequested);
+            Assert.True(onSecond.Ended.IsCancellationRequested);
+            Assert.False(backOnFirst.Ended.IsCancellationRequested);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // #40: a restart asked for under one attachment must not restart a server attached
+    // since, even the same process attached again.
+    [Fact]
+    public async Task RestartServerViaCommand_UnderAReplacedSession_IsRefused()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object);
+
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            var onFirst = serverManager.CurrentSession!;
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            var onSecond = serverManager.CurrentSession!;
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+
+            foreach (var stale in new[] { onFirst, onSecond })
+            {
+                var result = await serverManager.RestartServerViaCommandAsync(stale);
+                Assert.False(result.Success);
+                Assert.Equal("Attachment changed before restart.", result.Message);
+            }
+
+            Assert.Equal("Server is not running", (await serverManager.RestartServerViaCommandAsync(null)).Message);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // Reinjecting restarts the hook's I/O, not the attachment, so work accepted before
+    // it still belongs to the server afterwards.
+    [Fact]
+    public async Task AttachmentSession_SurvivesAReinject()
+    {
+        _mockConfiguration.Setup(c => c["WreckfestServer:SupportedBuild"]).Returns("1.308438");
+        var pid = Process.GetCurrentProcess().Id;
+        var injectedHookReader = new Mock<IInjectedHookOutputReader>();
+        injectedHookReader.Setup(r => r.InjectAsync(pid)).ReturnsAsync((true, "injected"));
+        var serverManager = CreateTestServerManager(injectedHookReader.Object, "1.308438");
+        serverManager.AttachToExistingProcess(pid);
+        var session = serverManager.CurrentSession!;
+
+        Assert.True((await serverManager.InjectConsoleHookAsync(pid)).Success);
+        Assert.True((await serverManager.InjectConsoleHookAsync(pid)).Success);
+
+        Assert.Equal(session, serverManager.CurrentSession);
+        Assert.False(session.Ended.IsCancellationRequested);
+    }
+
+    // The semaphore is the last wait before a command goes out, so it is where the
+    // attachment most often moves underneath a caller.
+    [Fact]
+    public async Task SendCommandAsync_WhenTheAttachmentMovesWhileWaitingForTheSemaphore_IsRefused()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var holding = new TaskCompletionSource<(bool Success, string Message)>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var inputWriter = new Mock<IServerInputWriter>();
+            inputWriter
+                .Setup(w => w.SendCommandAsync("/message one", It.IsAny<int>()))
+                .Returns(holding.Task);
+            inputWriter
+                .Setup(w => w.SendCommandAsync("/message two", It.IsAny<int>()))
+                .ReturnsAsync((true, "sent"));
+
+            var serverManager = CreateServerManager(outputReader.Object, inputWriter.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            var session = serverManager.CurrentSession;
+
+            var holder = serverManager.SendCommandAsync(session, "/message one");
+            var waiter = serverManager.SendCommandAsync(session, "/message two");
+            Assert.False(waiter.IsCompleted);
+
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            holding.SetResult((true, "sent"));
+            await holder.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            var result = await waiter.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            Assert.False(result.Success);
+            Assert.Contains("Attachment moved", result.Message);
+            inputWriter.Verify(w => w.SendCommandAsync("/message two", It.IsAny<int>()), Times.Never);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // Still in the queue, not yet handed to a handler, when the attachment moves.
+    [Fact]
+    public async Task ChatCommand_StillQueuedWhenTheAttachmentMoves_IsNeverHandled()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+
+            var handled = new List<string>();
+            // Asynchronous continuations: otherwise the rest of this test runs inline on the
+            // chat worker when the handler signals, and blocks the queue it is waiting on.
+            var firstRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseFirst = new TaskCompletionSource();
+            serverManager.ChatCommandReceived += (_, _, _, message) =>
+            {
+                lock (handled)
+                {
+                    handled.Add(message);
+                }
+
+                if (message == "!first")
+                {
+                    firstRunning.TrySetResult();
+                    releaseFirst.Task.GetAwaiter().GetResult();
+                }
+            };
+
+            outputReader.Raise(r => r.OutputReceivedFrom += null, first.Id, BuildChatRecord("10", "0", "Player", "!first"));
+            await firstRunning.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            outputReader.Raise(r => r.OutputReceivedFrom += null, first.Id, BuildChatRecord("10", "0", "Player", "!second"));
+
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            releaseFirst.TrySetResult();
+
+            // A marker raised under the new attachment, so its arrival proves the queue
+            // has been worked past the stale command.
+            outputReader.Raise(r => r.OutputReceivedFrom += null, second.Id, BuildChatRecord("10", "0", "Player", "!marker"));
+            WaitForChat(() => { lock (handled) { return handled.Contains("!marker"); } });
+
+            var log = string.Join(" | ", _mockLogger.Invocations.Select(i => string.Join(",", i.Arguments.Select(x => x?.ToString()))));
+            lock (handled)
+            {
+                Assert.True(handled.SequenceEqual(["!first", "!marker"]), log);
+            }
         }
         finally
         {
@@ -626,7 +820,7 @@ public class ServerManagerTests
     public async Task SendCommandAsync_WhenServerNotRunning_ReturnsFailure()
     {
         // Act
-        var result = await _serverManager.SendCommandAsync("test command");
+        var result = await _serverManager.SendCommandAsync(_serverManager.CurrentSession, "test command");
 
         // Assert
         Assert.False(result.Success);
@@ -661,7 +855,7 @@ public class ServerManagerTests
         serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
 
         // Act
-        var result = await serverManager.SendCommandAsync("status");
+        var result = await serverManager.SendCommandAsync(serverManager.CurrentSession, "status");
 
         // Assert
         Assert.True(result.Success);
@@ -697,7 +891,7 @@ public class ServerManagerTests
         serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
 
         // Act
-        var result = await serverManager.SendCommandAsync("/message hello\r\n");
+        var result = await serverManager.SendCommandAsync(serverManager.CurrentSession, "/message hello\r\n");
 
         // Assert
         Assert.True(result.Success);
@@ -729,7 +923,7 @@ public class ServerManagerTests
         serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id);
 
         // Act
-        var result = await serverManager.SendCommandAsync("\r\n");
+        var result = await serverManager.SendCommandAsync(serverManager.CurrentSession, "\r\n");
 
         // Assert
         Assert.False(result.Success);
@@ -857,9 +1051,9 @@ public class ServerManagerTests
 
         // Act
         await Task.WhenAll(
-            serverManager.SendCommandAsync("/message one"),
-            serverManager.SendCommandAsync("/message two"),
-            serverManager.SendCommandAsync("/message three"));
+            serverManager.SendCommandAsync(serverManager.CurrentSession, "/message one"),
+            serverManager.SendCommandAsync(serverManager.CurrentSession, "/message two"),
+            serverManager.SendCommandAsync(serverManager.CurrentSession, "/message three"));
 
         // Assert
         Assert.Equal(1, maxActiveCalls);
@@ -1182,7 +1376,7 @@ public class ServerManagerTests
     {
         // Arrange
         (string PlayerName, bool IsBot, string Message)? received = null;
-        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+        _serverManager.ChatCommandReceived += (_, playerName, isBot, message) =>
             received = (playerName, isBot, message);
 
         // Act
@@ -1203,7 +1397,7 @@ public class ServerManagerTests
     {
         // Arrange
         (string PlayerName, bool IsBot, string Message)? received = null;
-        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+        _serverManager.ChatCommandReceived += (_, playerName, isBot, message) =>
             received = (playerName, isBot, message);
 
         // Act
@@ -1228,7 +1422,7 @@ public class ServerManagerTests
         // Arrange
         var receivedCount = 0;
         (string PlayerName, bool IsBot, string Message)? received = null;
-        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+        _serverManager.ChatCommandReceived += (_, playerName, isBot, message) =>
         {
             receivedCount++;
             received = (playerName, isBot, message);
@@ -1258,7 +1452,7 @@ public class ServerManagerTests
         Assert.Equal(127, message.Length);
 
         (string PlayerName, bool IsBot, string Message)? received = null;
-        _serverManager.ChatCommandReceived += (playerName, isBot, msg) =>
+        _serverManager.ChatCommandReceived += (_, playerName, isBot, msg) =>
             received = (playerName, isBot, msg);
 
         // Act
@@ -1281,7 +1475,7 @@ public class ServerManagerTests
     {
         // Arrange
         (string PlayerName, bool IsBot, string Message)? received = null;
-        _serverManager.ChatCommandReceived += (playerName, isBot, message) =>
+        _serverManager.ChatCommandReceived += (_, playerName, isBot, message) =>
             received = (playerName, isBot, message);
         _serverManager.ProcessConsoleHookOutput = true;
 
@@ -1298,7 +1492,7 @@ public class ServerManagerTests
     {
         // Arrange
         var receivedCount = 0;
-        _serverManager.ChatCommandReceived += (_, _, _) => receivedCount++;
+        _serverManager.ChatCommandReceived += (_, _, _, _) => receivedCount++;
 
         // Act
         InvokeOnInjectedHookOutputReceived(
@@ -1330,7 +1524,7 @@ public class ServerManagerTests
         // Arrange
         var receivedCount = 0;
         var consoleLines = 0;
-        _serverManager.ChatCommandReceived += (_, _, _) => receivedCount++;
+        _serverManager.ChatCommandReceived += (_, _, _, _) => receivedCount++;
         _serverManager.ConsoleOutput += _ => consoleLines++;
         _serverManager.ProcessConsoleHookOutput = true;
 
@@ -1376,7 +1570,7 @@ public class ServerManagerTests
     {
         // Arrange
         var receivedCount = 0;
-        _serverManager.ChatCommandReceived += (_, _, _) => receivedCount++;
+        _serverManager.ChatCommandReceived += (_, _, _, _) => receivedCount++;
 
         // Act - not a ! command, but it still proves the hook is emitting records.
         InvokeOnInjectedHookOutputReceived(
@@ -1426,10 +1620,18 @@ public class ServerManagerTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
 
         Assert.NotNull(method);
-        // No attachment in these cases, so any source PID is accepted. The
-        // stale-source behaviour is covered by
-        // HookOutput_FromAPreviousAttachment_IsDropped.
-        method.Invoke(serverManager, [0, output]);
+        // A chat command needs an attachment session to arrive under. These cases only
+        // need one to exist, so it is set directly: a real attach would also announce
+        // itself on the console output these tests count. The stale-source behaviour
+        // is covered by HookOutput_FromAPreviousAttachment_IsDropped.
+        if (serverManager.CurrentSession == null)
+        {
+            typeof(ServerManager)
+                .GetMethod("SetAttachedProcess", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(serverManager, [Environment.ProcessId, false]);
+        }
+
+        method.Invoke(serverManager, [Environment.ProcessId, output]);
     }
 
     private TestServerManager CreateTestServerManager(IInjectedHookOutputReader injectedHookReader, string? build)

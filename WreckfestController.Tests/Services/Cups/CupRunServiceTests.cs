@@ -42,8 +42,8 @@ public sealed class CupRunServiceTests : IDisposable
             new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), events),
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()),
             events);
-        _server.Setup(s => s.SendCommandAsync(It.IsAny<string>()))
-            .ReturnsAsync((string command) =>
+        _server.Setup(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>()))
+            .ReturnsAsync((AttachmentSession? _, string command) =>
             {
                 _sent.Add(command);
                 return (true, "OK dispatched");
@@ -52,7 +52,7 @@ public sealed class CupRunServiceTests : IDisposable
             .ReturnsAsync(() => _session is { } phase ? new HookSessionState((int)phase, 0, 0, false) : null);
 
         _eventLoop = new Mock<EventLoopControl>(_server.Object);
-        _eventLoop.Setup(l => l.RestartAsync())
+        _eventLoop.Setup(l => l.RestartAsync(It.IsAny<AttachmentSession?>()))
             .ReturnsAsync(() =>
             {
                 _sent.Add("<rotation back to the beginning>");
@@ -144,7 +144,7 @@ public sealed class CupRunServiceTests : IDisposable
         Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
         Assert.Equal(CupPhase.Running, _db.Store.CachedActiveCup?.Phase);
         _publisher.Verify(p => p.CupStartedAsync(cup.Id, "Friday Derby"), Times.Once);
-        _eventLoop.Verify(l => l.RestartAsync(), Times.Never);
+        _eventLoop.Verify(l => l.RestartAsync(It.IsAny<AttachmentSession?>()), Times.Never);
     }
 
     [Fact]
@@ -189,7 +189,7 @@ public sealed class CupRunServiceTests : IDisposable
     public async Task AFailedReset_IsNotRetriedMidRace_EvenPastTheWait()
     {
         var (cup, start, _) = await ActiveAsync();
-        _server.SetupSequence(s => s.SendCommandAsync("/cupreset"))
+        _server.SetupSequence(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/cupreset"))
             .ReturnsAsync((false, "No hook"))
             .ReturnsAsync((true, "OK dispatched"));
         At(start);
@@ -199,7 +199,7 @@ public sealed class CupRunServiceTests : IDisposable
         At(start + CupRunService.LobbyWait);
         await _runs.TickAsync();
 
-        _server.Verify(s => s.SendCommandAsync("/cupreset"), Times.Once);
+        _server.Verify(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/cupreset"), Times.Once);
         Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
     }
 
@@ -238,7 +238,7 @@ public sealed class CupRunServiceTests : IDisposable
     public async Task AFailedReset_IsRetriedOnTheNextCheck()
     {
         var (cup, start, _) = await ActiveAsync();
-        _server.SetupSequence(s => s.SendCommandAsync("/cupreset"))
+        _server.SetupSequence(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/cupreset"))
             .ReturnsAsync((false, "No hook"))
             .ReturnsAsync((true, "OK dispatched"));
         At(start);
@@ -456,7 +456,7 @@ public sealed class CupRunServiceTests : IDisposable
     public async Task AResetRetry_WaitsForTheLobby()
     {
         var (cup, start, _) = await ActiveAsync();
-        _server.SetupSequence(s => s.SendCommandAsync("/cupreset"))
+        _server.SetupSequence(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/cupreset"))
             .ReturnsAsync((false, "No hook"))
             .ReturnsAsync((true, "OK dispatched"));
         At(start);
@@ -465,12 +465,12 @@ public sealed class CupRunServiceTests : IDisposable
         _session = ServerSessionPhase.Racing;
         At(start.AddMinutes(2));
         await _runs.TickAsync();
-        _server.Verify(s => s.SendCommandAsync("/cupreset"), Times.Once);
+        _server.Verify(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/cupreset"), Times.Once);
         Assert.Equal(CupPhase.Starting, (await _db.ReloadAsync(cup.Id)).Phase);
 
         _session = ServerSessionPhase.Lobby;
         await _runs.TickAsync();
-        _server.Verify(s => s.SendCommandAsync("/cupreset"), Times.Exactly(2));
+        _server.Verify(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/cupreset"), Times.Exactly(2));
         Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
     }
 
@@ -480,7 +480,7 @@ public sealed class CupRunServiceTests : IDisposable
     public async Task AStartWhoseResetFailed_SurvivesAControllerRestart()
     {
         var (cup, start, _) = await ActiveAsync();
-        _server.SetupSequence(s => s.SendCommandAsync("/cupreset"))
+        _server.SetupSequence(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/cupreset"))
             .ReturnsAsync((false, "No hook"))
             .ReturnsAsync((true, "OK dispatched"));
         At(start);
@@ -542,16 +542,16 @@ public sealed class CupRunServiceTests : IDisposable
     public async Task AResetThatIsRetried_TogglesTheLoopOnlyOnce_AfterItGoesThrough()
     {
         var (_, start, _) = await ActiveAsync(restartRotation: true);
-        _server.SetupSequence(s => s.SendCommandAsync("/cupreset"))
+        _server.SetupSequence(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/cupreset"))
             .ReturnsAsync((false, "No hook"))
             .ReturnsAsync((true, "OK dispatched"));
         At(start);
 
         await _runs.TickAsync();
-        _eventLoop.Verify(l => l.RestartAsync(), Times.Never);
+        _eventLoop.Verify(l => l.RestartAsync(It.IsAny<AttachmentSession?>()), Times.Never);
 
         await _runs.TickAsync();
-        _eventLoop.Verify(l => l.RestartAsync(), Times.Once);
+        _eventLoop.Verify(l => l.RestartAsync(It.IsAny<AttachmentSession?>()), Times.Once);
         Assert.Equal(["<rotation back to the beginning>", "/message Friday Derby has started - good luck!"], _sent);
     }
 
@@ -565,7 +565,7 @@ public sealed class CupRunServiceTests : IDisposable
 
         await _runs.TickAsync();
 
-        _eventLoop.Verify(l => l.RestartAsync(), Times.Never);
+        _eventLoop.Verify(l => l.RestartAsync(It.IsAny<AttachmentSession?>()), Times.Never);
         Assert.Empty(_sent);
     }
 
@@ -580,7 +580,7 @@ public sealed class CupRunServiceTests : IDisposable
         await _runs.TickAsync();
         await _runs.TickAsync();
 
-        _eventLoop.Verify(l => l.RestartAsync(), Times.Once);
+        _eventLoop.Verify(l => l.RestartAsync(It.IsAny<AttachmentSession?>()), Times.Once);
         Assert.DoesNotContain("/cupreset", _sent);
         Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
     }
@@ -598,7 +598,7 @@ public sealed class CupRunServiceTests : IDisposable
 
         Assert.DoesNotContain("/cupreset", _sent);
         Assert.Equal(CupPhase.Running, (await _db.ReloadAsync(cup.Id)).Phase);
-        _eventLoop.Verify(l => l.RestartAsync(), Times.Once);
+        _eventLoop.Verify(l => l.RestartAsync(It.IsAny<AttachmentSession?>()), Times.Once);
     }
 
     // Shown and recorded as the warmup: the warmup's points are still on the board.

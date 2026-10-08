@@ -29,9 +29,11 @@ public class ServerManager
     public event Action<string>? ConsoleHookOutput;
 
     /// <summary>
-    /// Event raised when a player sends a chat command (message starting with !).
+    /// Event raised when a player sends a chat command (message starting with !), with
+    /// the attachment session it arrived under. A handler acts on the server only through
+    /// that session, so its replies cannot reach a server attached since.
     /// </summary>
-    public event Action<string, bool, string>? ChatCommandReceived;
+    public event Action<AttachmentSession, string, bool, string>? ChatCommandReceived;
 
     /// <summary>
     /// Raised once per finished race, with every car's result as the injected hook read
@@ -82,8 +84,8 @@ public class ServerManager
     // pipe - which makes the hook's own WriteHookLine/FlushFileBuffers block, so
     // neither side can progress until a timeout fires. One consumer preserves the
     // strict command ordering that !yes / !no / !confirm rely on.
-    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message, int Generation, long AttachmentId)> _chatCommands =
-        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string, int, long)>(
+    private readonly System.Threading.Channels.Channel<(string Player, bool IsBot, string Message, AttachmentSession Session)> _chatCommands =
+        System.Threading.Channels.Channel.CreateUnbounded<(string, bool, string, AttachmentSession)>(
             new System.Threading.Channels.UnboundedChannelOptions
             {
                 SingleReader = true,
@@ -98,30 +100,20 @@ public class ServerManager
     // reports overflow so we can fall back to a full snapshot.
     private ServerEventReader? _serverEventReader;
 
-    // The attachment a chat command was accepted under, made ambient for the
-    // duration of the handler. Passing it explicitly would mean threading a PID
-    // through ChatCommandReceived and every SendCommandAsync call in VotingService;
-    // AsyncLocal flows across the awaits a handler makes without that churn.
+    // The current attachment (#40); see AttachmentSession. Replaced, under _lock, only
+    // by SetAttachedProcess. Session ids only ever increase, so a session is never
+    // mistaken for a later one - a PID cannot serve, since attach A, switch to B and
+    // back to A matches again.
     //
-    // It carries the PID rather than the generation on purpose: the generation is
-    // an I/O epoch that also advances when monitoring restarts, so gating dispatch
-    // on it would refuse commands after an ordinary reinject.
-    // Monotonic identity for one continuous attachment. A PID cannot serve: attach
-    // A, switch to B, switch back to A and the PID matches again, so work queued
-    // under the first A attachment would be accepted by the second. This only ever
-    // increases, so an attachment is never mistaken for a later one.
-    private long _attachmentId;
+    // Deliberately separate from _serverEventGeneration: that is an I/O epoch which
+    // also advances when monitoring restarts or the hook is reinjected, so gating
+    // dispatch on it would refuse commands after an ordinary reinject.
+    private AttachmentSession? _session;
+    private CancellationTokenSource? _sessionEnd;
+    private long _lastSessionId;
     // Automatic cleanup of an exited process must not cancel its replacement
     // search, but any explicit attach/start/stop must invalidate that search.
     private long _attachmentSelectionId;
-
-    // The attachment a chat command was accepted under, made ambient for the
-    // duration of the handler. Passing it explicitly would mean threading it
-    // through ChatCommandReceived and every SendCommandAsync call in
-    // VotingService; AsyncLocal flows across the awaits a handler makes without
-    // that churn. An explicit session parameter is the better end state - see the
-    // follow-up issue - but that is a wider change than this fix.
-    private static readonly AsyncLocal<long?> _dispatchAttachmentId = new();
     private int _serverEventGeneration;
     private System.Threading.Timer? _serverEventTimer;
     private int _serverEventPollBusy;
@@ -134,6 +126,29 @@ public class ServerManager
     public event Action<int?>? ProcessIdChanged;
 
     public bool IsRunning => GetActualServerPid() != null;
+
+    /// <summary>
+    /// The attachment as it is now, or null with nothing attached. An action captures
+    /// this when it begins and passes it to <see cref="SendCommandAsync"/>; deferred work
+    /// must use the session it was given, never read this again later.
+    /// </summary>
+    public virtual AttachmentSession? CurrentSession
+    {
+        get
+        {
+            // Notices an exit first, which ends the session, so a dead server's session
+            // is never handed out.
+            if (GetActualServerPid() == null)
+            {
+                return null;
+            }
+
+            lock (_lock)
+            {
+                return _session;
+            }
+        }
+    }
 
     public int? AttachedProcessId => GetActualServerPid();
 
@@ -488,6 +503,7 @@ public class ServerManager
 
         try
         {
+            var session = CurrentSession;
             var currentPid = _actualServerPid;
             _logger.LogInformation("Stopping server gracefully via 'exit' command (PID: {PID})", currentPid);
 
@@ -502,7 +518,7 @@ public class ServerManager
             // a process that is going away. Treating a missing "OK" as failure is what
             // made every graceful stop force-kill a server that was already exiting.
             //
-            var commandResult = await SendCommandAsync("exit");
+            var commandResult = await SendCommandAsync(session, "exit");
             if (!commandResult.Success && !IsExpectedExitSilence(commandResult.Message))
             {
                 _logger.LogWarning("Exit command was rejected ({Message}), falling back to force stop", commandResult.Message);
@@ -689,15 +705,23 @@ public class ServerManager
 
     /// <summary>
     /// Restarts the server using the built-in /restart command and tracks the new PID.
-    /// This is faster than stop+start but requires PID detection logic.
+    /// This is faster than stop+start but requires PID detection logic. Restarts the
+    /// server attached under <paramref name="session"/> only: a restart asked for
+    /// minutes ago must not restart a server attached since (#40).
     /// </summary>
-    public virtual async Task<(bool Success, string Message)> RestartServerViaCommandAsync()
+    public virtual async Task<(bool Success, string Message)> RestartServerViaCommandAsync(AttachmentSession? session)
     {
+        if (session == null)
+            return (false, "Server is not running");
+
         try
         {
             using var originalProcess = GetActualServerProcess();
             if (originalProcess == null)
                 return (false, "Server is not running");
+            // Early and cheap; the session is checked again under _lock below.
+            if (originalProcess.Id != session.ProcessId)
+                return (false, "Attachment changed before restart.");
 
             // Hold the original process handle so its exit time remains available
             // after /restart, even when normal status polling clears the attachment.
@@ -711,13 +735,11 @@ public class ServerManager
                 return (false, "Cannot restart safely: original process changed during identity capture.");
 
             long selectionId;
-            long attachmentId;
             lock (_lock)
             {
-                if (_actualServerPid != oldPid)
+                if (_actualServerPid != oldPid || _session?.Id != session.Id)
                     return (false, "Attachment changed before restart.");
                 selectionId = _attachmentSelectionId;
-                attachmentId = CurrentAttachmentId;
             }
 
             _logger.LogInformation("Starting server restart via /restart command");
@@ -737,14 +759,7 @@ public class ServerManager
 
             // Step 3: Send /restart command
             var requestedUtc = DateTime.UtcNow;
-            var previousDispatch = _dispatchAttachmentId.Value;
-            (bool Success, string Message) commandResult;
-            try
-            {
-                _dispatchAttachmentId.Value = attachmentId;
-                commandResult = await SendCommandAsync("/restart");
-            }
-            finally { _dispatchAttachmentId.Value = previousDispatch; }
+            var commandResult = await SendCommandAsync(session, "/restart");
             if (!commandResult.Success)
             {
                 return (false, $"Failed to send restart command: {commandResult.Message}");
@@ -1139,7 +1154,14 @@ public class ServerManager
         }
     }
 
-    public virtual async Task<(bool Success, string Message)> SendCommandAsync(string command)
+    /// <summary>
+    /// Sends a console command through the hook to the server attached under
+    /// <paramref name="session"/>, and to no other. There is deliberately no overload
+    /// that picks the current attachment: an action captures
+    /// <see cref="CurrentSession"/> when it begins, and deferred work passes the session
+    /// it was given. A null session - nothing was attached - is refused.
+    /// </summary>
+    public virtual async Task<(bool Success, string Message)> SendCommandAsync(AttachmentSession? session, string command)
     {
         command = command.TrimEnd('\r', '\n');
         if (string.IsNullOrWhiteSpace(command))
@@ -1147,7 +1169,9 @@ public class ServerManager
             return (false, "Command cannot be empty");
         }
 
-        if (!IsRunning)
+        // IsRunning notices an exit, which ends the session, so the check below refuses
+        // a session whose process has gone.
+        if (session == null || !IsRunning)
         {
             return (false, "Server is not running");
         }
@@ -1155,31 +1179,27 @@ public class ServerManager
         await _commandSendLock.WaitAsync();
         try
         {
-            // Resolved after the semaphore, which is the last moment before the
-            // command goes out - and the moment that matters, because waiting for
-            // this lock is exactly when attachment can move underneath a caller
-            // that already validated.
-            int? processId;
-            var expectedAttachment = _dispatchAttachmentId.Value;
+            // Checked after the semaphore, which is the last moment before the command
+            // goes out - and the moment that matters, because waiting for this lock is
+            // exactly when attachment can move underneath a caller that already
+            // validated. The PID comes from the session, so it is the session's process
+            // or nothing, however the attachment moves after this.
+            int processId;
             lock (_lock)
             {
-                processId = _actualServerPid ?? GetActualServerPid();
-                if (processId == null)
-                {
-                    return (false, "Server is not running");
-                }
-
-                if (expectedAttachment != null && expectedAttachment.Value != CurrentAttachmentId)
+                if (_session?.Id != session.Id)
                 {
                     _logger.LogWarning(
-                        "Refused to send {Command}: accepted under attachment {Expected}, now on {Current} (process {Pid})",
-                        command, expectedAttachment.Value, CurrentAttachmentId, processId.Value);
+                        "Refused to send {Command}: accepted under attachment session {Expected}, now {Current}",
+                        command, session.Id, _session?.Id.ToString() ?? "none");
                     return (false,
-                        $"Attachment moved before the command could be sent (was {expectedAttachment.Value}, now {CurrentAttachmentId})");
+                        $"Attachment moved before the command could be sent (session {session.Id}, now {_session?.Id.ToString() ?? "none"})");
                 }
+
+                processId = session.ProcessId;
             }
 
-            var result = await _serverInputWriter.SendCommandAsync(command, processId.Value);
+            var result = await _serverInputWriter.SendCommandAsync(command, processId);
 
             if (result.Success)
             {
@@ -1496,18 +1516,38 @@ public class ServerManager
     // Every attachment change goes through here. Scattered assignments were how
     // identity drifted: eight sites moved the PID and only one advanced the
     // guard that work is validated against.
+    //
+    // Each call ends the current attachment session and begins the next: attach,
+    // detach and process replacement all come through here, while a reinject or a
+    // monitoring restart does not, and so keeps the session.
     private void SetAttachedProcess(int? pid, bool processExited = false)
     {
+        CancellationTokenSource? ended;
         lock (_lock)
         {
             _actualServerPid = pid;
-            Interlocked.Increment(ref _attachmentId);
             if (!processExited)
                 Interlocked.Increment(ref _attachmentSelectionId);
-        }
-    }
 
-    private long CurrentAttachmentId => Interlocked.Read(ref _attachmentId);
+            ended = _sessionEnd;
+            if (pid is int processId)
+            {
+                _sessionEnd = new CancellationTokenSource();
+                _session = new AttachmentSession(++_lastSessionId, processId, _sessionEnd.Token);
+            }
+            else
+            {
+                _sessionEnd = null;
+                _session = null;
+            }
+        }
+
+        // Every caller holds _lock, and cancellation runs callbacks, so they run on the
+        // thread pool rather than here. IsCancellationRequested is set before this
+        // returns. The source is never disposed: a token from a disposed source can
+        // throw, and late work still reads it.
+        _ = ended?.CancelAsync();
+    }
 
     // Everything here describes one attached process and means nothing about the
     // next one. Called while holding _lock.
@@ -1875,10 +1915,10 @@ public class ServerManager
     /// Hands a chat command to the worker. Never blocks the caller - the caller is
     /// the thread draining the hook output pipe.
     /// </summary>
-    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage, int generation, long attachmentId)
+    private void EnqueueChatCommand(string playerName, bool isBot, string chatMessage, AttachmentSession session)
     {
         EnsureChatCommandWorker();
-        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage, generation, attachmentId)))
+        if (!_chatCommands.Writer.TryWrite((playerName, isBot, chatMessage, session)))
         {
             _logger.LogWarning("Dropped chat command from {Player}: queue closed", playerName);
         }
@@ -1897,12 +1937,14 @@ public class ServerManager
 
     private async Task ProcessChatCommandQueueAsync()
     {
-        await foreach (var (player, isBot, message, generation, attachmentId) in _chatCommands.Reader.ReadAllAsync())
+        await foreach (var (player, isBot, message, session) in _chatCommands.Reader.ReadAllAsync())
         {
             // A command accepted before an attachment switch would otherwise run
             // against the new server: the queue is the longest delay between
-            // accepting output and acting on it, and a chat command acts.
-            if (!IsCurrentAttachmentGeneration(generation))
+            // accepting output and acting on it, and a chat command acts. Checked
+            // against the session rather than the I/O generation, so a reinject while
+            // the command waited does not lose it.
+            if (session.Ended.IsCancellationRequested)
             {
                 _logger.LogDebug(
                     "Discarded queued chat command from {Player}; attachment moved before it ran",
@@ -1912,13 +1954,11 @@ public class ServerManager
 
             // Passing the dequeue check is not enough on its own: the handler can
             // block - on the command semaphore, on a vote - while attachment moves.
-            // Publishing it here lets SendCommandAsync refuse at the last moment,
-            // when it picks the target PID.
-            _dispatchAttachmentId.Value = attachmentId;
-
+            // It acts only through this session, so SendCommandAsync refuses at the
+            // last moment instead.
             try
             {
-                ChatCommandReceived?.Invoke(player, isBot, message);
+                ChatCommandReceived?.Invoke(session, player, isBot, message);
             }
             catch (Exception ex)
             {
@@ -1946,12 +1986,12 @@ public class ServerManager
         // still be applied to the process we have just moved to.
         int? attachedPid;
         int generation;
-        long attachmentId;
+        AttachmentSession? session;
         lock (_lock)
         {
             attachedPid = _actualServerPid;
             generation = CurrentAttachmentGeneration;
-            attachmentId = CurrentAttachmentId;
+            session = _session;
         }
 
         // Only drop what can be proved stale. With nothing attached there is no
@@ -1968,7 +2008,7 @@ public class ServerManager
         // Demuxed ahead of the text fanout. A structured record is not console
         // output: it must not reach the output buffer, the web UI console or the
         // chat regex, and it is consumed whether or not it parsed.
-        if (TryProcessHookChatRecord(output, generation, attachmentId) || TryProcessHookRaceRecord(output, generation))
+        if (TryProcessHookChatRecord(output, session) || TryProcessHookRaceRecord(output, generation))
         {
             return;
         }
@@ -1984,7 +2024,7 @@ public class ServerManager
     /// the line was a record - including a malformed one, which is dropped rather
     /// than leaked into the console output fanout.
     /// </summary>
-    private bool TryProcessHookChatRecord(string output, int generation, long attachmentId)
+    private bool TryProcessHookChatRecord(string output, AttachmentSession? session)
     {
         if (!HookChatRecord.LooksLikeRecord(output))
         {
@@ -2037,9 +2077,16 @@ public class ServerManager
             return true;
         }
 
+        // Nothing is attached, so there is no server a reply could go to.
+        if (session == null)
+        {
+            _logger.LogDebug("Dropped chat command from {Player}: nothing is attached", record.PlayerName);
+            return true;
+        }
+
         // No duplicate suppression needed: the hook emits one record per message,
         // where the console echo the old path had to undo did not exist.
-        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message, generation, attachmentId);
+        EnqueueChatCommand(record.PlayerName, record.IsBot, record.Message, session);
         return true;
     }
 
@@ -2120,7 +2167,7 @@ public class ServerManager
         try
         {
             // Send ? command
-            var commandResult = await SendCommandAsync("?");
+            var commandResult = await SendCommandAsync(CurrentSession, "?");
             if (!commandResult.Success)
             {
                 return (false, $"Failed to send ? command: {commandResult.Message}", null);

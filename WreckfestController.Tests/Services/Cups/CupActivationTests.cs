@@ -36,7 +36,7 @@ public sealed class CupActivationTests : IDisposable
         var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), cups);
         _server = new Mock<ServerManager>(settings, TestSettings.Server(), TestSettings.SteamCmd(), Mock.Of<ILogger<ServerManager>>(), _players, tracks,
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), cups);
-        _server.Setup(s => s.RestartServerViaCommandAsync()).ReturnsAsync((true, "Restarted"));
+        _server.Setup(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>())).ReturnsAsync((true, "Restarted"));
 
         _config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>());
         _config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig { ServerName = "Old name" });
@@ -75,7 +75,7 @@ public sealed class CupActivationTests : IDisposable
     {
         var start = Now.AddMinutes(2);
         var cup = await _db.CreateAsync(CupTestDatabase.Definition("Race night", start, serverConfig: NewName, tracks: OneTrack));
-        _server.Setup(s => s.RestartServerViaCommandAsync()).Returns(() =>
+        _server.Setup(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>())).Returns(() =>
         {
             // Settings and tracks are written before the restart, not after.
             Assert.Equal(["settings:New name", "tracks:Cup: Race night:urban09_1"], _writes);
@@ -165,9 +165,9 @@ public sealed class CupActivationTests : IDisposable
     public async Task AFailedRestart_IsNotRetried_AndTheSchedulerMovesOn(bool throws)
     {
         if (throws)
-            _server.Setup(s => s.RestartServerViaCommandAsync()).ThrowsAsync(new IOException("Restart failed"));
+            _server.Setup(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>())).ThrowsAsync(new IOException("Restart failed"));
         else
-            _server.Setup(s => s.RestartServerViaCommandAsync()).ReturnsAsync((false, "Restart failed"));
+            _server.Setup(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>())).ReturnsAsync((false, "Restart failed"));
 
         var first = await _db.CreateAsync(CupTestDatabase.Definition("First", Now.AddMinutes(1)));
         await _scheduler.CheckAsync();
@@ -182,7 +182,7 @@ public sealed class CupActivationTests : IDisposable
         await EventuallyCheckedAsync(second.Id);
 
         // One attempt each: the failed occurrence was not tried again.
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Exactly(2));
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Exactly(2));
     }
 
     [Fact]
@@ -201,7 +201,7 @@ public sealed class CupActivationTests : IDisposable
         Assert.False(current.IsActive);
         Assert.Equal(OccurrenceOutcome.Cancelled, current.LastOutcome);
         Assert.Equal(SmartRestartState.Idle, _restart.GetState());
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
     }
 
     [Fact]
@@ -256,7 +256,7 @@ public sealed class CupActivationTests : IDisposable
         Assert.Null(skipped.NextOccurrence);
         Assert.Equal(OccurrenceOutcome.Failed, skipped.LastOutcome);
         Assert.True((await EventuallyAsync(plain.Id, e => e.IsActive)).IsActive);
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Once);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Once);
     }
 
     [Fact]
@@ -345,7 +345,7 @@ public sealed class CupActivationTests : IDisposable
 
         Assert.Equal(start.AddDays(1), current.NextOccurrence);
         Assert.Equal(start, current.LastOccurrence);
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Once);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Once);
     }
 
     [Fact]
@@ -373,7 +373,7 @@ public sealed class CupActivationTests : IDisposable
         _activator.Release(cup.Id);
         // Applied once, by the manual activation; nothing started it a second time.
         Assert.Equal(["settings:New name"], _writes);
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
     }
 
     [Fact]
@@ -433,7 +433,7 @@ public sealed class CupActivationTests : IDisposable
 
         Assert.Equal(SmartRestartState.Idle, _restart.GetState());
         Assert.False((await _db.ReloadAsync(cup.Id)).IsActive);
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
     }
 
     // All or nothing: the settings and scoring are written before the rotation, so a file
@@ -453,7 +453,7 @@ public sealed class CupActivationTests : IDisposable
 
         Assert.Empty(_writes);
         _config.Verify(c => c.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()), Times.Never);
-        _server.Verify(s => s.RestartServerViaCommandAsync(), Times.Never);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
         Assert.False((await _db.ReloadAsync(cup.Id)).IsActive);
     }
 
