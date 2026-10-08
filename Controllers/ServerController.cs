@@ -101,7 +101,7 @@ public class ServerController : ControllerBase
     public async Task<ActionResult<ServerActionResponse>> SendCommand(ServerCommandRequest request)
     {
         _logger.LogInformation("Received request to send command: {Command}", request.Command);
-        return Answer(await _serverManager.SendCommandAsync(request.Command));
+        return Answer(await _serverManager.SendCommandAsync(_serverManager.CurrentSession, request.Command));
     }
 
     /// <summary>

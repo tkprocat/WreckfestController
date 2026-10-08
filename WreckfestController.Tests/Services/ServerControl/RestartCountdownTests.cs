@@ -29,7 +29,7 @@ public class RestartCountdownTests : IDisposable
         var tracks = new TrackChangeTracker(Mock.Of<ILogger<TrackChangeTracker>>(), events);
         _server = new Mock<ServerManager>(settings, TestSettings.Server(), TestSettings.SteamCmd(), Mock.Of<ILogger<ServerManager>>(), players, tracks,
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), events);
-        _server.Setup(s => s.SendCommandAsync(It.IsAny<string>())).Returns((string command) => {
+        _server.Setup(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>())).Returns((AttachmentSession? _, string command) => {
             _messages.Add(command);
             return Task.FromResult((true, "Sent"));
         });

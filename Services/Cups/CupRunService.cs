@@ -121,8 +121,11 @@ public sealed class CupRunService : IHostedService, IDisposable
                 return;
             }
 
+            // One attachment for the whole check (#40): the lobby it confirms and the commands
+            // that follow belong to the same server, even if another is attached meanwhile.
+            var attachment = _serverManager.CurrentSession;
             var run = await _store.ActiveRunAsync();
-            await TurnPointsOffAsync(run);
+            await TurnPointsOffAsync(attachment, run);
 
             if (run is not { Occurrence: { } start })
             {
@@ -132,13 +135,13 @@ public sealed class CupRunService : IHostedService, IDisposable
             switch (run.Phase)
             {
                 case CupPhase.Warmup:
-                    await WarmupAsync(run, start);
+                    await WarmupAsync(attachment, run, start);
                     break;
                 case CupPhase.Starting:
-                    await ResetAsync(run, start);
+                    await ResetAsync(attachment, run, start);
                     break;
                 case CupPhase.Running when run.EndsAt is { } end && UtcNow >= end:
-                    await EndAsync(run);
+                    await EndAsync(attachment, run);
                     break;
             }
         }
@@ -157,7 +160,7 @@ public sealed class CupRunService : IHostedService, IDisposable
         }
     }
 
-    private async Task WarmupAsync(ActiveCupRun run, DateTime start)
+    private async Task WarmupAsync(AttachmentSession? attachment, ActiveCupRun run, DateTime start)
     {
         var name = Short(run.Name);
         if (UtcNow < start)
@@ -166,7 +169,7 @@ public sealed class CupRunService : IHostedService, IDisposable
             {
                 _warned = (run.Id, start);
                 var minutes = Math.Max(1, (int)Math.Ceiling((start - UtcNow).TotalMinutes));
-                await ChatAsync($"{name} starts in {minutes} minute{(minutes == 1 ? "" : "s")}.");
+                await ChatAsync(attachment, $"{name} starts in {minutes} minute{(minutes == 1 ? "" : "s")}.");
             }
 
             return;
@@ -177,7 +180,7 @@ public sealed class CupRunService : IHostedService, IDisposable
                 if (_toldAfterRace != (run.Id, start))
                 {
                     _toldAfterRace = (run.Id, start);
-                    await ChatAsync($"{name} starts after this race.");
+                    await ChatAsync(attachment, $"{name} starts after this race.");
                 }
             }))
         {
@@ -190,7 +193,7 @@ public sealed class CupRunService : IHostedService, IDisposable
             return;
         }
 
-        await ResetAsync(run with { Phase = CupPhase.Starting }, start);
+        await ResetAsync(attachment, run with { Phase = CupPhase.Starting }, start);
     }
 
     /// <summary>
@@ -216,7 +219,7 @@ public sealed class CupRunService : IHostedService, IDisposable
     /// the cup's first race or two, and only after a controller crash.
     /// </para>
     /// </remarks>
-    private async Task ResetAsync(ActiveCupRun run, DateTime start)
+    private async Task ResetAsync(AttachmentSession? attachment, ActiveCupRun run, DateTime start)
     {
         // The window is checked before sending, not only after a failure: a controller coming
         // back long after the start must not reset a cup that has been racing since.
@@ -229,7 +232,7 @@ public sealed class CupRunService : IHostedService, IDisposable
         {
             var session = await _serverManager.ReadHookSessionAsync();
             reset = session?.Phase == ServerSessionPhase.Lobby
-                ? await _serverManager.SendCommandAsync("/cupreset")
+                ? await _serverManager.SendCommandAsync(attachment, "/cupreset")
                 : (false, session is null ? "the session state cannot be read" : "not in the lobby");
         }
         if (!reset.Success)
@@ -254,7 +257,7 @@ public sealed class CupRunService : IHostedService, IDisposable
 
         if (run.RestartRotationAtStart)
         {
-            var loop = await _eventLoop.RestartAsync();
+            var loop = await _eventLoop.RestartAsync(attachment);
             if (loop is not { Enabled: true })
             {
                 _logger.LogWarning(
@@ -266,10 +269,10 @@ public sealed class CupRunService : IHostedService, IDisposable
 
         _logger.LogInformation("Cup {CupName} (ID {CupId}) has started", run.Name, run.Id);
         _ = _publisher.CupStartedAsync(run.Id, run.Name);
-        await ChatAsync($"{Short(run.Name)} has started - good luck!");
+        await ChatAsync(attachment, $"{Short(run.Name)} has started - good luck!");
     }
 
-    private async Task EndAsync(ActiveCupRun run)
+    private async Task EndAsync(AttachmentSession? attachment, ActiveCupRun run)
     {
         var pointsOff = AwardsCupPoints(run.SessionMode ?? ServerSessionMode()) ? UtcNow : (DateTime?)null;
 
@@ -281,11 +284,11 @@ public sealed class CupRunService : IHostedService, IDisposable
 
         _logger.LogInformation("Cup {CupName} (ID {CupId}) has ended", run.Name, run.Id);
         _ = _publisher.CupEndedAsync(run.Id, run.Name);
-        await ChatAsync($"{Short(run.Name)} is over - thanks for racing!");
+        await ChatAsync(attachment, $"{Short(run.Name)} is over - thanks for racing!");
 
         if (pointsOff is not null)
         {
-            await TurnPointsOffAsync(run: null);
+            await TurnPointsOffAsync(attachment, run: null);
         }
     }
 
@@ -296,7 +299,7 @@ public sealed class CupRunService : IHostedService, IDisposable
     /// settings are what the server runs now. <paramref name="run"/> is the active run as read
     /// inside the gate, so no activation can have come since.
     /// </summary>
-    private async Task TurnPointsOffAsync(ActiveCupRun? run)
+    private async Task TurnPointsOffAsync(AttachmentSession? attachment, ActiveCupRun? run)
     {
         var pending = await _store.PendingPointsOffAsync();
         if (pending.Count == 0)
@@ -320,7 +323,7 @@ public sealed class CupRunService : IHostedService, IDisposable
             return;
         }
 
-        var sent = await _serverManager.SendCommandAsync("session_mode=normal");
+        var sent = await _serverManager.SendCommandAsync(attachment, "session_mode=normal");
         if (!sent.Success && UtcNow - pending[0].Since < LobbyWait)
         {
             _logger.LogWarning("session_mode=normal could not be sent ({Message}); retrying", sent.Message);
@@ -394,10 +397,10 @@ public sealed class CupRunService : IHostedService, IDisposable
         && sessionMode != "normal"
         && !sessionMode.StartsWith("qualify", StringComparison.Ordinal);
 
-    private async Task ChatAsync(string text)
+    private async Task ChatAsync(AttachmentSession? attachment, string text)
     {
         var message = text.Length > ChatLimit ? text[..ChatLimit] : text;
-        var sent = await _serverManager.SendCommandAsync($"/message {message}");
+        var sent = await _serverManager.SendCommandAsync(attachment, $"/message {message}");
         if (!sent.Success)
         {
             _logger.LogWarning("Cup message could not be sent ({Message}): {Text}", sent.Message, message);

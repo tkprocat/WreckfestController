@@ -29,6 +29,10 @@ public class SmartRestartService
     private Action<Event>? _onRestartCompleteCallback = null;
     private Action<Event, RestartOutcome>? _onFinished;
     private long _restartId;
+    // The attachment the restart was asked for under (#40). Its announcements run for
+    // minutes, on timers, so they go to this session rather than whatever is attached
+    // when each one fires.
+    private AttachmentSession? _restartSession;
     private readonly object _stateLock = new();
 
     // Configuration
@@ -122,6 +126,7 @@ public class SmartRestartService
             ApplyEventConfiguration(@event);
 
             _pendingEvent = @event;
+            _restartSession = _serverManager.CurrentSession;
             _onRestartCompleteCallback = onComplete;
             _onFinished = onFinished;
             restartId = ++_restartId;
@@ -391,8 +396,14 @@ public class SmartRestartService
         {
             _logger.LogInformation("Sending server message: {Message}", message);
 
+            AttachmentSession? session;
+            lock (_stateLock)
+            {
+                session = _restartSession;
+            }
+
             var command = $"/message {message}";
-            var result = await _serverManager.SendCommandAsync(command);
+            var result = await _serverManager.SendCommandAsync(session, command);
 
             if (!result.Success)
             {

@@ -94,10 +94,12 @@ public partial class PlayersTab : UserControl
         if (sender is not Button { Tag: int slot })
             return;
 
+        // Captured on the click: the slot belongs to the server shown at that moment.
+        var session = _serverManager.CurrentSession;
         await RunPlayerActionAsync($"{action} player in slot {slot}", async () =>
         {
             _logger.LogInformation("Player action: {Action}, slot {Slot}", action, slot);
-            var result = await _serverManager.SendCommandAsync($"{command} {slot}");
+            var result = await _serverManager.SendCommandAsync(session, $"{command} {slot}");
             if (!result.Success)
                 throw new InvalidOperationException(result.Message);
 
