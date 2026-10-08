@@ -148,9 +148,20 @@ public partial class ProcessManagerTab : UserControl
         if (!await ConfirmIfNotConfiguredServerAsync(selectedProcess, "Attach to"))
             return;
 
+        // Attaching elsewhere stops the attached server; say which one, and ask (#40).
+        var attached = _serverManager.CurrentSession;
+        if (attached != null && attached.ProcessId != selectedProcess.ProcessId &&
+            !await DialogService.ShowConfirmationAsync(
+                $"Attaching to process {selectedProcess.ProcessId} stops the server the controller manages now " +
+                $"(process {attached.ProcessId}).\n\nStop it and attach?",
+                "Stop the attached server?"))
+        {
+            return;
+        }
+
         try
         {
-            var result = await _serverManager.AttachToProcessAsync(selectedProcess.ProcessId);
+            var result = await _serverManager.AttachToProcessAsync(selectedProcess.ProcessId, attached);
 
             if (result.Success)
             {

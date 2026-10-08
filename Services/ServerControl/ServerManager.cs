@@ -13,7 +13,6 @@ namespace WreckfestController.Services.ServerControl;
 
 public class ServerManager
 {
-    private Process? _serverProcess;
     /// <summary>Only the build-tied <c>WreckfestServer:SupportedBuild</c>; everything a person edits comes from the settings sections.</summary>
     private readonly IConfiguration _configuration;
     private readonly IOptionsMonitor<WreckfestServerSettings> _server;
@@ -50,6 +49,11 @@ public class ServerManager
     private readonly object _lock = new();
     private DateTime? _startTime;
     private int? _actualServerPid;
+    // A handle on the attached process, held for the whole attachment (#40). Windows
+    // does not reuse a PID while any handle to its process is open, so every lookup by
+    // _actualServerPid reaches this process or finds it gone - never a later process
+    // that inherited the number. Owned by SetAttachedProcess; nothing else uses it.
+    private Process? _attachedPin;
     private readonly ILogger<ServerManager> _logger;
     private readonly System.Collections.Concurrent.ConcurrentQueue<(DateTime Timestamp, string Message)> _outputBuffer = new();
     private const int MaxBufferSize = 500;
@@ -411,7 +415,6 @@ public class ServerManager
                         _logger.LogWarning("Server process exited. Exit code: {ExitCode}", process.ExitCode);
                     };
 
-                    _serverProcess = process;
                     SetAttachedProcess(process.Id);
                     _startTime = DateTime.UtcNow;
                     ProcessIdChanged?.Invoke(process.Id);
@@ -438,7 +441,6 @@ public class ServerManager
             _logger.LogError("Server process exited immediately with code: {ExitCode}", exitCode);
             lock (_lock)
             {
-                _serverProcess = null;
                 _startTime = null;
             }
             return (false, $"Server process exited immediately with code: {exitCode}. Check server arguments and config file.");
@@ -569,7 +571,6 @@ public class ServerManager
                     // Clean up
                     lock (_lock)
                     {
-                        _serverProcess = null;
                         _startTime = null;
                         SetAttachedProcess(null);
 
@@ -653,26 +654,14 @@ public class ServerManager
                 }
             });
 
+            // Only the attached process is stopped. A second "started" process used to be
+            // killed here as well, and after attaching elsewhere that was a different
+            // server altogether (#40).
             lock (_lock)
             {
-                // Clean up the launcher process if it's still around
-                if (_serverProcess != null && !_serverProcess.HasExited)
-                {
-                    try
-                    {
-                        _serverProcess.Kill();
-                        _serverProcess.Dispose();
-                    }
-                    catch
-                    {
-                        // Ignore cleanup errors
-                    }
-                }
-
                 // Stop output monitoring before cleanup (frees console attachment)
                 StopOutputMonitoring();
 
-                _serverProcess = null;
                 _startTime = null;
                 SetAttachedProcess(null);
 
@@ -1524,8 +1513,13 @@ public class ServerManager
     private void SetAttachedProcess(int? pid, bool processExited = false)
     {
         CancellationTokenSource? ended;
+        Process? unpinned;
         lock (_lock)
         {
+            // Every attach path still holds its own handle on the process here, so the
+            // PID cannot have changed owner before this pin takes over.
+            unpinned = _attachedPin;
+            _attachedPin = pid is int pinned ? OpenHeld(pinned) : null;
             _actualServerPid = pid;
             if (!processExited)
                 Interlocked.Increment(ref _attachmentSelectionId);
@@ -1548,6 +1542,7 @@ public class ServerManager
         // returns. The source is never disposed: a token from a disposed source can
         // throw, and late work still reads it.
         _ = ended?.CancelAsync();
+        unpinned?.Dispose();
     }
 
     // True while attachment is still the current one. Cheap enough for every hook read:
@@ -2343,8 +2338,7 @@ public class ServerManager
         try
         {
             var processes = Process.GetProcesses();
-            // The pid attachment sets (attach from the API or the desktop, or a start):
-            // _serverProcess is only the process this controller started.
+            // The pid attachment sets: attach from the API or the desktop, or a start.
             var currentPid = _actualServerPid;
 
             foreach (var process in processes)
@@ -2432,11 +2426,15 @@ public class ServerManager
     }
 
     /// <summary>
-    /// Attaches to an existing Wreckfest server process
+    /// The desktop app's attach. Attaching to a process other than the attached one
+    /// stops the attached server first, so the caller confirms that with the user and
+    /// passes the attachment they confirmed, <paramref name="confirmed"/> (null when
+    /// nothing was attached). If the attachment has moved since, nothing is stopped
+    /// and nothing is attached (#40).
     /// </summary>
-    public async Task<(bool Success, string Message)> AttachToProcessAsync(int processId)
+    public async Task<(bool Success, string Message)> AttachToProcessAsync(int processId, AttachmentSession? confirmed)
     {
-        // Held for the whole attach: it stops monitoring, and maybe the started server,
+        // Held for the whole attach: it stops monitoring, and maybe the attached server,
         // before the attachment itself changes.
         if (!_attachmentGate.Wait(0))
         {
@@ -2447,15 +2445,23 @@ public class ServerManager
         {
             _logger.LogInformation($"Attempting to attach to process {processId}");
 
-            // Check if process exists and is a Wreckfest server
-            var process = Process.GetProcessById(processId);
-            if (process == null || process.HasExited)
+            if (CurrentSession?.Id != confirmed?.Id)
+            {
+                return (false, "The attached server changed while you were confirming. Nothing was stopped; try again.");
+            }
+
+            // Check if process exists and is a Wreckfest server. The handle is held
+            // through the attach, so the PID cannot change owner before it is pinned.
+            using var process = Process.GetProcessById(processId);
+            _ = process.SafeHandle;
+            var processName = process.ProcessName;
+            if (process.HasExited)
             {
                 return (false, $"Process {processId} not found or has exited");
             }
 
-            if (!process.ProcessName.Equals("Wreckfest_x64", StringComparison.OrdinalIgnoreCase) &&
-                !process.ProcessName.Equals("Wreckfest", StringComparison.OrdinalIgnoreCase))
+            if (!processName.Equals("Wreckfest_x64", StringComparison.OrdinalIgnoreCase) &&
+                !processName.Equals("Wreckfest", StringComparison.OrdinalIgnoreCase))
             {
                 return (false, $"Process {processId} is not a Wreckfest server");
             }
@@ -2470,17 +2476,23 @@ public class ServerManager
                 StopOutputMonitoring();
             }
 
-            // Stop any currently running server if it's a different process
-            if (_serverProcess != null && !_serverProcess.HasExited && _serverProcess.Id != processId)
+            // Stop the attached server if it is a different process; the user confirmed
+            // this, naming it.
+            if (confirmed != null && confirmed.ProcessId != processId)
             {
-                _logger.LogInformation("Stopping current server {CurrentPid} before attaching to {NewPid}",
-                    _serverProcess.Id, processId);
-                await StopServerAsync();
+                _logger.LogInformation("Stopping attached server {CurrentPid} before attaching to {NewPid}",
+                    confirmed.ProcessId, processId);
+                var stopped = await StopServerAsync();
+                if (!stopped.Success && IsRunning)
+                {
+                    _logger.LogWarning("Attached server {Pid} could not be stopped ({Message}); nothing was attached",
+                        confirmed.ProcessId, stopped.Message);
+                    return (false, $"Process {confirmed.ProcessId} could not be stopped, so nothing was attached.");
+                }
             }
 
             lock (_lock)
             {
-                _serverProcess = process;
                 SetAttachedProcess(processId);
                 _startTime = process.StartTime.ToUniversalTime();
             }
@@ -2502,7 +2514,7 @@ public class ServerManager
                     await _events.ServerAttachedAsync(new Models.ServerAttachedEvent
                     {
                         ProcessId = processId,
-                        ProcessName = process.ProcessName,
+                        ProcessName = processName,
                         StartTime = _startTime ?? DateTime.UtcNow
                     });
                 }
@@ -2782,7 +2794,7 @@ public class ServerManager
     {
         try
         {
-            var pid = _serverProcess?.Id;
+            var pid = _actualServerPid;
             if (pid == null)
                 return string.Empty;
 
