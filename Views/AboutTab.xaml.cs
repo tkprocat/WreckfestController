@@ -23,10 +23,18 @@ public partial class AboutTab : UserControl
     }
 
     // A WPF Hyperlink outside a navigation host does nothing on its own: open the
-    // default browser.
+    // default browser. A launch Windows refuses must not escape the handler, which
+    // would close the app; show the address instead.
     private void OnLinkNavigate(object sender, RequestNavigateEventArgs e)
     {
-        Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
         e.Handled = true;
+        try
+        {
+            Process.Start(new ProcessStartInfo(e.Uri.AbsoluteUri) { UseShellExecute = true });
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            _ = DialogService.ShowErrorAsync($"The browser could not be opened. The address is:\n{e.Uri.AbsoluteUri}");
+        }
     }
 }
