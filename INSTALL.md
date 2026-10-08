@@ -38,6 +38,11 @@ click **RETRY** in the banner, or restart the controller.
 To keep the database somewhere else, set `Database:Path` in `user-settings.json` (step
 3). The `keys` folder follows it.
 
+To back up the database, click **BACK UP NOW** on the **Configuration** tab. It writes a
+consistent copy to the `backups` folder beside the database while the controller runs;
+the controller also backs up there before each database upgrade. A backup holds every
+account's password hash, so keep it private. There is no backup endpoint in the web API.
+
 ## 2. Connect the dedicated server
 
 Open the **Configuration** tab in the desktop app and set:
