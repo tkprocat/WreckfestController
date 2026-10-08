@@ -265,7 +265,7 @@ Check that `%LocalAppData%\WreckfestController\keys` is writable.
 **The controller closed unexpectedly.** Look in `%LocalAppData%\WreckfestController\crashes`
 for the newest `crash-<date>_<time>-pid<id>.txt`; it names the database, so with several
 controllers you can tell which one it was. If that folder cannot be written, the file goes
-to `%TEMP%WreckfestControllerashes`. Attach the file when you report the crash.
+to `%TEMP%\WreckfestController\crashes`. Attach the file when you report the crash.
 
 **Live updates do not arrive through the proxy.** The proxy must allow WebSocket
 upgrades on `/hubs/server`.

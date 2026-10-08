@@ -27,6 +27,7 @@ public sealed class CrashLog
     private readonly string _directory;
     private readonly string _fallbackDirectory;
     private readonly TimeProvider _time;
+    private readonly object _gate = new();
 
     // Every exception written, so one reported by both the dispatcher and the app domain
     // is written once, however many others arrive in between. Weak, so nothing is kept alive.
@@ -79,32 +80,57 @@ public sealed class CrashLog
     /// Writes <paramref name="exception"/> to a new file and returns its path, or null when
     /// nothing was written: it was written before, or no folder could take it.
     /// </summary>
+    /// <remarks>
+    /// One report at a time, so the same exception from two threads is written once. Each
+    /// step under the lock is bounded by <see cref="WriteTimeout"/>.
+    /// </remarks>
     public string? Write(Exception? exception, string source)
     {
         try
         {
-            if (exception != null && _written.TryGetValue(exception, out _))
+            lock (_gate)
             {
-                return null;
-            }
-
-            var now = _time.GetLocalNow();
-            var pid = Environment.ProcessId;
-            var name = string.Create(CultureInfo.InvariantCulture, $"{FilePrefix}{now:yyyy-MM-dd_HH-mm-ss}-pid{pid}");
-            var bytes = Encoding.UTF8.GetBytes(Format(exception, source, now, pid, DatabasePath));
-
-            foreach (var directory in new[] { _directory, _fallbackDirectory })
-            {
-                if (WriteWithin(directory, name, bytes) is { } path)
+                if (exception != null && _written.TryGetValue(exception, out _))
                 {
-                    // Only now: a report that failed everywhere may be tried again by
-                    // the second handler.
-                    if (exception != null)
-                    {
-                        _written.AddOrUpdate(exception, path);
-                    }
+                    return null;
+                }
 
-                    return path;
+                var now = _time.GetLocalNow();
+                var pid = Environment.ProcessId;
+                var name = string.Create(CultureInfo.InvariantCulture, $"{FilePrefix}{now:yyyy-MM-dd_HH-mm-ss}-pid{pid}");
+
+                // Formatting runs the exception's own ToString, which can hang as well as throw.
+                var text = RunWithin(() => Format(exception, source, now, pid, DatabasePath), _ => { })
+                    ?? FormattableString.Invariant(
+                        $"Wreckfest Controller crashed ({source}); its description timed out.{Environment.NewLine}{exception?.GetType().FullName}{Environment.NewLine}");
+                var bytes = Encoding.UTF8.GetBytes(text);
+                var reported = new StrongBox<bool>();
+
+                foreach (var directory in new[] { _directory, _fallbackDirectory })
+                {
+                    // A write given up on that finishes after another folder took the report
+                    // deletes its file, so there is no second copy; if none did, it is kept.
+                    var written = RunWithin(
+                        abandoned => TryWrite(directory, name, bytes, abandoned),
+                        late =>
+                        {
+                            if (reported.Value)
+                            {
+                                DeleteLate(late);
+                            }
+                        });
+                    if (written is { } path)
+                    {
+                        reported.Value = true;
+                        // Only now: a report that failed everywhere may be tried again by
+                        // the second handler.
+                        if (exception != null)
+                        {
+                            _written.AddOrUpdate(exception, path);
+                        }
+
+                        return path;
+                    }
                 }
             }
         }
@@ -159,49 +185,117 @@ public sealed class CrashLog
     }
 
     /// <summary>
-    /// The write runs on a thread of its own, waited for up to <see cref="WriteTimeout"/>:
-    /// a hung file system call cannot be cancelled, only left behind.
+    /// Runs <paramref name="work"/> on a thread of its own and waits up to
+    /// <see cref="WriteTimeout"/>: a hung file system call cannot be cancelled, only left
+    /// behind. Null when it timed out; <paramref name="late"/> then gets its result if it
+    /// ever finishes.
     /// </summary>
-    private string? WriteWithin(string directory, string name, byte[] bytes)
+    private T? RunWithin<T>(Func<StrongBox<bool>, T?> work, Action<T> late)
+        where T : class
     {
-        string? written = null;
-        var thread = new Thread(() => written = TryWrite(directory, name, bytes))
+        var abandoned = new StrongBox<bool>();
+        var gate = new object();
+        T? result = null;
+        var thread = new Thread(() =>
+        {
+            T? value = null;
+            try
+            {
+                value = work(abandoned);
+            }
+            catch
+            {
+                // Reported as no result.
+            }
+
+            lock (gate)
+            {
+                result = value;
+                if (abandoned.Value && value != null)
+                {
+                    late(value);
+                }
+            }
+        })
         {
             IsBackground = true,
             Name = "Crash log",
         };
         thread.Start();
-        return thread.Join(WriteTimeout) ? written : null;
+        var finished = thread.Join(WriteTimeout);
+        lock (gate)
+        {
+            if (!finished)
+            {
+                abandoned.Value = true;
+            }
+
+            return finished ? result : null;
+        }
     }
 
-    private static string? TryWrite(string directory, string name, byte[] bytes)
+    private T? RunWithin<T>(Func<T?> work, Action<T> late)
+        where T : class => RunWithin(_ => work(), late);
+
+    private static void DeleteLate(string path)
     {
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+            // Pruning removes it in time.
+        }
+    }
+
+    private static string? TryWrite(string directory, string name, byte[] bytes, StrongBox<bool> abandoned)
+    {
+        string? created = null;
         try
         {
             Directory.CreateDirectory(directory);
 
-            // CreateNew, so two crashes in the same second never overwrite each other.
-            for (var n = 1; n < 100; n++)
+            // CreateNew, so two crashes in the same second never overwrite each other. Only
+            // a name that is taken moves on to the next; a failed write fails this folder.
+            FileStream? file = null;
+            for (var n = 1; n < 100 && file == null && !abandoned.Value; n++)
             {
                 var path = Path.Combine(directory, (n == 1 ? name : name + "-" + n) + ".txt");
                 try
                 {
-                    using var file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-                    file.Write(bytes);
-                    return path;
+                    file = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    created = path;
                 }
                 catch (IOException) when (File.Exists(path))
                 {
                     // Taken; try the next name.
                 }
             }
+
+            if (file == null)
+            {
+                return null;
+            }
+
+            using (file)
+            {
+                file.Write(bytes);
+            }
+
+            return created;
         }
         catch
         {
-            // This folder cannot take it; the caller tries the next.
-        }
+            // This folder cannot take it; the caller tries the next. A partial file
+            // would pass for a report.
+            if (created != null)
+            {
+                DeleteLate(created);
+            }
 
-        return null;
+            return null;
+        }
     }
 
     /// <summary>

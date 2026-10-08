@@ -116,6 +116,30 @@ public sealed class CrashLogTests : IDisposable
         Assert.Contains("Unhandled exception", text, StringComparison.Ordinal);
     }
 
+    // A description that never returns must not keep a crashing process alive.
+    [Fact]
+    public void An_exception_whose_description_hangs_is_reported_without_it()
+    {
+        using var release = new ManualResetEventSlim();
+        var log = new CrashLog(Crashes, Fallback, _clock) { WriteTimeout = TimeSpan.FromMilliseconds(200) };
+
+        var path = log.Write(new HangingException(release), "Unhandled exception");
+        release.Set();
+
+        var text = File.ReadAllText(path!);
+        Assert.Contains("description timed out", text, StringComparison.Ordinal);
+        Assert.Contains(typeof(HangingException).FullName!, text, StringComparison.Ordinal);
+    }
+
+    private sealed class HangingException(ManualResetEventSlim release) : Exception
+    {
+        public override string ToString()
+        {
+            release.Wait();
+            return "late";
+        }
+    }
+
     private sealed class UnprintableException : Exception
     {
         public override string ToString() => throw new InvalidOperationException("no");
