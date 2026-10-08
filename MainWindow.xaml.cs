@@ -81,6 +81,7 @@ public partial class MainWindow : Window
         _configurationTab = new ConfigurationTab(
             settingsService,
             accountService,
+            _databaseState,
             apiServer,
             controllerInstance,
             _loggerFactory.CreateLogger<ConfigurationTab>());
@@ -208,6 +209,7 @@ public partial class MainWindow : Window
         {
             UpdateDatabaseBanner();
             _ = _configurationTab?.RefreshAccountsAsync();
+            _configurationTab?.ShowBackupState();
         });
     }
 

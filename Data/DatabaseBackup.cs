@@ -13,15 +13,17 @@ public static class DatabaseBackup
 {
     public const string FolderName = "backups";
 
+    /// <summary>The folder that <see cref="Create"/> writes to, beside the database.</summary>
+    public static string FolderFor(string databasePath) =>
+        Path.Combine(Path.GetDirectoryName(databasePath) ?? string.Empty, FolderName);
+
     /// <summary>
     /// Writes a copy to <c>backups\&lt;name&gt;-&lt;timestamp&gt;-&lt;reason&gt;.db</c>
     /// beside the database and returns its path.
     /// </summary>
     public static string Create(string databasePath, string reason, DateTimeOffset now)
     {
-        var directory = Path.Combine(
-            Path.GetDirectoryName(databasePath) ?? string.Empty,
-            FolderName);
+        var directory = FolderFor(databasePath);
         Directory.CreateDirectory(directory);
 
         var backupPath = Path.Combine(

@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Extensions.Logging;
 using Microsoft.Win32;
+using WreckfestController.Data;
 using WreckfestController.Models;
 using WreckfestController.Services.Auth;
 using WreckfestController.Services.Config;
@@ -18,6 +19,8 @@ public partial class ConfigurationTab : UserControl
 {
     private readonly SettingsService _settingsService;
     private readonly AccountService _accountService;
+    private readonly DatabaseState _databaseState;
+    private string? _lastBackupPath;
     private readonly ILogger<ConfigurationTab> _logger;
     private UserSettings _currentSettings;
 
@@ -30,6 +33,7 @@ public partial class ConfigurationTab : UserControl
     public ConfigurationTab(
         SettingsService settingsService,
         AccountService accountService,
+        DatabaseState databaseState,
         IApiServer apiServer,
         ControllerInstance controllerInstance,
         ILogger<ConfigurationTab> logger)
@@ -43,6 +47,7 @@ public partial class ConfigurationTab : UserControl
 
         _settingsService = settingsService;
         _accountService = accountService;
+        _databaseState = databaseState;
         _apiServer = apiServer;
 
         // The web API's state, HTTPS included: broken HTTPS locks the browser out, so this is
@@ -62,6 +67,7 @@ public partial class ConfigurationTab : UserControl
         // Load current settings
         LoadSettings();
         _ = RefreshAccountsAsync();
+        ShowBackupState();
 
         // Loaded in recovery mode, the form holds the shipped defaults (version 0): load the
         // stored settings once the database is back. A form holding stored settings is left
@@ -130,6 +136,58 @@ public partial class ConfigurationTab : UserControl
         }
 
         await RefreshAccountsAsync();
+    }
+
+    /// <summary>
+    /// Where backups go, and whether one can be made. Also called when the database
+    /// becomes ready or fails.
+    /// </summary>
+    public void ShowBackupState()
+    {
+        var folder = DatabaseBackup.FolderFor(_databaseState.DatabasePath);
+        BackupButton.IsEnabled = _databaseState.IsReady;
+        OpenBackupFolderButton.IsEnabled = Directory.Exists(folder);
+        BackupStatusText.Text = !_databaseState.IsReady
+            ? "Unavailable until the database is ready."
+            : _lastBackupPath is not null
+                ? $"Backed up to {_lastBackupPath}"
+                : $"A consistent copy, made while the controller runs, in {folder}. It holds every account's password hash: keep it private.";
+    }
+
+    private async void OnBackupClicked(object sender, RoutedEventArgs e)
+    {
+        BackupButton.IsEnabled = false;
+        try
+        {
+            var path = _databaseState.DatabasePath;
+            _lastBackupPath = await Task.Run(() => DatabaseBackup.Create(path, "manual", DateTimeOffset.Now));
+            _logger.LogInformation("Backed up the database to {BackupPath}", _lastBackupPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Database backup failed");
+            await DialogService.ShowErrorAsync($"The backup failed: {ex.Message}");
+        }
+        finally
+        {
+            ShowBackupState();
+        }
+    }
+
+    private void OnOpenBackupFolderClicked(object sender, RoutedEventArgs e)
+    {
+        var folder = DatabaseBackup.FolderFor(_databaseState.DatabasePath);
+        if (!Directory.Exists(folder))
+        {
+            ShowBackupState();
+            return;
+        }
+
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = folder,
+            UseShellExecute = true,
+        });
     }
 
     private void LoadSettings()

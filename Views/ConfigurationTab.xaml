@@ -13,6 +13,7 @@
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- Settings File Path Info -->
@@ -263,9 +264,54 @@
                 </Grid>
             </Border>
 
+            <!-- Database backup: desktop only, never an endpoint (#74). A copy holds every
+                 account's password hash, and writing it is a file operation on this PC. -->
+            <Border Grid.Row="7"
+                    Background="{StaticResource BackgroundMedium}"
+                    BorderBrush="{StaticResource BorderColor}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="15"
+                    Margin="0,20,0,0">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                        <TextBlock Text="DATABASE BACKUP"
+                                   FontSize="14"
+                                   FontWeight="Bold"
+                                   Foreground="{StaticResource TextPrimary}"
+                                   Margin="0,0,0,5"/>
+                        <TextBlock x:Name="BackupStatusText"
+                                   Text="Loading..."
+                                   FontSize="11"
+                                   Foreground="{StaticResource TextSecondary}"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <Button x:Name="OpenBackupFolderButton"
+                            Grid.Column="1"
+                            Content="OPEN FOLDER"
+                            Click="OnOpenBackupFolderClicked"
+                            Style="{StaticResource MaterialDesignOutlinedButton}"
+                            Foreground="{StaticResource TextPrimary}"
+                            Margin="15,0,0,0"/>
+                    <Button x:Name="BackupButton"
+                            Grid.Column="2"
+                            Content="BACK UP NOW"
+                            Click="OnBackupClicked"
+                            Background="{StaticResource ButtonLightBlue}"
+                            Foreground="White"
+                            Width="200"
+                            Margin="15,0,0,0"/>
+                </Grid>
+            </Border>
+
             <!-- Web API: where it listens, and how HTTPS stands. Read only: the startup
                  settings file holds these, edited by hand. -->
-            <Border Grid.Row="7"
+            <Border Grid.Row="8"
                     Background="{StaticResource BackgroundMedium}"
                     BorderBrush="{StaticResource BorderColor}"
                     BorderThickness="1"
