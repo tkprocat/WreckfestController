@@ -38,7 +38,7 @@ A missing or rejected credential returns **401** with no body, never a redirect.
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
 (`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`,
-`GET public/overview`, and the [live-update hub](#live-updates--hubsserver)), so one
+`GET public/overview`, `GET public/races`, and the [live-update hub](#live-updates--hubsserver)), so one
 cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
 
@@ -166,6 +166,7 @@ why. Numbers must be JSON numbers: `"5"` for an integer is a 400.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `overview` | Anonymous. The public home page's data, below. |
+| GET | `races` | Anonymous. The latest 10 finished races, newest first, below. |
 
 `overview` is `{ serverName, maxPlayers, status: { isRunning, uptimeSeconds }, currentTrack,
 players: { humans, bots, list: [{ name, isBot }] }, rotation: { name, tracks: [{ id, name,
@@ -181,6 +182,15 @@ upcomingCups: [{ name, description, nextOccurrence, repeat, warmupAt, endsAt }],
   Steam ids, or a cup's server settings.
 - 60 requests a minute per client IP; beyond that **429** with `Retry-After`. Live changes
   come from the hub's public group, so a page need not poll.
+
+`races` is `[{ id, startedAt, endedAt, track: { id, name }, laps, cupName, entries: [{
+position, name, isBot, vehicleName, outcome, timeMs, bestLapMs }] }]`.
+- `entries` are in finishing order, bots in their real places; a car the game never placed
+  has a null `position` and comes last. `outcome` is `Finished`, `Projected` (a bot's time
+  the game estimated when the last human finished), `DidNotFinish` or `Unknown`.
+- `startedAt` is null when the hook attached mid-race; `cupName` is null for a race outside
+  a cup. Track names work as in `overview`. No Steam ids.
+- It shares `overview`'s rate limit. `RaceRecorded` on the hub says when to reload.
 
 ### Users — `api/users`
 
@@ -558,6 +568,7 @@ anonymously, but what a connection receives depends on its group:
 | `ServerRestarted` | public | `{ oldProcessId, newProcessId, restartMethod, timestamp }` |
 | `ServerAttached` | public | `{ processId, processName, startTime, timestamp }` |
 | `ServerRestartPending` | public | `{ minutesRemaining, cupName, cupId, scheduledRestartTime, timestamp }` |
+| `RaceRecorded` | public | `{ raceId, trackId, endedAt }` — a finished race was saved; `GET api/public/races` lists it |
 | `CupOccurrenceEnded` | admin | `{ cupId, cupName, occurrence, outcome, timestamp }` — a scheduled occurrence was dealt with; `outcome` is `Activated`, `Failed`, `Cancelled` or `Missed` |
 | `ConsoleLog` | admin | `{ logs: [string] }` — console lines, batched about once a second (at most 1000 per message) |
 
