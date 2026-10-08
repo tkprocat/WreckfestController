@@ -1753,7 +1753,7 @@ public class ServerManagerTests
         {
             typeof(ServerManager)
                 .GetMethod("SetAttachedProcess", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .Invoke(serverManager, [Environment.ProcessId, false]);
+                .Invoke(serverManager, [Environment.ProcessId, false, null]);
         }
 
         method.Invoke(serverManager, [Environment.ProcessId, output]);
@@ -1832,6 +1832,126 @@ public class ServerManagerTests
         Assert.DoesNotContain("injection is in progress", after.Message);
     }
 
+    // #40: one tracked process. A stop after attaching elsewhere stops the attached
+    // process only - not one attached or started before.
+    [Fact]
+    public async Task StopServer_AfterSwitchingAttachment_StopsOnlyTheAttachedProcess()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object);
+
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            Assert.True((await serverManager.StopServerAsync()).Success);
+
+            Assert.True(second.WaitForExit(5000));
+            Assert.False(first.HasExited);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // #40: a handle on the attached process is held for the whole attachment, so its PID
+    // cannot be handed to another process while the controller still acts on it.
+    [Fact]
+    public async Task AttachedProcess_IsHeldOpenForTheAttachment_AndReleasedAfter()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object);
+            var pinField = typeof(ServerManager).GetField("_attachedPin",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            Assert.Equal(first.Id, ((Process)pinField.GetValue(serverManager)!).Id);
+
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            Assert.Equal(second.Id, ((Process)pinField.GetValue(serverManager)!).Id);
+
+            Assert.True((await serverManager.StopServerAsync()).Success);
+            Assert.Null(pinField.GetValue(serverManager));
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // #40: the target is held open before anything of the current attachment is torn
+    // down, so an attach to a process that has gone fails and changes nothing.
+    [Fact]
+    public void AttachToAnExitedProcess_FailsAndLeavesTheCurrentAttachment()
+    {
+        using var first = StartIdleProcess();
+        using var gone = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            var attached = serverManager.CurrentSession;
+
+            gone.Kill();
+            Assert.True(gone.WaitForExit(5000));
+
+            Assert.False(serverManager.AttachToExistingProcess(gone.Id).Success);
+            Assert.Equal(attached, serverManager.CurrentSession);
+            Assert.False(attached!.Ended.IsCancellationRequested);
+        }
+        finally
+        {
+            KillIfRunning(first);
+        }
+    }
+
+    // #40: the desktop app asks before an attach stops the attached server. If the
+    // attachment moved while it asked, what was confirmed no longer holds: nothing is
+    // stopped and nothing attached.
+    [Fact]
+    public async Task DesktopAttach_WhenTheConfirmedAttachmentMoved_StopsNothing()
+    {
+        using var first = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object);
+
+            // Confirmed with nothing attached; then an attach came in.
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            var attached = serverManager.CurrentSession;
+
+            var result = await serverManager.AttachToProcessAsync(Process.GetCurrentProcess().Id, confirmed: null);
+
+            Assert.False(result.Success);
+            Assert.Contains("changed while you were confirming", result.Message);
+            Assert.False(first.HasExited);
+            Assert.Equal(attached, serverManager.CurrentSession);
+        }
+        finally
+        {
+            KillIfRunning(first);
+        }
+    }
+
     // The desktop app's attach holds the gate for its whole run; every way out must give it
     // back, or every later attach and inject is refused and start waits out its timeout.
     [Theory]
@@ -1842,7 +1962,7 @@ public class ServerManagerTests
         var serverManager = CreateTestServerManager(Mock.Of<IInjectedHookOutputReader>(), "1.308438");
         var target = noSuchProcess ? int.MaxValue : Process.GetCurrentProcess().Id;
 
-        var failed = await serverManager.AttachToProcessAsync(target);
+        var failed = await serverManager.AttachToProcessAsync(target, serverManager.CurrentSession);
         Assert.False(failed.Success);
 
         Assert.True(serverManager.AttachToExistingProcess(Process.GetCurrentProcess().Id).Success);
