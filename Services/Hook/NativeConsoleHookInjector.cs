@@ -296,6 +296,15 @@ internal static class NativeConsoleHookInjector
                 error = "Remote FreeLibrary failed";
                 return false;
             }
+
+            // Recorded at once: the snapshot below can fail, and a retry must still know.
+            if (reference is { } released)
+            {
+                lock (ReleasedReferences)
+                {
+                    ReleasedReferences.Add(released);
+                }
+            }
         }
 
         if (!TryFindRemoteModule(processId, Path.GetFileName(dllPath), out var still, out error))
@@ -305,24 +314,18 @@ internal static class NativeConsoleHookInjector
 
         if (still is { } remaining && remaining.Base == module.Base)
         {
-            if (reference is { } key)
-            {
-                lock (ReleasedReferences)
-                {
-                    ReleasedReferences.Add(key);
-                }
-            }
-
             error = "The hook is shut down but still loaded: something else holds a reference to it";
             return false;
         }
 
+        // Unmapped: a later load may land at the same address, and is a new reference.
+        ForgetReleasedReference(processHandle, processId, module.Base);
         return true;
     }
 
     /// <summary>
-    /// Mappings of the hook whose controller reference has been given back while something
-    /// else kept them loaded, by process (its id and creation time, as a PID is reused)
+    /// Mappings of the hook whose controller reference has been given back and that have
+    /// not been seen unmapped since, by process (its id and creation time, as a PID is reused)
     /// and base address. Kept for this run of the controller only.
     /// </summary>
     private static readonly HashSet<(int ProcessId, long Created, IntPtr Base)> ReleasedReferences = [];
