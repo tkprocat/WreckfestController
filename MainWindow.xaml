@@ -150,6 +150,11 @@
                 <TabItem Header="Configuration">
                     <ContentControl x:Name="ConfigurationTabContent"/>
                 </TabItem>
+
+                <!-- About Tab -->
+                <TabItem Header="About">
+                    <ContentControl x:Name="AboutTabContent"/>
+                </TabItem>
             </TabControl>
 
             </Grid> <!-- Root Grid with titlebar -->

@@ -1,0 +1,63 @@
+<UserControl x:Class="WreckfestController.Views.AboutTab"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+             Background="{StaticResource BackgroundDark}">
+    <StackPanel Margin="20" MaxWidth="640" HorizontalAlignment="Left">
+        <!-- Header -->
+        <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+            <materialDesign:PackIcon Kind="InformationOutline"
+                                     Width="28"
+                                     Height="28"
+                                     Foreground="{StaticResource BlueColor}"
+                                     VerticalAlignment="Center"
+                                     Margin="0,0,10,0"/>
+            <TextBlock Text="Wreckfest Controller"
+                       FontSize="20"
+                       FontWeight="Bold"
+                       Foreground="{StaticResource TextPrimary}"
+                       VerticalAlignment="Center"/>
+        </StackPanel>
+
+        <TextBlock Text="Runs a Wreckfest dedicated server: start and stop, chat commands and voting, cups, and a web app for admins and spectators."
+                   TextWrapping="Wrap"
+                   Foreground="{StaticResource TextSecondary}"
+                   Margin="0,0,0,16"/>
+
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Version" Foreground="{StaticResource TextSecondary}" Margin="0,0,24,6"/>
+            <TextBlock Grid.Row="0" Grid.Column="1" x:Name="VersionText" Foreground="{StaticResource TextPrimary}" FontWeight="Bold" Margin="0,0,0,6"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Built" Foreground="{StaticResource TextSecondary}" Margin="0,0,24,6"/>
+            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="BuiltText" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,6"/>
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Runtime" Foreground="{StaticResource TextSecondary}" Margin="0,0,24,6"/>
+            <TextBlock Grid.Row="2" Grid.Column="1" x:Name="RuntimeText" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,6"/>
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="License" Foreground="{StaticResource TextSecondary}" Margin="0,0,24,6"/>
+            <TextBlock Grid.Row="3" Grid.Column="1" Text="MIT" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,6"/>
+        </Grid>
+
+        <TextBlock Margin="0,0,0,6">
+            <Hyperlink x:Name="RepositoryLink" RequestNavigate="OnLinkNavigate" Foreground="{StaticResource BlueColor}">
+                <Run x:Name="RepositoryLinkText"/>
+            </Hyperlink>
+        </TextBlock>
+        <TextBlock>
+            <Hyperlink x:Name="IssuesLink" RequestNavigate="OnLinkNavigate" Foreground="{StaticResource BlueColor}">
+                Report a problem or suggest a feature
+            </Hyperlink>
+        </TextBlock>
+    </StackPanel>
+</UserControl>
