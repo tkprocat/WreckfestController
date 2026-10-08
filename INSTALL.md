@@ -29,6 +29,7 @@ On first start it creates its data folder, `%LocalAppData%\WreckfestController\`
 | `controller.db` | Settings, web accounts, the track catalogue, collections, cups and race results |
 | `keys\` | The keys that protect sign-in cookies, encrypted for this Windows user. Deleting the folder signs everyone out. |
 | `user-settings.json` | Startup settings that you write by hand (see step 3). The controller never writes this file. |
+| `crashes\` | One file per crash, with the full error. Created on the first crash; the newest 20 are kept. |
 
 If the database cannot be opened, the controller starts in **recovery mode**: the
 desktop app shows why in a banner. Sign-in is unavailable and the API answers 503
@@ -36,7 +37,8 @@ desktop app shows why in a banner. Sign-in is unavailable and the API answers 50
 click **RETRY** in the banner, or restart the controller.
 
 To keep the database somewhere else, set `Database:Path` in `user-settings.json` (step
-3). The `keys` folder follows it.
+3). The `keys` folder follows it; the `crashes` folder does not, so a crash is recorded
+even when the database's folder cannot be written.
 
 To back up the database, click **BACK UP NOW** on the **Configuration** tab. It writes a
 consistent copy to the `backups` folder beside the database while the controller runs;
@@ -259,6 +261,11 @@ there.
 
 **Signed out after every restart.** The controller cannot keep its `keys` folder.
 Check that `%LocalAppData%\WreckfestController\keys` is writable.
+
+**The controller closed unexpectedly.** Look in `%LocalAppData%\WreckfestController\crashes`
+for the newest `crash-<date>_<time>-pid<id>.txt`; it names the database, so with several
+controllers you can tell which one it was. If that folder cannot be written, the file goes
+to `%TEMP%`. Attach the file when you report the crash.
 
 **Live updates do not arrive through the proxy.** The proxy must allow WebSocket
 upgrades on `/hubs/server`.

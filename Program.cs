@@ -26,6 +26,11 @@ public class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // First, so even a crash while starting leaves a file behind.
+        var crashLog = CrashLog.Default;
+        crashLog.Install();
+        crashLog.Prune();
+
         IHost host;
         try
         {
@@ -35,9 +40,12 @@ public class Program
         {
             // Nothing is registered yet, so there is no window to carry on in. This is
             // almost always a malformed settings file.
+            crashLog.Write(ex, "Startup failed");
             ReportFatalStartupError(ex);
             return;
         }
+
+        crashLog.DatabasePath = host.Services.GetService<DatabaseState>()?.DatabasePath;
 
         try
         {
@@ -83,6 +91,7 @@ public class Program
             // Create and run WPF application
             var app = new App();
             app.InitializeComponent();
+            crashLog.Install(app);
 
             // Create MainWindow with dependency injection
             var mainWindow = host.Services.GetRequiredService<MainWindow>();
