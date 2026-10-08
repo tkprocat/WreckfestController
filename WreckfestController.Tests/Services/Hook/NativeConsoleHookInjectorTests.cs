@@ -1,54 +1,61 @@
+using System.Runtime.InteropServices;
 using WreckfestController.Services.Hook;
 using Xunit;
 
 namespace WreckfestController.Tests.Services.Hook;
 
 /// <summary>
-/// An export is called at an address worked out from the DLL file, so it must only be
-/// called in a loaded image of that same build. The PE identity is what tells them apart.
+/// Exports are called at addresses read from the loaded image's own export table, so the
+/// call lands in the build that is loaded, whatever the DLL file holds now. Checked here
+/// against this process, where GetProcAddress gives the right answer.
 /// </summary>
 public class NativeConsoleHookInjectorTests
 {
-    [Fact]
-    public void ImageIdentity_ReadsTheHookDll()
+    private const uint DontResolveDllReferences = 0x00000001;
+    private static readonly IntPtr CurrentProcess = new(-1);
+
+    [Theory]
+    [InlineData("WreckfestConsoleHookShutdown")]
+    [InlineData("WreckfestConsoleHookInitialize")]
+    public void ResolvesAnExportFromTheLoadedImage(string exportName)
     {
-        var identity = NativeConsoleHookInjector.ImageIdentity(HookHeaders());
-
-        Assert.NotNull(identity);
-        Assert.NotEqual(0u, identity.Value.SizeOfImage);
-    }
-
-    [Fact]
-    public void ImageIdentity_DiffersForAnotherBuild()
-    {
-        var headers = HookHeaders();
-        var original = NativeConsoleHookInjector.ImageIdentity(headers);
-
-        // Another link of the same DLL: its timestamp differs.
-        var pe = BitConverter.ToInt32(headers, 0x3C);
-        headers[pe + 8] ^= 0xFF;
-
-        Assert.NotEqual(original, NativeConsoleHookInjector.ImageIdentity(headers));
+        var module = LoadHookImage();
+        try
+        {
+            Assert.True(
+                NativeConsoleHookInjector.TryResolveRemoteExport(CurrentProcess, module, exportName, out var address, out var error),
+                error);
+            Assert.Equal(GetProcAddress(module, exportName), address);
+        }
+        finally
+        {
+            FreeLibrary(module);
+        }
     }
 
     [Theory]
-    [InlineData(new byte[] { 0x4D, 0x5A })]
-    [InlineData(new byte[] { 0x00, 0x00, 0x00, 0x00 })]
-    public void ImageIdentity_IsNullForSomethingThatIsNotAnImage(byte[] start)
+    [InlineData("WreckfestConsoleHookShut")]
+    [InlineData("NoSuchExport")]
+    public void RefusesANameThatIsNotExported(string exportName)
     {
-        var headers = new byte[0x400];
-        start.CopyTo(headers, 0);
-        BitConverter.GetBytes(0x7FFFFFFF).CopyTo(headers, 0x3C);
-
-        Assert.Null(NativeConsoleHookInjector.ImageIdentity(headers));
+        var module = LoadHookImage();
+        try
+        {
+            Assert.False(NativeConsoleHookInjector.TryResolveRemoteExport(CurrentProcess, module, exportName, out var address, out _));
+            Assert.Equal(IntPtr.Zero, address);
+        }
+        finally
+        {
+            FreeLibrary(module);
+        }
     }
 
-    private static byte[] HookHeaders()
+    // Mapped as an image without running DllMain, so nothing of the hook starts here.
+    private static IntPtr LoadHookImage()
     {
-        using var file = File.OpenRead(FindHookDll());
-        var headers = new byte[0x400];
-        file.ReadExactly(headers);
-        return headers;
+        var module = LoadLibraryEx(FindHookDll(), IntPtr.Zero, DontResolveDllReferences);
+        Assert.NotEqual(IntPtr.Zero, module);
+        return module;
     }
 
     private static string FindHookDll()
@@ -67,4 +74,13 @@ public class NativeConsoleHookInjectorTests
 
         throw new FileNotFoundException("WreckfestConsoleHook.dll was not found above the test output; building the app builds it.");
     }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr LoadLibraryEx(string lpFileName, IntPtr hFile, uint dwFlags);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool FreeLibrary(IntPtr hModule);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
+    private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
 }

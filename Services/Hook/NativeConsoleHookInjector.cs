@@ -21,7 +21,6 @@ internal static class NativeConsoleHookInjector
     private const uint WaitTimeout = 0x00000102;
     private const uint Th32csSnapModule = 0x00000008;
     private const uint Th32csSnapModule32 = 0x00000010;
-    private const uint DontResolveDllReferences = 0x00000001;
     private const uint ErrorShutdownInProgress = 1115;
     private const int ErrorNoMoreFiles = 18;
     private const uint Infinite = 0xFFFFFFFF;
@@ -66,7 +65,7 @@ internal static class NativeConsoleHookInjector
             if (existing is { } loaded)
             {
                 wasAlreadyLoaded = true;
-                if (CallRemoteExport(processHandle, loaded.Base, dllPath, InitializeExportName, timeout, out var initialized, out error))
+                if (CallRemoteExport(processHandle, loaded.Base, InitializeExportName, timeout, out var initialized, out error))
                 {
                     return true;
                 }
@@ -168,10 +167,13 @@ internal static class NativeConsoleHookInjector
                 return false;
             }
 
+            // A fresh mapping: whatever was recorded for an earlier one at this address is
+            // not about this one.
+            ForgetReleasedReference(processHandle, processId, loadedModuleBase);
+
             return CallRemoteExport(
                 processHandle,
                 loadedModuleBase,
-                dllPath,
                 InitializeExportName,
                 timeout,
                 out _,
@@ -261,27 +263,39 @@ internal static class NativeConsoleHookInjector
             return false;
         }
 
-        if (!CallRemoteExport(processHandle, module.Base, dllPath, ShutdownExportName, Timeout.InfiniteTimeSpan, out _, out error))
+        if (!CallRemoteExport(processHandle, module.Base, ShutdownExportName, Timeout.InfiniteTimeSpan, out _, out error))
         {
             return false;
         }
 
-        var freeLibrary = GetProcAddress(GetModuleHandle("kernel32.dll"), "FreeLibrary");
-        if (freeLibrary == IntPtr.Zero)
+        // Given back already, by an earlier unload that found the module still loaded
+        // afterwards: what keeps it loaded is not the controller's to release.
+        var reference = ReferenceKey(processHandle, processId, module.Base);
+        bool releasedBefore;
+        lock (ReleasedReferences)
         {
-            error = $"Could not resolve FreeLibrary: {FormatLastWin32Error()}";
-            return false;
+            releasedBefore = reference is { } key && ReleasedReferences.Contains(key);
         }
 
-        if (!RunRemoteThread(processHandle, freeLibrary, module.Base, Timeout.InfiniteTimeSpan, "FreeLibrary", out var freed, out error))
+        if (!releasedBefore)
         {
-            return false;
-        }
+            var freeLibrary = GetProcAddress(GetModuleHandle("kernel32.dll"), "FreeLibrary");
+            if (freeLibrary == IntPtr.Zero)
+            {
+                error = $"Could not resolve FreeLibrary: {FormatLastWin32Error()}";
+                return false;
+            }
 
-        if (freed == 0)
-        {
-            error = "Remote FreeLibrary failed";
-            return false;
+            if (!RunRemoteThread(processHandle, freeLibrary, module.Base, Timeout.InfiniteTimeSpan, "FreeLibrary", out var freed, out error))
+            {
+                return false;
+            }
+
+            if (freed == 0)
+            {
+                error = "Remote FreeLibrary failed";
+                return false;
+            }
         }
 
         if (!TryFindRemoteModule(processId, Path.GetFileName(dllPath), out var still, out error))
@@ -291,6 +305,14 @@ internal static class NativeConsoleHookInjector
 
         if (still is { } remaining && remaining.Base == module.Base)
         {
+            if (reference is { } key)
+            {
+                lock (ReleasedReferences)
+                {
+                    ReleasedReferences.Add(key);
+                }
+            }
+
             error = "The hook is shut down but still loaded: something else holds a reference to it";
             return false;
         }
@@ -298,118 +320,158 @@ internal static class NativeConsoleHookInjector
         return true;
     }
 
+    /// <summary>
+    /// Mappings of the hook whose controller reference has been given back while something
+    /// else kept them loaded, by process (its id and creation time, as a PID is reused)
+    /// and base address. Kept for this run of the controller only.
+    /// </summary>
+    private static readonly HashSet<(int ProcessId, long Created, IntPtr Base)> ReleasedReferences = [];
+
+    private static (int, long, IntPtr)? ReferenceKey(IntPtr processHandle, int processId, IntPtr moduleBase) =>
+        GetProcessTimes(processHandle, out var created, out _, out _, out _) ? (processId, created, moduleBase) : null;
+
+    private static void ForgetReleasedReference(IntPtr processHandle, int processId, IntPtr moduleBase)
+    {
+        if (ReferenceKey(processHandle, processId, moduleBase) is { } key)
+        {
+            lock (ReleasedReferences)
+            {
+                ReleasedReferences.Remove(key);
+            }
+        }
+    }
+
     private static bool CallRemoteExport(
         IntPtr processHandle,
         IntPtr remoteModuleBase,
-        string dllPath,
         string exportName,
         TimeSpan timeout,
         out uint exitCode,
         out string error)
     {
-        error = string.Empty;
         exitCode = 0;
 
-        var localModule = LoadLibraryEx(dllPath, IntPtr.Zero, DontResolveDllReferences);
-        if (localModule == IntPtr.Zero)
+        // From the loaded image's own export table, not the DLL file's: the file can have
+        // been renamed while loaded and another build put in its place.
+        if (!TryResolveRemoteExport(processHandle, remoteModuleBase, exportName, out var remoteExport, out error))
         {
-            error = $"LoadLibraryEx failed while resolving {exportName}: {FormatLastWin32Error()}";
+            error = $"Could not resolve {exportName} in the loaded hook: {error}";
             return false;
         }
 
-        try
+        if (!RunRemoteThread(processHandle, remoteExport, IntPtr.Zero, timeout, exportName, out exitCode, out error))
         {
-            var localExport = GetProcAddress(localModule, exportName);
-            if (localExport == IntPtr.Zero)
-            {
-                error = $"Could not resolve {exportName}: {FormatLastWin32Error()}";
-                return false;
-            }
-
-            // The export's address is worked out from the file, so it is right only if the
-            // loaded image was mapped from this same build. A file can be renamed while
-            // loaded and another put in its place.
-            if (!SameImage(processHandle, remoteModuleBase, localModule, out error))
-            {
-                error = $"Not calling {exportName}: {error}";
-                return false;
-            }
-
-            var exportOffset = localExport.ToInt64() - localModule.ToInt64();
-            var remoteExport = IntPtr.Add(remoteModuleBase, checked((int)exportOffset));
-            if (!RunRemoteThread(processHandle, remoteExport, IntPtr.Zero, timeout, exportName, out exitCode, out error))
-            {
-                return false;
-            }
-
-            if (exitCode != 0)
-            {
-                error = $"Remote {exportName} returned error {exitCode}";
-                return false;
-            }
-
-            return true;
+            return false;
         }
-        finally
+
+        if (exitCode != 0)
         {
-            FreeLibrary(localModule);
+            error = $"Remote {exportName} returned error {exitCode}";
+            return false;
         }
+
+        return true;
     }
 
     /// <summary>
-    /// True when the image loaded at <paramref name="remoteBase"/> has the PE identity of
-    /// the one mapped locally: link timestamp, entry point, image size and checksum.
+    /// The address of <paramref name="exportName"/> in the 64-bit image loaded at
+    /// <paramref name="moduleBase"/>, read from that image's export directory.
     /// </summary>
-    private static bool SameImage(IntPtr processHandle, IntPtr remoteBase, IntPtr localBase, out string error)
+    internal static bool TryResolveRemoteExport(IntPtr processHandle, IntPtr moduleBase, string exportName, out IntPtr address, out string error)
     {
-        const int HeaderBytes = 0x400;
-        var remote = new byte[HeaderBytes];
-        if (!ReadProcessMemory(processHandle, remoteBase, remote, (UIntPtr)HeaderBytes, out var read) ||
-            read.ToUInt64() != HeaderBytes)
+        address = IntPtr.Zero;
+
+        var headers = new byte[0x400];
+        if (!ReadRemote(processHandle, moduleBase, 0, headers, out error))
         {
-            error = $"ReadProcessMemory of the loaded hook's headers failed: {FormatLastWin32Error()}";
             return false;
         }
 
-        var local = new byte[HeaderBytes];
-        Marshal.Copy(localBase, local, 0, HeaderBytes);
-
-        if (ImageIdentity(remote) is not { } loaded || ImageIdentity(local) is not { } file)
+        var pe = BitConverter.ToInt32(headers, 0x3C);
+        var optional = pe + 24;
+        // The export directory is the first data directory, 112 bytes into a PE32+ optional header.
+        if (BitConverter.ToUInt16(headers, 0) != 0x5A4D || pe < 0 || optional + 120 > headers.Length ||
+            BitConverter.ToUInt32(headers, pe) != 0x00004550 || BitConverter.ToUInt16(headers, optional) != 0x20B)
         {
-            error = "the hook's PE headers could not be read";
+            error = "not a 64-bit PE image";
             return false;
         }
 
-        if (loaded != file)
+        var exportRva = BitConverter.ToUInt32(headers, optional + 112);
+        var exportSize = BitConverter.ToUInt32(headers, optional + 116);
+        var directory = new byte[40];
+        if (exportRva == 0 || !ReadRemote(processHandle, moduleBase, exportRva, directory, out error))
         {
-            error = "the loaded hook is a different build from the DLL file";
+            error = exportRva == 0 ? "the image has no exports" : error;
+            return false;
+        }
+
+        var nameCount = BitConverter.ToUInt32(directory, 24);
+        var functionsRva = BitConverter.ToUInt32(directory, 28);
+        var namesRva = BitConverter.ToUInt32(directory, 32);
+        var ordinalsRva = BitConverter.ToUInt32(directory, 36);
+        if (nameCount > 4096)
+        {
+            error = $"implausible export count {nameCount}";
+            return false;
+        }
+
+        var names = new byte[nameCount * 4];
+        var ordinals = new byte[nameCount * 2];
+        if (!ReadRemote(processHandle, moduleBase, namesRva, names, out error) ||
+            !ReadRemote(processHandle, moduleBase, ordinalsRva, ordinals, out error))
+        {
+            return false;
+        }
+
+        // The name and its terminator, compared byte for byte.
+        var wanted = Encoding.ASCII.GetBytes(exportName + "\0");
+        var candidate = new byte[wanted.Length];
+        for (var index = 0; index < nameCount; index++)
+        {
+            if (!ReadRemote(processHandle, moduleBase, BitConverter.ToUInt32(names, index * 4), candidate, out error))
+            {
+                return false;
+            }
+
+            if (!candidate.AsSpan().SequenceEqual(wanted))
+            {
+                continue;
+            }
+
+            var ordinal = BitConverter.ToUInt16(ordinals, index * 2);
+            var function = new byte[4];
+            if (!ReadRemote(processHandle, moduleBase, functionsRva + ordinal * 4u, function, out error))
+            {
+                return false;
+            }
+
+            var functionRva = BitConverter.ToUInt32(function, 0);
+            if (functionRva >= exportRva && functionRva < exportRva + exportSize)
+            {
+                error = $"{exportName} is forwarded to another module";
+                return false;
+            }
+
+            address = IntPtr.Add(moduleBase, checked((int)functionRva));
+            return true;
+        }
+
+        error = $"{exportName} is not exported";
+        return false;
+    }
+
+    private static bool ReadRemote(IntPtr processHandle, IntPtr moduleBase, uint rva, byte[] buffer, out string error)
+    {
+        if (!ReadProcessMemory(processHandle, IntPtr.Add(moduleBase, checked((int)rva)), buffer, (UIntPtr)buffer.Length, out var read) ||
+            read.ToUInt64() != (ulong)buffer.Length)
+        {
+            error = $"ReadProcessMemory failed: {FormatLastWin32Error()}";
             return false;
         }
 
         error = string.Empty;
         return true;
-    }
-
-    internal static (uint TimeDateStamp, uint EntryPoint, uint SizeOfImage, uint CheckSum)? ImageIdentity(byte[] headers)
-    {
-        if (headers.Length < 0x40 || headers[0] != 'M' || headers[1] != 'Z')
-        {
-            return null;
-        }
-
-        var pe = BitConverter.ToInt32(headers, 0x3C);
-        // PE signature, file header (20 bytes), then the optional header up to CheckSum.
-        if (pe < 0 || pe > headers.Length - (24 + 68) || BitConverter.ToUInt32(headers, pe) != 0x00004550)
-        {
-            return null;
-        }
-
-        var optional = pe + 24;
-        return (
-            BitConverter.ToUInt32(headers, pe + 8),
-            BitConverter.ToUInt32(headers, optional + 16),
-            BitConverter.ToUInt32(headers, optional + 56),
-            BitConverter.ToUInt32(headers, optional + 64));
     }
 
     /// <summary>
@@ -606,11 +668,13 @@ internal static class NativeConsoleHookInjector
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Ansi)]
     private static extern IntPtr GetProcAddress(IntPtr hModule, string lpProcName);
 
-    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    private static extern IntPtr LoadLibraryEx(string lpFileName, IntPtr hFile, uint dwFlags);
-
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool FreeLibrary(IntPtr hModule);
+    private static extern bool GetProcessTimes(
+        IntPtr hProcess,
+        out long lpCreationTime,
+        out long lpExitTime,
+        out long lpKernelTime,
+        out long lpUserTime);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr CreateRemoteThread(
