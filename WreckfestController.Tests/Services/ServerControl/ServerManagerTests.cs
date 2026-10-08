@@ -1753,7 +1753,7 @@ public class ServerManagerTests
         {
             typeof(ServerManager)
                 .GetMethod("SetAttachedProcess", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .Invoke(serverManager, [Environment.ProcessId, false]);
+                .Invoke(serverManager, [Environment.ProcessId, false, null]);
         }
 
         method.Invoke(serverManager, [Environment.ProcessId, output]);
@@ -1889,6 +1889,35 @@ public class ServerManagerTests
         {
             KillIfRunning(first);
             KillIfRunning(second);
+        }
+    }
+
+    // #40: the target is held open before anything of the current attachment is torn
+    // down, so an attach to a process that has gone fails and changes nothing.
+    [Fact]
+    public void AttachToAnExitedProcess_FailsAndLeavesTheCurrentAttachment()
+    {
+        using var first = StartIdleProcess();
+        using var gone = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            var attached = serverManager.CurrentSession;
+
+            gone.Kill();
+            Assert.True(gone.WaitForExit(5000));
+
+            Assert.False(serverManager.AttachToExistingProcess(gone.Id).Success);
+            Assert.Equal(attached, serverManager.CurrentSession);
+            Assert.False(attached!.Ended.IsCancellationRequested);
+        }
+        finally
+        {
+            KillIfRunning(first);
         }
     }
 

@@ -289,6 +289,11 @@ public class ServerManager
                 try
                 {
                     var process = Process.GetProcessById(_actualServerPid.Value);
+                    // Opened while _lock is held and the pin keeps the PID ours, and kept
+                    // by the returned instance: a caller acting on it after the lock is
+                    // released - a force stop's Kill - still reaches this process, even
+                    // if attachment moves and the pin is released meanwhile (#40).
+                    _ = process.SafeHandle;
                     if (!process.HasExited)
                     {
                         return process;
@@ -415,12 +420,16 @@ public class ServerManager
                         _logger.LogWarning("Server process exited. Exit code: {ExitCode}", process.ExitCode);
                     };
 
-                    SetAttachedProcess(process.Id);
-                    _startTime = DateTime.UtcNow;
-                    ProcessIdChanged?.Invoke(process.Id);
+                    // Not held open means it has already gone; the immediate-exit check
+                    // below reports that.
+                    if (SetAttachedProcess(process.Id))
+                    {
+                        _startTime = DateTime.UtcNow;
+                        ProcessIdChanged?.Invoke(process.Id);
 
-                    // Start monitoring the server output (console or log file)
-                    StartOutputMonitoring();
+                        // Start monitoring the server output (console or log file)
+                        StartOutputMonitoring();
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -796,7 +805,8 @@ public class ServerManager
                         return (false, "Attachment changed during restart; replacement was not attached.");
                     StopHookOutputListener();
                     ClearProcessScopedState();
-                    SetAttachedProcess(newPid);
+                    if (!SetAttachedProcess(newPid))
+                        return (false, "Server restart failed: the replacement process exited before it could be attached.");
                 }
             }
             finally
@@ -1341,12 +1351,8 @@ public class ServerManager
 
     public (bool Success, string Message) AttachToExistingProcess(int pid)
     {
-        Process process;
-        try
-        {
-            process = Process.GetProcessById(pid);
-        }
-        catch (ArgumentException)
+        // Held open from here, so the process checked is the process attached.
+        if (OpenHeld(pid) is not { } process)
         {
             return (false, $"Process {pid} does not exist");
         }
@@ -1456,11 +1462,21 @@ public class ServerManager
                     return (false, "The attachment changed meanwhile; left as it is.");
                 }
 
+                // Pinned before anything is torn down: an attach that cannot be held
+                // open fails here and leaves the current attachment as it was.
+                var pin = OpenHeld(pid);
+                if (pin == null || pin.HasExited)
+                {
+                    pin?.Dispose();
+                    return (false, $"Process {pid} has already exited");
+                }
+
                 StopOutputMonitoring();
                 StopHookOutputListener();
                 ClearProcessScopedState();
 
-                SetAttachedProcess(pid);
+                SetAttachedProcess(pid, pin: pin);
+
                 _startTime = process.StartTime.ToUniversalTime();
             }
 
@@ -1510,7 +1526,13 @@ public class ServerManager
     // Each call ends the current attachment session and begins the next: attach,
     // detach and process replacement all come through here, while a reinject or a
     // monitoring restart does not, and so keeps the session.
-    private void SetAttachedProcess(int? pid, bool processExited = false)
+    //
+    // Returns false, changing nothing, when the process to attach cannot be held open
+    // - it has exited, or cannot be opened. An attachment is never made without its pin.
+    //
+    // A caller that must not tear anything down for an attach that will fail opens the
+    // pin itself first (OpenHeld) and hands it over in pin; it is owned here from then.
+    private bool SetAttachedProcess(int? pid, bool processExited = false, Process? pin = null)
     {
         CancellationTokenSource? ended;
         Process? unpinned;
@@ -1518,8 +1540,14 @@ public class ServerManager
         {
             // Every attach path still holds its own handle on the process here, so the
             // PID cannot have changed owner before this pin takes over.
+            if (pid is int pinned && pin == null && (pin = OpenHeld(pinned)) == null)
+            {
+                _logger.LogWarning("Process {PID} could not be held open, so it was not attached", pinned);
+                return false;
+            }
+
             unpinned = _attachedPin;
-            _attachedPin = pid is int pinned ? OpenHeld(pinned) : null;
+            _attachedPin = pin;
             _actualServerPid = pid;
             if (!processExited)
                 Interlocked.Increment(ref _attachmentSelectionId);
@@ -1543,6 +1571,7 @@ public class ServerManager
         // throw, and late work still reads it.
         _ = ended?.CancelAsync();
         unpinned?.Dispose();
+        return true;
     }
 
     // True while attachment is still the current one. Cheap enough for every hook read:
@@ -2487,13 +2516,20 @@ public class ServerManager
                 {
                     _logger.LogWarning("Attached server {Pid} could not be stopped ({Message}); nothing was attached",
                         confirmed.ProcessId, stopped.Message);
+                    // Monitoring was stopped above for the switch; the server is still
+                    // attached, so give it back.
+                    StartOutputMonitoring();
                     return (false, $"Process {confirmed.ProcessId} could not be stopped, so nothing was attached.");
                 }
             }
 
             lock (_lock)
             {
-                SetAttachedProcess(processId);
+                if (!SetAttachedProcess(processId))
+                {
+                    return (false, $"Process {processId} has exited");
+                }
+
                 _startTime = process.StartTime.ToUniversalTime();
             }
             ProcessIdChanged?.Invoke(processId);
