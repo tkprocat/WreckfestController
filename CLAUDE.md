@@ -4,9 +4,8 @@
 
 See `docs/finding-rvas.md` before touching any hardcoded game offset.
 
-`CLAUDE_GUIDE.md` is ~1800 lines and **stale** — it still describes ASP.NET Core 8, "51+
-tests" (there are 246) and predates the hook-only I/O work. Do not read it wholesale; grep
-it for a specific topic, and trust the code over it.
+Setup and configuration are in `INSTALL.md`, the HTTP API in `docs/API.md`, and the web
+app's visual rules in `docs/design-system.md`.
 
 ## Build and test
 
