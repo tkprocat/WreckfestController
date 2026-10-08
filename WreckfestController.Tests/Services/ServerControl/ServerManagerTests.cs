@@ -677,6 +677,48 @@ public class ServerManagerTests
         }
     }
 
+    // A restart starts monitoring after it releases the attachment gate, so another
+    // attach can come first. Polling started late must still read the server attached
+    // now, not the one the restart began with.
+    [Fact]
+    public async Task EventPolling_StartedAfterAnotherAttach_ReadsTheCurrentServer()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var inputWriter = new Mock<IServerInputWriter>();
+            var memoryReader = inputWriter.As<IHookMemoryReader>();
+            var polledSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            memoryReader.Setup(r => r.ReadModuleMemoryAsync(It.IsAny<int>(), It.IsAny<uint>(), It.IsAny<int>()))
+                .Returns((int pid, uint _, int size) =>
+                {
+                    if (pid == second.Id)
+                        polledSecond.TrySetResult();
+                    return Task.FromResult((false, "not injected", new byte[size]));
+                });
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object, inputWriter.Object);
+
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            typeof(ServerManager)
+                .GetMethod("StartOutputMonitoring", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(serverManager, null);
+            memoryReader.Invocations.Clear();
+
+            await polledSecond.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+            memoryReader.Verify(r => r.ReadModuleMemoryAsync(first.Id, It.IsAny<uint>(), It.IsAny<int>()), Times.Never);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
     // A read already in flight when the attachment moves describes the old server, so
     // it is discarded rather than handed to a caller that will act on the new one.
     [Fact]

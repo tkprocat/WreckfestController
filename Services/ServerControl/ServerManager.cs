@@ -1726,32 +1726,35 @@ public class ServerManager
 
     private void StartServerEventPolling()
     {
-        StopServerEventPolling();
-
-        // Polling reads only from the attachment it was started for: a poll still in
-        // flight after a switch reads nothing rather than the next server's ring.
-        AttachmentSession? attachment;
+        // One step under the lock attachment changes take. The session, the reader
+        // bound to it and the generation the timer carries must all describe the same
+        // attachment: a restart starting monitoring late, after another attach, would
+        // otherwise pair the old session's reader with the new generation, and every
+        // poll would then pass its generation check yet read nothing.
         lock (_lock)
         {
-            attachment = _session;
+            StopServerEventPolling();
+
+            // Polling reads only from the attachment it was started for: a poll still
+            // in flight after a switch reads nothing rather than the next server's ring.
+            var attachment = _session;
+            _serverEventReader = new ServerEventReader(
+                (rva, size) => ReadHookMemoryAsync(attachment, rva, size),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<ServerEventReader>.Instance);
+
+            // Every poll carries the generation it was started under. Disposing the
+            // timer does not cancel a poll already awaiting a hook read, so the
+            // generation is what lets that poll notice its results belong to a process
+            // we have since stopped watching, and drop them instead of feeding another
+            // process's tracker.
+            var generation = Volatile.Read(ref _serverEventGeneration);
+
+            _serverEventTimer = new System.Threading.Timer(
+                _ => _ = PollServerEventsAsync(generation),
+                null,
+                ServerEventPollInterval,
+                ServerEventPollInterval);
         }
-
-        _serverEventReader = new ServerEventReader(
-            (rva, size) => ReadHookMemoryAsync(attachment, rva, size),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<ServerEventReader>.Instance);
-
-        // Every poll carries the generation it was started under. Disposing the timer
-        // does not cancel a poll already awaiting a hook read, so the generation is
-        // what lets that poll notice its results belong to a process we have since
-        // stopped watching, and drop them instead of feeding another process's
-        // tracker.
-        var generation = Volatile.Read(ref _serverEventGeneration);
-
-        _serverEventTimer = new System.Threading.Timer(
-            _ => _ = PollServerEventsAsync(generation),
-            null,
-            ServerEventPollInterval,
-            ServerEventPollInterval);
     }
 
     private void StopServerEventPolling()
