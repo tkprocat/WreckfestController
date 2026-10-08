@@ -75,6 +75,52 @@ public sealed class CrashLogTests : IDisposable
         Assert.Single(Directory.GetFiles(Crashes));
     }
 
+    // Another thread's crash between the two reports must not make the first one look new.
+    [Fact]
+    public void An_exception_reported_again_after_another_is_still_written_once()
+    {
+        var log = Log();
+        var first = Thrown();
+
+        log.Write(first, "Unhandled exception on the UI thread");
+        log.Write(Thrown(), "Unhandled exception");
+        log.Write(first, "Unhandled exception");
+
+        Assert.Equal(2, Directory.GetFiles(Crashes).Length);
+    }
+
+    // The app domain's report is the second chance for one the dispatcher could not write.
+    [Fact]
+    public void A_report_that_could_not_be_written_is_tried_again()
+    {
+        Directory.CreateDirectory(_root);
+        File.WriteAllText(Crashes, "in the way");
+        File.WriteAllText(Fallback, "in the way too");
+        var log = Log();
+        var ex = Thrown();
+
+        Assert.Null(log.Write(ex, "Unhandled exception on the UI thread"));
+        File.Delete(Crashes);
+
+        Assert.NotNull(log.Write(ex, "Unhandled exception"));
+    }
+
+    [Fact]
+    public void An_exception_whose_description_throws_still_leaves_a_report()
+    {
+        var path = Log().Write(new UnprintableException(), "Unhandled exception");
+
+        var text = File.ReadAllText(path!);
+        Assert.Contains(typeof(UnprintableException).FullName!, text, StringComparison.Ordinal);
+        Assert.Contains("could not be read", text, StringComparison.Ordinal);
+        Assert.Contains("Unhandled exception", text, StringComparison.Ordinal);
+    }
+
+    private sealed class UnprintableException : Exception
+    {
+        public override string ToString() => throw new InvalidOperationException("no");
+    }
+
     [Fact]
     public void Two_crashes_in_the_same_second_get_a_file_each()
     {
@@ -132,6 +178,21 @@ public sealed class CrashLogTests : IDisposable
         Assert.Equal(CrashLog.KeepCount, left.Count);
         Assert.Equal("crash-05.txt", left[0]);
         Assert.True(File.Exists(other));
+    }
+
+    // A crash folder that is never writable must not fill %TEMP% one restart at a time.
+    [Fact]
+    public void Prune_also_trims_the_fallback_folder()
+    {
+        Directory.CreateDirectory(Fallback);
+        for (var i = 0; i < CrashLog.KeepCount + 3; i++)
+        {
+            File.WriteAllText(Path.Combine(Fallback, $"crash-{i:D2}.txt"), "x");
+        }
+
+        Log().Prune();
+
+        Assert.Equal(CrashLog.KeepCount, Directory.GetFiles(Fallback, "crash-*.txt").Length);
     }
 
     [Fact]
