@@ -14,7 +14,7 @@
 
     <!-- Application info -->
     <ApplicationTitle>Wreckfest Controller</ApplicationTitle>
-    <Version>1.0.0</Version>
+    <Version>2.0.0</Version>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <GenerateAssemblyVersionAttribute>false</GenerateAssemblyVersionAttribute>
     <GenerateAssemblyFileVersionAttribute>false</GenerateAssemblyFileVersionAttribute>
@@ -105,7 +105,8 @@
   <Target Name="GenerateVersionInfo" BeforeTargets="CoreCompile">
     <PropertyGroup>
       <BuildDate>$([System.DateTime]::UtcNow.ToString("yyyy.MMdd.HHmm"))</BuildDate>
-      <VersionPrefix>1.0</VersionPrefix>
+      <!-- Major.minor of $(Version), the one place the version is set. -->
+      <VersionPrefix>$([System.Version]::Parse('$(Version)').ToString(2))</VersionPrefix>
     </PropertyGroup>
 
     <ItemGroup>
