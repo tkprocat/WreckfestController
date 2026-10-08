@@ -111,6 +111,7 @@ public partial class MainWindow : Window
         ConfigurationTabContent.Content = _configurationTab;
         CupsTabContent.Content = _cupsTab;
         ControllerLogTabContent.Content = _controllerLogTab;
+        AboutTabContent.Content = new AboutTab();
 
         // Setup status update timer
         _statusUpdateTimer = new Timer(1000); // Update every second

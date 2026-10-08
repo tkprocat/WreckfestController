@@ -119,6 +119,11 @@
       <AssemblyAttributes Include="AssemblyInformationalVersion">
         <_Parameter1>$(VersionPrefix).$(BuildDate)</_Parameter1>
       </AssemblyAttributes>
+      <!-- The full version, patch included, for the desktop app's About tab. -->
+      <AssemblyAttributes Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>AppVersion</_Parameter1>
+        <_Parameter2>$(Version)</_Parameter2>
+      </AssemblyAttributes>
     </ItemGroup>
 
     <WriteCodeFragment Language="C#" OutputFile="$(IntermediateOutputPath)VersionInfo.cs" AssemblyAttributes="@(AssemblyAttributes)" />
