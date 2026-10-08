@@ -21,10 +21,11 @@ public sealed class RaceResultRecorderTests : IDisposable
     private readonly Mock<ILogger<RaceResultRecorder>> _logger = new();
     private readonly ServerManager _serverManager;
     private readonly TrackChangeTracker _tracks;
+    private readonly Mock<IServerEventPublisher> _events = new();
 
     public RaceResultRecorderTests()
     {
-        var events = new Mock<IServerEventPublisher>().Object;
+        var events = _events.Object;
         _tracks = new TrackChangeTracker(NullLogger<TrackChangeTracker>.Instance, events);
         _serverManager = new ServerManager(
             new Mock<IConfiguration>().Object,
@@ -40,7 +41,7 @@ public sealed class RaceResultRecorderTests : IDisposable
     public void Dispose() => _database.Dispose();
 
     private RaceResultRecorder Recorder(IDbContextFactory<ControllerDbContext> contexts) =>
-        new(_serverManager, new RaceResultStore(contexts), _database.Store, _tracks, _logger.Object)
+        new(_serverManager, new RaceResultStore(contexts), _database.Store, _tracks, _events.Object, _logger.Object)
         {
             RetryDelays = [TimeSpan.Zero, TimeSpan.Zero],
         };
@@ -76,6 +77,33 @@ public sealed class RaceResultRecorderTests : IDisposable
 
         Assert.Equal(1, await RaceCountAsync());
         VerifyErrorLogged("could not be saved", Times.Never());
+    }
+
+    // The public front page refreshes its race list on this.
+    [Fact]
+    public async Task A_saved_race_is_announced()
+    {
+        using var recorder = Recorder(_database.Contexts);
+        await recorder.StartAsync(CancellationToken.None);
+
+        ReportRace();
+        await recorder.FlushAsync();
+
+        await using var db = await _database.Contexts.CreateDbContextAsync();
+        var race = await db.Races.SingleAsync();
+        _events.Verify(e => e.RaceRecordedAsync(race.Id, race.TrackId, race.EndedAt), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_race_that_could_not_be_saved_is_not_announced()
+    {
+        using var recorder = Recorder(new FailingFactory(_database.Contexts, failures: 10));
+        await recorder.StartAsync(CancellationToken.None);
+
+        ReportRace();
+        await recorder.FlushAsync();
+
+        _events.Verify(e => e.RaceRecordedAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<DateTime>()), Times.Never);
     }
 
     [Fact]
@@ -186,7 +214,7 @@ public sealed class RaceResultRecorderTests : IDisposable
         var freshStore = new WreckfestController.Services.Cups.CupStore(_database.Contexts, _database.Clock);
 
         using var recorder = new RaceResultRecorder(
-            _serverManager, new RaceResultStore(_database.Contexts), freshStore, _tracks, _logger.Object);
+            _serverManager, new RaceResultStore(_database.Contexts), freshStore, _tracks, _events.Object, _logger.Object);
         await recorder.StartAsync(CancellationToken.None);
         ReportRace();
         await recorder.FlushAsync();
@@ -202,7 +230,7 @@ public sealed class RaceResultRecorderTests : IDisposable
             new FailingFactory(_database.Contexts, failures: 1), _database.Clock);
 
         using var recorder = new RaceResultRecorder(
-            _serverManager, new RaceResultStore(_database.Contexts), cups, _tracks, _logger.Object);
+            _serverManager, new RaceResultStore(_database.Contexts), cups, _tracks, _events.Object, _logger.Object);
         await recorder.StartAsync(CancellationToken.None);
         ReportRace();
         await recorder.FlushAsync();

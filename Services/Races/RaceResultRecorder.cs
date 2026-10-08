@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using WreckfestController.Services.Cups;
 using WreckfestController.Services.Hook;
+using WreckfestController.Services.Publishing;
 using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Tracking;
 
@@ -26,6 +27,7 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
     private readonly RaceResultStore _store;
     private readonly CupStore _cups;
     private readonly TrackChangeTracker _tracks;
+    private readonly IServerEventPublisher _events;
     private readonly ILogger<RaceResultRecorder> _logger;
     // Wait, not a Drop mode: only Wait makes TryWrite return false when the queue is
     // full. The Drop modes report success while discarding a race.
@@ -52,12 +54,14 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
         RaceResultStore store,
         CupStore cups,
         TrackChangeTracker tracks,
+        IServerEventPublisher events,
         ILogger<RaceResultRecorder> logger)
     {
         _serverManager = serverManager;
         _store = store;
         _cups = cups;
         _tracks = tracks;
+        _events = events;
         _logger = logger;
     }
 
@@ -141,6 +145,7 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
                         race.TrackId,
                         race.Entries.Count,
                         race.CupId == null ? string.Empty : $" for cup {race.CupName}");
+                    await _events.RaceRecordedAsync(race.Id, race.TrackId, race.EndedAt);
                     break;
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

@@ -6,14 +6,18 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
+using WreckfestController.Controllers;
+using WreckfestController.Data;
+using WreckfestController.Data.Races;
 using WreckfestController.Services.Auth;
+using WreckfestController.Services.Hook;
 using WreckfestController.Services.Cups;
 using WreckfestController.Services.Tracking;
 using WreckfestController.Tests.Services.Tracking;
 
 namespace WreckfestController.Tests.Api;
 
-/// <summary>/api/public/overview: anonymous, rate-limited, and never a secret.</summary>
+/// <summary>/api/public/*: anonymous, rate-limited, and never a secret.</summary>
 public sealed class PublicEndpointsTests : IDisposable
 {
     private const string Password = "hunter2-server-password";
@@ -208,6 +212,89 @@ public sealed class PublicEndpointsTests : IDisposable
 
         // Sign-in has its own bucket: a wrong password, not a rate limit.
         Assert.Equal(HttpStatusCode.Unauthorized, signIn.StatusCode);
+    }
+
+    [Fact]
+    public async Task Races_AreAnonymous_NewestFirst_InFinishingOrder_WithoutSteamIds()
+    {
+        await using var host = await ApiTestHost.StartAsync(Settings);
+        var ended = new DateTime(2026, 10, 8, 20, 0, 0, DateTimeKind.Utc);
+        await AddRaceAsync(host, "bigstadium_demolition_arena", ended.AddMinutes(-10), cupName: "");
+        await AddRaceAsync(host, "somebodys_workshop_track", ended, cupName: "Friday Cup");
+        using var client = host.CreateClient();
+
+        var text = await client.GetStringAsync("/api/public/races", Ct);
+        var races = JsonDocument.Parse(text).RootElement;
+
+        // A new field must be added here on purpose: this is what anyone can read.
+        Assert.Equal(["cupName", "endedAt", "entries", "id", "laps", "startedAt", "track"], Names(races[0]));
+        Assert.Equal(["bestLapMs", "isBot", "name", "outcome", "position", "timeMs", "vehicleName"], Names(races[0].GetProperty("entries")[0]));
+        Assert.DoesNotContain(PlayerSteamId.ToString(CultureInfo.InvariantCulture), text, StringComparison.Ordinal);
+        Assert.DoesNotContain("steamId", text, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal("somebodys_workshop_track", races[0].GetProperty("track").GetProperty("name").GetString());
+        Assert.Equal("Friday Cup", races[0].GetProperty("cupName").GetString());
+        Assert.Equal("Madman Stadium - Demolition Arena", races[1].GetProperty("track").GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, races[1].GetProperty("cupName").ValueKind);
+
+        var entries = races[0].GetProperty("entries");
+        Assert.Equal(["Winner", "Bot Two", "Third", "Unplaced"], entries.EnumerateArray().Select(e => e.GetProperty("name").GetString()));
+        Assert.True(entries[1].GetProperty("isBot").GetBoolean());
+        Assert.Equal("Projected", entries[1].GetProperty("outcome").GetString());
+        Assert.Equal(JsonValueKind.Null, entries[3].GetProperty("position").ValueKind);
+    }
+
+    [Fact]
+    public async Task Races_ListsOnlyTheLatest()
+    {
+        await using var host = await ApiTestHost.StartAsync(Settings);
+        var start = new DateTime(2026, 10, 8, 18, 0, 0, DateTimeKind.Utc);
+        for (var i = 0; i < PublicController.RaceLimit + 2; i++)
+        {
+            await AddRaceAsync(host, "fields14", start.AddMinutes(i), cupName: "", laps: i);
+        }
+
+        using var client = host.CreateClient();
+        var races = await client.GetFromJsonAsync<JsonElement>("/api/public/races", Ct);
+
+        Assert.Equal(PublicController.RaceLimit, races.GetArrayLength());
+        Assert.Equal(PublicController.RaceLimit + 1, races[0].GetProperty("laps").GetInt32());
+    }
+
+    [Fact]
+    public async Task Races_WithNoneRecorded_IsAnEmptyList()
+    {
+        await using var host = await ApiTestHost.StartAsync(Settings);
+        using var client = host.CreateClient();
+
+        var races = await client.GetFromJsonAsync<JsonElement>("/api/public/races", Ct);
+
+        Assert.Equal(0, races.GetArrayLength());
+    }
+
+    private const long PlayerSteamId = 76561190000000001;
+
+    // Entries are added out of order: the endpoint sorts them.
+    private static async Task AddRaceAsync(ApiTestHost host, string trackId, DateTime endedAt, string cupName, int laps = 3)
+    {
+        var contexts = host.MainServices.GetRequiredService<IDbContextFactory<ControllerDbContext>>();
+        await using var db = await contexts.CreateDbContextAsync(Ct);
+        db.Races.Add(new Race
+        {
+            TrackId = trackId,
+            EndedAt = endedAt,
+            StartedAt = endedAt.AddMinutes(-5),
+            Laps = laps,
+            CupName = cupName,
+            Entries =
+            [
+                new RaceEntry { Position = null, Name = "Unplaced", Outcome = RaceOutcome.DidNotFinish },
+                new RaceEntry { Position = 3, Name = "Third", VehicleName = "Sunrise Super", Outcome = RaceOutcome.Finished, TimeMs = 190_000 },
+                new RaceEntry { Position = 1, Name = "Winner", SteamId = PlayerSteamId, VehicleName = "Roadslayer", Outcome = RaceOutcome.Finished, TimeMs = 180_000, BestLapMs = 59_000 },
+                new RaceEntry { Position = 2, Name = "Bot Two", IsBot = true, Outcome = RaceOutcome.Projected, TimeMs = 185_000 },
+            ],
+        });
+        await db.SaveChangesAsync(Ct);
     }
 
     private static BrowserClient Browser(ApiTestHost host, string peer)

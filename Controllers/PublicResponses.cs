@@ -1,4 +1,5 @@
 using WreckfestController.Data.Cups;
+using WreckfestController.Services.Hook;
 namespace WreckfestController.Controllers;
 
 // The public home page's data. Every field here is safe for anyone to read: add to
@@ -53,3 +54,29 @@ public sealed record PublicUpcomingCup(
     string? Repeat,
     DateTime? WarmupAt,
     DateTime? EndsAt);
+
+/// <summary>
+/// GET /api/public/races: the latest finished races, newest first. No Steam ids: a name
+/// is shown as the results screen showed it.
+/// </summary>
+public sealed record PublicRace(
+    int Id,
+    DateTime? StartedAt,
+    DateTime EndedAt,
+    PublicTrack Track,
+    int Laps,
+    string? CupName,
+    IReadOnlyList<PublicRaceEntry> Entries);
+
+/// <summary>
+/// One car, in finishing order; <see cref="Position"/> is null for a car the game never
+/// placed. Bots keep their places.
+/// </summary>
+public sealed record PublicRaceEntry(
+    int? Position,
+    string Name,
+    bool IsBot,
+    string VehicleName,
+    RaceOutcome Outcome,
+    int? TimeMs,
+    int? BestLapMs);

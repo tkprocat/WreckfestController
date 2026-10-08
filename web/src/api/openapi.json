@@ -2608,6 +2608,44 @@
         }
       }
     },
+    "/api/public/races": {
+      "get": {
+        "tags": [
+          "Public"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicRace"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicRace"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicRace"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/server/version": {
       "get": {
         "tags": [
@@ -5285,6 +5323,101 @@
           }
         }
       },
+      "PublicRace": {
+        "required": [
+          "id",
+          "startedAt",
+          "endedAt",
+          "track",
+          "laps",
+          "cupName",
+          "entries"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "startedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "track": {
+            "$ref": "#/components/schemas/PublicTrack"
+          },
+          "laps": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "cupName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicRaceEntry"
+            }
+          }
+        }
+      },
+      "PublicRaceEntry": {
+        "required": [
+          "position",
+          "name",
+          "isBot",
+          "vehicleName",
+          "outcome",
+          "timeMs",
+          "bestLapMs"
+        ],
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "isBot": {
+            "type": "boolean"
+          },
+          "vehicleName": {
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/RaceOutcome"
+          },
+          "timeMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "bestLapMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "PublicRotation": {
         "required": [
           "name",
@@ -5412,6 +5545,14 @@
             "format": "date-time"
           }
         }
+      },
+      "RaceOutcome": {
+        "enum": [
+          "Finished",
+          "Projected",
+          "DidNotFinish",
+          "Unknown"
+        ]
       },
       "RepeatSchedule": {
         "type": "object",
