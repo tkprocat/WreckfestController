@@ -29,9 +29,11 @@ public class SmartRestartService
     private Action<Event>? _onRestartCompleteCallback = null;
     private Action<Event, RestartOutcome>? _onFinished;
     private long _restartId;
-    // The attachment the restart was asked for under (#40). Its announcements run for
-    // minutes, on timers, so they go to this session rather than whatever is attached
-    // when each one fires.
+    // The attachment the restart was asked for under (#40). Its announcements and the
+    // restart itself run minutes later, on timers, so they go to this session rather
+    // than whatever is attached when each one fires. Read under _stateLock together
+    // with the state that decides what to send, so work from a restart since
+    // replaced never picks up its successor's session.
     private AttachmentSession? _restartSession;
     private readonly object _stateLock = new();
 
@@ -105,6 +107,9 @@ public class SmartRestartService
     {
         bool startImmediately;
         long restartId;
+        // Before _stateLock: CurrentSession takes ServerManager's lock, which is held
+        // while track changes are raised to OnTrackChanged, which takes _stateLock.
+        var session = _serverManager.CurrentSession;
         lock (_stateLock)
         {
             if (_state != SmartRestartState.Idle)
@@ -126,7 +131,7 @@ public class SmartRestartService
             ApplyEventConfiguration(@event);
 
             _pendingEvent = @event;
-            _restartSession = _serverManager.CurrentSession;
+            _restartSession = session;
             _onRestartCompleteCallback = onComplete;
             _onFinished = onFinished;
             restartId = ++_restartId;
@@ -173,10 +178,12 @@ public class SmartRestartService
     {
         Models.ServerRestartPendingEvent notification;
         string message;
+        AttachmentSession? session;
         lock (_stateLock)
         {
             if (state is not long restartId || restartId != _restartId || _state != SmartRestartState.Warning)
                 return;
+            session = _restartSession;
 
             // Count elapsed monotonic time, not callbacks: delayed ticks and wall
             // clock corrections must not shorten the promised warning period.
@@ -224,7 +231,7 @@ public class SmartRestartService
 
         // Async methods can run synchronously up to their first incomplete await.
         // Dispatch the captured message/payload only after releasing the state lock.
-        _ = SendServerMessageAsync(message);
+        _ = SendServerMessageAsync(session, message);
         _ = SendRestartPendingNotificationAsync(notification);
     }
 
@@ -242,10 +249,12 @@ public class SmartRestartService
             return;
         bool shouldRestart = false;
         bool timedOut = false;
+        AttachmentSession? session;
         lock (_stateLock)
         {
             if (restartId != _restartId || _state != SmartRestartState.Pending)
                 return;
+            session = _restartSession;
 
             var waitDuration = _timeProvider.GetElapsedTime(_waitTimestamp);
             if (waitDuration.TotalMinutes >= MaxWaitMinutes)
@@ -282,7 +291,7 @@ public class SmartRestartService
         }
 
         if (timedOut)
-            _ = SendServerMessageAsync("Server restarting now (timeout).");
+            _ = SendServerMessageAsync(session, "Server restarting now (timeout).");
         if (shouldRestart)
             _ = Task.Run(() => ExecuteRestartAsync(restartId));
     }
@@ -302,7 +311,7 @@ public class SmartRestartService
                 _logger.LogInformation(
                     "Track changed to {TrackId} - lobby detected, initiating restart",
                     trackChangeEvent.TrackId);
-                _ = SendServerMessageAsync("Server restarting now.");
+                _ = SendServerMessageAsync(_restartSession, "Server restarting now.");
                 shouldRestart = true;
             }
         }
@@ -318,6 +327,7 @@ public class SmartRestartService
     {
         Event? eventToActivate;
         Action<Event>? callback;
+        AttachmentSession? session;
 
         lock (_stateLock)
         {
@@ -331,6 +341,7 @@ public class SmartRestartService
             _state = SmartRestartState.Restarting;
             eventToActivate = _pendingEvent;
             callback = _onRestartCompleteCallback;
+            session = _restartSession;
 
             // Stop any running timers
             _countdownTimer?.Dispose();
@@ -353,7 +364,7 @@ public class SmartRestartService
                 eventToActivate.Id);
 
             // Restart the server using in-game /restart command (faster and cleaner)
-            var restartResult = await _serverManager.RestartServerViaCommandAsync();
+            var restartResult = await _serverManager.RestartServerViaCommandAsync(session);
             if (!restartResult.Success)
             {
                 _logger.LogError("Server restart failed: {Message}", restartResult.Message);
@@ -390,17 +401,11 @@ public class SmartRestartService
     /// <summary>
     /// Sends a message to the server console that players will see
     /// </summary>
-    private async Task SendServerMessageAsync(string message)
+    private async Task SendServerMessageAsync(AttachmentSession? session, string message)
     {
         try
         {
             _logger.LogInformation("Sending server message: {Message}", message);
-
-            AttachmentSession? session;
-            lock (_stateLock)
-            {
-                session = _restartSession;
-            }
 
             var command = $"/message {message}";
             var result = await _serverManager.SendCommandAsync(session, command);
@@ -560,7 +565,7 @@ public class SmartRestartService
 
             _logger.LogInformation("Cancelling restart for cup: {CupName}", _pendingEvent?.Name ?? "Unknown");
 
-            _ = SendServerMessageAsync("Server restart cancelled.");
+            _ = SendServerMessageAsync(_restartSession, "Server restart cancelled.");
 
             restartId = _restartId;
             // Claim cancellation before releasing the lock; queued execution can

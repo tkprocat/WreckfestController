@@ -132,7 +132,7 @@ public class ServerManager
     /// this when it begins and passes it to <see cref="SendCommandAsync"/>; deferred work
     /// must use the session it was given, never read this again later.
     /// </summary>
-    public AttachmentSession? CurrentSession
+    public virtual AttachmentSession? CurrentSession
     {
         get
         {
@@ -705,15 +705,23 @@ public class ServerManager
 
     /// <summary>
     /// Restarts the server using the built-in /restart command and tracks the new PID.
-    /// This is faster than stop+start but requires PID detection logic.
+    /// This is faster than stop+start but requires PID detection logic. Restarts the
+    /// server attached under <paramref name="session"/> only: a restart asked for
+    /// minutes ago must not restart a server attached since (#40).
     /// </summary>
-    public virtual async Task<(bool Success, string Message)> RestartServerViaCommandAsync()
+    public virtual async Task<(bool Success, string Message)> RestartServerViaCommandAsync(AttachmentSession? session)
     {
+        if (session == null)
+            return (false, "Server is not running");
+
         try
         {
             using var originalProcess = GetActualServerProcess();
             if (originalProcess == null)
                 return (false, "Server is not running");
+            // Early and cheap; the session is checked again under _lock below.
+            if (originalProcess.Id != session.ProcessId)
+                return (false, "Attachment changed before restart.");
 
             // Hold the original process handle so its exit time remains available
             // after /restart, even when normal status polling clears the attachment.
@@ -727,13 +735,11 @@ public class ServerManager
                 return (false, "Cannot restart safely: original process changed during identity capture.");
 
             long selectionId;
-            AttachmentSession? session;
             lock (_lock)
             {
-                if (_actualServerPid != oldPid)
+                if (_actualServerPid != oldPid || _session?.Id != session.Id)
                     return (false, "Attachment changed before restart.");
                 selectionId = _attachmentSelectionId;
-                session = _session;
             }
 
             _logger.LogInformation("Starting server restart via /restart command");

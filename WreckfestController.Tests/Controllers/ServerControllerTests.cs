@@ -131,7 +131,7 @@ public class ServerControllerTests
     public async Task RestartServer_WhenSuccessful_ReturnsOkResult()
     {
         // Arrange
-        _mockServerManager.Setup(m => m.RestartServerViaCommandAsync())
+        _mockServerManager.Setup(m => m.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()))
             .ReturnsAsync((true, "Server restarted successfully"));
 
         // Act
@@ -139,14 +139,14 @@ public class ServerControllerTests
 
         // Assert
         Assert.Equal("Server restarted successfully", result.Value!.Message);
-        _mockServerManager.Verify(m => m.RestartServerViaCommandAsync(), Times.Once);
+        _mockServerManager.Verify(m => m.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Once);
     }
 
     [Fact]
     public async Task RestartServer_WhenFailed_IsRefused()
     {
         // Arrange
-        _mockServerManager.Setup(m => m.RestartServerViaCommandAsync())
+        _mockServerManager.Setup(m => m.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()))
             .ReturnsAsync((false, "Failed to restart"));
 
         // Act
@@ -154,7 +154,7 @@ public class ServerControllerTests
 
         // Assert
         Assert.Equal("Failed to restart", ControllerTesting.RefusalOf(result));
-        _mockServerManager.Verify(m => m.RestartServerViaCommandAsync(), Times.Once);
+        _mockServerManager.Verify(m => m.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Once);
     }
 
     [Fact]

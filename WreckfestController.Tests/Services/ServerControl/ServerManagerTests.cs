@@ -634,6 +634,42 @@ public class ServerManagerTests
         }
     }
 
+    // #40: a restart asked for under one attachment must not restart a server attached
+    // since, even the same process attached again.
+    [Fact]
+    public async Task RestartServerViaCommand_UnderAReplacedSession_IsRefused()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object);
+
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            var onFirst = serverManager.CurrentSession!;
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            var onSecond = serverManager.CurrentSession!;
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+
+            foreach (var stale in new[] { onFirst, onSecond })
+            {
+                var result = await serverManager.RestartServerViaCommandAsync(stale);
+                Assert.False(result.Success);
+                Assert.Equal("Attachment changed before restart.", result.Message);
+            }
+
+            Assert.Equal("Server is not running", (await serverManager.RestartServerViaCommandAsync(null)).Message);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
     // Reinjecting restarts the hook's I/O, not the attachment, so work accepted before
     // it still belongs to the server afterwards.
     [Fact]

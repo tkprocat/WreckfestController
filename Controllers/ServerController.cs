@@ -77,7 +77,7 @@ public class ServerController : ControllerBase
     public async Task<ActionResult<ServerActionResponse>> RestartServer()
     {
         _logger.LogInformation("Received request to restart server (using in-game /restart command)");
-        return Answer(await _serverManager.RestartServerViaCommandAsync());
+        return Answer(await _serverManager.RestartServerViaCommandAsync(_serverManager.CurrentSession));
     }
 
     /// <summary>Stops the process and starts it again.</summary>
