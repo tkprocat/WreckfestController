@@ -408,6 +408,41 @@ public class ServerManagerTests
         }
     }
 
+    // Attaching elsewhere does not stop the server attached before, so its hook would
+    // stay patched into a game nothing reads from any more.
+    [Fact]
+    public async Task AttachingElsewhere_UnloadsTheHookFromTheServerLeftRunning()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var unloaded = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.Setup(r => r.UnloadAsync(It.IsAny<int>()))
+                .Returns((int pid) =>
+                {
+                    unloaded.TrySetResult(pid);
+                    return Task.FromResult((true, "unloaded"));
+                });
+
+            var serverManager = CreateServerManager(outputReader.Object);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            outputReader.Verify(r => r.UnloadAsync(It.IsAny<int>()), Times.Never);
+
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+
+            Assert.Equal(first.Id, await unloaded.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+            outputReader.Verify(r => r.UnloadAsync(second.Id), Times.Never);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
     private ServerManager CreateServerManager(
         IInjectedHookOutputReader outputReader,
         IServerInputWriter? inputWriter = null)

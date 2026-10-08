@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using MaterialDesignThemes.Wpf;
 using Microsoft.AspNetCore.Identity;
 using WreckfestController.Services.Auth;
+using WreckfestController.Services.Desktop;
 
 namespace WreckfestController.Views;
 
@@ -12,8 +13,6 @@ namespace WreckfestController.Views;
 /// </summary>
 public partial class CreateAccountDialogView : UserControl
 {
-    public const string DialogIdentifier = "RootDialog";
-
     private readonly AccountService _accounts;
 
     /// <summary>This dialog's own session on the shared host, so closing never ends another dialog.</summary>
@@ -38,7 +37,7 @@ public partial class CreateAccountDialogView : UserControl
     public static async Task<string?> ShowAsync(AccountService accounts, string intro)
     {
         var view = new CreateAccountDialogView(accounts, intro);
-        var result = await DialogHost.Show(view, DialogIdentifier, new DialogOpenedEventHandler((_, args) => view._session = args.Session));
+        var result = await DialogService.ShowAsync(view, new DialogOpenedEventHandler((_, args) => view._session = args.Session));
         if (result is string userName)
         {
             return userName;

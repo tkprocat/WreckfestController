@@ -1444,6 +1444,8 @@ public class ServerManager
             return (false, BusyMessage);
         }
 
+        // The server attached until now, if it keeps running after this attach.
+        Process? released = null;
         try
         {
             if (process.HasExited)
@@ -1471,6 +1473,11 @@ public class ServerManager
                     return (false, $"Process {pid} has already exited");
                 }
 
+                if (_actualServerPid is int previous && previous != pid)
+                {
+                    released = OpenHeld(previous);
+                }
+
                 StopOutputMonitoring();
                 StopHookOutputListener();
                 ClearProcessScopedState();
@@ -1486,6 +1493,32 @@ public class ServerManager
             // Start monitoring the attached process
             StartOutputMonitoring();
 
+            if (released != null)
+            {
+                lock (_lock)
+                {
+                    var releasedPid = released.Id;
+                    var previous = _hookUnloads.GetValueOrDefault(releasedPid) ?? Task.CompletedTask;
+                    var unload = UnloadReleasedHookAsync(previous, released);
+                    _hookUnloads[releasedPid] = unload;
+
+                    // The unload holds the process open until it ends; after that the PID
+                    // can be reused, so the entry must go with it.
+                    _ = unload.ContinueWith(done =>
+                    {
+                        lock (_lock)
+                        {
+                            if (_hookUnloads.TryGetValue(releasedPid, out var current) && current == done)
+                            {
+                                _hookUnloads.Remove(releasedPid);
+                            }
+                        }
+                    }, TaskScheduler.Default);
+                }
+
+                released = null;
+            }
+
             return (true, $"Attached to process {pid} ({process.ProcessName})");
         }
         catch (Exception ex)
@@ -1495,7 +1528,62 @@ public class ServerManager
         }
         finally
         {
+            released?.Dispose();
             _attachmentGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// The hook unload running or last run for each released process, by PID. An injection
+    /// into that process waits for it, so the hook is never loaded into a process while it
+    /// is being taken out. While an unload runs it holds its process open, so the PID
+    /// still names that process. Guarded by _lock.
+    /// </summary>
+    private readonly Dictionary<int, Task> _hookUnloads = new();
+
+    /// <summary>
+    /// Takes the hook out of a server the controller let go of while it keeps running: an
+    /// attach to another process does not stop the one attached before. Left in, its
+    /// patches stay in the game with nothing reading them, and a later injection would
+    /// reuse that copy instead of loading the controller's own.
+    /// </summary>
+    /// <remarks>
+    /// Not under the attachment gate: an unload takes seconds, and attaching back meanwhile
+    /// must not be refused as busy. <paramref name="released"/> is held open throughout, so
+    /// the PID cannot change owner. Skipped when the process has exited or has been
+    /// attached again by the time it runs. Never throws, so the chain keeps going.
+    /// </remarks>
+    private async Task UnloadReleasedHookAsync(Task previous, Process released)
+    {
+        using (released)
+        {
+            var pid = released.Id;
+            try
+            {
+                // An unload of this process released earlier, and attached again since.
+                await previous;
+                // Off the caller, which holds _lock.
+                await Task.Yield();
+
+                if (released.HasExited || AttachedProcessId == pid)
+                {
+                    return;
+                }
+
+                var (unloaded, message) = await _injectedHookOutputReader.UnloadAsync(pid);
+                if (unloaded)
+                {
+                    _logger.LogInformation("Console hook taken out of released server process {PID}: {Message}", pid, message);
+                }
+                else
+                {
+                    _logger.LogWarning("Console hook left in released server process {PID}: {Message}", pid, message);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not take the console hook out of released server process {PID}", pid);
+            }
         }
     }
 
@@ -2603,6 +2691,20 @@ public class ServerManager
 
     private async Task<(bool Success, string Message)> InjectConsoleHookCoreAsync(int processId)
     {
+        // First, so everything below is checked after it: a hook still being taken out of
+        // this process would be found loaded and reused, then unloaded under the new
+        // attachment.
+        Task? unload;
+        lock (_lock)
+        {
+            unload = _hookUnloads.GetValueOrDefault(processId);
+        }
+
+        if (unload != null)
+        {
+            await unload;
+        }
+
         try
         {
             var process = Process.GetProcessById(processId);

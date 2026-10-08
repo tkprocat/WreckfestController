@@ -13,4 +13,10 @@ public interface IInjectedHookOutputReader : IServerOutputReader
     bool IsHookConnected { get; }
 
     Task<(bool Success, string Message)> InjectAsync(int processId);
+
+    /// <summary>
+    /// Shuts the hook down in a process and unloads it, for a process the controller lets
+    /// go of while it keeps running. Succeeds when no hook is loaded.
+    /// </summary>
+    Task<(bool Success, string Message)> UnloadAsync(int processId);
 }

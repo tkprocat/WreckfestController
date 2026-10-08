@@ -80,6 +80,32 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
         return (true, $"Console hook {action.ToLowerInvariant()} for process {processId}");
     }
 
+    public async Task<(bool Success, string Message)> UnloadAsync(int processId)
+    {
+        var hookDllPath = ResolveHookDllPath();
+        if (hookDllPath == null)
+        {
+            return (false, "Console hook DLL not found, so the loaded one could not be identified.");
+        }
+
+        StopPipeListener(processId);
+
+        // On a worker thread, like injection: the hook's shutdown can take seconds.
+        var (unloaded, error) = await Task.Run(() =>
+        {
+            var ok = NativeConsoleHookInjector.UnloadDll(processId, hookDllPath, out var unloadError);
+            return (ok, unloadError);
+        });
+
+        if (!unloaded)
+        {
+            _logger.LogWarning("Console hook could not be unloaded from process {ProcessId}: {Error}", processId, error);
+            return (false, "The console hook could not be unloaded. The desktop app's log has the details.");
+        }
+
+        return (true, $"Console hook unloaded from process {processId}");
+    }
+
     /// <summary>
     /// Turns one line off the hook pipe into what subscribers receive.
     ///

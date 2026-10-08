@@ -2125,8 +2125,15 @@ public class VotingServiceTests
         tracker.GetPlayers().Single(p => p.Name == "Admin").IsAdmin = true;
 
         service.ProcessChatCommand(TestSession, "Admin", false, "!eventloop off");
-        // The toggle is polled for up to 8 x 250ms before giving up.
-        await Task.Delay(2600, TestContext.Current.CancellationToken);
+        // The toggle is polled for up to 8 x 250ms before giving up. Waited for rather than
+        // slept: a fixed 2.6 s left too little slack when the whole suite runs. The list is
+        // written from the chat worker, so it is read as a snapshot.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!messages.ToArray().Any(m => m != null && m.Contains("did not change", StringComparison.Ordinal)) &&
+               DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(50, TestContext.Current.CancellationToken);
+        }
 
         serverMock.Verify(m => m.SendCommandAsync(It.IsAny<AttachmentSession?>(), "/eventloop"), Times.Once);
         Assert.Contains(messages, m => m.Contains("did not change", StringComparison.Ordinal));
