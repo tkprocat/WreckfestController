@@ -10,12 +10,20 @@ namespace WreckfestController.Services.Desktop;
 /// in-app log dies with the process, and Windows keeps only a terse event-log entry.
 /// </summary>
 /// <remarks>
+/// <para>
 /// The folder is fixed, not beside the database: <c>Database:Path</c> can point at a
 /// folder that is missing or read-only, which is when a crash is likeliest. If the
 /// folder cannot be written, the file goes to <c>%TEMP%\WreckfestController\crashes</c>
-/// instead. Nothing here throws, and no write may hold up the process for longer than
-/// <see cref="WriteTimeout"/>: it runs while the process is already going down.
-/// Stack overflows and native faults end the process without reaching it.
+/// instead. Stack overflows and native faults end the process without reaching this.
+/// </para>
+/// <para>
+/// It runs while the process is going down, so nothing here throws, and every step that
+/// can hang - the exception's own <c>ToString</c>, each folder's write - is given up
+/// after <see cref="WriteTimeout"/>. A step given up on cannot be cancelled, only left
+/// behind: a folder that answers after its write was abandoned may end up holding a
+/// second copy of a report the fallback also took. That is accepted; losing the report,
+/// or hanging, is not.
+/// </para>
 /// </remarks>
 public sealed class CrashLog
 {
@@ -51,10 +59,7 @@ public sealed class CrashLog
         Path.Combine(Path.GetTempPath(), "WreckfestController", "crashes"),
         TimeProvider.System);
 
-    /// <summary>
-    /// How long one folder may take to write a file before the next is tried, so a folder
-    /// on a share that stopped answering cannot keep a crashing process alive.
-    /// </summary>
+    /// <summary>How long one step that can hang is waited for before it is given up on.</summary>
     public TimeSpan WriteTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
     /// <summary>Shown in each file, so a crash can be told apart when several controllers run.</summary>
@@ -80,63 +85,49 @@ public sealed class CrashLog
     /// Writes <paramref name="exception"/> to a new file and returns its path, or null when
     /// nothing was written: it was written before, or no folder could take it.
     /// </summary>
-    /// <remarks>
-    /// One report at a time, so the same exception from two threads is written once. Each
-    /// step under the lock is bounded by <see cref="WriteTimeout"/>.
-    /// </remarks>
     public string? Write(Exception? exception, string source)
     {
+        // One report at a time, so the same exception from two threads is written once. A
+        // report stuck behind a stalled one goes ahead after a while without that guarantee.
+        var locked = false;
         try
         {
-            lock (_gate)
+            Monitor.TryEnter(_gate, WriteTimeout * 3, ref locked);
+            if (exception != null && _written.TryGetValue(exception, out _))
             {
-                if (exception != null && _written.TryGetValue(exception, out _))
+                return null;
+            }
+
+            var now = _time.GetLocalNow();
+            var pid = Environment.ProcessId;
+            var name = string.Create(CultureInfo.InvariantCulture, $"{FilePrefix}{now:yyyy-MM-dd_HH-mm-ss}-pid{pid}");
+            var bytes = Encoding.UTF8.GetBytes(Format(exception, source, now, pid, DatabasePath));
+
+            foreach (var directory in new[] { _directory, _fallbackDirectory })
+            {
+                if (RunWithin(() => TryWrite(directory, name, bytes)) is { } path)
                 {
-                    return null;
-                }
-
-                var now = _time.GetLocalNow();
-                var pid = Environment.ProcessId;
-                var name = string.Create(CultureInfo.InvariantCulture, $"{FilePrefix}{now:yyyy-MM-dd_HH-mm-ss}-pid{pid}");
-
-                // Formatting runs the exception's own ToString, which can hang as well as throw.
-                var text = RunWithin(() => Format(exception, source, now, pid, DatabasePath), _ => { })
-                    ?? FormattableString.Invariant(
-                        $"Wreckfest Controller crashed ({source}); its description timed out.{Environment.NewLine}{exception?.GetType().FullName}{Environment.NewLine}");
-                var bytes = Encoding.UTF8.GetBytes(text);
-                var reported = new StrongBox<bool>();
-
-                foreach (var directory in new[] { _directory, _fallbackDirectory })
-                {
-                    // A write given up on that finishes after another folder took the report
-                    // deletes its file, so there is no second copy; if none did, it is kept.
-                    var written = RunWithin(
-                        abandoned => TryWrite(directory, name, bytes, abandoned),
-                        late =>
-                        {
-                            if (reported.Value)
-                            {
-                                DeleteLate(late);
-                            }
-                        });
-                    if (written is { } path)
+                    // Only now: a report that failed everywhere may be tried again by
+                    // the second handler.
+                    if (exception != null)
                     {
-                        reported.Value = true;
-                        // Only now: a report that failed everywhere may be tried again by
-                        // the second handler.
-                        if (exception != null)
-                        {
-                            _written.AddOrUpdate(exception, path);
-                        }
-
-                        return path;
+                        _written.AddOrUpdate(exception, path);
                     }
+
+                    return path;
                 }
             }
         }
         catch
         {
             // Already going down; there is nowhere left to report this.
+        }
+        finally
+        {
+            if (locked)
+            {
+                Monitor.Exit(_gate);
+            }
         }
 
         return null;
@@ -185,36 +176,67 @@ public sealed class CrashLog
     }
 
     /// <summary>
-    /// Runs <paramref name="work"/> on a thread of its own and waits up to
-    /// <see cref="WriteTimeout"/>: a hung file system call cannot be cancelled, only left
-    /// behind. Null when it timed out; <paramref name="late"/> then gets its result if it
-    /// ever finishes.
+    /// The report. The exception's own description runs under <see cref="WriteTimeout"/>;
+    /// everything else is read from the runtime and cannot hang. Each part is guarded, so
+    /// one that fails costs only that part.
     /// </summary>
-    private T? RunWithin<T>(Func<StrongBox<bool>, T?> work, Action<T> late)
-        where T : class
+    private string Format(Exception? exception, string source, DateTimeOffset when, int processId, string? databasePath)
     {
-        var abandoned = new StrongBox<bool>();
-        var gate = new object();
-        T? result = null;
+        var text = new StringBuilder();
+        Line(text, () => $"Wreckfest Controller {AppInfo.Version} crashed.");
+        text.AppendLine();
+        Line(text, () => $"Time:      {when:yyyy-MM-dd HH:mm:ss zzz}");
+        Line(text, () => $"Source:    {source}");
+        Line(text, () => $"Process:   {processId} ({Environment.ProcessPath})");
+        Line(text, () => $"Database:  {databasePath ?? "(not resolved yet)"}");
+        Line(text, () => $"Runtime:   {Environment.Version} on {Environment.OSVersion}");
+        text.AppendLine();
+
+        if (exception == null)
+        {
+            text.AppendLine("(no exception object)");
+            return text.ToString();
+        }
+
+        // ToString includes the inner exceptions and their stack traces.
+        var description = RunWithin(exception.ToString);
+        Line(text, () => $"{description ?? exception.GetType().FullName + ": (its description could not be read in time)"}");
+        if (description == null)
+        {
+            Line(text, () => $"{exception.StackTrace}");
+        }
+
+        return text.ToString();
+    }
+
+    private static void Line(StringBuilder text, Func<FormattableString> part)
+    {
+        try
+        {
+            text.AppendLine(FormattableString.Invariant(part()));
+        }
+        catch
+        {
+            text.AppendLine("(could not be read)");
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="work"/> on a thread of its own and waits up to
+    /// <see cref="WriteTimeout"/> for it. Null when it failed or took too long.
+    /// </summary>
+    private string? RunWithin(Func<string?> work)
+    {
+        string? result = null;
         var thread = new Thread(() =>
         {
-            T? value = null;
             try
             {
-                value = work(abandoned);
+                result = work();
             }
             catch
             {
                 // Reported as no result.
-            }
-
-            lock (gate)
-            {
-                result = value;
-                if (abandoned.Value && value != null)
-                {
-                    late(value);
-                }
             }
         })
         {
@@ -222,34 +244,10 @@ public sealed class CrashLog
             Name = "Crash log",
         };
         thread.Start();
-        var finished = thread.Join(WriteTimeout);
-        lock (gate)
-        {
-            if (!finished)
-            {
-                abandoned.Value = true;
-            }
-
-            return finished ? result : null;
-        }
+        return thread.Join(WriteTimeout) ? result : null;
     }
 
-    private T? RunWithin<T>(Func<T?> work, Action<T> late)
-        where T : class => RunWithin(_ => work(), late);
-
-    private static void DeleteLate(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch
-        {
-            // Pruning removes it in time.
-        }
-    }
-
-    private static string? TryWrite(string directory, string name, byte[] bytes, StrongBox<bool> abandoned)
+    private static string? TryWrite(string directory, string name, byte[] bytes)
     {
         string? created = null;
         try
@@ -259,7 +257,7 @@ public sealed class CrashLog
             // CreateNew, so two crashes in the same second never overwrite each other. Only
             // a name that is taken moves on to the next; a failed write fails this folder.
             FileStream? file = null;
-            for (var n = 1; n < 100 && file == null && !abandoned.Value; n++)
+            for (var n = 1; n < 100 && file == null; n++)
             {
                 var path = Path.Combine(directory, (n == 1 ? name : name + "-" + n) + ".txt");
                 try
@@ -291,50 +289,17 @@ public sealed class CrashLog
             // would pass for a report.
             if (created != null)
             {
-                DeleteLate(created);
+                try
+                {
+                    File.Delete(created);
+                }
+                catch
+                {
+                    // Pruning removes it in time.
+                }
             }
 
             return null;
-        }
-    }
-
-    /// <summary>
-    /// The report. Each part is guarded, so one that fails, such as an exception whose
-    /// <c>ToString</c> throws, costs only that part.
-    /// </summary>
-    internal static string Format(Exception? exception, string source, DateTimeOffset when, int processId, string? databasePath)
-    {
-        var text = new StringBuilder();
-        Line(text, () => $"Wreckfest Controller {AppInfo.Version} crashed.");
-        text.AppendLine();
-        Line(text, () => $"Time:      {when:yyyy-MM-dd HH:mm:ss zzz}");
-        Line(text, () => $"Source:    {source}");
-        Line(text, () => $"Process:   {processId} ({Environment.ProcessPath})");
-        Line(text, () => $"Database:  {databasePath ?? "(not resolved yet)"}");
-        Line(text, () => $"Runtime:   {Environment.Version} on {Environment.OSVersion}");
-        text.AppendLine();
-        // ToString includes the inner exceptions and their stack traces.
-        Line(text, () => $"{exception?.ToString() ?? "(no exception object)"}", () =>
-            $"{exception!.GetType().FullName}: (its description could not be read){Environment.NewLine}{exception.StackTrace}");
-        return text.ToString();
-    }
-
-    private static void Line(StringBuilder text, Func<FormattableString> part, Func<FormattableString>? fallback = null)
-    {
-        try
-        {
-            text.AppendLine(FormattableString.Invariant(part()));
-        }
-        catch
-        {
-            try
-            {
-                text.AppendLine(fallback is null ? "(could not be read)" : FormattableString.Invariant(fallback()));
-            }
-            catch
-            {
-                text.AppendLine("(could not be read)");
-            }
         }
     }
 }

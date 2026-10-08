@@ -123,11 +123,15 @@ public sealed class CrashLogTests : IDisposable
         using var release = new ManualResetEventSlim();
         var log = new CrashLog(Crashes, Fallback, _clock) { WriteTimeout = TimeSpan.FromMilliseconds(200) };
 
+        log.DatabasePath = @"D:\Servers\Second\controller.db";
+
         var path = log.Write(new HangingException(release), "Unhandled exception");
         release.Set();
 
         var text = File.ReadAllText(path!);
-        Assert.Contains("description timed out", text, StringComparison.Ordinal);
+        Assert.Contains("could not be read in time", text, StringComparison.Ordinal);
+        Assert.Contains(@"D:\Servers\Second\controller.db", text, StringComparison.Ordinal);
+        Assert.Contains(AppInfo.Version, text, StringComparison.Ordinal);
         Assert.Contains(typeof(HangingException).FullName!, text, StringComparison.Ordinal);
     }
 
