@@ -24,6 +24,11 @@ namespace WreckfestController.Controllers;
 [ApiController]
 [AllowAnonymous]
 [EnableRateLimiting(RateLimits.PublicPolicy)]
+// Declaring any response type stops ASP.NET Core inferring the 200 from ActionResult<T>,
+// so it is declared too; with no type given, each action's own return type is used.
+[ProducesResponseType(StatusCodes.Status200OK)]
+[ProducesResponseType<ProblemDetails>(StatusCodes.Status429TooManyRequests, "application/problem+json")]
+[ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, "application/problem+json")]
 [Route("api/public")]
 public class PublicController : ControllerBase
 {

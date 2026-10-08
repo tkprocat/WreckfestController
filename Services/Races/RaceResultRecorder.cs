@@ -145,7 +145,9 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
                         race.TrackId,
                         race.Entries.Count,
                         race.CupId == null ? string.Empty : $" for cup {race.CupName}");
-                    await _events.RaceRecordedAsync(race.Id, race.TrackId, race.EndedAt);
+                    // Not awaited: a slow hub client must not hold up the next save. The
+                    // publisher never throws.
+                    _ = _events.RaceRecordedAsync(race.Id, race.TrackId, race.EndedAt);
                     break;
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

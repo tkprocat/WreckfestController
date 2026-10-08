@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { NEmpty, NSkeleton, NTag } from 'naive-ui'
+import { NButton, NEmpty, NSkeleton, NTag } from 'naive-ui'
 import ContentSection from '@/components/ContentSection.vue'
 import { usePublicRaces, type PublicRace, type PublicRaceEntry } from '@/composables/usePublicRaces'
 import { formatFromNow, formatRaceTime, formatWhen } from '@/utils/format'
 
-const { races, error, loading } = usePublicRaces()
+const { races, error, loading, reload } = usePublicRaces()
 
 // "12 minutes ago" moves on while the page stays open.
 const now = ref(new Date())
@@ -13,6 +13,15 @@ const clock = setInterval(() => (now.value = new Date()), 60_000)
 onBeforeUnmount(() => clearInterval(clock))
 
 const list = computed(() => races.value ?? [])
+
+/** What the shorthand in the results means, when any of it is shown. */
+const legend = computed(() => {
+  const outcomes = new Set(list.value.flatMap((race) => race.entries.map((e) => e.outcome)))
+  return {
+    estimated: outcomes.has('Projected'),
+    dnf: outcomes.has('DidNotFinish'),
+  }
+})
 
 function ago(race: PublicRace): string {
   const text = formatFromNow(race.endedAt, now.value)
@@ -28,7 +37,7 @@ function result(entry: PublicRaceEntry): string {
   if (entry.outcome === 'DidNotFinish') return 'DNF'
   const time = formatRaceTime(entry.timeMs)
   if (!time) return '–'
-  return entry.outcome === 'Projected' ? '~' + time : time
+  return entry.outcome === 'Projected' ? time + ' est.' : time
 }
 
 function resultTitle(entry: PublicRaceEntry): string | undefined {
@@ -50,10 +59,13 @@ function resultTitle(entry: PublicRaceEntry): string | undefined {
     <div v-if="loading && !races" aria-label="Loading recent races">
       <NSkeleton text :repeat="3" />
     </div>
-    <p v-else-if="error && !races" class="races-error">{{ error }}</p>
-    <NEmpty v-else-if="!list.length" description="No races recorded yet" />
+    <div v-else-if="error" class="races-error">
+      <p>{{ error }}<template v-if="races"> Showing the last list loaded.</template></p>
+      <NButton size="small" @click="reload()">Try again</NButton>
+    </div>
 
-    <ol v-else class="race-list">
+    <NEmpty v-if="races && !list.length" description="No races recorded yet" />
+    <ol v-else-if="list.length" class="race-list">
       <li v-for="race in list" :key="race.id" class="race">
         <div class="race-heading">
           <h3>{{ race.track.name }}</h3>
@@ -101,6 +113,10 @@ function resultTitle(entry: PublicRaceEntry): string | undefined {
         </details>
       </li>
     </ol>
+    <p v-if="legend.estimated || legend.dnf" class="legend">
+      <span v-if="legend.estimated"><strong>est.</strong> – a bot's time, estimated by the game when the last player finished.</span>
+      <span v-if="legend.dnf"><strong>DNF</strong> – did not finish.</span>
+    </p>
   </ContentSection>
 </template>
 
@@ -108,7 +124,9 @@ function resultTitle(entry: PublicRaceEntry): string | undefined {
 .panel-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px; margin-bottom: 24px; }
 .panel-heading h2 { margin: 8px 0 0; font-size: var(--font-section); line-height: 1.3; }
 .eyebrow { font-size: var(--font-label); font-weight: 650; color: var(--text-secondary); margin: 0; letter-spacing: .06em; text-transform: uppercase; }
-.races-error { color: var(--text-secondary); margin: 0; }
+.races-error { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 16px; margin-bottom: 24px; color: var(--text-secondary); }
+.races-error p { margin: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 24px 0 0; font-size: var(--font-meta); color: var(--text-secondary); }
 .race-list, .podium { list-style: none; margin: 0; padding: 0; }
 .race-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; }
 .race { display: flex; flex-direction: column; gap: 20px; min-width: 0; padding: 24px; background: var(--surface); border-radius: 12px; }
