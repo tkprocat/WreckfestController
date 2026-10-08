@@ -48,7 +48,7 @@ public sealed class CupRunServiceTests : IDisposable
                 _sent.Add(command);
                 return (true, "OK dispatched");
             });
-        _server.Setup(s => s.ReadHookSessionAsync())
+        _server.Setup(s => s.ReadHookSessionAsync(It.IsAny<AttachmentSession?>()))
             .ReturnsAsync(() => _session is { } phase ? new HookSessionState((int)phase, 0, 0, false) : null);
 
         _eventLoop = new Mock<EventLoopControl>(_server.Object);

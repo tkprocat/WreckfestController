@@ -39,11 +39,14 @@ public class EventLoopControl
 
     private const int PollAttempts = 8;
 
-    /// <summary>The loop as it is now, or null when it cannot be read or reads as nonsense.</summary>
-    public virtual async Task<EventLoopState?> ReadAsync()
+    /// <summary>
+    /// The loop as it is now on the server attached under <paramref name="session"/>, or null
+    /// when it cannot be read, reads as nonsense, or that attachment has been replaced.
+    /// </summary>
+    public virtual async Task<EventLoopState?> ReadAsync(AttachmentSession? session)
     {
-        var countBytes = await _serverManager.ReadHookMemoryAsync(RvaEventLoopCount, 4);
-        var indexBytes = await _serverManager.ReadHookMemoryAsync(RvaEventLoopIndex, 4);
+        var countBytes = await _serverManager.ReadHookMemoryAsync(session, RvaEventLoopCount, 4);
+        var indexBytes = await _serverManager.ReadHookMemoryAsync(session, RvaEventLoopIndex, 4);
         if (countBytes?.Length != 4 || indexBytes?.Length != 4)
         {
             return null;
@@ -65,13 +68,13 @@ public class EventLoopControl
     /// apply <c>/eventloop</c> synchronously, so a single immediate read sees the old value.
     /// Returns the last state read, which may still differ.
     /// </summary>
-    public async Task<EventLoopState?> WaitForStateAsync(bool enabled)
+    public async Task<EventLoopState?> WaitForStateAsync(AttachmentSession? session, bool enabled)
     {
         EventLoopState? latest = null;
         for (var attempt = 0; attempt < PollAttempts; attempt++)
         {
             await Task.Delay(PollInterval);
-            var loop = await ReadAsync();
+            var loop = await ReadAsync(session);
             latest = loop ?? latest;
             if (loop?.Enabled == enabled)
             {
@@ -90,14 +93,14 @@ public class EventLoopControl
     /// </summary>
     public async Task<EventLoopState?> SetAsync(AttachmentSession? session, bool enabled)
     {
-        var loop = await ReadAsync();
+        var loop = await ReadAsync(session);
         if (loop is null || loop.Enabled == enabled)
         {
             return loop;
         }
 
         var sent = await _serverManager.SendCommandAsync(session, "/eventloop");
-        return sent.Success ? await WaitForStateAsync(enabled) : null;
+        return sent.Success ? await WaitForStateAsync(session, enabled) : null;
     }
 
     /// <summary>
@@ -123,6 +126,6 @@ public class EventLoopControl
             }
         }
 
-        return await ReadAsync();
+        return await ReadAsync(session);
     }
 }

@@ -175,7 +175,7 @@ public sealed class CupRunService : IHostedService, IDisposable
             return;
         }
 
-        if (!await WaitForLobbyAsync(start, onRace: async () =>
+        if (!await WaitForLobbyAsync(attachment, start, onRace: async () =>
             {
                 if (_toldAfterRace != (run.Id, start))
                 {
@@ -230,7 +230,7 @@ public sealed class CupRunService : IHostedService, IDisposable
         }
         else
         {
-            var session = await _serverManager.ReadHookSessionAsync();
+            var session = await _serverManager.ReadHookSessionAsync(attachment);
             reset = session?.Phase == ServerSessionPhase.Lobby
                 ? await _serverManager.SendCommandAsync(attachment, "/cupreset")
                 : (false, session is null ? "the session state cannot be read" : "not in the lobby");
@@ -318,7 +318,7 @@ public sealed class CupRunService : IHostedService, IDisposable
             return;
         }
 
-        if (!await WaitForLobbyAsync(pending[0].Since, onRace: () => Task.CompletedTask))
+        if (!await WaitForLobbyAsync(attachment, pending[0].Since, onRace: () => Task.CompletedTask))
         {
             return;
         }
@@ -350,9 +350,9 @@ public sealed class CupRunService : IHostedService, IDisposable
     /// cannot be read, or <see cref="LobbyWait"/> has passed since <paramref name="since"/>.
     /// Otherwise calls <paramref name="onRace"/> and returns false, to be checked again.
     /// </summary>
-    private async Task<bool> WaitForLobbyAsync(DateTime since, Func<Task> onRace)
+    private async Task<bool> WaitForLobbyAsync(AttachmentSession? attachment, DateTime since, Func<Task> onRace)
     {
-        var session = await _serverManager.ReadHookSessionAsync();
+        var session = await _serverManager.ReadHookSessionAsync(attachment);
         if (session?.Phase == ServerSessionPhase.Lobby)
         {
             return true;

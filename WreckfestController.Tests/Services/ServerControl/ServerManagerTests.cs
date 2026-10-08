@@ -634,6 +634,89 @@ public class ServerManagerTests
         }
     }
 
+    // #40: a hook read made for one attachment reads that server or nothing - never the
+    // server attached since, even the same process attached again.
+    [Fact]
+    public async Task HookReads_UnderAReplacedAttachment_ReadNothing()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var inputWriter = new Mock<IServerInputWriter>();
+            var sessionReader = inputWriter.As<IHookSessionReader>();
+            var memoryReader = inputWriter.As<IHookMemoryReader>();
+            sessionReader.Setup(r => r.ReadSessionStateAsync(It.IsAny<int>()))
+                .ReturnsAsync((true, "OK", new HookSessionState(2, 0, EventCounter: 1, Ended: false)));
+            memoryReader.Setup(r => r.ReadModuleMemoryAsync(It.IsAny<int>(), It.IsAny<uint>(), It.IsAny<int>()))
+                .ReturnsAsync((true, "OK", new byte[4]));
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object, inputWriter.Object);
+
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            var onFirst = serverManager.CurrentSession!;
+            Assert.NotNull(await serverManager.ReadHookSessionAsync(onFirst));
+            Assert.NotNull(await serverManager.ReadHookMemoryAsync(onFirst, 0x10, 4));
+
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+
+            Assert.Null(await serverManager.ReadHookSessionAsync(onFirst));
+            Assert.Null(await serverManager.ReadHookMemoryAsync(onFirst, 0x10, 4));
+            Assert.Null(await serverManager.ReadHookSessionAsync(null));
+            sessionReader.Verify(r => r.ReadSessionStateAsync(It.IsAny<int>()), Times.Once);
+            // Event polling reads memory too, at other addresses; only 0x10 is ours.
+            memoryReader.Verify(r => r.ReadModuleMemoryAsync(It.IsAny<int>(), 0x10, 4), Times.Once);
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
+    // A read already in flight when the attachment moves describes the old server, so
+    // it is discarded rather than handed to a caller that will act on the new one.
+    [Fact]
+    public async Task HookRead_InFlightAcrossAnAttachmentSwitch_IsDiscarded()
+    {
+        using var first = StartIdleProcess();
+        using var second = StartIdleProcess();
+
+        try
+        {
+            var inputWriter = new Mock<IServerInputWriter>();
+            var sessionReader = inputWriter.As<IHookSessionReader>();
+            var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            sessionReader.Setup(r => r.ReadSessionStateAsync(first.Id)).Returns(async () =>
+            {
+                started.TrySetResult();
+                await release.Task;
+                return (true, "OK", (HookSessionState?)new HookSessionState(2, 0, EventCounter: 1, Ended: false));
+            });
+            var outputReader = new Mock<IInjectedHookOutputReader>();
+            outputReader.SetupGet(r => r.Mode).Returns(ServerOutputModes.InjectedHook);
+            var serverManager = CreateServerManager(outputReader.Object, inputWriter.Object);
+
+            Assert.True(serverManager.AttachToExistingProcess(first.Id).Success);
+            var read = serverManager.ReadHookSessionAsync(serverManager.CurrentSession);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+
+            Assert.True(serverManager.AttachToExistingProcess(second.Id).Success);
+            release.TrySetResult();
+
+            Assert.Null(await read.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+        }
+        finally
+        {
+            KillIfRunning(first);
+            KillIfRunning(second);
+        }
+    }
+
     // #40: a restart asked for under one attachment must not restart a server attached
     // since, even the same process attached again.
     [Fact]
