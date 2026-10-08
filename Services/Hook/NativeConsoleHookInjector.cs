@@ -7,6 +7,7 @@ namespace WreckfestController.Services.Hook;
 internal static class NativeConsoleHookInjector
 {
     private const string InitializeExportName = "WreckfestConsoleHookInitialize";
+    private const string ShutdownExportName = "WreckfestConsoleHookShutdown";
     private const uint ProcessCreateThread = 0x0002;
     private const uint ProcessQueryInformation = 0x0400;
     private const uint ProcessVirtualMemoryOperation = 0x0008;
@@ -179,6 +180,98 @@ internal static class NativeConsoleHookInjector
         }
     }
 
+    /// <summary>
+    /// Takes the hook out of a process the controller is letting go of: its shutdown
+    /// export stops the hook's threads, removes its patches from the game and gives back
+    /// the hook's own module reference, then a remote FreeLibrary gives back the one
+    /// LoadLibraryW took at injection, so the module is unmapped. Without that second
+    /// step the shut-down module would stay loaded, and a later injection would find it
+    /// and be refused by it.
+    /// </summary>
+    /// <remarks>
+    /// Only a module loaded from <paramref name="dllPath"/> is touched: the export's
+    /// address is worked out from that file, so it is right only for that file, and
+    /// Windows does not let a loaded image's file be rewritten. True when nothing is
+    /// loaded. Nothing is freed when the shutdown fails: the hook then keeps itself
+    /// pinned, so it cannot be unmapped under its own threads.
+    /// </remarks>
+    public static bool UnloadDll(int processId, string dllPath, TimeSpan timeout, out string error)
+    {
+        error = string.Empty;
+
+        var processHandle = OpenProcess(
+            ProcessCreateThread |
+            ProcessQueryInformation |
+            ProcessVirtualMemoryOperation |
+            ProcessVirtualMemoryWrite |
+            ProcessVirtualMemoryRead,
+            false,
+            processId);
+
+        if (processHandle == IntPtr.Zero)
+        {
+            error = $"OpenProcess failed: {FormatLastWin32Error()}";
+            return false;
+        }
+
+        try
+        {
+            var module = FindRemoteModule(processId, Path.GetFileName(dllPath));
+            if (module == null)
+            {
+                return true;
+            }
+
+            if (!string.Equals(Path.GetFullPath(module.Value.Path), Path.GetFullPath(dllPath), StringComparison.OrdinalIgnoreCase))
+            {
+                error = $"The hook loaded in process {processId} is {module.Value.Path}, not {dllPath}; left loaded";
+                return false;
+            }
+
+            if (!CallRemoteExport(processHandle, module.Value.Base, dllPath, ShutdownExportName, timeout, out error))
+            {
+                return false;
+            }
+
+            var freeLibrary = GetProcAddress(GetModuleHandle("kernel32.dll"), "FreeLibrary");
+            if (freeLibrary == IntPtr.Zero)
+            {
+                error = $"Could not resolve FreeLibrary: {FormatLastWin32Error()}";
+                return false;
+            }
+
+            // One reference per LoadLibraryW that loaded it; a reinjection into a loaded
+            // hook takes none. Bounded, so a module something else also holds is not
+            // chased forever.
+            const int MaxReleases = 8;
+            for (var release = 0; release < MaxReleases; release++)
+            {
+                if (!RunRemoteThread(processHandle, freeLibrary, module.Value.Base, timeout, "FreeLibrary", out var exitCode, out error))
+                {
+                    return false;
+                }
+
+                if (exitCode == 0)
+                {
+                    error = "Remote FreeLibrary failed";
+                    return false;
+                }
+
+                if (FindRemoteModule(processId, Path.GetFileName(dllPath)) is not { } still || still.Base != module.Value.Base)
+                {
+                    return true;
+                }
+            }
+
+            error = $"The hook is still loaded after {MaxReleases} releases";
+            return false;
+        }
+        finally
+        {
+            CloseHandle(processHandle);
+        }
+    }
+
     private static bool CallRemoteExport(
         IntPtr processHandle,
         IntPtr remoteModuleBase,
@@ -196,7 +289,6 @@ internal static class NativeConsoleHookInjector
             return false;
         }
 
-        IntPtr threadHandle = IntPtr.Zero;
         try
         {
             var localExport = GetProcAddress(localModule, exportName);
@@ -208,37 +300,8 @@ internal static class NativeConsoleHookInjector
 
             var exportOffset = localExport.ToInt64() - localModule.ToInt64();
             var remoteExport = IntPtr.Add(remoteModuleBase, checked((int)exportOffset));
-            threadHandle = CreateRemoteThread(
-                processHandle,
-                IntPtr.Zero,
-                UIntPtr.Zero,
-                remoteExport,
-                IntPtr.Zero,
-                0,
-                IntPtr.Zero);
-
-            if (threadHandle == IntPtr.Zero)
+            if (!RunRemoteThread(processHandle, remoteExport, IntPtr.Zero, timeout, exportName, out var exitCode, out error))
             {
-                error = $"CreateRemoteThread for {exportName} failed: {FormatLastWin32Error()}";
-                return false;
-            }
-
-            var waitResult = WaitForSingleObject(threadHandle, (uint)timeout.TotalMilliseconds);
-            if (waitResult == WaitTimeout)
-            {
-                error = $"Timed out waiting for remote {exportName} to complete";
-                return false;
-            }
-
-            if (waitResult != WaitObject0)
-            {
-                error = $"WaitForSingleObject for {exportName} failed with result 0x{waitResult:X}";
-                return false;
-            }
-
-            if (!GetExitCodeThread(threadHandle, out var exitCode))
-            {
-                error = $"GetExitCodeThread for {exportName} failed: {FormatLastWin32Error()}";
                 return false;
             }
 
@@ -252,21 +315,76 @@ internal static class NativeConsoleHookInjector
         }
         finally
         {
-            if (threadHandle != IntPtr.Zero)
-            {
-                CloseHandle(threadHandle);
-            }
-
             FreeLibrary(localModule);
         }
     }
 
-    private static IntPtr FindRemoteModuleBase(int processId, string moduleName)
+    /// <summary>Runs <paramref name="start"/> on a new thread in the process and waits for its exit code.</summary>
+    private static bool RunRemoteThread(
+        IntPtr processHandle,
+        IntPtr start,
+        IntPtr parameter,
+        TimeSpan timeout,
+        string what,
+        out uint exitCode,
+        out string error)
+    {
+        exitCode = 0;
+        error = string.Empty;
+
+        var threadHandle = CreateRemoteThread(
+            processHandle,
+            IntPtr.Zero,
+            UIntPtr.Zero,
+            start,
+            parameter,
+            0,
+            IntPtr.Zero);
+
+        if (threadHandle == IntPtr.Zero)
+        {
+            error = $"CreateRemoteThread for {what} failed: {FormatLastWin32Error()}";
+            return false;
+        }
+
+        try
+        {
+            var waitResult = WaitForSingleObject(threadHandle, (uint)timeout.TotalMilliseconds);
+            if (waitResult == WaitTimeout)
+            {
+                error = $"Timed out waiting for remote {what} to complete";
+                return false;
+            }
+
+            if (waitResult != WaitObject0)
+            {
+                error = $"WaitForSingleObject for {what} failed with result 0x{waitResult:X}";
+                return false;
+            }
+
+            if (!GetExitCodeThread(threadHandle, out exitCode))
+            {
+                error = $"GetExitCodeThread for {what} failed: {FormatLastWin32Error()}";
+                return false;
+            }
+
+            return true;
+        }
+        finally
+        {
+            CloseHandle(threadHandle);
+        }
+    }
+
+    private static IntPtr FindRemoteModuleBase(int processId, string moduleName) =>
+        FindRemoteModule(processId, moduleName)?.Base ?? IntPtr.Zero;
+
+    private static (IntPtr Base, string Path)? FindRemoteModule(int processId, string moduleName)
     {
         var snapshot = CreateModuleSnapshot(processId);
         if (snapshot == InvalidHandleValue)
         {
-            return IntPtr.Zero;
+            return null;
         }
 
         try
@@ -278,7 +396,7 @@ internal static class NativeConsoleHookInjector
 
             if (!Module32First(snapshot, ref entry))
             {
-                return IntPtr.Zero;
+                return null;
             }
 
             do
@@ -286,12 +404,12 @@ internal static class NativeConsoleHookInjector
                 if (string.Equals(entry.SzModule, moduleName, StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(Path.GetFileName(entry.SzExePath), moduleName, StringComparison.OrdinalIgnoreCase))
                 {
-                    return entry.ModBaseAddr;
+                    return (entry.ModBaseAddr, entry.SzExePath);
                 }
             }
             while (Module32Next(snapshot, ref entry));
 
-            return IntPtr.Zero;
+            return null;
         }
         finally
         {

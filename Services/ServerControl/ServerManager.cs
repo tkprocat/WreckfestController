@@ -1444,6 +1444,8 @@ public class ServerManager
             return (false, BusyMessage);
         }
 
+        // The server attached until now, if it keeps running after this attach.
+        Process? released = null;
         try
         {
             if (process.HasExited)
@@ -1471,6 +1473,11 @@ public class ServerManager
                     return (false, $"Process {pid} has already exited");
                 }
 
+                if (_actualServerPid is int previous && previous != pid)
+                {
+                    released = OpenHeld(previous);
+                }
+
                 StopOutputMonitoring();
                 StopHookOutputListener();
                 ClearProcessScopedState();
@@ -1486,6 +1493,16 @@ public class ServerManager
             // Start monitoring the attached process
             StartOutputMonitoring();
 
+            if (released != null)
+            {
+                lock (_lock)
+                {
+                    _hookUnloads = UnloadReleasedHookAsync(_hookUnloads, released);
+                }
+
+                released = null;
+            }
+
             return (true, $"Attached to process {pid} ({process.ProcessName})");
         }
         catch (Exception ex)
@@ -1495,7 +1512,60 @@ public class ServerManager
         }
         finally
         {
+            released?.Dispose();
             _attachmentGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// The hook unloads started by <see cref="UnloadReleasedHookAsync"/>, chained so one
+    /// runs at a time. An injection waits for them, so it never loads the hook into a
+    /// process while the hook is being taken out of it. Guarded by _lock.
+    /// </summary>
+    private Task _hookUnloads = Task.CompletedTask;
+
+    /// <summary>
+    /// Takes the hook out of a server the controller let go of while it keeps running: an
+    /// attach to another process does not stop the one attached before. Left in, its
+    /// patches stay in the game with nothing reading them, and a later injection would
+    /// reuse that copy instead of loading the controller's own.
+    /// </summary>
+    /// <remarks>
+    /// Not under the attachment gate: an unload takes seconds, and attaching back meanwhile
+    /// must not be refused as busy. <paramref name="released"/> is held open throughout, so
+    /// the PID cannot change owner. Skipped when the process has exited or has been
+    /// attached again by the time it runs. Never throws, so the chain keeps going.
+    /// </remarks>
+    private async Task UnloadReleasedHookAsync(Task previous, Process released)
+    {
+        using (released)
+        {
+            var pid = released.Id;
+            try
+            {
+                await previous;
+                // Off the caller, which holds _lock.
+                await Task.Yield();
+
+                if (released.HasExited || AttachedProcessId == pid)
+                {
+                    return;
+                }
+
+                var (unloaded, message) = await _injectedHookOutputReader.UnloadAsync(pid);
+                if (unloaded)
+                {
+                    _logger.LogInformation("Console hook taken out of released server process {PID}: {Message}", pid, message);
+                }
+                else
+                {
+                    _logger.LogWarning("Console hook left in released server process {PID}: {Message}", pid, message);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Could not take the console hook out of released server process {PID}", pid);
+            }
         }
     }
 
@@ -2637,6 +2707,16 @@ public class ServerManager
             _logger.LogError(ex, "Failed to validate target process {ProcessId}", processId);
             return (false, $"Could not check process {processId}. The desktop app's log has the details.");
         }
+
+        // A hook still being taken out of this process would be found loaded and reused,
+        // then unloaded under the new attachment.
+        Task unloads;
+        lock (_lock)
+        {
+            unloads = _hookUnloads;
+        }
+
+        await unloads;
 
         return await _injectedHookOutputReader.InjectAsync(processId);
     }

@@ -9,6 +9,39 @@ namespace WreckfestController.Services.Desktop;
 /// </summary>
 public class DialogService
 {
+    /// <summary>The main window's dialog host, which every desktop dialog shares.</summary>
+    public const string RootDialog = "RootDialog";
+
+    private static readonly TimeSpan OpenDialogPollInterval = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>
+    /// Shows <paramref name="content"/> on the root dialog host once no other dialog is
+    /// open there. The host holds one dialog at a time, and DialogHost.Show throws
+    /// "DialogHost is already open" for a second one, which crashed the app: an error
+    /// raised while a confirmation or the first-admin dialog was up. A dialog that
+    /// arrives then now waits its turn. Call it on the UI thread.
+    /// </summary>
+    public static Task<object?> ShowAsync(object content, DialogOpenedEventHandler? opened = null) =>
+        ShowWhenFreeAsync(
+            () => DialogHost.IsDialogOpen(RootDialog),
+            () => opened == null ? DialogHost.Show(content, RootDialog) : DialogHost.Show(content, RootDialog, opened),
+            OpenDialogPollInterval);
+
+    /// <summary>
+    /// Waits until <paramref name="isOpen"/> is false, then calls <paramref name="show"/>.
+    /// On the UI thread nothing runs between the last check and the show, so a dialog
+    /// cannot open in between.
+    /// </summary>
+    internal static async Task<object?> ShowWhenFreeAsync(Func<bool> isOpen, Func<Task<object?>> show, TimeSpan pollInterval)
+    {
+        while (isOpen())
+        {
+            await Task.Delay(pollInterval);
+        }
+
+        return await show();
+    }
+
     /// <summary>
     /// Shows an error dialog with Material Design styling
     /// </summary>
@@ -59,7 +92,7 @@ public class DialogService
             DataContext = viewModel
         };
 
-        var result = await DialogHost.Show(view, "RootDialog");
+        var result = await ShowAsync(view);
         return result is true;
     }
 
@@ -81,7 +114,7 @@ public class DialogService
             DataContext = viewModel
         };
 
-        await DialogHost.Show(view, "RootDialog");
+        await ShowAsync(view);
     }
 }
 
