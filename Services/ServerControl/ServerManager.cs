@@ -1497,7 +1497,23 @@ public class ServerManager
             {
                 lock (_lock)
                 {
-                    _hookUnloads = UnloadReleasedHookAsync(_hookUnloads, released);
+                    var releasedPid = released.Id;
+                    var previous = _hookUnloads.GetValueOrDefault(releasedPid) ?? Task.CompletedTask;
+                    var unload = UnloadReleasedHookAsync(previous, released);
+                    _hookUnloads[releasedPid] = unload;
+
+                    // The unload holds the process open until it ends; after that the PID
+                    // can be reused, so the entry must go with it.
+                    _ = unload.ContinueWith(done =>
+                    {
+                        lock (_lock)
+                        {
+                            if (_hookUnloads.TryGetValue(releasedPid, out var current) && current == done)
+                            {
+                                _hookUnloads.Remove(releasedPid);
+                            }
+                        }
+                    }, TaskScheduler.Default);
                 }
 
                 released = null;
@@ -1518,11 +1534,12 @@ public class ServerManager
     }
 
     /// <summary>
-    /// The hook unloads started by <see cref="UnloadReleasedHookAsync"/>, chained so one
-    /// runs at a time. An injection waits for them, so it never loads the hook into a
-    /// process while the hook is being taken out of it. Guarded by _lock.
+    /// The hook unload running or last run for each released process, by PID. An injection
+    /// into that process waits for it, so the hook is never loaded into a process while it
+    /// is being taken out. While an unload runs it holds its process open, so the PID
+    /// still names that process. Guarded by _lock.
     /// </summary>
-    private Task _hookUnloads = Task.CompletedTask;
+    private readonly Dictionary<int, Task> _hookUnloads = new();
 
     /// <summary>
     /// Takes the hook out of a server the controller let go of while it keeps running: an
@@ -1543,6 +1560,7 @@ public class ServerManager
             var pid = released.Id;
             try
             {
+                // An unload of this process released earlier, and attached again since.
                 await previous;
                 // Off the caller, which holds _lock.
                 await Task.Yield();
@@ -2673,6 +2691,20 @@ public class ServerManager
 
     private async Task<(bool Success, string Message)> InjectConsoleHookCoreAsync(int processId)
     {
+        // First, so everything below is checked after it: a hook still being taken out of
+        // this process would be found loaded and reused, then unloaded under the new
+        // attachment.
+        Task? unload;
+        lock (_lock)
+        {
+            unload = _hookUnloads.GetValueOrDefault(processId);
+        }
+
+        if (unload != null)
+        {
+            await unload;
+        }
+
         try
         {
             var process = Process.GetProcessById(processId);
@@ -2707,16 +2739,6 @@ public class ServerManager
             _logger.LogError(ex, "Failed to validate target process {ProcessId}", processId);
             return (false, $"Could not check process {processId}. The desktop app's log has the details.");
         }
-
-        // A hook still being taken out of this process would be found loaded and reused,
-        // then unloaded under the new attachment.
-        Task unloads;
-        lock (_lock)
-        {
-            unloads = _hookUnloads;
-        }
-
-        await unloads;
 
         return await _injectedHookOutputReader.InjectAsync(processId);
     }

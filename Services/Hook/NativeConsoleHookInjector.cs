@@ -22,6 +22,9 @@ internal static class NativeConsoleHookInjector
     private const uint Th32csSnapModule = 0x00000008;
     private const uint Th32csSnapModule32 = 0x00000010;
     private const uint DontResolveDllReferences = 0x00000001;
+    private const uint ErrorShutdownInProgress = 1115;
+    private const int ErrorNoMoreFiles = 18;
+    private const uint Infinite = 0xFFFFFFFF;
     private static readonly IntPtr InvalidHandleValue = new(-1);
 
     public static bool InjectDll(int processId, string dllPath, TimeSpan timeout, out string error, out bool wasAlreadyLoaded)
@@ -55,17 +58,33 @@ internal static class NativeConsoleHookInjector
 
         try
         {
-            var existingModuleBase = FindRemoteModuleBase(processId, Path.GetFileName(dllPath));
-            if (existingModuleBase != IntPtr.Zero)
+            if (!TryFindRemoteModule(processId, Path.GetFileName(dllPath), out var existing, out error))
+            {
+                return false;
+            }
+
+            if (existing is { } loaded)
             {
                 wasAlreadyLoaded = true;
-                return CallRemoteExport(
-                    processHandle,
-                    existingModuleBase,
-                    dllPath,
-                    InitializeExportName,
-                    timeout,
-                    out error);
+                if (CallRemoteExport(processHandle, loaded.Base, dllPath, InitializeExportName, timeout, out var initialized, out error))
+                {
+                    return true;
+                }
+
+                // An unload whose shutdown timed out leaves the hook shut down partway, and
+                // it refuses to start again. Finish taking it out, then load it afresh.
+                if (initialized != ErrorShutdownInProgress)
+                {
+                    return false;
+                }
+
+                if (!UnloadLoaded(processHandle, processId, dllPath, loaded, out error))
+                {
+                    error = $"The hook in process {processId} is shut down and could not be unloaded to load it again: {error}";
+                    return false;
+                }
+
+                wasAlreadyLoaded = false;
             }
 
             var dllPathBytes = Encoding.Unicode.GetBytes(dllPath + "\0");
@@ -155,6 +174,7 @@ internal static class NativeConsoleHookInjector
                 dllPath,
                 InitializeExportName,
                 timeout,
+                out _,
                 out error);
         }
         finally
@@ -186,16 +206,14 @@ internal static class NativeConsoleHookInjector
     /// the hook's own module reference, then a remote FreeLibrary gives back the one
     /// LoadLibraryW took at injection, so the module is unmapped. Without that second
     /// step the shut-down module would stay loaded, and a later injection would find it
-    /// and be refused by it.
+    /// and be refused by it. True when no hook is loaded.
     /// </summary>
     /// <remarks>
-    /// Only a module loaded from <paramref name="dllPath"/> is touched: the export's
-    /// address is worked out from that file, so it is right only for that file, and
-    /// Windows does not let a loaded image's file be rewritten. True when nothing is
-    /// loaded. Nothing is freed when the shutdown fails: the hook then keeps itself
-    /// pinned, so it cannot be unmapped under its own threads.
+    /// Waits for each remote thread to end, however long that takes - it ends with the
+    /// process at the latest. Returning while one still ran would let an injection
+    /// resolve the module just before that FreeLibrary unmapped it.
     /// </remarks>
-    public static bool UnloadDll(int processId, string dllPath, TimeSpan timeout, out string error)
+    public static bool UnloadDll(int processId, string dllPath, out string error)
     {
         error = string.Empty;
 
@@ -216,60 +234,68 @@ internal static class NativeConsoleHookInjector
 
         try
         {
-            var module = FindRemoteModule(processId, Path.GetFileName(dllPath));
-            if (module == null)
-            {
-                return true;
-            }
-
-            if (!string.Equals(Path.GetFullPath(module.Value.Path), Path.GetFullPath(dllPath), StringComparison.OrdinalIgnoreCase))
-            {
-                error = $"The hook loaded in process {processId} is {module.Value.Path}, not {dllPath}; left loaded";
-                return false;
-            }
-
-            if (!CallRemoteExport(processHandle, module.Value.Base, dllPath, ShutdownExportName, timeout, out error))
+            if (!TryFindRemoteModule(processId, Path.GetFileName(dllPath), out var module, out error))
             {
                 return false;
             }
 
-            var freeLibrary = GetProcAddress(GetModuleHandle("kernel32.dll"), "FreeLibrary");
-            if (freeLibrary == IntPtr.Zero)
-            {
-                error = $"Could not resolve FreeLibrary: {FormatLastWin32Error()}";
-                return false;
-            }
-
-            // One reference per LoadLibraryW that loaded it; a reinjection into a loaded
-            // hook takes none. Bounded, so a module something else also holds is not
-            // chased forever.
-            const int MaxReleases = 8;
-            for (var release = 0; release < MaxReleases; release++)
-            {
-                if (!RunRemoteThread(processHandle, freeLibrary, module.Value.Base, timeout, "FreeLibrary", out var exitCode, out error))
-                {
-                    return false;
-                }
-
-                if (exitCode == 0)
-                {
-                    error = "Remote FreeLibrary failed";
-                    return false;
-                }
-
-                if (FindRemoteModule(processId, Path.GetFileName(dllPath)) is not { } still || still.Base != module.Value.Base)
-                {
-                    return true;
-                }
-            }
-
-            error = $"The hook is still loaded after {MaxReleases} releases";
-            return false;
+            return module is not { } loaded || UnloadLoaded(processHandle, processId, dllPath, loaded, out error);
         }
         finally
         {
             CloseHandle(processHandle);
         }
+    }
+
+    /// <remarks>
+    /// Nothing is freed when the shutdown fails: the hook then keeps itself pinned, so it
+    /// cannot be unmapped under its own threads, and a later call retries. Exactly one
+    /// reference is given back - the controller's injection takes one, a reinjection into
+    /// a loaded hook none - so a reference anything else holds is left alone.
+    /// </remarks>
+    private static bool UnloadLoaded(IntPtr processHandle, int processId, string dllPath, (IntPtr Base, string Path) module, out string error)
+    {
+        if (!string.Equals(Path.GetFullPath(module.Path), Path.GetFullPath(dllPath), StringComparison.OrdinalIgnoreCase))
+        {
+            error = $"The hook loaded in process {processId} is {module.Path}, not {dllPath}; left loaded";
+            return false;
+        }
+
+        if (!CallRemoteExport(processHandle, module.Base, dllPath, ShutdownExportName, Timeout.InfiniteTimeSpan, out _, out error))
+        {
+            return false;
+        }
+
+        var freeLibrary = GetProcAddress(GetModuleHandle("kernel32.dll"), "FreeLibrary");
+        if (freeLibrary == IntPtr.Zero)
+        {
+            error = $"Could not resolve FreeLibrary: {FormatLastWin32Error()}";
+            return false;
+        }
+
+        if (!RunRemoteThread(processHandle, freeLibrary, module.Base, Timeout.InfiniteTimeSpan, "FreeLibrary", out var freed, out error))
+        {
+            return false;
+        }
+
+        if (freed == 0)
+        {
+            error = "Remote FreeLibrary failed";
+            return false;
+        }
+
+        if (!TryFindRemoteModule(processId, Path.GetFileName(dllPath), out var still, out error))
+        {
+            return false;
+        }
+
+        if (still is { } remaining && remaining.Base == module.Base)
+        {
+            error = "The hook is shut down but still loaded: something else holds a reference to it";
+            return false;
+        }
+
+        return true;
     }
 
     private static bool CallRemoteExport(
@@ -278,9 +304,11 @@ internal static class NativeConsoleHookInjector
         string dllPath,
         string exportName,
         TimeSpan timeout,
+        out uint exitCode,
         out string error)
     {
         error = string.Empty;
+        exitCode = 0;
 
         var localModule = LoadLibraryEx(dllPath, IntPtr.Zero, DontResolveDllReferences);
         if (localModule == IntPtr.Zero)
@@ -298,9 +326,18 @@ internal static class NativeConsoleHookInjector
                 return false;
             }
 
+            // The export's address is worked out from the file, so it is right only if the
+            // loaded image was mapped from this same build. A file can be renamed while
+            // loaded and another put in its place.
+            if (!SameImage(processHandle, remoteModuleBase, localModule, out error))
+            {
+                error = $"Not calling {exportName}: {error}";
+                return false;
+            }
+
             var exportOffset = localExport.ToInt64() - localModule.ToInt64();
             var remoteExport = IntPtr.Add(remoteModuleBase, checked((int)exportOffset));
-            if (!RunRemoteThread(processHandle, remoteExport, IntPtr.Zero, timeout, exportName, out var exitCode, out error))
+            if (!RunRemoteThread(processHandle, remoteExport, IntPtr.Zero, timeout, exportName, out exitCode, out error))
             {
                 return false;
             }
@@ -319,7 +356,66 @@ internal static class NativeConsoleHookInjector
         }
     }
 
-    /// <summary>Runs <paramref name="start"/> on a new thread in the process and waits for its exit code.</summary>
+    /// <summary>
+    /// True when the image loaded at <paramref name="remoteBase"/> has the PE identity of
+    /// the one mapped locally: link timestamp, entry point, image size and checksum.
+    /// </summary>
+    private static bool SameImage(IntPtr processHandle, IntPtr remoteBase, IntPtr localBase, out string error)
+    {
+        const int HeaderBytes = 0x400;
+        var remote = new byte[HeaderBytes];
+        if (!ReadProcessMemory(processHandle, remoteBase, remote, (UIntPtr)HeaderBytes, out var read) ||
+            read.ToUInt64() != HeaderBytes)
+        {
+            error = $"ReadProcessMemory of the loaded hook's headers failed: {FormatLastWin32Error()}";
+            return false;
+        }
+
+        var local = new byte[HeaderBytes];
+        Marshal.Copy(localBase, local, 0, HeaderBytes);
+
+        if (ImageIdentity(remote) is not { } loaded || ImageIdentity(local) is not { } file)
+        {
+            error = "the hook's PE headers could not be read";
+            return false;
+        }
+
+        if (loaded != file)
+        {
+            error = "the loaded hook is a different build from the DLL file";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    internal static (uint TimeDateStamp, uint EntryPoint, uint SizeOfImage, uint CheckSum)? ImageIdentity(byte[] headers)
+    {
+        if (headers.Length < 0x40 || headers[0] != 'M' || headers[1] != 'Z')
+        {
+            return null;
+        }
+
+        var pe = BitConverter.ToInt32(headers, 0x3C);
+        // PE signature, file header (20 bytes), then the optional header up to CheckSum.
+        if (pe < 0 || pe > headers.Length - (24 + 68) || BitConverter.ToUInt32(headers, pe) != 0x00004550)
+        {
+            return null;
+        }
+
+        var optional = pe + 24;
+        return (
+            BitConverter.ToUInt32(headers, pe + 8),
+            BitConverter.ToUInt32(headers, optional + 16),
+            BitConverter.ToUInt32(headers, optional + 56),
+            BitConverter.ToUInt32(headers, optional + 64));
+    }
+
+    /// <summary>
+    /// Runs <paramref name="start"/> on a new thread in the process and waits for its exit
+    /// code; <see cref="Timeout.InfiniteTimeSpan"/> waits until it ends.
+    /// </summary>
     private static bool RunRemoteThread(
         IntPtr processHandle,
         IntPtr start,
@@ -349,7 +445,8 @@ internal static class NativeConsoleHookInjector
 
         try
         {
-            var waitResult = WaitForSingleObject(threadHandle, (uint)timeout.TotalMilliseconds);
+            var waitMs = timeout == Timeout.InfiniteTimeSpan ? Infinite : (uint)timeout.TotalMilliseconds;
+            var waitResult = WaitForSingleObject(threadHandle, waitMs);
             if (waitResult == WaitTimeout)
             {
                 error = $"Timed out waiting for remote {what} to complete";
@@ -377,14 +474,22 @@ internal static class NativeConsoleHookInjector
     }
 
     private static IntPtr FindRemoteModuleBase(int processId, string moduleName) =>
-        FindRemoteModule(processId, moduleName)?.Base ?? IntPtr.Zero;
+        TryFindRemoteModule(processId, moduleName, out var module, out _) && module is { } found ? found.Base : IntPtr.Zero;
 
-    private static (IntPtr Base, string Path)? FindRemoteModule(int processId, string moduleName)
+    /// <summary>
+    /// Looks the module up in the process. False when the module list could not be read,
+    /// which says nothing about whether it is loaded; true with null when it is not.
+    /// </summary>
+    private static bool TryFindRemoteModule(int processId, string moduleName, out (IntPtr Base, string Path)? module, out string error)
     {
+        module = null;
+        error = string.Empty;
+
         var snapshot = CreateModuleSnapshot(processId);
         if (snapshot == InvalidHandleValue)
         {
-            return null;
+            error = $"Could not list the modules of process {processId}: {FormatLastWin32Error()}";
+            return false;
         }
 
         try
@@ -396,7 +501,13 @@ internal static class NativeConsoleHookInjector
 
             if (!Module32First(snapshot, ref entry))
             {
-                return null;
+                if (Marshal.GetLastWin32Error() == ErrorNoMoreFiles)
+                {
+                    return true;
+                }
+
+                error = $"Could not list the modules of process {processId}: {FormatLastWin32Error()}";
+                return false;
             }
 
             do
@@ -404,12 +515,19 @@ internal static class NativeConsoleHookInjector
                 if (string.Equals(entry.SzModule, moduleName, StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(Path.GetFileName(entry.SzExePath), moduleName, StringComparison.OrdinalIgnoreCase))
                 {
-                    return (entry.ModBaseAddr, entry.SzExePath);
+                    module = (entry.ModBaseAddr, entry.SzExePath);
+                    return true;
                 }
             }
             while (Module32Next(snapshot, ref entry));
 
-            return null;
+            if (Marshal.GetLastWin32Error() != ErrorNoMoreFiles)
+            {
+                error = $"Could not list the modules of process {processId}: {FormatLastWin32Error()}";
+                return false;
+            }
+
+            return true;
         }
         finally
         {
@@ -465,6 +583,14 @@ internal static class NativeConsoleHookInjector
         IntPtr lpAddress,
         UIntPtr dwSize,
         uint dwFreeType);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool ReadProcessMemory(
+        IntPtr hProcess,
+        IntPtr lpBaseAddress,
+        byte[] lpBuffer,
+        UIntPtr nSize,
+        out UIntPtr lpNumberOfBytesRead);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool WriteProcessMemory(

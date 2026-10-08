@@ -93,7 +93,7 @@ public class InjectedHookOutputReader : IInjectedHookOutputReader
         // On a worker thread, like injection: the hook's shutdown can take seconds.
         var (unloaded, error) = await Task.Run(() =>
         {
-            var ok = NativeConsoleHookInjector.UnloadDll(processId, hookDllPath, TimeSpan.FromSeconds(10), out var unloadError);
+            var ok = NativeConsoleHookInjector.UnloadDll(processId, hookDllPath, out var unloadError);
             return (ok, unloadError);
         });
 
