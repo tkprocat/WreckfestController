@@ -203,7 +203,8 @@ public sealed class CrashLog
         Line(text, () => $"{description ?? exception.GetType().FullName + ": (its description could not be read in time)"}");
         if (description == null)
         {
-            Line(text, () => $"{exception.StackTrace}");
+            // StackTrace is virtual too, so it is timed as well.
+            Line(text, () => $"{RunWithin(() => exception.StackTrace) ?? "(no stack trace)"}");
         }
 
         return text.ToString();

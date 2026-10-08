@@ -142,6 +142,16 @@ public sealed class CrashLogTests : IDisposable
             release.Wait();
             return "late";
         }
+
+        // The fallback reads this, so it must not hang the report either.
+        public override string? StackTrace
+        {
+            get
+            {
+                release.Wait();
+                return "late";
+            }
+        }
     }
 
     private sealed class UnprintableException : Exception
