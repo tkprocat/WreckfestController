@@ -68,6 +68,7 @@
             <Button x:Name="OpenCrashFolderButton"
                     Grid.Column="1"
                     Content="OPEN FOLDER"
+                    IsEnabled="False"
                     Click="OnOpenCrashFolderClicked"
                     Style="{StaticResource MaterialDesignOutlinedButton}"
                     Foreground="{StaticResource TextPrimary}"

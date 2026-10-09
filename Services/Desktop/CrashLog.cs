@@ -144,35 +144,36 @@ public sealed class CrashLog
     /// </summary>
     public CrashReports Reports()
     {
-        var files = new[] { _directory, _fallbackDirectory }
-            .SelectMany(ReportsIn)
+        // Each folder on its own, given up on after WriteTimeout: a stalled main folder
+        // must not hide reports the fallback took because of that very stall.
+        var scans = new[] { _directory, _fallbackDirectory }
+            .Select(directory => (Directory: directory, Scan: Task.Run(() => Scan(directory))))
+            .ToList();
+        var results = scans
+            .Select(s => (s.Directory, Result: s.Scan.Wait(WriteTimeout) ? s.Scan.Result : (Files: [], Exists: false)))
+            .ToList();
+
+        var files = results
+            .SelectMany(r => r.Result.Files)
             .OrderByDescending(f => f.LastWriteTimeUtc)
             .ThenByDescending(f => f.Name, StringComparer.Ordinal)
             .ToList();
         var folder = files.Count > 0 ? files[0].DirectoryName ?? _directory : _directory;
-        bool exists;
-        try
-        {
-            exists = System.IO.Directory.Exists(folder);
-        }
-        catch
-        {
-            exists = false;
-        }
-
+        var exists = results.Any(r => string.Equals(r.Directory, folder, StringComparison.OrdinalIgnoreCase) && r.Result.Exists);
         return new CrashReports(files, folder, exists);
     }
 
-    private static IEnumerable<FileInfo> ReportsIn(string directory)
+    /// <summary>A folder's crash files and whether it exists. Never throws.</summary>
+    private static (IReadOnlyList<FileInfo> Files, bool Exists) Scan(string directory)
     {
         try
         {
             var folder = new DirectoryInfo(directory);
-            return folder.Exists ? folder.GetFiles(FilePrefix + "*.txt") : [];
+            return folder.Exists ? (folder.GetFiles(FilePrefix + "*.txt"), true) : ([], false);
         }
         catch
         {
-            return [];
+            return ([], false);
         }
     }
 
