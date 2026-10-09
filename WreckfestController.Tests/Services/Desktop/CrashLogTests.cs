@@ -233,6 +233,32 @@ public sealed class CrashLogTests : IDisposable
         Assert.Equal(CrashLog.KeepCount, Directory.GetFiles(Fallback, "crash-*.txt").Length);
     }
 
+    // What the About tab shows.
+    [Fact]
+    public void Reports_lists_crash_files_newest_first_and_nothing_else()
+    {
+        Directory.CreateDirectory(Crashes);
+        var start = new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc);
+        foreach (var (name, minutes) in new[] { ("crash-a.txt", 1), ("crash-b.txt", 3), ("crash-c.txt", 2) })
+        {
+            var file = Path.Combine(Crashes, name);
+            File.WriteAllText(file, "x");
+            File.SetLastWriteTimeUtc(file, start.AddMinutes(minutes));
+        }
+
+        File.WriteAllText(Path.Combine(Crashes, "notes.txt"), "mine");
+
+        var log = Log();
+        Assert.Equal(["crash-b.txt", "crash-c.txt", "crash-a.txt"], log.Reports().Select(f => f.Name));
+        Assert.Equal(Crashes, log.Folder);
+    }
+
+    [Fact]
+    public void Reports_without_a_crash_folder_is_empty()
+    {
+        Assert.Empty(Log().Reports());
+    }
+
     [Fact]
     public void Prune_without_a_crash_folder_does_nothing()
     {

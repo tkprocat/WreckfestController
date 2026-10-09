@@ -49,6 +49,31 @@
             <TextBlock Grid.Row="3" Grid.Column="1" Text="MIT" Foreground="{StaticResource TextPrimary}" Margin="0,0,0,6"/>
         </Grid>
 
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="Crash reports"
+                           FontWeight="Bold"
+                           Foreground="{StaticResource TextPrimary}"
+                           Margin="0,0,0,5"/>
+                <TextBlock x:Name="CrashStatusText"
+                           FontSize="11"
+                           Foreground="{StaticResource TextSecondary}"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+            <Button x:Name="OpenCrashFolderButton"
+                    Grid.Column="1"
+                    Content="OPEN FOLDER"
+                    Click="OnOpenCrashFolderClicked"
+                    Style="{StaticResource MaterialDesignOutlinedButton}"
+                    Foreground="{StaticResource TextPrimary}"
+                    VerticalAlignment="Center"
+                    Margin="15,0,0,0"/>
+        </Grid>
+
         <TextBlock Margin="0,0,0,6">
             <Hyperlink x:Name="RepositoryLink" RequestNavigate="OnLinkNavigate" Foreground="{StaticResource BlueColor}">
                 <Run x:Name="RepositoryLinkText"/>

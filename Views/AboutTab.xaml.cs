@@ -20,6 +20,42 @@ public partial class AboutTab : UserControl
         RepositoryLink.NavigateUri = new Uri(AppInfo.RepositoryUrl);
         RepositoryLinkText.Text = AppInfo.RepositoryUrl;
         IssuesLink.NavigateUri = new Uri(AppInfo.IssuesUrl);
+
+        // Checked each time the tab is shown: a crash folder appears with the first crash.
+        IsVisibleChanged += (_, e) =>
+        {
+            if (e.NewValue is true)
+            {
+                ShowCrashStatus();
+            }
+        };
+    }
+
+    private void ShowCrashStatus()
+    {
+        var reports = CrashLog.Default.Reports();
+        var folder = CrashLog.Default.Folder;
+        CrashStatusText.Text = reports.Count == 0
+            ? $"None recorded. A crash is written to {folder}."
+            : $"{reports.Count} report{(reports.Count == 1 ? "" : "s")}, the newest from " +
+              $"{reports[0].LastWriteTime:yyyy-MM-dd HH:mm}. In {folder}.";
+        OpenCrashFolderButton.IsEnabled = reports.Count > 0;
+    }
+
+    // Like the links: a folder the shell will not open must not escape the handler.
+    private void OnOpenCrashFolderClicked(object sender, System.Windows.RoutedEventArgs e)
+    {
+        var folder = CrashLog.Default.Folder;
+        try
+        {
+            Process.Start(new ProcessStartInfo { FileName = folder, UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            _ = DialogService.ShowErrorAsync($"The crash folder could not be opened: {ex.Message}\n{folder}");
+        }
+
+        ShowCrashStatus();
     }
 
     // A WPF Hyperlink outside a navigation host does nothing on its own: open the

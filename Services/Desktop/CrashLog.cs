@@ -133,6 +133,31 @@ public sealed class CrashLog
         return null;
     }
 
+    /// <summary>The crash folder this log writes to first.</summary>
+    public string Folder => _directory;
+
+    /// <summary>
+    /// The crash files in <see cref="Folder"/>, newest first; empty when there are none
+    /// or the folder cannot be read. Never throws.
+    /// </summary>
+    public IReadOnlyList<FileInfo> Reports()
+    {
+        try
+        {
+            var folder = new DirectoryInfo(_directory);
+            return folder.Exists
+                ? folder.GetFiles(FilePrefix + "*.txt")
+                    .OrderByDescending(f => f.LastWriteTimeUtc)
+                    .ThenByDescending(f => f.Name, StringComparer.Ordinal)
+                    .ToList()
+                : [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
     /// <summary>
     /// Removes all but the newest <see cref="KeepCount"/> crash files from each folder.
     /// Only <c>crash-*.txt</c> files are touched. Never throws.
