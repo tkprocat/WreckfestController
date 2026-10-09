@@ -60,6 +60,7 @@
                            Foreground="{StaticResource TextPrimary}"
                            Margin="0,0,0,5"/>
                 <TextBlock x:Name="CrashStatusText"
+                           Text="Checking..."
                            FontSize="11"
                            Foreground="{StaticResource TextSecondary}"
                            TextWrapping="Wrap"/>

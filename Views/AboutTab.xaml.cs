@@ -26,26 +26,49 @@ public partial class AboutTab : UserControl
         {
             if (e.NewValue is true)
             {
-                ShowCrashStatus();
+                ShowCrashStatusAsync();
             }
         };
     }
 
-    private void ShowCrashStatus()
+    // The folder that OPEN FOLDER opens: the newest report's, which may be the %TEMP% fallback.
+    private string _crashFolder = CrashLog.Default.Folder;
+    private int _crashStatusLoads;
+
+    // Read off the UI thread: a folder that stops answering must not freeze the window.
+    // Never throws, so it is safe to fire and forget from an event handler.
+    private async void ShowCrashStatusAsync()
     {
-        var reports = CrashLog.Default.Reports();
-        var folder = CrashLog.Default.Folder;
-        CrashStatusText.Text = reports.Count == 0
-            ? $"None recorded. A crash is written to {folder}."
-            : $"{reports.Count} report{(reports.Count == 1 ? "" : "s")}, the newest from " +
-              $"{reports[0].LastWriteTime:yyyy-MM-dd HH:mm}. In {folder}.";
-        OpenCrashFolderButton.IsEnabled = reports.Count > 0;
+        var load = ++_crashStatusLoads;
+        CrashReports reports;
+        try
+        {
+            reports = await Task.Run(CrashLog.Default.Reports);
+        }
+        catch
+        {
+            return;
+        }
+
+        // A later load, started while this one waited, is newer.
+        if (load != _crashStatusLoads)
+        {
+            return;
+        }
+
+        var files = reports.Files;
+        _crashFolder = reports.Folder;
+        CrashStatusText.Text = files.Count == 0
+            ? $"None recorded. A crash is written to {reports.Folder}."
+            : $"{files.Count} report{(files.Count == 1 ? "" : "s")}, the newest from " +
+              $"{files[0].LastWriteTime:yyyy-MM-dd HH:mm}. In {reports.Folder}.";
+        OpenCrashFolderButton.IsEnabled = reports.FolderExists;
     }
 
     // Like the links: a folder the shell will not open must not escape the handler.
     private void OnOpenCrashFolderClicked(object sender, System.Windows.RoutedEventArgs e)
     {
-        var folder = CrashLog.Default.Folder;
+        var folder = _crashFolder;
         try
         {
             Process.Start(new ProcessStartInfo { FileName = folder, UseShellExecute = true });
@@ -55,7 +78,7 @@ public partial class AboutTab : UserControl
             _ = DialogService.ShowErrorAsync($"The crash folder could not be opened: {ex.Message}\n{folder}");
         }
 
-        ShowCrashStatus();
+        ShowCrashStatusAsync();
     }
 
     // A WPF Hyperlink outside a navigation host does nothing on its own: open the

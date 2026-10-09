@@ -248,15 +248,39 @@ public sealed class CrashLogTests : IDisposable
 
         File.WriteAllText(Path.Combine(Crashes, "notes.txt"), "mine");
 
-        var log = Log();
-        Assert.Equal(["crash-b.txt", "crash-c.txt", "crash-a.txt"], log.Reports().Select(f => f.Name));
-        Assert.Equal(Crashes, log.Folder);
+        var reports = Log().Reports();
+        Assert.Equal(["crash-b.txt", "crash-c.txt", "crash-a.txt"], reports.Files.Select(f => f.Name));
+        Assert.Equal(Crashes, reports.Folder);
+        Assert.True(reports.FolderExists);
     }
 
     [Fact]
-    public void Reports_without_a_crash_folder_is_empty()
+    public void Reports_without_a_crash_folder_is_empty_and_points_at_the_crash_folder()
     {
-        Assert.Empty(Log().Reports());
+        var reports = Log().Reports();
+
+        Assert.Empty(reports.Files);
+        Assert.Equal(Crashes, reports.Folder);
+        Assert.False(reports.FolderExists);
+    }
+
+    // A crash the main folder could not take must not read as "none recorded".
+    [Fact]
+    public void Reports_include_the_fallback_folder_and_point_at_the_newest_report()
+    {
+        Directory.CreateDirectory(Crashes);
+        Directory.CreateDirectory(Fallback);
+        var older = Path.Combine(Crashes, "crash-old.txt");
+        var newer = Path.Combine(Fallback, "crash-new.txt");
+        File.WriteAllText(older, "x");
+        File.WriteAllText(newer, "x");
+        File.SetLastWriteTimeUtc(older, new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc));
+        File.SetLastWriteTimeUtc(newer, new DateTime(2026, 10, 2, 12, 0, 0, DateTimeKind.Utc));
+
+        var reports = Log().Reports();
+
+        Assert.Equal(["crash-new.txt", "crash-old.txt"], reports.Files.Select(f => f.Name));
+        Assert.Equal(Fallback, reports.Folder);
     }
 
     [Fact]

@@ -137,20 +137,38 @@ public sealed class CrashLog
     public string Folder => _directory;
 
     /// <summary>
-    /// The crash files in <see cref="Folder"/>, newest first; empty when there are none
-    /// or the folder cannot be read. Never throws.
+    /// The crash files in both folders, newest first, and the folder to show: the newest
+    /// report's, or <see cref="Folder"/> when there are none. A folder that cannot be read
+    /// counts as empty. Never throws, but can block on a folder that does not answer, so
+    /// call it off the UI thread.
     /// </summary>
-    public IReadOnlyList<FileInfo> Reports()
+    public CrashReports Reports()
+    {
+        var files = new[] { _directory, _fallbackDirectory }
+            .SelectMany(ReportsIn)
+            .OrderByDescending(f => f.LastWriteTimeUtc)
+            .ThenByDescending(f => f.Name, StringComparer.Ordinal)
+            .ToList();
+        var folder = files.Count > 0 ? files[0].DirectoryName ?? _directory : _directory;
+        bool exists;
+        try
+        {
+            exists = System.IO.Directory.Exists(folder);
+        }
+        catch
+        {
+            exists = false;
+        }
+
+        return new CrashReports(files, folder, exists);
+    }
+
+    private static IEnumerable<FileInfo> ReportsIn(string directory)
     {
         try
         {
-            var folder = new DirectoryInfo(_directory);
-            return folder.Exists
-                ? folder.GetFiles(FilePrefix + "*.txt")
-                    .OrderByDescending(f => f.LastWriteTimeUtc)
-                    .ThenByDescending(f => f.Name, StringComparer.Ordinal)
-                    .ToList()
-                : [];
+            var folder = new DirectoryInfo(directory);
+            return folder.Exists ? folder.GetFiles(FilePrefix + "*.txt") : [];
         }
         catch
         {
@@ -329,3 +347,9 @@ public sealed class CrashLog
         }
     }
 }
+
+/// <summary>
+/// What <see cref="CrashLog.Reports"/> found: the files newest first, and the folder to
+/// open, with whether it exists.
+/// </summary>
+public sealed record CrashReports(IReadOnlyList<FileInfo> Files, string Folder, bool FolderExists);
