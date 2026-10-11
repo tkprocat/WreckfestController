@@ -64,6 +64,10 @@ public class CatalogueModsController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
+        // BEGIN IMMEDIATE: no track can be moved to this mod between the check below and
+        // the delete (#241).
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+
         var mod = await _db.Mods.Include(m => m.Tracks).SingleOrDefaultAsync(m => m.Id == id);
         if (mod is null)
         {
@@ -77,7 +81,16 @@ public class CatalogueModsController : ControllerBase
         }
 
         _db.Mods.Remove(mod);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex) when (CatalogueHttp.IsForeignKeyViolation(ex))
+        {
+            return this.Refused("A track started using it. Reload and try again.");
+        }
+
+        await transaction.CommitAsync();
         _logger.LogInformation("{Caller} deleted mod {FolderName}", this.Caller(), mod.FolderName);
         return NoContent();
     }

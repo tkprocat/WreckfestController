@@ -222,6 +222,38 @@ public class CupEndpointsTests
         Assert.Equal(HttpStatusCode.NotFound, gone.StatusCode);
     }
 
+    // #241: the delete reads the cups linked to the collection, rewrites them, then saves.
+    // A linked cup edited in between failed that save on its version token: an unhandled
+    // 500, and nothing deleted. Now the delete holds the write lock from the start, so the
+    // edit waits for it - and then finds the cup changed, as it should.
+    [Fact]
+    public async Task ALinkedCupEditedWhileItsCollectionIsDeleted_DoesNotFailTheDelete()
+    {
+        // The delete's read of the cups linked to the collection.
+        var pause = new PauseAfterQueryInterceptor(TimeSpan.FromSeconds(1), "FROM \"Cups\"", "\"CollectionId\" = ");
+        await using var host = await ApiTestHost.StartAsync(configureDatabase: options => options.AddInterceptors(pause));
+        using var client = host.CreateAuthenticatedClient();
+        using var collection = await client.PostAsJsonAsync(
+            "/api/collections", new { name = "Ovals", tracks = new[] { new { track = "speedway2_figure_8" } } }, Ct);
+        var collectionId = (await collection.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("id").GetInt32();
+        var id = await CreateAsync(client, CupBody(extra: new { collectionId }));
+
+        pause.Arm();
+        var delete = client.DeleteAsync($"/api/collections/{collectionId}", Ct);
+        await pause.Paused.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        var edit = SendAsync(client, HttpMethod.Put, $"/api/cups/{id}", CupBody(name: "Renamed", extra: new { collectionId }), "\"1\"");
+        using var deleted = await delete;
+        using var edited = await edit;
+
+        Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, edited.StatusCode);
+        var cup = await client.GetFromJsonAsync<JsonElement>($"/api/cups/{id}", Ct);
+        Assert.Equal("Race night", cup.GetProperty("name").GetString());
+        Assert.Equal(2, cup.GetProperty("version").GetInt32());
+        Assert.Equal(JsonValueKind.Null, cup.GetProperty("collectionId").ValueKind);
+        Assert.Equal(["speedway2_figure_8"], cup.GetProperty("tracks").EnumerateArray().Select(t => t.GetProperty("track").GetString()));
+    }
+
     [Fact]
     public async Task ALinkedCup_ShowsItsCollectionsCurrentTracks_AndKeepsThemWhenTheCollectionIsDeleted()
     {

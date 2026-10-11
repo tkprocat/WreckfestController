@@ -63,3 +63,34 @@ public sealed class CountRendezvousInterceptor(string marker = "COUNT(*)") : DbC
         return result;
     }
 }
+
+/// <summary>
+/// Once <see cref="Arm"/>ed, holds the first request that runs a query containing every
+/// one of <paramref name="markers"/>, for <paramref name="pause"/> after reading it, so a
+/// test can send a competing request into that window. Armed only after setup, whose own
+/// queries can match. <see cref="Paused"/> completes when the hold begins.
+/// </summary>
+public sealed class PauseAfterQueryInterceptor(TimeSpan pause, params string[] markers) : DbCommandInterceptor
+{
+    private readonly TaskCompletionSource _paused = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private int _armed;
+
+    public Task Paused => _paused.Task;
+
+    public void Arm() => Volatile.Write(ref _armed, 1);
+
+    public override async ValueTask<InterceptionResult> DataReaderClosingAsync(
+        DbCommand command,
+        DataReaderClosingEventData eventData,
+        InterceptionResult result)
+    {
+        if (markers.All(marker => command.CommandText.Contains(marker, StringComparison.Ordinal))
+            && Interlocked.Exchange(ref _armed, 0) == 1)
+        {
+            _paused.TrySetResult();
+            await Task.Delay(pause);
+        }
+
+        return result;
+    }
+}
