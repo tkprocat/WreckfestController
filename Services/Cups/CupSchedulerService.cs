@@ -19,12 +19,16 @@ namespace WreckfestController.Services.Cups;
 public class CupSchedulerService : IHostedService, IDisposable
 {
     public static readonly TimeSpan MissedGrace = TimeSpan.FromMinutes(15);
+
+    /// <summary>The longest the first check waits for the startup reattach.</summary>
+    public static readonly TimeSpan StartupWait = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
 
     private readonly CupStore _store;
     private readonly CupActivator _activator;
     private readonly TimeProvider _time;
     private readonly ILogger<CupSchedulerService> _logger;
+    private readonly StartupReattach? _startup;
     private readonly object _lock = new();
 
     private ITimer? _timer;
@@ -37,12 +41,14 @@ public class CupSchedulerService : IHostedService, IDisposable
         CupStore store,
         CupActivator activator,
         TimeProvider time,
-        ILogger<CupSchedulerService> logger)
+        ILogger<CupSchedulerService> logger,
+        StartupReattach? startup = null)
     {
         _store = store;
         _activator = activator;
         _time = time;
         _logger = logger;
+        _startup = startup;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -76,6 +82,13 @@ public class CupSchedulerService : IHostedService, IDisposable
 
         try
         {
+            // Not before the startup reattach: a cup due now would be started with no
+            // server attached, or with nobody on the roster to warn (#232).
+            if (_startup is { IsSettled: false })
+            {
+                await _startup.WhenSettledAsync(StartupWait, _time);
+            }
+
             // Bounded, in case a write keeps failing to move a cup on.
             for (var i = 0; i < 100; i++)
             {
