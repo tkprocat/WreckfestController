@@ -46,9 +46,14 @@ public sealed class RaceResultRecorderTests : IDisposable
             RetryDelays = [TimeSpan.Zero, TimeSpan.Zero],
         };
 
-    private void ReportRace() =>
+    /// <summary>
+    /// Reports the live race. A different <paramref name="eventCounter"/> makes it another
+    /// race: the same one reported again is recognised and not saved twice (#234).
+    /// </summary>
+    private void ReportRace(int eventCounter = 1) =>
         Assert.True(_serverManager.TryProcessHookRaceRecord(
-            HookRaceRecordTests.LiveRecord, _serverManager.CurrentAttachmentGeneration));
+            HookRaceRecordTests.LiveRecord.Replace("\u0012RACE\u001F1\u001F1\u001F", $"\u0012RACE\u001F1\u001F{eventCounter}\u001F"),
+            _serverManager.CurrentAttachmentGeneration));
 
     private async Task<int> RaceCountAsync()
     {
@@ -136,7 +141,7 @@ public sealed class RaceResultRecorderTests : IDisposable
             // One race is held in the save; the queue takes 64 more, and refuses two.
             for (var i = 0; i < 66; i++)
             {
-                ReportRace();
+                ReportRace(eventCounter: i + 2);
             }
 
             VerifyErrorLogged("the results queue is full", Times.Exactly(2));

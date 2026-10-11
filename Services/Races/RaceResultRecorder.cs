@@ -138,7 +138,17 @@ public sealed class RaceResultRecorder : IHostedService, IDisposable
             {
                 try
                 {
-                    var race = await _store.SaveAsync(record, cup, fallback, cancellationToken);
+                    var (race, added) = await _store.SaveOrFindAsync(record, cup, fallback, cancellationToken);
+                    if (!added)
+                    {
+                        // A hook injected again while the results were still on screen.
+                        _logger.LogInformation(
+                            "Race {RaceId} on {Track} was reported again; already recorded",
+                            race.Id,
+                            race.TrackId);
+                        break;
+                    }
+
                     _logger.LogInformation(
                         "Recorded race {RaceId} on {Track} with {Cars} cars{Cup}",
                         race.Id,
