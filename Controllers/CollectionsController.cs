@@ -153,6 +153,11 @@ public class CollectionsController : ControllerBase
     [HttpDelete("{id:int}")]
     public async Task<IActionResult> Delete(int id)
     {
+        // BEGIN IMMEDIATE, as user deletes: the cups below are read and rewritten with no
+        // other write in between - a cup saved, or linked to this collection, meanwhile
+        // would otherwise fail the save with a 500 or lose its tracks (#241).
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+
         var collection = await LoadAsync(id);
         if (collection is null)
         {
@@ -174,7 +179,16 @@ public class CollectionsController : ControllerBase
         }
 
         _db.TrackCollections.Remove(collection);
-        await _db.SaveChangesAsync();
+        try
+        {
+            await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return this.Refused("A cup using this collection changed meanwhile. Reload and try again.");
+        }
+
+        await transaction.CommitAsync();
         _logger.LogInformation("{Caller} deleted collection {Name}", this.Caller(), collection.Name);
         return NoContent();
     }
