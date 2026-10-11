@@ -147,6 +147,62 @@ public class ServerEventReaderTests
         Assert.Equal("Newest", e.Name);
     }
 
+    // #233: a poll that lands between an entry's start and its terminator used to move
+    // past it, so the rest arrived without the marker and the event was never reported.
+    [Fact]
+    public async Task PollAsync_ReportsAnEntrySplitAcrossTwoPolls()
+    {
+        var ring = new byte[ServerEventReader.RingSize];
+        var entry = Hex("1227" + Convert.ToHexString("Bob"u8.ToArray()) + "130a");
+        Array.Copy(entry, 0, ring, 100, entry.Length);
+        long cursor = 100;
+        var reader = MakeRingReader(() => cursor, ring);
+        await reader.PollAsync();      // adopt cursor 100
+
+        cursor = 103;                  // marker, id and "B" written so far
+        var (first, _) = await reader.PollAsync();
+        cursor = 100 + entry.Length;   // the rest
+        var (second, _) = await reader.PollAsync();
+        var (third, _) = await reader.PollAsync();
+
+        Assert.Empty(first);
+        Assert.Equal("Bob", Assert.Single(second).Name);
+        Assert.Empty(third);
+    }
+
+    // Bytes that look like the start of an entry but never end are not held for ever:
+    // the events written after them still arrive.
+    [Fact]
+    public async Task PollAsync_DoesNotWaitForeverOnAnUnfinishedTailLongerThanAnyEntry()
+    {
+        var ring = new byte[ServerEventReader.RingSize];
+        ring[100] = 0x12;
+        ring[101] = 0x27;
+        for (var i = 102; i < 700; i++) ring[i] = (byte)'x';
+        long cursor = 100;
+        var reader = MakeRingReader(() => cursor, ring);
+        await reader.PollAsync();
+
+        cursor = 700;
+        await reader.PollAsync();
+        var entry = Hex("1227" + Convert.ToHexString("Alice"u8.ToArray()) + "130a");
+        Array.Copy(entry, 0, ring, 700, entry.Length);
+        cursor = 700 + entry.Length;
+        var (events, _) = await reader.PollAsync();
+
+        Assert.Equal("Alice", Assert.Single(events).Name);
+    }
+
+    // #230: the player snapshot, chat and race records decode names as UTF-8. Decoded as
+    // Latin-1 here, "Jürgen" joined as "JÃ¼rgen" and his quit never matched.
+    [Fact]
+    public void Parse_DecodesNamesAsUtf8()
+    {
+        var span = Hex("1227" + Convert.ToHexString("Jürgen"u8.ToArray()) + "130a");
+
+        Assert.Equal("Jürgen", Assert.Single(ServerEventReader.Parse(span, null)).Name);
+    }
+
     /// <summary>
     /// A reader backed by a real wrapping ring: reads are served from the requested
     /// offset instead of always handing back the same block.

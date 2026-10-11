@@ -67,6 +67,12 @@ public class ServerEventReader
     // The hook caps a single read; larger spans are fetched in chunks.
     private const int MaxReadChunk = 1024;
 
+    /// <summary>
+    /// Longer than any entry: a marker, an id, up to three arguments and a name. An
+    /// unfinished tail longer than this is not an entry still being written.
+    /// </summary>
+    private const int MaxEntryBytes = 512;
+
     private readonly Func<uint, int, Task<byte[]?>> _read;
     private readonly ILogger<ServerEventReader> _logger;
 
@@ -148,11 +154,11 @@ public class ServerEventReader
         // one we saw: on overflow the oldest pending bytes have already been
         // overwritten, and starting at _lastCursor would return them while dropping
         // the newest - and with them a terminator or a whole final event.
-        var span = await ReadRingAsync(cursor - pending, (int)pending);
-        _lastCursor = cursor;
-
+        var start = cursor - pending;
+        var span = await ReadRingAsync(start, (int)pending);
         if (span is null)
         {
+            _lastCursor = cursor;
             return ([], overflowed);
         }
 
@@ -161,7 +167,16 @@ public class ServerEventReader
             _argCounts = await ReadArgCountsAsync();
         }
 
-        return (Parse(span, _argCounts), overflowed);
+        var events = Parse(span, _argCounts, out var unfinishedAt);
+
+        // An entry whose end is not written yet is read again, whole, on the next poll:
+        // starting after it would leave its end without the marker the parser looks
+        // for, and the event would be lost (#233). Unless it is already longer than any
+        // entry can be - then it is not an entry being written, and waiting for it would
+        // hold back every event after it.
+        var unfinished = span.Length - unfinishedAt;
+        _lastCursor = unfinished is > 0 and <= MaxEntryBytes ? start + unfinishedAt : cursor;
+        return (events, overflowed);
     }
 
     /// <summary>
@@ -215,15 +230,28 @@ public class ServerEventReader
     /// well-formed entry is skipped rather than guessed at: the span may begin
     /// mid-entry, and a wrong offset must not be allowed to invent events.
     /// </summary>
-    public static List<ServerEvent> Parse(byte[] span, short[]? argCounts)
+    public static List<ServerEvent> Parse(byte[] span, short[]? argCounts) => Parse(span, argCounts, out _);
+
+    /// <param name="unfinishedAt">
+    /// Where an entry starts whose end is not in <paramref name="span"/> yet, or the span's
+    /// length when every entry in it is complete.
+    /// </param>
+    public static List<ServerEvent> Parse(byte[] span, short[]? argCounts, out int unfinishedAt)
     {
         var events = new List<ServerEvent>();
+        unfinishedAt = span.Length;
 
         for (var i = 0; i < span.Length; i++)
         {
-            if (span[i] != EntryMarker || i + 1 >= span.Length)
+            if (span[i] != EntryMarker)
             {
                 continue;
+            }
+
+            if (i + 1 >= span.Length)
+            {
+                unfinishedAt = i;
+                break;
             }
 
             var id = span[i + 1] - EventIdBias;
@@ -234,15 +262,11 @@ public class ServerEventReader
 
             var argCount = argCounts is not null && id < argCounts.Length ? argCounts[id] : 0;
             var nameStart = i + 2 + argCount;
-            if (nameStart > span.Length)
-            {
-                continue;
-            }
-
-            var end = Array.IndexOf(span, EntryTerminator, nameStart);
+            var end = nameStart > span.Length ? -1 : Array.IndexOf(span, EntryTerminator, nameStart);
             if (end < 0)
             {
-                // Truncated tail: the rest arrives on the next poll.
+                // Truncated tail: the rest arrives on the next poll, which reads it again.
+                unfinishedAt = i;
                 break;
             }
 
@@ -252,7 +276,9 @@ public class ServerEventReader
                 args[a] = span[i + 2 + a] - 0x20;
             }
 
-            var name = System.Text.Encoding.Latin1.GetString(span, nameStart, end - nameStart);
+            // UTF-8, like the same names from the player snapshot, chat and race records:
+            // decoded differently here, a quit never matched its join (#230).
+            var name = System.Text.Encoding.UTF8.GetString(span, nameStart, end - nameStart);
             events.Add(new ServerEvent(id, InjectedHookOutputReader.NormalizeLine(name), args));
 
             i = end;
