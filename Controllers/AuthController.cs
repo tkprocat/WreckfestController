@@ -99,8 +99,9 @@ public class AuthController : ControllerBase
             user, request.Password, request.Remember, lockoutOnFailure: true);
         // A password stored with older hashing settings is rehashed on sign-in, which
         // gives the account a new stamp and so ends its other sessions: their live
-        // consoles end with them (#227).
-        if (result.Succeeded && user.SecurityStamp != stamp)
+        // consoles end with them (#227). Whatever the result: the rehash is saved before
+        // the rest of the sign-in, which can still fail.
+        if (user.SecurityStamp != stamp)
         {
             _hubConnections.EndSessionsOf(user.Id);
         }

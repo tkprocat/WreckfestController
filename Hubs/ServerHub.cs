@@ -43,7 +43,20 @@ public sealed class ServerHub : Hub<IServerHubClient>
                 // checked: sessions ended before the check fail it, and sessions ended after
                 // it find this connection on the list.
                 _admins.Add(userId, Context);
-                if (await _signIn.ValidateSecurityStampAsync(user) is null)
+                AppUser? valid;
+                try
+                {
+                    valid = await _signIn.ValidateSecurityStampAsync(user);
+                }
+                catch
+                {
+                    // SignalR closes the connection without OnDisconnectedAsync when this
+                    // throws: the list would keep it for good.
+                    _admins.Remove(userId, Context.ConnectionId);
+                    throw;
+                }
+
+                if (valid is null)
                 {
                     _admins.Remove(userId, Context.ConnectionId);
                     Context.Abort();
