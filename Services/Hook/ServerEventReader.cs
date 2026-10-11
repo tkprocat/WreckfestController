@@ -77,7 +77,11 @@ public class ServerEventReader
     private readonly ILogger<ServerEventReader> _logger;
 
     private short[]? _argCounts;
+    // The game's cursor at the last poll, and where the next read starts: behind it while
+    // an unfinished entry waits for its end (#233). Kept apart so a cursor going
+    // backwards - a restarted server - is still seen as one.
     private long _lastCursor = -1;
+    private long _readFrom = -1;
 
     /// <summary>
     /// True once a cursor has been read successfully. The first poll only adopts the
@@ -98,6 +102,7 @@ public class ServerEventReader
     public void Reset()
     {
         _lastCursor = -1;
+        _readFrom = -1;
         _argCounts = null;
     }
 
@@ -124,10 +129,11 @@ public class ServerEventReader
         // would re-announce joins that happened before we attached.
         if (_lastCursor < 0)
         {
-            _lastCursor = cursor;
+            _lastCursor = _readFrom = cursor;
             return ([], false);
         }
 
+        // Nothing written since: an entry still unfinished stays so.
         if (cursor == _lastCursor)
         {
             return ([], false);
@@ -136,11 +142,12 @@ public class ServerEventReader
         if (cursor < _lastCursor)
         {
             // The server restarted underneath us.
-            _lastCursor = cursor;
+            _lastCursor = _readFrom = cursor;
             return ([], true);
         }
 
-        var pending = cursor - _lastCursor;
+        _lastCursor = cursor;
+        var pending = cursor - _readFrom;
         var overflowed = pending > RingSize;
         if (overflowed)
         {
@@ -152,13 +159,13 @@ public class ServerEventReader
 
         // Read the window that ends at the cursor, not the one that starts at the last
         // one we saw: on overflow the oldest pending bytes have already been
-        // overwritten, and starting at _lastCursor would return them while dropping
+        // overwritten, and starting at _readFrom would return them while dropping
         // the newest - and with them a terminator or a whole final event.
         var start = cursor - pending;
         var span = await ReadRingAsync(start, (int)pending);
         if (span is null)
         {
-            _lastCursor = cursor;
+            _readFrom = cursor;
             return ([], overflowed);
         }
 
@@ -175,7 +182,7 @@ public class ServerEventReader
         // entry can be - then it is not an entry being written, and waiting for it would
         // hold back every event after it.
         var unfinished = span.Length - unfinishedAt;
-        _lastCursor = unfinished is > 0 and <= MaxEntryBytes ? start + unfinishedAt : cursor;
+        _readFrom = unfinished is > 0 and <= MaxEntryBytes ? start + unfinishedAt : cursor;
         return (events, overflowed);
     }
 

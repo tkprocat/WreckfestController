@@ -81,10 +81,11 @@ public sealed class NativeHookShutdownTests
         await output.WaitForConnectionAsync(timeout.Token);
 
         // The controller connects and never reads. Every refused command queues a
-        // line. Once the bytes waiting in the pipe stop growing with lines still being
-        // sent, the writer is stuck on a full pipe, however large Windows made the buffer.
+        // line. Once the pipe's contents stop growing while it holds fewer lines than
+        // were sent, the writer is stuck on a full pipe with lines still owed, however
+        // large Windows made the buffer.
         var sent = 0;
-        var waiting = 0L;
+        var inPipe = 0;
         var stalled = false;
         while (!stalled && sent < 1500)
         {
@@ -93,13 +94,14 @@ public sealed class NativeHookShutdownTests
                 await host.SendInputCommandAsync("list", timeout.Token);
             }
 
-            var before = BytesWaiting(output);
+            var before = Waiting(output);
             await Task.Delay(500, timeout.Token);
-            waiting = BytesWaiting(output);
-            stalled = waiting > 0 && waiting == before;
+            var waiting = Waiting(output);
+            inPipe = CompleteLines(waiting).Count(l => l.Contains(RefusedDispatch, StringComparison.Ordinal));
+            stalled = waiting.Length == before.Length && inPipe < sent;
         }
 
-        Assert.True(stalled, $"The pipe never filled: {sent} sent, {waiting} bytes waiting");
+        Assert.True(stalled, $"The pipe never filled: {sent} sent, {inPipe} in the pipe");
 
         var elapsed = host.Shutdown();
         Assert.True(elapsed < TimeSpan.FromSeconds(4), $"Shutdown took {elapsed}");
@@ -111,8 +113,8 @@ public sealed class NativeHookShutdownTests
         // Abandoning the controller loses nothing: each line is either whole in the pipe
         // or, once the pipe could not take it, in the fallback log - never both, since
         // lines the pipe took are no longer copied there (#229).
-        var inPipe = CompleteLines(await ReadToEndAsync(output, timeout.Token)).Count(l => l.Contains(RefusedDispatch, StringComparison.Ordinal));
-        Assert.Equal(sent, inPipe + host.CountFallbackLines(RefusedDispatch));
+        var delivered = CompleteLines(await ReadToEndAsync(output, timeout.Token)).Count(l => l.Contains(RefusedDispatch, StringComparison.Ordinal));
+        Assert.Equal(sent, delivered + host.CountFallbackLines(RefusedDispatch));
         Assert.Equal(1, host.CountFallbackLines("WreckfestConsoleHook shut down."));
 
         host.FreeLibrary();
@@ -197,15 +199,21 @@ public sealed class NativeHookShutdownTests
         }
     }
 
-    /// <summary>Bytes written into the pipe that nobody has read yet.</summary>
-    private static long BytesWaiting(NamedPipeServerStream pipe)
+    /// <summary>What was written into the pipe and not read yet, left there for the reader.</summary>
+    private static string Waiting(NamedPipeServerStream pipe)
     {
-        if (!PeekNamedPipe(pipe.SafePipeHandle, IntPtr.Zero, 0, IntPtr.Zero, out var available, IntPtr.Zero))
+        if (!PeekNamedPipe(pipe.SafePipeHandle, null, 0, out _, out var available, IntPtr.Zero))
         {
             throw new Win32Exception();
         }
 
-        return available;
+        var buffer = new byte[available];
+        if (!PeekNamedPipe(pipe.SafePipeHandle, buffer, available, out var read, out _, IntPtr.Zero))
+        {
+            throw new Win32Exception();
+        }
+
+        return Encoding.UTF8.GetString(buffer, 0, (int)read);
     }
 
     /// <summary>Everything left in the pipe, once the hook has closed its end.</summary>
@@ -229,9 +237,9 @@ public sealed class NativeHookShutdownTests
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool PeekNamedPipe(
         Microsoft.Win32.SafeHandles.SafePipeHandle pipe,
-        IntPtr buffer,
+        byte[]? buffer,
         uint bufferSize,
-        IntPtr bytesRead,
+        out uint bytesRead,
         out uint totalBytesAvailable,
         IntPtr bytesLeftThisMessage);
 

@@ -737,14 +737,27 @@ void ClosePipe()
 // a server that runs for weeks without a controller cannot fill the disk.
 constexpr LONGLONG FallbackLogMaxBytes = 1024 * 1024;
 
-void WriteFallbackLog(const char* text)
+// onlyIfFree: shutdown's own diagnostics, written when a worker failed to stop - which
+// may be a worker stuck inside this very function. They are dropped rather than wait
+// for it, so shutdown keeps its deadline.
+void WriteFallbackLog(const char* text, bool onlyIfFree = false)
 {
     if (g_fallbackLogPath[0] == L'\0' || text == nullptr)
     {
         return;
     }
 
-    EnterCriticalSection(&g_fallbackLogLock);
+    if (onlyIfFree)
+    {
+        if (!TryEnterCriticalSection(&g_fallbackLogLock))
+        {
+            return;
+        }
+    }
+    else
+    {
+        EnterCriticalSection(&g_fallbackLogLock);
+    }
 
     HANDLE file = CreateFileW(
         g_fallbackLogPath,
@@ -2496,7 +2509,7 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookShutdown()
         if (!JoinWorker(thread, inputThread, deadline))
         {
             // Not through the pipe: the worker still running may hold g_outputLock.
-            WriteFallbackLog("WreckfestConsoleHook shutdown timed out waiting for a worker thread.");
+            WriteFallbackLog("WreckfestConsoleHook shutdown timed out waiting for a worker thread.", true);
             LeaveCriticalSection(&g_teardownLock);
             return WAIT_TIMEOUT;
         }
@@ -2520,7 +2533,7 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookShutdown()
 
     if (!RemoveHooks(deadline))
     {
-        WriteFallbackLog("WreckfestConsoleHook shutdown could not remove the hooks before its deadline.");
+        WriteFallbackLog("WreckfestConsoleHook shutdown could not remove the hooks before its deadline.", true);
         LeaveCriticalSection(&g_teardownLock);
         return WAIT_TIMEOUT;
     }

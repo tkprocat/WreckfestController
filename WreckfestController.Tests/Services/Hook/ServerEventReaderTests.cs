@@ -170,6 +170,27 @@ public class ServerEventReaderTests
         Assert.Empty(third);
     }
 
+    // Holding the read back for an unfinished entry must not hide a restart: the game's
+    // cursor going backwards still asks the caller to resync.
+    [Fact]
+    public async Task PollAsync_SeesARestartWhileAnEntryIsUnfinished()
+    {
+        var ring = new byte[ServerEventReader.RingSize];
+        ring[100] = 0x12;
+        ring[101] = 0x27;
+        long cursor = 100;
+        var reader = MakeRingReader(() => cursor, ring);
+        await reader.PollAsync();
+        cursor = 110;                  // an entry from 100, unfinished
+        await reader.PollAsync();
+
+        cursor = 105;                  // behind the last cursor, ahead of the held entry
+        var (events, overflowed) = await reader.PollAsync();
+
+        Assert.Empty(events);
+        Assert.True(overflowed);
+    }
+
     // Bytes that look like the start of an entry but never end are not held for ever:
     // the events written after them still arrive.
     [Fact]
