@@ -485,6 +485,42 @@ public class ConfigService
         File.WriteAllLines(configPath, newLines);
         _logger.LogInformation("Event loop tracks updated successfully");
     }
+
+    /// <summary>
+    /// server_config.cfg byte for byte, so a change can be undone exactly
+    /// (<see cref="RestoreConfig"/>).
+    /// </summary>
+    public sealed record ConfigFileCapture(string Path, byte[] Content);
+
+    public virtual ConfigFileCapture CaptureConfig()
+    {
+        lock (_writeLock)
+        {
+            var configPath = GetConfigFilePath();
+            return new ConfigFileCapture(configPath, File.ReadAllBytes(configPath));
+        }
+    }
+
+    /// <summary>
+    /// Puts <paramref name="before"/> back. With <paramref name="onlyIfCurrentIs"/>, only
+    /// when the file still holds exactly that: a change made since - by an admin, or by a
+    /// cup run - is kept rather than overwritten. False when the file was left alone.
+    /// </summary>
+    public virtual bool RestoreConfig(ConfigFileCapture before, byte[]? onlyIfCurrentIs)
+    {
+        lock (_writeLock)
+        {
+            if (onlyIfCurrentIs is not null
+                && !File.ReadAllBytes(before.Path).AsSpan().SequenceEqual(onlyIfCurrentIs))
+            {
+                return false;
+            }
+
+            File.WriteAllBytes(before.Path, before.Content);
+            return true;
+        }
+    }
+
     public virtual string GetCurrentCollectionName()
     {
         string collectionName = String.Empty;

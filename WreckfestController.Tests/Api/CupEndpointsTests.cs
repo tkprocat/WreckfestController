@@ -2,6 +2,10 @@ using System.Globalization;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
+using WreckfestController.Services.ServerControl;
+using WreckfestController.Services.Tracking;
+using WreckfestController.Tests.Services.Tracking;
 
 namespace WreckfestController.Tests.Api;
 
@@ -256,7 +260,12 @@ public class CupEndpointsTests
     public async Task Activate_WritesTheCupToTheServerConfig()
     {
         using var server = new CollectionEndpointsTests.ServerConfigFile();
+        var before = File.ReadAllBytes(server.Path);
         await using var host = await ApiTestHost.StartAsync(server.Settings);
+        // A player online holds the restart in its countdown: with nobody on, it restarts at
+        // once, fails with no server attached, and takes the cup's settings back out (#224).
+        host.MainServices.GetRequiredService<PlayerTracker>().Seed("Alice");
+        var restart = host.MainServices.GetRequiredService<SmartRestartService>();
         using var client = host.CreateAuthenticatedClient();
         var id = await CreateAsync(client, CupBody(extra: new
         {
@@ -264,14 +273,23 @@ public class CupEndpointsTests
             tracks = new[] { new { track = "urban09_1" } },
         }));
 
-        using var activated = await client.PostAsync($"/api/cups/{id}/activate", null, Ct);
-        using var missing = await client.PostAsync($"/api/cups/{id + 1}/activate", null, Ct);
+        try
+        {
+            using var activated = await client.PostAsync($"/api/cups/{id}/activate", null, Ct);
+            using var missing = await client.PostAsync($"/api/cups/{id + 1}/activate", null, Ct);
 
-        Assert.Equal(HttpStatusCode.Accepted, activated.StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
-        var lines = File.ReadAllLines(server.Path).Select(l => l.Trim()).ToList();
-        Assert.Contains("#CollectionName Event Rotation", lines);
-        Assert.Contains("el_add=urban09_1", lines);
+            Assert.Equal(HttpStatusCode.Accepted, activated.StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
+            var lines = File.ReadAllLines(server.Path).Select(l => l.Trim()).ToList();
+            Assert.Contains("#CollectionName Event Rotation", lines);
+            Assert.Contains("el_add=urban09_1", lines);
+        }
+        finally
+        {
+            restart.CancelRestart();
+        }
+
+        Assert.Equal(before, File.ReadAllBytes(server.Path));
     }
 
     [Fact]

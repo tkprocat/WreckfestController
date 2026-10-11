@@ -240,6 +240,42 @@ public class RestartCountdownTests : IDisposable
         Assert.True(stateReadable);
     }
 
+    // #223: sending takes ServerManager's lock, so a send under the service's lock
+    // deadlocks against a track change, which arrives holding ServerManager's lock.
+    [Fact]
+    public void CancelRestart_SendsWithoutHoldingItsStateLock()
+    {
+        bool? stateReadable = null;
+        SendCheckingTheStateLock(readable => stateReadable = readable);
+
+        Assert.True(_restart.CancelRestart());
+        Assert.True(stateReadable);
+    }
+
+    [Fact]
+    public async Task TrackChange_SendsWithoutHoldingItsStateLock()
+    {
+        for (var minute = 0; minute <= 5; minute++)
+        {
+            _clock.Elapsed = TimeSpan.FromMinutes(minute);
+            _clock.Timer!.Fire();
+            await _published.Next();
+        }
+        Assert.Equal(SmartRestartState.Pending, _restart.GetState());
+        bool? stateReadable = null;
+        SendCheckingTheStateLock(readable => stateReadable = readable);
+
+        _tracks.ProcessLogLine("22:45:27 Current track loaded! (speedway2_inner_oval)");
+
+        Assert.True(stateReadable);
+    }
+
+    private void SendCheckingTheStateLock(Action<bool> report) =>
+        _server.Setup(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>())).Returns(() => {
+            report(Task.Run(() => _restart.GetState()).Wait(TimeSpan.FromSeconds(2)));
+            return Task.FromResult((true, "Sent"));
+        });
+
     private sealed class ManualClock : TimeProvider
     {
         public TimeSpan Elapsed { get; set; }
