@@ -94,8 +94,17 @@ public class AuthController : ControllerBase
             return InvalidLogin();
         }
 
+        var stamp = user.SecurityStamp;
         var result = await _signIn.PasswordSignInAsync(
             user, request.Password, request.Remember, lockoutOnFailure: true);
+        // A password stored with older hashing settings is rehashed on sign-in, which
+        // gives the account a new stamp and so ends its other sessions: their live
+        // consoles end with them (#227).
+        if (result.Succeeded && user.SecurityStamp != stamp)
+        {
+            _hubConnections.EndSessionsOf(user.Id);
+        }
+
         if (result.IsLockedOut)
         {
             _logger.LogWarning("Sign-in refused for locked account {UserName}", user.UserName);
@@ -118,15 +127,9 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Logout()
     {
-        var userId = _users.GetUserId(User);
+        // Nothing to end on the hub: signing out does not revoke the cookie anywhere else,
+        // and the SPA restarts its own connection afterwards.
         await _signIn.SignOutAsync();
-        // This browser's hub connection still runs as the signed-in user (#227). The
-        // account's other connections are dropped too and come back on their own cookies.
-        if (userId is not null)
-        {
-            _hubConnections.EndSessionsOf(userId);
-        }
-
         return NoContent();
     }
 

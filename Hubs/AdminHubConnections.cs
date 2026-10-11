@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR;
 
 namespace WreckfestController.Hubs;
@@ -11,45 +10,62 @@ namespace WreckfestController.Hubs;
 /// reconnects with its cookie and is let back in; one that was ended reconnects as
 /// anonymous and gets the public events only.
 /// </summary>
+/// <remarks>
+/// Callers end sessions after the account's change is saved, and the hub checks the
+/// account after adding a connection here, so every connection is either caught by the
+/// check or still on the list when its sessions end.
+/// </remarks>
 public sealed class AdminHubConnections
 {
-    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, HubCallerContext>> _byUser = new();
-    // Bumped by every EndSessionsOf, so a connection that was being let in while it ran
-    // can tell, and drop itself (see ServerHub.OnConnectedAsync).
-    private readonly ConcurrentDictionary<string, long> _endings = new();
+    private readonly object _lock = new();
+    private readonly Dictionary<string, Dictionary<string, HubCallerContext>> _byUser = new();
 
-    public long EndingsOf(string userId) => _endings.GetValueOrDefault(userId);
+    public void Add(string userId, HubCallerContext connection)
+    {
+        lock (_lock)
+        {
+            if (!_byUser.TryGetValue(userId, out var connections))
+            {
+                _byUser[userId] = connections = new Dictionary<string, HubCallerContext>();
+            }
 
-    public void Add(string userId, HubCallerContext connection) =>
-        _byUser.GetOrAdd(userId, _ => new ConcurrentDictionary<string, HubCallerContext>())[connection.ConnectionId] = connection;
+            connections[connection.ConnectionId] = connection;
+        }
+    }
 
     public void Remove(string userId, string connectionId)
     {
-        if (_byUser.TryGetValue(userId, out var connections))
+        lock (_lock)
         {
-            connections.TryRemove(connectionId, out _);
+            if (_byUser.TryGetValue(userId, out var connections)
+                && connections.Remove(connectionId)
+                && connections.Count == 0)
+            {
+                _byUser.Remove(userId);
+            }
         }
     }
 
     /// <summary>Drops every admin connection of the account. Returns how many there were.</summary>
     public int EndSessionsOf(string userId)
     {
-        _endings.AddOrUpdate(userId, 1, (_, endings) => endings + 1);
-        if (!_byUser.TryGetValue(userId, out var connections))
+        List<HubCallerContext> ended;
+        lock (_lock)
         {
-            return 0;
-        }
-
-        var ended = 0;
-        foreach (var (connectionId, connection) in connections)
-        {
-            if (connections.TryRemove(connectionId, out _))
+            if (!_byUser.Remove(userId, out var connections))
             {
-                connection.Abort();
-                ended++;
+                return 0;
             }
+
+            ended = [.. connections.Values];
         }
 
-        return ended;
+        // Outside the lock: aborting runs the connection's own teardown.
+        foreach (var connection in ended)
+        {
+            connection.Abort();
+        }
+
+        return ended.Count;
     }
 }

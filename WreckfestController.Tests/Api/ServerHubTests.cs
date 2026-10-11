@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
+using WreckfestController.Data;
 using WreckfestController.Data.Cups;
 using WreckfestController.Hubs;
 using WreckfestController.Services.Publishing;
@@ -131,7 +134,122 @@ public class ServerHubTests
         Assert.Empty(againLog.ConsoleLines);
     }
 
-    // Dropped connections whose session is still valid come back as admins.
+    // SignalR lets a connection in after its handshake, with the principal it
+    // authenticated with before it: over WebSockets, nothing checks it again. An account
+    // locked in between must not get into the admin group (#227).
+    [Fact]
+    public async Task AStalePrincipal_IsNotLetIntoTheAdminGroup()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        await host.CreateUserAsync();
+        var other = await host.CreateUserAsync("other");
+        System.Security.Claims.ClaimsPrincipal principal;
+        using (var scope = host.Services.CreateScope())
+        {
+            var signIn = scope.ServiceProvider.GetRequiredService<SignInManager<AppUser>>();
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+            principal = await signIn.CreateUserPrincipalAsync((await users.FindByIdAsync(other.Id))!);
+        }
+
+        // Still valid: let in, so the refusal below is the lock's doing.
+        var (validContext, validGroups) = await ConnectAsync(host, principal, other.Id);
+        Assert.False(validContext.Aborted);
+        Assert.Contains(ServerHub.AdminGroup, validGroups.Joined);
+        host.Services.GetRequiredService<AdminHubConnections>().EndSessionsOf(other.Id);
+
+        using var script = host.CreateAuthenticatedClient();
+        using (var locked = await script.PostAsync($"/api/users/{other.Id}/lock", null, Ct))
+        {
+            Assert.Equal(System.Net.HttpStatusCode.OK, locked.StatusCode);
+        }
+
+        var (context, groups) = await ConnectAsync(host, principal, other.Id);
+
+        Assert.True(context.Aborted);
+        Assert.DoesNotContain(ServerHub.AdminGroup, groups.Joined);
+        Assert.Equal(0, host.Services.GetRequiredService<AdminHubConnections>().EndSessionsOf(other.Id));
+    }
+
+    // A password stored with older hashing settings is rehashed when its owner signs in,
+    // which gives the account a new stamp and ends its other sessions: their live
+    // consoles must end too.
+    [Fact]
+    public async Task ASignInThatRehashesThePassword_EndsTheOtherLiveConsoles()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        var user = await host.CreateUserAsync();
+        using (var scope = host.Services.CreateScope())
+        {
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+            var stored = (await users.FindByIdAsync(user.Id))!;
+            var v2 = new PasswordHasher<AppUser>(Microsoft.Extensions.Options.Options.Create(
+                new PasswordHasherOptions { CompatibilityMode = PasswordHasherCompatibilityMode.IdentityV2 }));
+            stored.PasswordHash = v2.HashPassword(stored, ApiTestHost.Password);
+            Assert.True((await users.UpdateAsync(stored)).Succeeded);
+        }
+        var cookie = (await host.SignInAsync(user)).Split(';')[0];
+        await using var connection = host.CreateHubConnection(o => o.Headers["Cookie"] = cookie);
+        var closed = ClosedSignal(connection);
+        await connection.StartAsync(Ct);
+        var publisher = host.MainServices.GetRequiredService<HubServerEventPublisher>();
+        var log = Record(connection);
+        await PublishUntilAsync(() => publisher.TrackChangedAsync("ready"), () => log.TrackIds.Contains("ready"));
+
+        using var browser = host.CreateBrowser();
+        await browser.SignInAsync("admin");
+
+        await closed.WaitAsync(Timeout, Ct);
+    }
+
+    /// <summary>Runs the hub's connect step as SignalR would: in a scope of its own.</summary>
+    private static async Task<(FakeCallerContext Context, RecordingGroups Groups)> ConnectAsync(
+        ApiTestHost host, System.Security.Claims.ClaimsPrincipal principal, string userId)
+    {
+        using var scope = host.Services.CreateScope();
+        var context = new FakeCallerContext(principal, userId);
+        var groups = new RecordingGroups();
+        var hub = new ServerHub(
+            scope.ServiceProvider.GetRequiredService<Microsoft.AspNetCore.Authorization.IAuthorizationService>(),
+            host.Services.GetRequiredService<AdminHubConnections>(),
+            scope.ServiceProvider.GetRequiredService<SignInManager<AppUser>>())
+        {
+            Context = context,
+            Groups = groups,
+        };
+
+        await hub.OnConnectedAsync();
+        return (context, groups);
+    }
+
+    private sealed class FakeCallerContext(System.Security.Claims.ClaimsPrincipal user, string userId) : HubCallerContext
+    {
+        public bool Aborted { get; private set; }
+        public override string ConnectionId { get; } = Guid.NewGuid().ToString("N");
+        public override string? UserIdentifier => userId;
+        public override System.Security.Claims.ClaimsPrincipal? User => user;
+        public override IDictionary<object, object?> Items { get; } = new Dictionary<object, object?>();
+        public override Microsoft.AspNetCore.Http.Features.IFeatureCollection Features { get; } =
+            new Microsoft.AspNetCore.Http.Features.FeatureCollection();
+        public override CancellationToken ConnectionAborted => CancellationToken.None;
+        public override void Abort() => Aborted = true;
+    }
+
+    private sealed class RecordingGroups : IGroupManager
+    {
+        public List<string> Joined { get; } = [];
+
+        public Task AddToGroupAsync(string connectionId, string groupName, CancellationToken cancellationToken = default)
+        {
+            Joined.Add(groupName);
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveFromGroupAsync(string connectionId, string groupName, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+    }
+
+    // The registry drops connections whose session is still valid too; on the same cookie
+    // they are let back in as admins. The web app reconnects by itself after a close.
     [Fact]
     public async Task EndedHubSessions_OfAValidSignIn_ReconnectAsAdmin()
     {

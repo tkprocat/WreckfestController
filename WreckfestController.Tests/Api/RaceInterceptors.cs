@@ -34,8 +34,8 @@ public sealed class ConcurrentEditInterceptor : SaveChangesInterceptor
 /// Holds each request that has just counted the users until a second one has counted
 /// too, or until a timeout. Without serialization both see the same count before
 /// either deletes; with it, the second cannot count until the first has committed.
-/// <paramref name="marker"/> picks the query: the delete counts, the lock reads every
-/// other account's <c>LockoutEnd</c>.
+/// <paramref name="marker"/> picks the query, such as the users controller's
+/// <c>SignInFloorTag</c>, which lock and delete both read.
 /// </summary>
 public sealed class CountRendezvousInterceptor(string marker = "COUNT(*)") : DbCommandInterceptor
 {

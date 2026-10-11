@@ -150,10 +150,12 @@ public class UsersController : ControllerBase
             return Refused("You cannot delete your own account.");
         }
 
-        // Also guards API-key callers, who have no account of their own.
-        if (await _users.Users.CountAsync() <= 1)
+        // Also guards API-key callers, who have no account of their own. Counts accounts
+        // that can sign in, not rows: deleting the last unlocked one, next to accounts an
+        // admin locked, would shut everyone out just the same (#226).
+        if (!await AnotherAccountCanSignInAsync(user.Id))
         {
-            return Refused("The last account cannot be deleted. Create another one first.");
+            return Refused("The last account that can sign in cannot be deleted. Unlock or create another one first.");
         }
 
         var result = await _users.DeleteAsync(user);
@@ -222,11 +224,8 @@ public class UsersController : ControllerBase
         }
 
         // Also guards API-key callers, who have no account of their own and so are never
-        // refused above. A failed-sign-in lockout ends by itself, so only an admin lock
-        // (until MaxValue) takes an account out of the count. Compared here rather than in
-        // SQL: SQLite cannot compare DateTimeOffset values.
-        var lockEnds = await _users.Users.Where(u => u.Id != user.Id).Select(u => u.LockoutEnd).ToListAsync();
-        if (!lockEnds.Any(end => end != DateTimeOffset.MaxValue))
+        // refused above.
+        if (!await AnotherAccountCanSignInAsync(user.Id))
         {
             return Refused("The last account that can sign in cannot be locked. Unlock or create another one first.");
         }
@@ -267,6 +266,26 @@ public class UsersController : ControllerBase
 
         _logger.LogInformation("{Caller} unlocked web account {UserName}", Caller, user.UserName);
         return UserResponse.From(user, _time);
+    }
+
+    /// <summary>Tags the query below, so a test can hold requests at exactly that point.</summary>
+    internal const string SignInFloorTag = "sign-in floor";
+
+    /// <summary>
+    /// Whether an account other than <paramref name="exceptId"/> could still sign in. A
+    /// failed-sign-in lockout ends by itself, so only an admin lock (until MaxValue) takes
+    /// an account out. Read inside the caller's BEGIN IMMEDIATE transaction, so a
+    /// competing lock or delete waits until this one commits and then reads again.
+    /// </summary>
+    private async Task<bool> AnotherAccountCanSignInAsync(string exceptId)
+    {
+        // Compared here rather than in SQL: SQLite cannot compare DateTimeOffset values.
+        var lockEnds = await _users.Users
+            .TagWith(SignInFloorTag)
+            .Where(u => u.Id != exceptId)
+            .Select(u => u.LockoutEnd)
+            .ToListAsync();
+        return lockEnds.Any(end => end != DateTimeOffset.MaxValue);
     }
 
     /// <summary>For the log: the signed-in user's name, or "ApiKey" for a script.</summary>

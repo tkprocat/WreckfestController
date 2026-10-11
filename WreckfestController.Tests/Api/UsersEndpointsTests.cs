@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.Extensions.DependencyInjection;
+using WreckfestController.Controllers;
 using WreckfestController.Data;
 
 namespace WreckfestController.Tests.Api;
@@ -308,7 +309,7 @@ public class UsersEndpointsTests
     public async Task ConcurrentLocks_NeverLockEveryAccount()
     {
         await using var host = await ApiTestHost.StartAsync(
-            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor("\"LockoutEnd\"")));
+            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor(UsersController.SignInFloorTag)));
         var first = await host.CreateUserAsync("first");
         var second = await host.CreateUserAsync("second");
         using var script = host.CreateAuthenticatedClient();
@@ -325,6 +326,49 @@ public class UsersEndpointsTests
         }
     }
 
+    // #226: one admin locks A while another deletes B. Delete counted rows, so after the
+    // lock it still saw two and went ahead, leaving only a locked account. Either order
+    // must leave one that can sign in.
+    [Fact]
+    public async Task ConcurrentLockAndDelete_LeaveAnAccountThatCanSignIn()
+    {
+        await using var host = await ApiTestHost.StartAsync(
+            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor(UsersController.SignInFloorTag)));
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using var script = host.CreateAuthenticatedClient();
+
+        var responses = await Task.WhenAll(
+            script.PostAsync($"/api/users/{first.Id}/lock", null, Ct),
+            script.DeleteAsync($"/api/users/{second.Id}", Ct));
+
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.Conflict);
+        var remaining = await script.GetFromJsonAsync<JsonElement>("/api/users", Ct);
+        Assert.Contains(remaining.EnumerateArray(), u => !u.GetProperty("isLockedOut").GetBoolean());
+        foreach (var response in responses)
+        {
+            response.Dispose();
+        }
+    }
+
+    // Delete counts accounts that can sign in, not rows.
+    [Fact]
+    public async Task Delete_RefusesTheLastAccountThatCanSignIn()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using var script = host.CreateAuthenticatedClient();
+        using (var locked = await script.PostAsync($"/api/users/{first.Id}/lock", null, Ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, locked.StatusCode);
+        }
+
+        using var deleted = await script.DeleteAsync($"/api/users/{second.Id}", Ct);
+
+        Assert.Equal(HttpStatusCode.Conflict, deleted.StatusCode);
+    }
+
     // Two admins delete the other two accounts at the same moment. Each sees two
     // accounts when it counts; unless the count and delete are serialized, both go
     // ahead and nobody can sign in any more.
@@ -332,7 +376,7 @@ public class UsersEndpointsTests
     public async Task ConcurrentDeletes_NeverRemoveTheLastAccount()
     {
         await using var host = await ApiTestHost.StartAsync(
-            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor()));
+            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor(UsersController.SignInFloorTag)));
         var first = await host.CreateUserAsync("first");
         var second = await host.CreateUserAsync("second");
         using var script = host.CreateAuthenticatedClient();

@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
+using WreckfestController.Data;
 using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Hubs;
@@ -18,29 +20,30 @@ public sealed class ServerHub : Hub<IServerHubClient>
 
     private readonly IAuthorizationService _authorization;
     private readonly AdminHubConnections _admins;
+    private readonly SignInManager<AppUser> _signIn;
 
-    public ServerHub(IAuthorizationService authorization, AdminHubConnections admins)
+    public ServerHub(IAuthorizationService authorization, AdminHubConnections admins, SignInManager<AppUser> signIn)
     {
         _authorization = authorization;
         _admins = admins;
+        _signIn = signIn;
     }
 
     public override async Task OnConnectedAsync()
     {
-        // An account's sessions ended while this one was being let in would miss it:
-        // compared again once the connection is on the list (#227).
-        var userId = Context.UserIdentifier;
-        var endings = userId is null ? 0 : _admins.EndingsOf(userId);
-
         // The policy rather than IsAuthenticated, so roles added later decide this too.
         if (Context.User is { } user
             && (await _authorization.AuthorizeAsync(user, ApiAuthentication.AdminPolicy)).Succeeded)
         {
             // An API-key caller has no account, so nothing can end its session but the key.
-            if (userId is not null)
+            if (Context.UserIdentifier is { } userId)
             {
+                // The principal is the one the connection authenticated with, which can be
+                // older than the handshake this runs after (#227). On the list first, then
+                // checked: sessions ended before the check fail it, and sessions ended after
+                // it find this connection on the list.
                 _admins.Add(userId, Context);
-                if (_admins.EndingsOf(userId) != endings)
+                if (await _signIn.ValidateSecurityStampAsync(user) is null)
                 {
                     _admins.Remove(userId, Context.ConnectionId);
                     Context.Abort();
