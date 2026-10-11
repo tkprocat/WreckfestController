@@ -28,6 +28,9 @@ const cup = (extra: Record<string, unknown> = {}) => ({
   serverConfig: { serverName: 'Derby night' },
   sessionMode: '30p-aggr',
   gridOrder: null,
+  warmupTime: '19:30',
+  endTime: '22:00',
+  restartRotationAtStart: true,
   collectionId: null,
   collectionName: 'Derby set',
   tracks: [{ track: 'arena' }],
@@ -53,11 +56,17 @@ let rotation = loop([{ track: 'loop', laps: 3, weather: 'rain' }, { track: 'aren
 let wrapper: VueWrapper | undefined
 /** Every state the panel reports, latest last: what a page holding it collapsed shows. */
 let states: RotationState[] = []
+/** How often the panel said the cup (or its collection) may have changed. */
+let cupSaves = 0
 async function mountPanel() {
   states = []
+  cupSaves = 0
   wrapper = mount(
     defineComponent({
-      render: () => h(NMessageProvider, () => h(NDialogProvider, () => h(RotationPanel, { onState: (s: RotationState) => states.push(s) }))),
+      render: () =>
+        h(NMessageProvider, () =>
+          h(NDialogProvider, () => h(RotationPanel, { onState: (s: RotationState) => states.push(s), onCupSaved: () => cupSaves++ })),
+        ),
     }),
     { attachTo: document.body },
   )
@@ -176,17 +185,26 @@ describe('RotationPanel', () => {
     const [path, request] = api.PUT.mock.calls[1]!
     expect(path).toBe('/api/cups/{id}')
     expect(request.headers).toEqual({ 'If-Match': '"7"' })
-    expect(request.body).toEqual(
-      expect.objectContaining({
-        name: 'Friday Derby',
-        description: 'Bring a helmet',
-        repeat: { frequency: 'weekly', days: [5], time: '20:00' },
-        serverConfig: { serverName: 'Derby night' },
-        sessionMode: '30p-aggr',
-        collectionId: null,
-        tracks: [{ track: 'arena' }, { track: 'loop', laps: 3, weather: 'rain' }],
-      }),
-    )
+    // Whole, not objectContaining: a field left out is reset by the PUT (#225).
+    expect(request.body).toEqual({
+      name: 'Friday Derby',
+      description: 'Bring a helmet',
+      startTime: when,
+      timeZone: 'Europe/Copenhagen',
+      repeat: { frequency: 'weekly', days: [5], time: '20:00' },
+      serverConfig: { serverName: 'Derby night' },
+      sessionMode: '30p-aggr',
+      gridOrder: null,
+      warmupTime: '19:30',
+      endTime: '22:00',
+      restartRotationAtStart: true,
+      collectionId: null,
+      tracks: [{ track: 'arena' }, { track: 'loop', laps: 3, weather: 'rain' }],
+      // The saved rotation's name, which the cup now carries.
+      collectionName: 'Evening',
+    })
+    // The Cups page reloads its table, so Edit opens this version rather than the old one.
+    expect(cupSaves).toBe(1)
   })
 
   it('asks before saving to the collection a cup follows', async () => {

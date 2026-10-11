@@ -21,6 +21,7 @@ import { describeTrack } from '@/utils/trackText'
 type Track = components['schemas']['EventLoopTrack']
 type Loop = components['schemas']['EventLoopResponse']
 type Cup = components['schemas']['CupResponse']
+type CupRequest = components['schemas']['CupRequest']
 type Variant = components['schemas']['VariantResponse']
 type Summary = components['schemas']['CollectionSummaryResponse']
 type Collection = components['schemas']['CollectionResponse']
@@ -39,7 +40,8 @@ export interface RotationState {
   dirty: boolean
   notice: 'conflict' | 'stale' | 'offer' | null
 }
-const emit = defineEmits<{ state: [state: RotationState] }>()
+/** `cupSaved`: the active cup, or the collection it follows, may have changed. */
+const emit = defineEmits<{ state: [state: RotationState]; cupSaved: [] }>()
 
 const message = useMessage()
 const confirm = useConfirm()
@@ -290,9 +292,11 @@ async function saveToCup() {
     if (outcome.kind === 'ok') {
       savedForCup.value = null
       message.success(`Saved to ${target.label} too.`)
+      emit('cupSaved')
       await load()
     } else if (outcome.kind === 'conflict') {
       message.warning(`${target.label} was changed meanwhile, so it was not saved. Check it on its page.`)
+      emit('cupSaved')
       await load()
     } else {
       fail(outcome, 'It was not saved.')
@@ -302,9 +306,13 @@ async function saveToCup() {
   }
 }
 
-/** PUT replaces everything a cup sets: send it back as it is, with the saved tracks. */
+/**
+ * PUT replaces everything a cup sets: send it back as it is, with the saved tracks. Every
+ * field is required here, so one added to the request later cannot be left out and silently
+ * reset (#225).
+ */
 function saveCupTracks(c: Cup, saved: { name: string; tracks: Track[] }) {
-  const body = {
+  const body: Required<CupRequest> = {
     name: c.name,
     description: c.description,
     startTime: c.startTime,
@@ -313,6 +321,9 @@ function saveCupTracks(c: Cup, saved: { name: string; tracks: Track[] }) {
     serverConfig: c.serverConfig,
     sessionMode: c.sessionMode,
     gridOrder: c.gridOrder,
+    warmupTime: c.warmupTime,
+    endTime: c.endTime,
+    restartRotationAtStart: c.restartRotationAtStart,
     collectionId: null,
     tracks: saved.tracks,
     collectionName: saved.name || null,
