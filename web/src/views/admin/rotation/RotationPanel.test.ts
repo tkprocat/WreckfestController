@@ -227,6 +227,25 @@ describe('RotationPanel', () => {
     })
   })
 
+  // The panel reloads on hub events while the dialog is open: a cup activated meanwhile
+  // must not move the save to the collection it follows, which the dialog never named.
+  it('saves nothing when another cup activates while the collection dialog is open', async () => {
+    current = cup({ collectionId: 3, collectionName: 'Short set' })
+    api.PUT.mockResolvedValue(answer(loop([{ track: 'arena' }, { track: 'loop', laps: 3, weather: 'rain' }], 'v2')))
+    await mountPanel()
+    await labelled('Move loop (not in the catalogue) down').trigger('click')
+    await click('Save rotation')
+    await click('Also save to the collection "Short set"')
+
+    current = cup({ id: 6, name: 'Saturday Smash', collectionId: 4, collectionName: 'Long set' })
+    hub.get('CupActivated')!({ cupId: 6, cupName: 'Saturday Smash', timestamp: when })
+    await flushPromises()
+    await click('Save', body().find('.n-dialog'))
+
+    expect(api.PUT).not.toHaveBeenCalledWith('/api/collections/{id}', expect.anything())
+    expect(body().text()).toContain('The active cup changed while this was open, so nothing was saved.')
+  })
+
   it('deploys a collection after asking, then shows the new rotation', async () => {
     api.POST.mockResolvedValue(answer({ message: 'Deployed', collectionName: 'Short set', count: 4 }))
     await mountPanel()
