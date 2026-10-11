@@ -192,6 +192,13 @@ onMounted(() => {
   stops.push(
     ...statusEvents.map((event) => onHub(event, () => void loadStatus())),
     onHub('ConsoleLog', ({ logs }) => void append(logs)),
+    // Back after the connection was lost: the lines sent meanwhile are only in the log
+    // file now, so the console starts again from its tail.
+    onHub('Reconnected', () => {
+      void loadStatus()
+      tailLoaded = false
+      void loadLogTail()
+    }),
   )
 })
 

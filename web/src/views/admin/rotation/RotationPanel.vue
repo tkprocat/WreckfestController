@@ -390,6 +390,7 @@ onMounted(() => {
   stops.push(
     onHub('CupActivated', () => void load({ keepDraft: true })),
     onHub('CupOccurrenceEnded', () => void load({ keepDraft: true })),
+    onHub('Reconnected', () => void load({ keepDraft: true })),
   )
 })
 onBeforeUnmount(() => stops.forEach((stop) => stop()))

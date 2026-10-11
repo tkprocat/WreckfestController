@@ -60,6 +60,11 @@ onMounted(() => {
   void loadPlayers()
   stops.push(
     ...statusEvents.map((event) => onHub(event, () => void loadStatus())),
+    // Back after the connection was lost: whatever changed meanwhile was missed.
+    onHub('Reconnected', () => {
+      void loadStatus()
+      void loadPlayers()
+    }),
     onHub('PlayersUpdated', ({ players: list }) => {
       hubRosterSeen = true
       players.value = list
