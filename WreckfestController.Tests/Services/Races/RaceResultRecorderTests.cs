@@ -94,8 +94,8 @@ public sealed class RaceResultRecorderTests : IDisposable
         ReportRace();
         await recorder.FlushAsync();
 
-        await using var db = await _database.Contexts.CreateDbContextAsync();
-        var race = await db.Races.SingleAsync();
+        await using var db = await _database.Contexts.CreateDbContextAsync(TestContext.Current.CancellationToken);
+        var race = await db.Races.SingleAsync(cancellationToken: TestContext.Current.CancellationToken);
         _events.Verify(e => e.RaceRecordedAsync(race.Id, race.TrackId, race.EndedAt), Times.Once);
     }
 
@@ -171,7 +171,7 @@ public sealed class RaceResultRecorderTests : IDisposable
     {
         var cupA = await CreateCupAsync("Cup A");
         var cupB = await CreateCupAsync("Cup B");
-        await _database.Store.SetActiveAsync(cupA);
+        await _database.Store.SetActiveAsync(cupA, TestContext.Current.CancellationToken);
 
         var gate = new BlockingFactory(_database.Contexts);
         using var recorder = Recorder(gate);
@@ -183,7 +183,7 @@ public sealed class RaceResultRecorderTests : IDisposable
 
             // The admin switches after the race ended, while it waits to be saved.
             _database.Clock.Now = HookRaceRecord.TryParse(HookRaceRecordTests.LiveRecord)!.EndedAt.AddSeconds(5);
-            await _database.Store.SetActiveAsync(cupB);
+            await _database.Store.SetActiveAsync(cupB, TestContext.Current.CancellationToken);
         }
         finally
         {
@@ -199,7 +199,7 @@ public sealed class RaceResultRecorderTests : IDisposable
     {
         var cup = await CreateCupAsync("Too Late");
         _database.Clock.Now = HookRaceRecord.TryParse(HookRaceRecordTests.LiveRecord)!.EndedAt.AddSeconds(5);
-        await _database.Store.SetActiveAsync(cup);
+        await _database.Store.SetActiveAsync(cup, TestContext.Current.CancellationToken);
 
         using var recorder = Recorder(_database.Contexts);
         await recorder.StartAsync(CancellationToken.None);
@@ -215,7 +215,7 @@ public sealed class RaceResultRecorderTests : IDisposable
     public async Task Credits_a_cup_that_was_active_before_the_recorder_started()
     {
         var cup = await CreateCupAsync("Already Running");
-        await _database.Store.SetActiveAsync(cup);
+        await _database.Store.SetActiveAsync(cup, TestContext.Current.CancellationToken);
         var freshStore = new WreckfestController.Services.Cups.CupStore(_database.Contexts, _database.Clock);
 
         using var recorder = new RaceResultRecorder(

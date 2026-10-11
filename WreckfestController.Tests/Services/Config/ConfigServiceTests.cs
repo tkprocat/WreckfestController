@@ -276,7 +276,7 @@ public sealed class ConfigServiceTests : IDisposable
     // Another writer waits for the whole change, so its write can be neither part of the
     // change's "after" nor overwritten by a rollback.
     [Fact]
-    public void WriteRestorably_HoldsOtherWritersOffUntilItEnds()
+    public async Task WriteRestorably_HoldsOtherWritersOffUntilItEnds()
     {
         File.WriteAllLines(_file, ["server_name=Race night", "session_mode=normal", "", "# Event Loop"]);
         Task? admin = null;
@@ -288,7 +288,7 @@ public sealed class ConfigServiceTests : IDisposable
             Assert.False(admin.Wait(TimeSpan.FromMilliseconds(300)));
         })!;
 
-        Assert.True(admin!.Wait(TimeSpan.FromSeconds(10)));
+        await admin!.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
         Assert.DoesNotContain("password=admin-edit", System.Text.Encoding.UTF8.GetString(point.After));
         Assert.False(_service.Restore(point));
         Assert.Contains("password=admin-edit", File.ReadAllLines(_file));

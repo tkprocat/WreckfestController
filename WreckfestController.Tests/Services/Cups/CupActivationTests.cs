@@ -121,7 +121,7 @@ public sealed class CupActivationTests : IDisposable
     {
         var startup = new StartupReattach();
 
-        await startup.WhenSettledAsync(CupSchedulerService.StartupWait, new ExpiringClock()).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        await startup.WhenSettledAsync(CupSchedulerService.StartupWait, new ExpiringClock(), Ct).WaitAsync(TimeSpan.FromSeconds(10), Ct);
 
         Assert.False(startup.IsSettled);
     }
@@ -142,7 +142,7 @@ public sealed class CupActivationTests : IDisposable
         await check.WaitAsync(TimeSpan.FromSeconds(10), Ct);
 
         _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
-        Assert.False((await _db.Store.GetAsync(cup.Id))!.IsActive);
+        Assert.False((await _db.Store.GetAsync(cup.Id, Ct))!.IsActive);
     }
 
     // A reattach that never settles costs the first check its wait, and no other.

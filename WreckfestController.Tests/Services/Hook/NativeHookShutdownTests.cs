@@ -65,7 +65,7 @@ public sealed class NativeHookShutdownTests
         // Shutdown gave back the reference its first worker took, so the injector's
         // own is the last one. A worker left running would take the process down.
         host.FreeLibrary();
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
         Assert.False(host.IsHookLoaded);
         Assert.False(host.Process.HasExited);
     }
@@ -118,7 +118,7 @@ public sealed class NativeHookShutdownTests
         Assert.Equal(1, host.CountFallbackLines("WreckfestConsoleHook shut down."));
 
         host.FreeLibrary();
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
         Assert.False(host.IsHookLoaded);
         Assert.False(host.Process.HasExited);
     }
@@ -131,14 +131,14 @@ public sealed class NativeHookShutdownTests
         // No output pipe is listening, so the hook thread retries its connect for
         // about five seconds before giving up and saying so in its log.
         host.Inject();
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
 
         var elapsed = host.Shutdown();
         Assert.True(elapsed < TimeSpan.FromSeconds(2), $"Shutdown took {elapsed}");
         Assert.Equal(0, host.CountFallbackLines("could not connect to controller pipe"));
 
         host.FreeLibrary();
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
         Assert.False(host.IsHookLoaded);
         Assert.False(host.Process.HasExited);
     }
@@ -159,14 +159,14 @@ public sealed class NativeHookShutdownTests
 
         // The injector's reference goes, but the workers' pin holds the module.
         host.FreeLibrary();
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
         Assert.True(host.IsHookLoaded);
         Assert.StartsWith("ERR dispatch failed", await host.SendInputCommandAsync("list", timeout.Token));
 
         // Shutdown then drops the last reference as its thread leaves the module.
         host.Shutdown();
         await reader;
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await Task.Delay(TimeSpan.FromSeconds(1), TestContext.Current.CancellationToken);
         Assert.False(host.IsHookLoaded);
         Assert.False(host.Process.HasExited);
     }
