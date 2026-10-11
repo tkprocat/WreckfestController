@@ -9,11 +9,14 @@ namespace WreckfestController.Services.ServerControl;
 public sealed class ServerReattachService : IHostedService
 {
     private readonly ServerManager _serverManager;
+    private readonly StartupReattach _startup;
     private readonly ILogger<ServerReattachService> _logger;
+    private readonly CancellationTokenSource _stopping = new();
 
-    public ServerReattachService(ServerManager serverManager, ILogger<ServerReattachService> logger)
+    public ServerReattachService(ServerManager serverManager, StartupReattach startup, ILogger<ServerReattachService> logger)
     {
         _serverManager = serverManager;
+        _startup = startup;
         _logger = logger;
     }
 
@@ -23,15 +26,55 @@ public sealed class ServerReattachService : IHostedService
         {
             try
             {
-                await _serverManager.ReattachOwnServerAsync();
+                var (reattached, _) = await _serverManager.ReattachOwnServerAsync();
+                if (reattached)
+                {
+                    await ReadRosterAsync();
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Reattaching to this controller's server failed");
             }
+            finally
+            {
+                _startup.Settle();
+            }
         }, CancellationToken.None);
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        // Stops the roster retries; the reattach itself is the server manager's to finish.
+        _stopping.Cancel();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The players already on the server, before anything decides whether to warn them
+    /// (#232). The hook's pipe can take a moment to answer after the inject, hence a few
+    /// tries; without an answer, event polling fills the roster in later.
+    /// </summary>
+    private async Task ReadRosterAsync()
+    {
+        for (var attempt = 0; attempt < 5 && !_stopping.IsCancellationRequested; attempt++)
+        {
+            if (await _serverManager.TryRefreshPlayersFromHookAsync())
+            {
+                return;
+            }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), _stopping.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+
+        _logger.LogWarning("Reattached, but the roster could not be read from the hook yet");
+    }
 }

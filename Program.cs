@@ -255,6 +255,7 @@ public class Program
 
                 // Reattach to this controller's own server if it outlived the controller (#201).
                 // Gated: the server path it checks against comes from the database.
+                services.AddSingleton<StartupReattach>();
                 services.AddSingleton<ServerReattachService>();
                 services.AddHostedService<DatabaseGatedHostedService<ServerReattachService>>();
 

@@ -94,6 +94,87 @@ public sealed class CupActivationTests : IDisposable
             _publisher.Verify(p => p.CupOccurrenceEndedAsync(cup.Id, "Race night", start, OccurrenceOutcome.Activated), Times.Once));
     }
 
+    // #232: a cup due when the controller starts must wait for the startup reattach,
+    // or it is started with no server attached and fails for good.
+    [Fact]
+    public async Task ADueCup_WaitsForTheStartupReattach()
+    {
+        var start = Now.AddMinutes(2);
+        var cup = await _db.CreateAsync(CupTestDatabase.Definition("Race night", start, tracks: OneTrack));
+        var startup = new StartupReattach();
+        var scheduler = new CupSchedulerService(_db.Store, _activator, _db.Clock, Mock.Of<ILogger<CupSchedulerService>>(), startup);
+
+        var check = scheduler.CheckAsync();
+        await Task.Delay(300, Ct);
+        Assert.False(check.IsCompleted);
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
+
+        startup.Settle();
+        await check.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+        var current = await EventuallyAsync(cup.Id, e => e.NextOccurrence is null);
+
+        Assert.True(current.IsActive);
+    }
+
+    [Fact]
+    public async Task TheStartupWait_EndsAtItsLimit()
+    {
+        var startup = new StartupReattach();
+
+        await startup.WhenSettledAsync(CupSchedulerService.StartupWait, new ExpiringClock()).WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        Assert.False(startup.IsSettled);
+    }
+
+    // Stopped while waiting for the startup reattach: no cup starts afterwards, even once
+    // the reattach settles.
+    [Fact]
+    public async Task AScheduler_StoppedWhileWaitingForTheReattach_StartsNothing()
+    {
+        var cup = await _db.CreateAsync(CupTestDatabase.Definition("Race night", Now.AddMinutes(2), tracks: OneTrack));
+        var startup = new StartupReattach();
+        using var scheduler = new CupSchedulerService(_db.Store, _activator, _db.Clock, Mock.Of<ILogger<CupSchedulerService>>(), startup);
+
+        var check = scheduler.CheckAsync();
+        await Task.Delay(100, Ct);
+        await scheduler.StopAsync(Ct);
+        startup.Settle();
+        await check.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
+        Assert.False((await _db.Store.GetAsync(cup.Id))!.IsActive);
+    }
+
+    // A reattach that never settles costs the first check its wait, and no other.
+    [Fact]
+    public async Task OnlyTheFirstCheck_WaitsForTheReattach()
+    {
+        var clock = new ExpiringClock(_db.Clock);
+        var scheduler = new CupSchedulerService(_db.Store, _activator, clock, Mock.Of<ILogger<CupSchedulerService>>(), new StartupReattach());
+
+        await scheduler.CheckAsync();
+        await scheduler.CheckAsync();
+
+        Assert.Equal(1, clock.Waits);
+    }
+
+    /// <summary>
+    /// The test clock's time, but every timer it makes fires at once, so a wait with a
+    /// limit times out; <see cref="Waits"/> counts them.
+    /// </summary>
+    private sealed class ExpiringClock(TestClock? time = null) : TimeProvider
+    {
+        public int Waits;
+
+        public override DateTimeOffset GetUtcNow() => time?.GetUtcNow() ?? base.GetUtcNow();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            Interlocked.Increment(ref Waits);
+            return TimeProvider.System.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
+        }
+    }
+
     // #204: the restart happens at the warmup, so players who join early are not
     // disconnected when the cup begins. The cup is then active, warming up for that start.
     [Fact]

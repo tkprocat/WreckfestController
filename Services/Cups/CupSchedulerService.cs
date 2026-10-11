@@ -19,15 +19,24 @@ namespace WreckfestController.Services.Cups;
 public class CupSchedulerService : IHostedService, IDisposable
 {
     public static readonly TimeSpan MissedGrace = TimeSpan.FromMinutes(15);
+
+    /// <summary>The longest the first check waits for the startup reattach.</summary>
+    public static readonly TimeSpan StartupWait = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
 
     private readonly CupStore _store;
     private readonly CupActivator _activator;
     private readonly TimeProvider _time;
     private readonly ILogger<CupSchedulerService> _logger;
+    private readonly StartupReattach? _startup;
     private readonly object _lock = new();
 
     private ITimer? _timer;
+    private readonly CancellationTokenSource _stopping = new();
+
+    // The startup wait happens once, settled or timed out: a reattach that never settles
+    // must not cost every later check another wait.
+    private bool _startupWaited;
     private bool _checking;
 
     /// <summary>True from starting an occurrence until its restart has ended.</summary>
@@ -37,12 +46,14 @@ public class CupSchedulerService : IHostedService, IDisposable
         CupStore store,
         CupActivator activator,
         TimeProvider time,
-        ILogger<CupSchedulerService> logger)
+        ILogger<CupSchedulerService> logger,
+        StartupReattach? startup = null)
     {
         _store = store;
         _activator = activator;
         _time = time;
         _logger = logger;
+        _startup = startup;
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -55,6 +66,9 @@ public class CupSchedulerService : IHostedService, IDisposable
     public Task StopAsync(CancellationToken cancellationToken)
     {
         _timer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        // A check still waiting for the startup reattach gives up, rather than starting a
+        // cup once the scheduler has stopped.
+        _stopping.Cancel();
         return Task.CompletedTask;
     }
 
@@ -76,6 +90,19 @@ public class CupSchedulerService : IHostedService, IDisposable
 
         try
         {
+            // Not before the startup reattach: a cup due now would be started with no
+            // server attached, or with nobody on the roster to warn (#232).
+            if (!_startupWaited && _startup is { IsSettled: false })
+            {
+                await _startup.WhenSettledAsync(StartupWait, _time, _stopping.Token);
+            }
+
+            _startupWaited = true;
+            if (_stopping.IsCancellationRequested)
+            {
+                return;
+            }
+
             // Bounded, in case a write keeps failing to move a cup on.
             for (var i = 0; i < 100; i++)
             {
@@ -233,5 +260,9 @@ public class CupSchedulerService : IHostedService, IDisposable
         }
     }
 
-    public void Dispose() => _timer?.Dispose();
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        _stopping.Dispose();
+    }
 }
