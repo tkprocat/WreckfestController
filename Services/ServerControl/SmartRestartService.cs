@@ -38,7 +38,7 @@ public class SmartRestartService
     // server_config.cfg before and after the pending cup's settings were written (#224):
     // put back when the restart is cancelled or fails, so the next ordinary restart does
     // not run a cup that never became active.
-    private (ConfigService.ConfigFileCapture Before, byte[] After)? _appliedConfig;
+    private ConfigService.RestorePoint? _appliedConfig;
     private readonly object _stateLock = new();
 
     // Configuration
@@ -433,13 +433,9 @@ public class SmartRestartService
     /// <summary>
     /// Applies the event's server configuration (tracks and server settings)
     /// </summary>
-    /// <returns>
-    /// The file before and after, to put back if the restart does not happen; null when
-    /// nothing changed.
-    /// </returns>
-    private (ConfigService.ConfigFileCapture Before, byte[] After)? ApplyEventConfiguration(Event @event)
+    /// <returns>How to take it back out if the restart does not happen; null when nothing changed.</returns>
+    private ConfigService.RestorePoint? ApplyEventConfiguration(Event @event)
     {
-        ConfigService.ConfigFileCapture? before = null;
         try
         {
             _logger.LogInformation("Applying configuration for cup: {CupName}", @event.Name);
@@ -451,102 +447,97 @@ public class SmartRestartService
                 throw new EventLoopHeadingMissingException();
             }
 
-            before = _configService.CaptureConfig();
-
-            // Read current config
-            var currentConfig = _configService.ReadBasicConfig();
-
-            // Apply server config overrides if present, noting each key set
-            var overridden = new List<string>();
-            if (@event.ServerConfig != null)
-            {
-                var eventConfig = @event.ServerConfig;
-                void Set(string key, Action apply)
-                {
-                    apply();
-                    overridden.Add(key);
-                }
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.ServerName))
-                    Set("server_name", () => currentConfig.ServerName = eventConfig.ServerName);
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.WelcomeMessage))
-                    Set("welcome_message", () => currentConfig.WelcomeMessage = eventConfig.WelcomeMessage);
-
-                if (eventConfig.Password != null)
-                    Set("password", () => currentConfig.Password = eventConfig.Password);
-
-                if (eventConfig.MaxPlayers.HasValue)
-                    Set("max_players", () => currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value);
-
-                if (eventConfig.Bots.HasValue)
-                    Set("bots", () => currentConfig.Bots = eventConfig.Bots.Value);
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.AiDifficulty))
-                    Set("ai_difficulty", () => currentConfig.AiDifficulty = eventConfig.AiDifficulty);
-
-                if (eventConfig.Laps.HasValue)
-                    Set("laps", () => currentConfig.Laps = eventConfig.Laps.Value);
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.VehicleDamage))
-                    Set("vehicle_damage", () => currentConfig.VehicleDamage = eventConfig.VehicleDamage);
-
-                if (eventConfig.LobbyCountdown.HasValue)
-                    Set("lobby_countdown", () => currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value);
-            }
-
-            // The overrides and the cup's scoring, each by its key, in one write: a key the
-            // file lacks (a password on a public server, a commented-out session_mode) is
-            // added or uncommented, never silently dropped. The restart below starts a new
-            // server process, which reads them and begins with no cup points.
-            var settings = overridden.ToDictionary(key => key, key => ConfigService.ValueOf(currentConfig, key) ?? string.Empty);
-            if (@event.SessionMode != null)
-                settings["session_mode"] = @event.SessionMode;
-
-            if (@event.GridOrder != null)
-                settings["grid_order"] = @event.GridOrder;
-
-            if (settings.Count > 0)
-            {
-                _configService.WriteSettings(settings);
-                _logger.LogInformation("Cup settings applied: {Keys}", string.Join(", ", settings.Keys));
-            }
-
-            // Apply track rotation if present
-            if (@event.Tracks != null && @event.Tracks.Count > 0)
-            {
-                var collectionName = string.IsNullOrWhiteSpace(@event.CollectionName)
-                    ? $"Cup: {@event.Name}"
-                    : @event.CollectionName;
-
-                _configService.WriteEventLoopTracks(collectionName, @event.Tracks);
-                _logger.LogInformation("Track rotation updated with {Count} tracks", @event.Tracks.Count);
-            }
-
-            var after = _configService.CaptureConfig();
-            return before is null || after is null || before.Content.AsSpan().SequenceEqual(after.Content)
-                ? null
-                : (before, after.Content);
+            // One change under the config's write lock (#224): no other write can land
+            // between the cup's and be taken for part of it, and one that fails partway
+            // is put back before anything else can write.
+            return _configService.WriteRestorably(() => WriteEventConfiguration(@event));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error applying cup configuration");
-            // A write that failed partway would leave part of the cup behind.
-            if (before is not null)
-            {
-                RestoreConfiguration(before, onlyIfCurrentIs: null);
-            }
-
             throw;
         }
     }
 
+    private void WriteEventConfiguration(Event @event)
+    {
+        // Read current config
+        var currentConfig = _configService.ReadBasicConfig();
+
+        // Apply server config overrides if present, noting each key set
+        var overridden = new List<string>();
+        if (@event.ServerConfig != null)
+        {
+            var eventConfig = @event.ServerConfig;
+            void Set(string key, Action apply)
+            {
+                apply();
+                overridden.Add(key);
+            }
+
+            if (!string.IsNullOrWhiteSpace(eventConfig.ServerName))
+                Set("server_name", () => currentConfig.ServerName = eventConfig.ServerName);
+
+            if (!string.IsNullOrWhiteSpace(eventConfig.WelcomeMessage))
+                Set("welcome_message", () => currentConfig.WelcomeMessage = eventConfig.WelcomeMessage);
+
+            if (eventConfig.Password != null)
+                Set("password", () => currentConfig.Password = eventConfig.Password);
+
+            if (eventConfig.MaxPlayers.HasValue)
+                Set("max_players", () => currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value);
+
+            if (eventConfig.Bots.HasValue)
+                Set("bots", () => currentConfig.Bots = eventConfig.Bots.Value);
+
+            if (!string.IsNullOrWhiteSpace(eventConfig.AiDifficulty))
+                Set("ai_difficulty", () => currentConfig.AiDifficulty = eventConfig.AiDifficulty);
+
+            if (eventConfig.Laps.HasValue)
+                Set("laps", () => currentConfig.Laps = eventConfig.Laps.Value);
+
+            if (!string.IsNullOrWhiteSpace(eventConfig.VehicleDamage))
+                Set("vehicle_damage", () => currentConfig.VehicleDamage = eventConfig.VehicleDamage);
+
+            if (eventConfig.LobbyCountdown.HasValue)
+                Set("lobby_countdown", () => currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value);
+        }
+
+        // The overrides and the cup's scoring, each by its key, in one write: a key the
+        // file lacks (a password on a public server, a commented-out session_mode) is
+        // added or uncommented, never silently dropped. The restart below starts a new
+        // server process, which reads them and begins with no cup points.
+        var settings = overridden.ToDictionary(key => key, key => ConfigService.ValueOf(currentConfig, key) ?? string.Empty);
+        if (@event.SessionMode != null)
+            settings["session_mode"] = @event.SessionMode;
+
+        if (@event.GridOrder != null)
+            settings["grid_order"] = @event.GridOrder;
+
+        if (settings.Count > 0)
+        {
+            _configService.WriteSettings(settings);
+            _logger.LogInformation("Cup settings applied: {Keys}", string.Join(", ", settings.Keys));
+        }
+
+        // Apply track rotation if present
+        if (@event.Tracks != null && @event.Tracks.Count > 0)
+        {
+            var collectionName = string.IsNullOrWhiteSpace(@event.CollectionName)
+                ? $"Cup: {@event.Name}"
+                : @event.CollectionName;
+
+            _configService.WriteEventLoopTracks(collectionName, @event.Tracks);
+            _logger.LogInformation("Track rotation updated with {Count} tracks", @event.Tracks.Count);
+        }
+    }
+
     /// <summary>Takes the pending cup's settings back out of server_config.cfg (#224).</summary>
-    private void RestoreConfiguration(ConfigService.ConfigFileCapture before, byte[]? onlyIfCurrentIs)
+    private void RestoreConfiguration(ConfigService.RestorePoint point)
     {
         try
         {
-            if (_configService.RestoreConfig(before, onlyIfCurrentIs))
+            if (_configService.Restore(point))
             {
                 _logger.LogInformation("Put server_config.cfg back as it was before the cup's settings");
             }
@@ -569,31 +560,31 @@ public class SmartRestartService
     {
         Action<Event, RestartOutcome>? finished;
         Event? completedEvent;
-        (ConfigService.ConfigFileCapture Before, byte[] After)? appliedConfig;
         lock (_stateLock)
         {
             if (restartId != _restartId || _state == SmartRestartState.Idle)
                 return;
             finished = _onFinished;
             completedEvent = _pendingEvent;
-            appliedConfig = _appliedConfig;
             _logger.LogDebug("Resetting smart restart service state");
 
             _countdownTimer?.Dispose();
             _countdownTimer = null;
+
+            // Still busy while the cup's settings come back out, so no other cup can be
+            // applied meanwhile and have its own taken for this one's, or captured with
+            // this one's in it. Only the config's write lock is taken here, which never
+            // waits on this one.
+            if (outcome != RestartOutcome.Succeeded && _appliedConfig is { } applied)
+            {
+                RestoreConfiguration(applied);
+            }
 
             _state = SmartRestartState.Idle;
             _pendingEvent = null;
             _onRestartCompleteCallback = null;
             _onFinished = null;
             _appliedConfig = null;
-        }
-
-        // Before the consumer hears of it, so a cup activated from its callback writes
-        // over the restored file rather than having its own settings restored away.
-        if (outcome != RestartOutcome.Succeeded && appliedConfig is { } applied)
-        {
-            RestoreConfiguration(applied.Before, applied.After);
         }
 
         // Never invoke consumer callbacks under the state lock. Clear ownership

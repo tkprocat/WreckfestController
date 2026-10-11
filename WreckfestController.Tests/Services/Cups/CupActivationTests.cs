@@ -6,6 +6,7 @@ using WreckfestController.Data.Cups;
 using WreckfestController.Models;
 using WreckfestController.Services.Cups;
 using WreckfestController.Services.Config;
+using WreckfestController.Tests.Services.Config;
 using WreckfestController.Services.Publishing;
 using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Tracking;
@@ -38,7 +39,7 @@ public sealed class CupActivationTests : IDisposable
             new ServerInfoTracker(Mock.Of<ILogger<ServerInfoTracker>>()), cups);
         _server.Setup(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>())).ReturnsAsync((true, "Restarted"));
 
-        _config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>());
+        _config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>()).RunsRestorableWrites();
         _config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig { ServerName = "Old name" });
         // The overrides are written by key; a write with a server name is the "settings" step.
         _config.Setup(c => c.WriteSettings(It.IsAny<IReadOnlyDictionary<string, string>>()))
