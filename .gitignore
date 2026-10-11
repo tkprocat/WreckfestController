@@ -83,3 +83,11 @@ appsettings.*.json
 
 # Claude Code settings
 .claude/
+
+# Local controller databases (and SQLite's WAL/shared-memory files): they hold account
+# password hashes, so a stray copy must never be committed (#243). Test fixtures are the
+# exception.
+*.db
+*.db-wal
+*.db-shm
+!WreckfestController.Tests/Data/Fixtures/*.db

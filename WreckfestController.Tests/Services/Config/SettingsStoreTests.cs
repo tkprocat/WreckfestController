@@ -68,7 +68,7 @@ public sealed class SettingsStoreTests : IDisposable
 
         Assert.Equal((VoteModes.Direct, 100, 0), (vote.Value.Mode, vote.Value.MessageDelayMs, vote.Version));
         Assert.Equal(SettingsSections.DefaultServerArguments, store.Get<WreckfestServerSettings>().ServerArguments);
-        await Assert.ThrowsAsync<SettingsUnavailableException>(() => store.SaveAsync(vote.Value, 0));
+        await Assert.ThrowsAsync<SettingsUnavailableException>(() => store.SaveAsync(vote.Value, 0, TestContext.Current.CancellationToken));
         Assert.Empty(Rows());
     }
 
@@ -114,7 +114,7 @@ public sealed class SettingsStoreTests : IDisposable
         var read = store.GetEntry<VoteSettings>();
 
         read.Value.Mode = VoteModes.Off;
-        var saved = await store.SaveAsync(read.Value, read.Version);
+        var saved = await store.SaveAsync(read.Value, read.Version, TestContext.Current.CancellationToken);
 
         Assert.Equal(SettingsSaveStatus.Saved, saved.Status);
         Assert.Equal((VoteModes.Off, 2), (saved.Current.Value.Mode, saved.Current.Version));
@@ -123,7 +123,7 @@ public sealed class SettingsStoreTests : IDisposable
 
         // Another editor still holding version 1.
         read.Value.Mode = VoteModes.Voting;
-        var stale = await store.SaveAsync(read.Value, read.Version);
+        var stale = await store.SaveAsync(read.Value, read.Version, TestContext.Current.CancellationToken);
 
         Assert.Equal(SettingsSaveStatus.Conflict, stale.Status);
         Assert.Equal((VoteModes.Off, 2), (stale.Current.Value.Mode, stale.Current.Version));
@@ -162,8 +162,8 @@ public sealed class SettingsStoreTests : IDisposable
 
         var theirEdit = theirs.GetEntry<VoteSettings>();
         theirEdit.Value.Mode = VoteModes.Off;
-        await theirs.SaveAsync(theirEdit.Value, theirEdit.Version);
-        var stale = await mine.SaveAsync(read.Value, read.Version);
+        await theirs.SaveAsync(theirEdit.Value, theirEdit.Version, TestContext.Current.CancellationToken);
+        var stale = await mine.SaveAsync(read.Value, read.Version, TestContext.Current.CancellationToken);
 
         Assert.Equal(SettingsSaveStatus.Conflict, stale.Status);
         Assert.Equal((VoteModes.Off, 2), (mine.Get<VoteSettings>().Mode, mine.GetEntry<VoteSettings>().Version));
@@ -190,7 +190,7 @@ public sealed class SettingsStoreTests : IDisposable
 
         var save = Task.Run(() => store.SaveAsync(read.Value, read.Version));
 
-        Assert.Same(save, await Task.WhenAny(save, Task.Delay(TimeSpan.FromSeconds(10))));
+        Assert.Same(save, await Task.WhenAny(save, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken)));
         Assert.Equal("follows the vote", store.Get<SteamCmdSettings>().SteamCmdPath);
     }
 
@@ -215,7 +215,7 @@ public sealed class SettingsStoreTests : IDisposable
         var store = CreateStore();
         var read = store.GetEntry<VoteSettings>();
         read.Value.Mode = VoteModes.Off;
-        await store.SaveAsync(read.Value, read.Version);
+        await store.SaveAsync(read.Value, read.Version, TestContext.Current.CancellationToken);
         var heard = new List<Type>();
         store.Changed += (_, e) => heard.Add(e.Section);
 
@@ -223,7 +223,7 @@ public sealed class SettingsStoreTests : IDisposable
 
         var vote = store.GetEntry<VoteSettings>();
         Assert.Equal((VoteModes.Direct, 0), (vote.Value.Mode, vote.Version));
-        await Assert.ThrowsAsync<SettingsUnavailableException>(() => store.SaveAsync(vote.Value, 2));
+        await Assert.ThrowsAsync<SettingsUnavailableException>(() => store.SaveAsync(vote.Value, 2, TestContext.Current.CancellationToken));
         Assert.Equal([typeof(VoteSettings)], heard);
 
         // A successful retry brings the stored values back, and says so.
@@ -245,7 +245,7 @@ public sealed class SettingsStoreTests : IDisposable
         edit.VoteTimeoutSeconds = 0;
         edit.Mode = "direct";
 
-        var saved = (await store.SaveAsync(edit, read.Version)).Current.Value;
+        var saved = (await store.SaveAsync(edit, read.Version, TestContext.Current.CancellationToken)).Current.Value;
 
         Assert.Equal((5000, 1, VoteModes.Direct, true), (saved.MessageDelayMs, saved.VoteTimeoutSeconds, saved.Mode, saved.Enabled));
         Assert.Equal(99_999, edit.MessageDelayMs);
@@ -272,7 +272,7 @@ public sealed class SettingsStoreTests : IDisposable
         var read = store.GetEntry<VoteSettings>();
         store.Changed += (_, e) => heard.Add(e.Section);
 
-        var saved = await store.SaveAsync(read.Value, read.Version);
+        var saved = await store.SaveAsync(read.Value, read.Version, TestContext.Current.CancellationToken);
 
         Assert.Equal(SettingsSaveStatus.Saved, saved.Status);
         Assert.Empty(heard);
@@ -321,7 +321,7 @@ public sealed class SettingsStoreTests : IDisposable
         var read = store.GetEntry<SteamCmdSettings>();
         read.Value.SteamCmdPath = @"C:\steamcmd\steamcmd.exe";
 
-        var saved = await store.SaveAsync(read.Value, read.Version);
+        var saved = await store.SaveAsync(read.Value, read.Version, TestContext.Current.CancellationToken);
 
         Assert.Equal(SettingsSaveStatus.Saved, saved.Status);
         Assert.Equal(1, heard);
@@ -338,17 +338,17 @@ public sealed class SettingsStoreTests : IDisposable
         var read = store.GetEntry<VoteSettings>();
 
         read.Value.Mode = VoteModes.Off;
-        await store.SaveAsync(read.Value, read.Version);
+        await store.SaveAsync(read.Value, read.Version, TestContext.Current.CancellationToken);
 
         Assert.Equal(VoteModes.Off, monitor.CurrentValue.Mode);
         Assert.Equal([VoteModes.Off], heard);
 
         // Another section's save, or a disposed registration, is not heard.
         var steam = store.GetEntry<SteamCmdSettings>();
-        await store.SaveAsync(steam.Value, steam.Version);
+        await store.SaveAsync(steam.Value, steam.Version, TestContext.Current.CancellationToken);
         registration!.Dispose();
         var again = store.GetEntry<VoteSettings>();
-        await store.SaveAsync(again.Value, again.Version);
+        await store.SaveAsync(again.Value, again.Version, TestContext.Current.CancellationToken);
 
         Assert.Single(heard);
     }

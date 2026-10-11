@@ -48,7 +48,7 @@ public sealed class RaceResultStoreTests : IDisposable
     [Fact]
     public async Task Saves_the_race_and_every_car()
     {
-        await _store.SaveAsync(LiveRace);
+        await _store.SaveAsync(LiveRace, cancellationToken: TestContext.Current.CancellationToken);
 
         var race = Assert.Single(await AllRacesAsync());
         Assert.Equal("speedway2_inner_oval", race.TrackId);
@@ -63,7 +63,7 @@ public sealed class RaceResultStoreTests : IDisposable
     [Fact]
     public async Task Keeps_what_the_results_screen_showed_and_the_raw_values()
     {
-        await _store.SaveAsync(LiveRace);
+        await _store.SaveAsync(LiveRace, cancellationToken: TestContext.Current.CancellationToken);
 
         var winner = (await AllRacesAsync()).Single().Entries.Single(e => e.Position == 1);
         Assert.Equal("Driver", winner.Name);
@@ -85,7 +85,7 @@ public sealed class RaceResultStoreTests : IDisposable
     [Fact]
     public async Task Stores_bots_as_bots_with_their_projected_outcome()
     {
-        await _store.SaveAsync(LiveRace);
+        await _store.SaveAsync(LiveRace, cancellationToken: TestContext.Current.CancellationToken);
 
         var bot = (await AllRacesAsync()).Single().Entries.Single(e => e.Name == "Djkevino");
         Assert.True(bot.IsBot);
@@ -101,7 +101,7 @@ public sealed class RaceResultStoreTests : IDisposable
     {
         var cupId = await ActivateCupAsync("Monday Night Wrecking", BeforeTheRace);
 
-        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Monday Night Wrecking", BeforeTheRace));
+        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Monday Night Wrecking", BeforeTheRace), cancellationToken: TestContext.Current.CancellationToken);
 
         var race = Assert.Single(await AllRacesAsync());
         Assert.Equal(cupId, race.CupId);
@@ -115,12 +115,12 @@ public sealed class RaceResultStoreTests : IDisposable
     public async Task Keeps_the_cup_name_when_the_cup_was_deleted_before_the_save()
     {
         var cupId = await ActivateCupAsync("Gone Cup", BeforeTheRace);
-        await using (var db = await _database.Contexts.CreateDbContextAsync())
+        await using (var db = await _database.Contexts.CreateDbContextAsync(TestContext.Current.CancellationToken))
         {
-            await db.Cups.Where(c => c.Id == cupId).ExecuteDeleteAsync();
+            await db.Cups.Where(c => c.Id == cupId).ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
 
-        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Gone Cup", BeforeTheRace));
+        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Gone Cup", BeforeTheRace), cancellationToken: TestContext.Current.CancellationToken);
 
         var race = Assert.Single(await AllRacesAsync());
         Assert.Null(race.CupId);
@@ -134,7 +134,7 @@ public sealed class RaceResultStoreTests : IDisposable
     {
         var cupId = await ActivateCupAsync("Renamed Since", BeforeTheRace);
 
-        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Old Name", BeforeTheRace));
+        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Old Name", BeforeTheRace), cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal("Renamed Since", Assert.Single(await AllRacesAsync()).CupName);
     }
@@ -181,11 +181,11 @@ public sealed class RaceResultStoreTests : IDisposable
     public async Task Keeps_the_race_and_the_cup_name_when_the_cup_is_deleted()
     {
         var cupId = await ActivateCupAsync("Monday Night Wrecking", BeforeTheRace);
-        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Monday Night Wrecking", BeforeTheRace));
+        await _store.SaveAsync(LiveRace, new ActiveCupSnapshot(cupId, "Monday Night Wrecking", BeforeTheRace), cancellationToken: TestContext.Current.CancellationToken);
 
-        await using (var db = await _database.Contexts.CreateDbContextAsync())
+        await using (var db = await _database.Contexts.CreateDbContextAsync(TestContext.Current.CancellationToken))
         {
-            await db.Cups.Where(c => c.Id == cupId).ExecuteDeleteAsync();
+            await db.Cups.Where(c => c.Id == cupId).ExecuteDeleteAsync(cancellationToken: TestContext.Current.CancellationToken);
         }
 
         var race = Assert.Single(await AllRacesAsync());
@@ -196,8 +196,8 @@ public sealed class RaceResultStoreTests : IDisposable
     [Fact]
     public async Task Uses_the_fallback_track_only_when_the_hook_had_none()
     {
-        await _store.SaveAsync(LiveRace with { TrackId = "" }, fallbackTrackId: "urban07");
-        await _store.SaveAsync(LiveRace, fallbackTrackId: "urban07");
+        await _store.SaveAsync(LiveRace with { TrackId = "" }, fallbackTrackId: "urban07", cancellationToken: TestContext.Current.CancellationToken);
+        await _store.SaveAsync(LiveRace, fallbackTrackId: "urban07", cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.Equal(
             new[] { "speedway2_inner_oval", "urban07" },
@@ -211,10 +211,10 @@ public sealed class RaceResultStoreTests : IDisposable
         var unplaced = LiveRace.Cars[0] with { Position = null, Name = "Unplaced" };
         var latest = LiveRace with { Cars = LiveRace.Cars.Append(unplaced).ToList() };
 
-        await _store.SaveAsync(earlier);
-        await _store.SaveAsync(latest);
+        await _store.SaveAsync(earlier, cancellationToken: TestContext.Current.CancellationToken);
+        await _store.SaveAsync(latest, cancellationToken: TestContext.Current.CancellationToken);
 
-        var races = await _store.LatestAsync(10);
+        var races = await _store.LatestAsync(10, TestContext.Current.CancellationToken);
 
         Assert.Equal(new[] { "speedway2_inner_oval", "earlier" }, races.Select(r => r.TrackId));
         var positions = races[0].Entries.Select(e => e.Position).ToList();
@@ -275,12 +275,12 @@ public sealed class RaceResultStoreTests : IDisposable
     [Fact]
     public async Task The_same_race_reported_again_is_not_saved_twice()
     {
-        var first = await _store.SaveOrFindAsync(LiveRace);
+        var first = await _store.SaveOrFindAsync(LiveRace, cancellationToken: TestContext.Current.CancellationToken);
         var again = await _store.SaveOrFindAsync(LiveRace with
         {
             StartedAt = null,
             EndedAt = LiveRace.EndedAt.AddSeconds(30),
-        });
+        }, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(first.Added);
         Assert.False(again.Added);
@@ -293,10 +293,10 @@ public sealed class RaceResultStoreTests : IDisposable
     [Fact]
     public async Task A_different_race_with_the_same_counter_and_track_is_saved()
     {
-        await _store.SaveAsync(LiveRace);
+        await _store.SaveAsync(LiveRace, cancellationToken: TestContext.Current.CancellationToken);
         var cars = LiveRace.Cars.Select((car, i) => i == 0 ? car with { TimeMs = (car.TimeMs ?? 0) + 1000 } : car).ToList();
 
-        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { Cars = cars, EndedAt = LiveRace.EndedAt.AddMinutes(1) });
+        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { Cars = cars, EndedAt = LiveRace.EndedAt.AddMinutes(1) }, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(added);
         Assert.Equal(2, (await AllRacesAsync()).Count);
@@ -307,10 +307,10 @@ public sealed class RaceResultStoreTests : IDisposable
     [Fact]
     public async Task A_repeat_read_after_a_player_left_is_still_the_same_race()
     {
-        await _store.SaveAsync(LiveRace);
+        await _store.SaveAsync(LiveRace, cancellationToken: TestContext.Current.CancellationToken);
         var cars = LiveRace.Cars.Select(car => car with { SteamId = null }).ToList();
 
-        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { Cars = cars, StartedAt = null, EndedAt = LiveRace.EndedAt.AddSeconds(20) });
+        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { Cars = cars, StartedAt = null, EndedAt = LiveRace.EndedAt.AddSeconds(20) }, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.False(added);
     }
@@ -319,13 +319,13 @@ public sealed class RaceResultStoreTests : IDisposable
     [Fact]
     public async Task Different_known_starts_are_different_races()
     {
-        await _store.SaveAsync(LiveRace);
+        await _store.SaveAsync(LiveRace, cancellationToken: TestContext.Current.CancellationToken);
 
         var (_, added) = await _store.SaveOrFindAsync(LiveRace with
         {
             StartedAt = LiveRace.StartedAt!.Value.AddSeconds(45),
             EndedAt = LiveRace.EndedAt.AddSeconds(45),
-        });
+        }, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(added);
     }
@@ -333,9 +333,9 @@ public sealed class RaceResultStoreTests : IDisposable
     [Fact]
     public async Task The_same_results_long_after_are_another_race()
     {
-        await _store.SaveAsync(LiveRace);
+        await _store.SaveAsync(LiveRace, cancellationToken: TestContext.Current.CancellationToken);
 
-        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { EndedAt = LiveRace.EndedAt + RaceResultStore.DuplicateWindow + TimeSpan.FromMinutes(1) });
+        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { EndedAt = LiveRace.EndedAt + RaceResultStore.DuplicateWindow + TimeSpan.FromMinutes(1) }, cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.True(added);
     }
