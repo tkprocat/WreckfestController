@@ -218,6 +218,82 @@ public sealed class ConfigServiceTests : IDisposable
         Assert.DoesNotContain(logger.Messages, m => m.Contains("hunter2-secret", StringComparison.Ordinal));
     }
 
+    // ---- Restorable writes (#224) ----
+
+    private static readonly Dictionary<string, string> CupSettings = new() { ["session_mode"] = "30p-aggr" };
+
+    [Fact]
+    public void WriteRestorably_ThenRestore_PutsTheFileBackByteForByte()
+    {
+        // A BOM and mixed line endings: the writers would normalise both.
+        byte[] original = [0xEF, 0xBB, 0xBF, .. "server_name=Race night\r\nsession_mode=normal\n\r\n# Event Loop\n"u8];
+        File.WriteAllBytes(_file, original);
+
+        var point = _service.WriteRestorably(() => _service.WriteSettings(CupSettings));
+
+        Assert.NotNull(point);
+        Assert.Contains("session_mode=30p-aggr", File.ReadAllLines(_file));
+        Assert.True(_service.Restore(point));
+        Assert.Equal(original, File.ReadAllBytes(_file));
+    }
+
+    [Fact]
+    public void WriteRestorably_ThatChangesNothing_HasNothingToRestore()
+    {
+        File.WriteAllLines(_file, ["session_mode=30p-aggr", "", "# Event Loop"]);
+
+        Assert.Null(_service.WriteRestorably(() => _service.WriteSettings(CupSettings)));
+    }
+
+    [Fact]
+    public void Restore_LeavesAFileChangedSince()
+    {
+        File.WriteAllLines(_file, ["server_name=Race night", "session_mode=normal", "", "# Event Loop"]);
+        var point = _service.WriteRestorably(() => _service.WriteSettings(CupSettings))!;
+        _service.WriteSettings(new Dictionary<string, string> { ["password"] = "admin-edit" });
+        var edited = File.ReadAllBytes(_file);
+
+        Assert.False(_service.Restore(point));
+        Assert.Equal(edited, File.ReadAllBytes(_file));
+    }
+
+    // A write that fails partway is undone before any other write can land.
+    [Fact]
+    public void WriteRestorably_ThatThrowsPartway_PutsTheFileBack()
+    {
+        File.WriteAllLines(_file, ["server_name=Race night", "session_mode=normal", "", "# Event Loop"]);
+        var original = File.ReadAllBytes(_file);
+
+        Assert.Throws<IOException>(() => _service.WriteRestorably(() =>
+        {
+            _service.WriteSettings(CupSettings);
+            throw new IOException("Disk full");
+        }));
+
+        Assert.Equal(original, File.ReadAllBytes(_file));
+    }
+
+    // Another writer waits for the whole change, so its write can be neither part of the
+    // change's "after" nor overwritten by a rollback.
+    [Fact]
+    public void WriteRestorably_HoldsOtherWritersOffUntilItEnds()
+    {
+        File.WriteAllLines(_file, ["server_name=Race night", "session_mode=normal", "", "# Event Loop"]);
+        Task? admin = null;
+
+        var point = _service.WriteRestorably(() =>
+        {
+            _service.WriteSettings(CupSettings);
+            admin = Task.Run(() => _service.WriteSettings(new Dictionary<string, string> { ["password"] = "admin-edit" }));
+            Assert.False(admin.Wait(TimeSpan.FromMilliseconds(300)));
+        })!;
+
+        Assert.True(admin!.Wait(TimeSpan.FromSeconds(10)));
+        Assert.DoesNotContain("password=admin-edit", System.Text.Encoding.UTF8.GetString(point.After));
+        Assert.False(_service.Restore(point));
+        Assert.Contains("password=admin-edit", File.ReadAllLines(_file));
+    }
+
     private sealed class CollectingLogger<T> : Microsoft.Extensions.Logging.ILogger<T>
     {
         public List<string> Messages { get; } = [];

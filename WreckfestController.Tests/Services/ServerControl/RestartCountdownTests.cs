@@ -6,6 +6,7 @@ using WreckfestController.Models;
 using Xunit;
 using WreckfestController.Data.Cups;
 using WreckfestController.Services.Config;
+using WreckfestController.Tests.Services.Config;
 using WreckfestController.Services.Publishing;
 using WreckfestController.Services.ServerControl;
 using WreckfestController.Services.Tracking;
@@ -42,7 +43,7 @@ public class RestartCountdownTests : IDisposable
             _messageSessions.Add(session);
             return Task.FromResult((true, "Sent"));
         });
-        var config = _config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>());
+        var config = _config = new Mock<ConfigService>(TestSettings.Server(), Mock.Of<ILogger<ConfigService>>()).RunsRestorableWrites();
         config.Setup(c => c.ReadBasicConfig()).Returns(new ServerConfig());
         _restart = new SmartRestartService(_server.Object, players, tracks, config.Object, events,
             Mock.Of<ILogger<SmartRestartService>>(), _clock);
@@ -239,6 +240,44 @@ public class RestartCountdownTests : IDisposable
         Assert.True(second.InitiateRestart(new Event { Id = 8, Name = "Second" }, _ => { }));
         Assert.True(stateReadable);
     }
+
+    // #223: sending takes ServerManager's lock, so a send under the service's lock
+    // deadlocks against a track change, which arrives holding ServerManager's lock.
+    [Fact]
+    public void CancelRestart_SendsWithoutHoldingItsStateLock()
+    {
+        bool? stateReadable = null;
+        SendCheckingTheStateLock(readable => stateReadable = readable);
+
+        Assert.True(_restart.CancelRestart());
+        Assert.True(stateReadable);
+    }
+
+    [Fact]
+    public async Task TrackChange_SendsWithoutHoldingItsStateLock()
+    {
+        for (var minute = 0; minute <= 5; minute++)
+        {
+            _clock.Elapsed = TimeSpan.FromMinutes(minute);
+            _clock.Timer!.Fire();
+            await _published.Next();
+        }
+        Assert.Equal(SmartRestartState.Pending, _restart.GetState());
+        bool? stateReadable = null;
+        SendCheckingTheStateLock(readable => stateReadable = readable);
+
+        _tracks.ProcessLogLine("22:45:27 Current track loaded! (speedway2_inner_oval)");
+
+        Assert.True(stateReadable);
+    }
+
+    // Generous: with the lock held this waits it out and fails either way, while a short
+    // wait could fail a correct build on a starved thread pool.
+    private void SendCheckingTheStateLock(Action<bool> report) =>
+        _server.Setup(s => s.SendCommandAsync(It.IsAny<AttachmentSession?>(), It.IsAny<string>())).Returns(() => {
+            report(Task.Run(() => _restart.GetState()).Wait(TimeSpan.FromSeconds(10)));
+            return Task.FromResult((true, "Sent"));
+        });
 
     private sealed class ManualClock : TimeProvider
     {

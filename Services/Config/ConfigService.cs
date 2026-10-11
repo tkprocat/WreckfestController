@@ -485,6 +485,70 @@ public class ConfigService
         File.WriteAllLines(configPath, newLines);
         _logger.LogInformation("Event loop tracks updated successfully");
     }
+
+    /// <summary>
+    /// server_config.cfg byte for byte before a change and after it, so the change can be
+    /// undone exactly (<see cref="Restore"/>).
+    /// </summary>
+    public sealed record RestorePoint(string Path, byte[] Before, byte[] After);
+
+    /// <summary>
+    /// Runs <paramref name="write"/> - calls to this service's own writers - as one change:
+    /// the file is read before and after under the write lock, which the writers take again
+    /// (it is re-entrant), so no other write can land in between and be mistaken for part
+    /// of it. If <paramref name="write"/> throws, the file is put back before the lock is
+    /// released, and the exception propagates.
+    /// </summary>
+    /// <returns>How to undo the change; null when it changed nothing.</returns>
+    public virtual RestorePoint? WriteRestorably(Action write)
+    {
+        lock (_writeLock)
+        {
+            var configPath = GetConfigFilePath();
+            var before = File.ReadAllBytes(configPath);
+            try
+            {
+                write();
+                // Inside the try: a change that cannot be read back cannot be undone later
+                // either, so it is undone now.
+                var after = File.ReadAllBytes(configPath);
+                return before.AsSpan().SequenceEqual(after) ? null : new RestorePoint(configPath, before, after);
+            }
+            catch
+            {
+                try
+                {
+                    File.WriteAllBytes(configPath, before);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Could not put server_config.cfg back after a failed write");
+                }
+
+                throw;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Undoes the change <paramref name="point"/> was made for, but only while the file still
+    /// holds exactly what it left: a change made since - by an admin, or by a cup run - is
+    /// kept rather than overwritten. False when the file was left alone.
+    /// </summary>
+    public virtual bool Restore(RestorePoint point)
+    {
+        lock (_writeLock)
+        {
+            if (!File.ReadAllBytes(point.Path).AsSpan().SequenceEqual(point.After))
+            {
+                return false;
+            }
+
+            File.WriteAllBytes(point.Path, point.Before);
+            return true;
+        }
+    }
+
     public virtual string GetCurrentCollectionName()
     {
         string collectionName = String.Empty;

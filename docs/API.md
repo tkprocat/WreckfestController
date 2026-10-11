@@ -322,7 +322,7 @@ scored with cup points. Cups live in the controller's database.
 | GET | `upcoming` | Cups whose next occurrence is more than 5 minutes away |
 | GET | `due` | Cups the scheduler will start at its next check |
 | GET | `summary` | `{ totalCups, activeCups, upcomingCups, dueCups, lastUpdated }` |
-| POST | `{id}/activate` | Activate now. 202; the cup becomes active when the restart succeeds |
+| POST | `{id}/activate` | Activate now. 202; the cup becomes active when the restart succeeds. Its settings are written to `server_config.cfg` at once, and taken back out if the restart is cancelled or fails (unless the file changed meanwhile) |
 
 `CupRequest` is `{ name, description?, startTime, timeZone?, repeat?, warmupTime?, endTime?,
 restartRotationAtStart?, serverConfig?, sessionMode?, gridOrder?, collectionId?, tracks?,

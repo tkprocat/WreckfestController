@@ -35,6 +35,10 @@ public class SmartRestartService
     // with the state that decides what to send, so work from a restart since
     // replaced never picks up its successor's session.
     private AttachmentSession? _restartSession;
+    // server_config.cfg before and after the pending cup's settings were written (#224):
+    // put back when the restart is cancelled or fails, so the next ordinary restart does
+    // not run a cup that never became active.
+    private ConfigService.RestorePoint? _appliedConfig;
     private readonly object _stateLock = new();
 
     // Configuration
@@ -128,7 +132,7 @@ public class SmartRestartService
 
             // Both manual and scheduled activation must finish configuration writes
             // before a restart is accepted. A failure propagates to the caller.
-            ApplyEventConfiguration(@event);
+            _appliedConfig = ApplyEventConfiguration(@event);
 
             _pendingEvent = @event;
             _restartSession = session;
@@ -303,21 +307,26 @@ public class SmartRestartService
     {
         bool shouldRestart = false;
         long restartId;
+        AttachmentSession? session;
         lock (_stateLock)
         {
             restartId = _restartId;
+            session = _restartSession;
             if (_state == SmartRestartState.Pending)
             {
                 _logger.LogInformation(
                     "Track changed to {TrackId} - lobby detected, initiating restart",
                     trackChangeEvent.TrackId);
-                _ = SendServerMessageAsync(_restartSession, "Server restarting now.");
                 shouldRestart = true;
             }
         }
 
+        // After releasing _stateLock: sending takes ServerManager's lock (#223).
         if (shouldRestart)
+        {
+            _ = SendServerMessageAsync(session, "Server restarting now.");
             _ = Task.Run(() => ExecuteRestartAsync(restartId));
+        }
     }
 
     /// <summary>
@@ -424,7 +433,8 @@ public class SmartRestartService
     /// <summary>
     /// Applies the event's server configuration (tracks and server settings)
     /// </summary>
-    private void ApplyEventConfiguration(Event @event)
+    /// <returns>How to take it back out if the restart does not happen; null when nothing changed.</returns>
+    private ConfigService.RestorePoint? ApplyEventConfiguration(Event @event)
     {
         try
         {
@@ -437,82 +447,109 @@ public class SmartRestartService
                 throw new EventLoopHeadingMissingException();
             }
 
-            // Read current config
-            var currentConfig = _configService.ReadBasicConfig();
-
-            // Apply server config overrides if present, noting each key set
-            var overridden = new List<string>();
-            if (@event.ServerConfig != null)
-            {
-                var eventConfig = @event.ServerConfig;
-                void Set(string key, Action apply)
-                {
-                    apply();
-                    overridden.Add(key);
-                }
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.ServerName))
-                    Set("server_name", () => currentConfig.ServerName = eventConfig.ServerName);
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.WelcomeMessage))
-                    Set("welcome_message", () => currentConfig.WelcomeMessage = eventConfig.WelcomeMessage);
-
-                if (eventConfig.Password != null)
-                    Set("password", () => currentConfig.Password = eventConfig.Password);
-
-                if (eventConfig.MaxPlayers.HasValue)
-                    Set("max_players", () => currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value);
-
-                if (eventConfig.Bots.HasValue)
-                    Set("bots", () => currentConfig.Bots = eventConfig.Bots.Value);
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.AiDifficulty))
-                    Set("ai_difficulty", () => currentConfig.AiDifficulty = eventConfig.AiDifficulty);
-
-                if (eventConfig.Laps.HasValue)
-                    Set("laps", () => currentConfig.Laps = eventConfig.Laps.Value);
-
-                if (!string.IsNullOrWhiteSpace(eventConfig.VehicleDamage))
-                    Set("vehicle_damage", () => currentConfig.VehicleDamage = eventConfig.VehicleDamage);
-
-                if (eventConfig.LobbyCountdown.HasValue)
-                    Set("lobby_countdown", () => currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value);
-            }
-
-            // The overrides and the cup's scoring, each by its key, in one write: a key the
-            // file lacks (a password on a public server, a commented-out session_mode) is
-            // added or uncommented, never silently dropped. The restart below starts a new
-            // server process, which reads them and begins with no cup points.
-            var settings = overridden.ToDictionary(key => key, key => ConfigService.ValueOf(currentConfig, key) ?? string.Empty);
-            if (@event.SessionMode != null)
-                settings["session_mode"] = @event.SessionMode;
-
-            if (@event.GridOrder != null)
-                settings["grid_order"] = @event.GridOrder;
-
-            if (settings.Count > 0)
-            {
-                _configService.WriteSettings(settings);
-                _logger.LogInformation("Cup settings applied: {Keys}", string.Join(", ", settings.Keys));
-            }
-
-            // Apply track rotation if present
-            if (@event.Tracks != null && @event.Tracks.Count > 0)
-            {
-                var collectionName = string.IsNullOrWhiteSpace(@event.CollectionName)
-                    ? $"Cup: {@event.Name}"
-                    : @event.CollectionName;
-
-                _configService.WriteEventLoopTracks(collectionName, @event.Tracks);
-                _logger.LogInformation("Track rotation updated with {Count} tracks", @event.Tracks.Count);
-            }
-
-            return;
+            // One change under the config's write lock (#224): no other write can land
+            // between the cup's and be taken for part of it, and one that fails partway
+            // is put back before anything else can write.
+            return _configService.WriteRestorably(() => WriteEventConfiguration(@event));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error applying cup configuration");
             throw;
+        }
+    }
+
+    private void WriteEventConfiguration(Event @event)
+    {
+        // Read current config
+        var currentConfig = _configService.ReadBasicConfig();
+
+        // Apply server config overrides if present, noting each key set
+        var overridden = new List<string>();
+        if (@event.ServerConfig != null)
+        {
+            var eventConfig = @event.ServerConfig;
+            void Set(string key, Action apply)
+            {
+                apply();
+                overridden.Add(key);
+            }
+
+            if (!string.IsNullOrWhiteSpace(eventConfig.ServerName))
+                Set("server_name", () => currentConfig.ServerName = eventConfig.ServerName);
+
+            if (!string.IsNullOrWhiteSpace(eventConfig.WelcomeMessage))
+                Set("welcome_message", () => currentConfig.WelcomeMessage = eventConfig.WelcomeMessage);
+
+            if (eventConfig.Password != null)
+                Set("password", () => currentConfig.Password = eventConfig.Password);
+
+            if (eventConfig.MaxPlayers.HasValue)
+                Set("max_players", () => currentConfig.MaxPlayers = eventConfig.MaxPlayers.Value);
+
+            if (eventConfig.Bots.HasValue)
+                Set("bots", () => currentConfig.Bots = eventConfig.Bots.Value);
+
+            if (!string.IsNullOrWhiteSpace(eventConfig.AiDifficulty))
+                Set("ai_difficulty", () => currentConfig.AiDifficulty = eventConfig.AiDifficulty);
+
+            if (eventConfig.Laps.HasValue)
+                Set("laps", () => currentConfig.Laps = eventConfig.Laps.Value);
+
+            if (!string.IsNullOrWhiteSpace(eventConfig.VehicleDamage))
+                Set("vehicle_damage", () => currentConfig.VehicleDamage = eventConfig.VehicleDamage);
+
+            if (eventConfig.LobbyCountdown.HasValue)
+                Set("lobby_countdown", () => currentConfig.LobbyCountdown = eventConfig.LobbyCountdown.Value);
+        }
+
+        // The overrides and the cup's scoring, each by its key, in one write: a key the
+        // file lacks (a password on a public server, a commented-out session_mode) is
+        // added or uncommented, never silently dropped. The restart below starts a new
+        // server process, which reads them and begins with no cup points.
+        var settings = overridden.ToDictionary(key => key, key => ConfigService.ValueOf(currentConfig, key) ?? string.Empty);
+        if (@event.SessionMode != null)
+            settings["session_mode"] = @event.SessionMode;
+
+        if (@event.GridOrder != null)
+            settings["grid_order"] = @event.GridOrder;
+
+        if (settings.Count > 0)
+        {
+            _configService.WriteSettings(settings);
+            _logger.LogInformation("Cup settings applied: {Keys}", string.Join(", ", settings.Keys));
+        }
+
+        // Apply track rotation if present
+        if (@event.Tracks != null && @event.Tracks.Count > 0)
+        {
+            var collectionName = string.IsNullOrWhiteSpace(@event.CollectionName)
+                ? $"Cup: {@event.Name}"
+                : @event.CollectionName;
+
+            _configService.WriteEventLoopTracks(collectionName, @event.Tracks);
+            _logger.LogInformation("Track rotation updated with {Count} tracks", @event.Tracks.Count);
+        }
+    }
+
+    /// <summary>Takes the pending cup's settings back out of server_config.cfg (#224).</summary>
+    private void RestoreConfiguration(ConfigService.RestorePoint point)
+    {
+        try
+        {
+            if (_configService.Restore(point))
+            {
+                _logger.LogInformation("Put server_config.cfg back as it was before the cup's settings");
+            }
+            else
+            {
+                _logger.LogWarning(
+                    "server_config.cfg changed after the cup's settings were written, so it was left as it is");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not put server_config.cfg back as it was before the cup's settings");
         }
     }
 
@@ -534,10 +571,20 @@ public class SmartRestartService
             _countdownTimer?.Dispose();
             _countdownTimer = null;
 
+            // Still busy while the cup's settings come back out, so no other cup can be
+            // applied meanwhile and have its own taken for this one's, or captured with
+            // this one's in it. Only the config's write lock is taken here, which never
+            // waits on this one.
+            if (outcome != RestartOutcome.Succeeded && _appliedConfig is { } applied)
+            {
+                RestoreConfiguration(applied);
+            }
+
             _state = SmartRestartState.Idle;
             _pendingEvent = null;
             _onRestartCompleteCallback = null;
             _onFinished = null;
+            _appliedConfig = null;
         }
 
         // Never invoke consumer callbacks under the state lock. Clear ownership
@@ -555,6 +602,7 @@ public class SmartRestartService
     public bool CancelRestart()
     {
         long restartId;
+        AttachmentSession? session;
         lock (_stateLock)
         {
             if (_state != SmartRestartState.Warning && _state != SmartRestartState.Pending)
@@ -565,13 +613,16 @@ public class SmartRestartService
 
             _logger.LogInformation("Cancelling restart for cup: {CupName}", _pendingEvent?.Name ?? "Unknown");
 
-            _ = SendServerMessageAsync(_restartSession, "Server restart cancelled.");
-
+            session = _restartSession;
             restartId = _restartId;
             // Claim cancellation before releasing the lock; queued execution can
             // no longer enter Restarting while the terminal callback is delivered.
             _state = SmartRestartState.Completed;
         }
+
+        // Not under _stateLock: sending takes ServerManager's lock, which is held while
+        // track changes are raised to OnTrackChanged, which takes _stateLock (#223).
+        _ = SendServerMessageAsync(session, "Server restart cancelled.");
         FinishRestart(restartId, RestartOutcome.Cancelled);
         return true;
     }
