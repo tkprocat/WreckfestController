@@ -106,6 +106,18 @@ describe('antiforgery', () => {
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 
+  // #240: the server answered, refusing the token. A failed refresh must leave that
+  // answer, not turn it into an error that reads as "no answer from the controller".
+  it('keeps the refusal when no fresh token can be had', async () => {
+    setCookie('stale')
+    const sent = (await callRequest(new Request('http://localhost/api/cups', { method: 'POST' }))) as Request
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')))
+
+    const response = await callAntiforgeryResponse(sent, antiforgeryFailure())
+
+    expect(response).toBeUndefined()
+  })
+
   it('does not retry other 400s, or a request it did not send', async () => {
     setCookie('token-1')
     const fetch = vi.fn()

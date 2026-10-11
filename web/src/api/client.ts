@@ -95,7 +95,14 @@ export const antiforgery: Middleware = {
       return undefined
     }
 
-    await refreshAntiforgery()
+    // The server has answered, refusing the request: no fresh token means that refusal
+    // stands. Thrown, it read as no answer at all - "not known whether this happened" (#240).
+    try {
+      await refreshAntiforgery()
+    } catch {
+      return undefined
+    }
+
     const token = readCookie(XSRF_COOKIE)
     if (!token) {
       return undefined
