@@ -232,7 +232,8 @@ onBeforeUnmount(() => {
         </span>
       </div>
       <div v-show="rotationOpen" :id="rotationId" class="rotation-body">
-        <RotationPanel @state="(state: RotationState) => (rotation = state)" />
+        <!-- A save to the cup changes its row: reload, or Edit opens the old version. -->
+        <RotationPanel @state="(state: RotationState) => (rotation = state)" @cup-saved="void list.reload()" />
       </div>
     </NCard>
     <NCard>

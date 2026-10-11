@@ -21,6 +21,7 @@ import { describeTrack } from '@/utils/trackText'
 type Track = components['schemas']['EventLoopTrack']
 type Loop = components['schemas']['EventLoopResponse']
 type Cup = components['schemas']['CupResponse']
+type CupRequest = components['schemas']['CupRequest']
 type Variant = components['schemas']['VariantResponse']
 type Summary = components['schemas']['CollectionSummaryResponse']
 type Collection = components['schemas']['CollectionResponse']
@@ -39,7 +40,8 @@ export interface RotationState {
   dirty: boolean
   notice: 'conflict' | 'stale' | 'offer' | null
 }
-const emit = defineEmits<{ state: [state: RotationState] }>()
+/** `cupSaved`: the active cup, or the collection it follows, may have changed. */
+const emit = defineEmits<{ state: [state: RotationState]; cupSaved: [] }>()
 
 const message = useMessage()
 const confirm = useConfirm()
@@ -274,6 +276,9 @@ async function saveToCup() {
   const target = cupTarget.value
   const c = cup.value
   const saved = savedForCup.value
+  // The collection as the dialog names it, version and all: hub events reload the panel
+  // while the dialog is open, and must not move the save to another collection.
+  const row = followed.value
   if (!target || !c || !saved || busy.value) return
   if (target.kind === 'collection') {
     const sure = await confirm({
@@ -282,17 +287,23 @@ async function saveToCup() {
       positive: 'Save',
     })
     if (!sure) return
+    if (cup.value?.id !== c.id || cup.value.collectionId !== c.collectionId) {
+      message.warning('The active cup changed while this was open, so nothing was saved. Check the rotation, then save again.')
+      return
+    }
   }
 
   busy.value = 'cup'
   try {
-    const outcome = target.kind === 'cup' ? await saveCupTracks(c, saved) : await saveCollectionTracks(saved)
+    const outcome = target.kind === 'cup' ? await saveCupTracks(c, saved) : await saveCollectionTracks(row, target.id, saved)
     if (outcome.kind === 'ok') {
       savedForCup.value = null
       message.success(`Saved to ${target.label} too.`)
+      emit('cupSaved')
       await load()
     } else if (outcome.kind === 'conflict') {
       message.warning(`${target.label} was changed meanwhile, so it was not saved. Check it on its page.`)
+      emit('cupSaved')
       await load()
     } else {
       fail(outcome, 'It was not saved.')
@@ -302,9 +313,13 @@ async function saveToCup() {
   }
 }
 
-/** PUT replaces everything a cup sets: send it back as it is, with the saved tracks. */
+/**
+ * PUT replaces everything a cup sets: send it back as it is, with the saved tracks. Every
+ * field is required here, so one added to the request later cannot be left out and silently
+ * reset (#225).
+ */
 function saveCupTracks(c: Cup, saved: { name: string; tracks: Track[] }) {
-  const body = {
+  const body: Required<CupRequest> = {
     name: c.name,
     description: c.description,
     startTime: c.startTime,
@@ -313,6 +328,9 @@ function saveCupTracks(c: Cup, saved: { name: string; tracks: Track[] }) {
     serverConfig: c.serverConfig,
     sessionMode: c.sessionMode,
     gridOrder: c.gridOrder,
+    warmupTime: c.warmupTime,
+    endTime: c.endTime,
+    restartRotationAtStart: c.restartRotationAtStart,
     collectionId: null,
     tracks: saved.tracks,
     collectionName: saved.name || null,
@@ -328,9 +346,12 @@ function saveCupTracks(c: Cup, saved: { name: string; tracks: Track[] }) {
  * With the collection's version from when the panel loaded: a change made to it since is a
  * conflict, not something this save silently replaces.
  */
-async function saveCollectionTracks(saved: { name: string; tracks: Track[] }): Promise<Outcome<Collection>> {
-  const row = followed.value
-  if (!row) {
+async function saveCollectionTracks(
+  row: Collection | null,
+  expectedId: number,
+  saved: { name: string; tracks: Track[] },
+): Promise<Outcome<Collection>> {
+  if (!row || row.id !== expectedId) {
     return { kind: 'refused', message: 'The collection could not be read. Reload, then try again.' }
   }
 
