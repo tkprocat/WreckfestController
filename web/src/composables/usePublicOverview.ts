@@ -108,6 +108,7 @@ export function usePublicOverview() {
         }
       }),
       ...REFETCH_ON.map((event) => onHub(event, refetchSoon)),
+      onHub('Reconnected', refetchSoon),
     )
 
     pollTimer = setInterval(() => void load(), POLL_INTERVAL_MS)

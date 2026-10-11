@@ -58,8 +58,13 @@ const consoleBox = ref<HTMLElement | null>(null)
 // Hub lines that arrive while the tail is loading go after it, not under it.
 let tailLoaded = false
 let pending: string[] = []
+// Only the latest tail request is used: a reload after reconnecting can overlap the
+// first one, whose older answer must not replace the newer tail and the lines after it.
+let tailRequest = 0
 
 async function loadLogTail() {
+  const mine = ++tailRequest
+  tailLoaded = false
   let head: string[]
   try {
     const { data, error } = await api.GET('/api/server/logfile', { params: { query: { lines: 200 } } })
@@ -67,6 +72,8 @@ async function loadLogTail() {
   } catch {
     head = ['(The log file could not be read: no answer from the controller.)']
   }
+
+  if (mine !== tailRequest) return
 
   tailLoaded = true
   logLoading.value = false
@@ -192,6 +199,12 @@ onMounted(() => {
   stops.push(
     ...statusEvents.map((event) => onHub(event, () => void loadStatus())),
     onHub('ConsoleLog', ({ logs }) => void append(logs)),
+    // Back after the connection was lost: the lines sent meanwhile are only in the log
+    // file now, so the console starts again from its tail.
+    onHub('Reconnected', () => {
+      void loadStatus()
+      void loadLogTail()
+    }),
   )
 })
 

@@ -206,6 +206,48 @@ describe('ServerControlView', () => {
     expect(wrapper.find('pre').text()).toBe('from the file\nlive line')
   })
 
+  // Lines sent while the connection was down never arrive: the log file has them (#231).
+  it('reloads the status and the log tail when live updates come back', async () => {
+    serve({ '/api/server/status': stopped, '/api/server/logfile': tail('before the drop') })
+    wrapper = mountPage()
+    await flushPromises()
+    hub.get('ConsoleLog')!({ logs: ['live line'] })
+    await flushPromises()
+
+    const log = deferred<unknown>()
+    serve({ '/api/server/status': running, '/api/server/logfile': log.promise })
+    hub.get('Reconnected')!({})
+    await flushPromises()
+    hub.get('ConsoleLog')!({ logs: ['after the drop'] })
+    log.resolve(tail('before the drop', 'missed while down'))
+    await flushPromises()
+
+    expect(wrapper.find('pre').text()).toBe('before the drop\nmissed while down\nafter the drop')
+    expect(api.GET.mock.calls.filter(([path]) => path === '/api/server/status')).toHaveLength(2)
+  })
+
+  // The first tail can still be on its way when the reload starts: answering last, the
+  // older tail must not replace the newer one and the lines after it.
+  it('keeps the newest log tail when an older one answers last', async () => {
+    const first = deferred<unknown>()
+    serve({ '/api/server/status': running, '/api/server/logfile': first.promise })
+    wrapper = mountPage()
+    await flushPromises()
+
+    const second = deferred<unknown>()
+    serve({ '/api/server/status': running, '/api/server/logfile': second.promise })
+    hub.get('Reconnected')!({})
+    await flushPromises()
+    hub.get('ConsoleLog')!({ logs: ['live one'] })
+    second.resolve(tail('newer tail'))
+    await flushPromises()
+    hub.get('ConsoleLog')!({ logs: ['live two'] })
+    first.resolve(tail('older tail'))
+    await flushPromises()
+
+    expect(wrapper.find('pre').text()).toBe('newer tail\nlive one\nlive two')
+  })
+
   // No answer is not a failure: whether the server started is unknown, and the page says so.
   it('says when an action got no answer', async () => {
     serve({ '/api/server/status': stopped, '/api/server/logfile': tail() })

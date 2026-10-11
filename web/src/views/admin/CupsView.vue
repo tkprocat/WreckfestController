@@ -178,11 +178,14 @@ let poll: ReturnType<typeof setInterval> | undefined
 function watchActivation(id: number) {
   clearInterval(poll)
   let left = 120
-  poll = setInterval(() => {
+  // Its own timer: a reload from an earlier activation, still answering, must not stop
+  // this one's polling by clearing whatever `poll` holds by then.
+  const timer = setInterval(() => {
     void list.reload().then(() => {
-      if (--left <= 0 || cups.value.some((c) => c.id === id && c.isActive)) clearInterval(poll)
+      if (--left <= 0 || cups.value.some((c) => c.id === id && c.isActive)) clearInterval(timer)
     })
   }, 10_000)
+  poll = timer
 }
 
 onMounted(() => {
@@ -192,6 +195,7 @@ onMounted(() => {
     onHub('CupStarted', () => void list.reload()),
     onHub('CupEnded', () => void list.reload()),
     onHub('CupOccurrenceEnded', () => void list.reload()),
+    onHub('Reconnected', () => void list.reload()),
   )
 })
 
