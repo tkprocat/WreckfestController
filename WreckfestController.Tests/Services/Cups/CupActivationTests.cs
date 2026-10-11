@@ -126,13 +126,52 @@ public sealed class CupActivationTests : IDisposable
         Assert.False(startup.IsSettled);
     }
 
-    /// <summary>Every timer it makes fires at once: a wait with a limit times out.</summary>
-    private sealed class ExpiringClock : TimeProvider
+    // Stopped while waiting for the startup reattach: no cup starts afterwards, even once
+    // the reattach settles.
+    [Fact]
+    public async Task AScheduler_StoppedWhileWaitingForTheReattach_StartsNothing()
     {
+        var cup = await _db.CreateAsync(CupTestDatabase.Definition("Race night", Now.AddMinutes(2), tracks: OneTrack));
+        var startup = new StartupReattach();
+        using var scheduler = new CupSchedulerService(_db.Store, _activator, _db.Clock, Mock.Of<ILogger<CupSchedulerService>>(), startup);
+
+        var check = scheduler.CheckAsync();
+        await Task.Delay(100, Ct);
+        await scheduler.StopAsync(Ct);
+        startup.Settle();
+        await check.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        _server.Verify(s => s.RestartServerViaCommandAsync(It.IsAny<AttachmentSession?>()), Times.Never);
+        Assert.False((await _db.Store.GetAsync(cup.Id))!.IsActive);
+    }
+
+    // A reattach that never settles costs the first check its wait, and no other.
+    [Fact]
+    public async Task OnlyTheFirstCheck_WaitsForTheReattach()
+    {
+        var clock = new ExpiringClock(_db.Clock);
+        var scheduler = new CupSchedulerService(_db.Store, _activator, clock, Mock.Of<ILogger<CupSchedulerService>>(), new StartupReattach());
+
+        await scheduler.CheckAsync();
+        await scheduler.CheckAsync();
+
+        Assert.Equal(1, clock.Waits);
+    }
+
+    /// <summary>
+    /// The test clock's time, but every timer it makes fires at once, so a wait with a
+    /// limit times out; <see cref="Waits"/> counts them.
+    /// </summary>
+    private sealed class ExpiringClock(TestClock? time = null) : TimeProvider
+    {
+        public int Waits;
+
+        public override DateTimeOffset GetUtcNow() => time?.GetUtcNow() ?? base.GetUtcNow();
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            var timer = TimeProvider.System.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
-            return timer;
+            Interlocked.Increment(ref Waits);
+            return TimeProvider.System.CreateTimer(callback, state, TimeSpan.Zero, Timeout.InfiniteTimeSpan);
         }
     }
 

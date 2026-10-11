@@ -18,14 +18,20 @@ public sealed class StartupReattach
 
     public void Settle() => _settled.TrySetResult();
 
-    /// <summary>Waits until settled, or <paramref name="atMost"/>: a reattach that hangs must not hold cups back for ever.</summary>
-    public async Task WhenSettledAsync(TimeSpan atMost, TimeProvider time)
+    /// <summary>
+    /// Waits until settled, <paramref name="atMost"/> has passed - a reattach that hangs
+    /// must not hold cups back for ever - or <paramref name="cancellationToken"/> is cancelled.
+    /// </summary>
+    public async Task WhenSettledAsync(TimeSpan atMost, TimeProvider time, CancellationToken cancellationToken = default)
     {
         try
         {
-            await _settled.Task.WaitAsync(atMost, time);
+            await _settled.Task.WaitAsync(atMost, time, cancellationToken);
         }
         catch (TimeoutException)
+        {
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
     }

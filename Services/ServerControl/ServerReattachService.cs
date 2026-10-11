@@ -11,6 +11,7 @@ public sealed class ServerReattachService : IHostedService
     private readonly ServerManager _serverManager;
     private readonly StartupReattach _startup;
     private readonly ILogger<ServerReattachService> _logger;
+    private readonly CancellationTokenSource _stopping = new();
 
     public ServerReattachService(ServerManager serverManager, StartupReattach startup, ILogger<ServerReattachService> logger)
     {
@@ -43,7 +44,12 @@ public sealed class ServerReattachService : IHostedService
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        // Stops the roster retries; the reattach itself is the server manager's to finish.
+        _stopping.Cancel();
+        return Task.CompletedTask;
+    }
 
     /// <summary>
     /// The players already on the server, before anything decides whether to warn them
@@ -52,14 +58,21 @@ public sealed class ServerReattachService : IHostedService
     /// </summary>
     private async Task ReadRosterAsync()
     {
-        for (var attempt = 0; attempt < 5; attempt++)
+        for (var attempt = 0; attempt < 5 && !_stopping.IsCancellationRequested; attempt++)
         {
             if (await _serverManager.TryRefreshPlayersFromHookAsync())
             {
                 return;
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(1));
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), _stopping.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
         }
 
         _logger.LogWarning("Reattached, but the roster could not be read from the hook yet");
