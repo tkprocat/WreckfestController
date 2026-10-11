@@ -279,7 +279,7 @@ public sealed class RaceResultStoreTests : IDisposable
         var again = await _store.SaveOrFindAsync(LiveRace with
         {
             StartedAt = null,
-            EndedAt = LiveRace.EndedAt.AddMinutes(2),
+            EndedAt = LiveRace.EndedAt.AddSeconds(30),
         });
 
         Assert.True(first.Added);
@@ -296,10 +296,38 @@ public sealed class RaceResultStoreTests : IDisposable
         await _store.SaveAsync(LiveRace);
         var cars = LiveRace.Cars.Select((car, i) => i == 0 ? car with { TimeMs = (car.TimeMs ?? 0) + 1000 } : car).ToList();
 
-        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { Cars = cars, EndedAt = LiveRace.EndedAt.AddMinutes(10) });
+        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { Cars = cars, EndedAt = LiveRace.EndedAt.AddMinutes(1) });
 
         Assert.True(added);
         Assert.Equal(2, (await AllRacesAsync()).Count);
+    }
+
+    // A player who leaves the results screen is cleared from the player table, which the
+    // Steam id and vehicle are read from: the repeat lacks them, and is still the race.
+    [Fact]
+    public async Task A_repeat_read_after_a_player_left_is_still_the_same_race()
+    {
+        await _store.SaveAsync(LiveRace);
+        var cars = LiveRace.Cars.Select(car => car with { SteamId = null }).ToList();
+
+        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { Cars = cars, StartedAt = null, EndedAt = LiveRace.EndedAt.AddSeconds(20) });
+
+        Assert.False(added);
+    }
+
+    // Known, different starts are two races, however alike their results.
+    [Fact]
+    public async Task Different_known_starts_are_different_races()
+    {
+        await _store.SaveAsync(LiveRace);
+
+        var (_, added) = await _store.SaveOrFindAsync(LiveRace with
+        {
+            StartedAt = LiveRace.StartedAt!.Value.AddSeconds(45),
+            EndedAt = LiveRace.EndedAt.AddSeconds(45),
+        });
+
+        Assert.True(added);
     }
 
     [Fact]

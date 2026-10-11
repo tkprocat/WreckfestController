@@ -29,14 +29,19 @@ public sealed class RaceResultStore
         CancellationToken cancellationToken = default) =>
         (await SaveOrFindAsync(record, notedCup, fallbackTrackId, cancellationToken)).Race;
 
-    /// <summary>How far back a race can be the one a record reports again.</summary>
-    public static readonly TimeSpan DuplicateWindow = TimeSpan.FromHours(1);
+    /// <summary>
+    /// How far back a race can be the one a record reports again. The results stay in
+    /// memory only until the server returns to the lobby, about 20 s after the race ends
+    /// (docs/finding-rvas.md), so a repeat comes within moments of the first report.
+    /// </summary>
+    public static readonly TimeSpan DuplicateWindow = TimeSpan.FromMinutes(2);
 
     /// <summary>
     /// As <see cref="SaveAsync"/>, but a race already saved is not saved again: a hook
     /// injected while the results screen is still up has a watcher of its own, which
     /// reports the race on screen once more (#234). The same race is the same event
-    /// counter, track and results, moments apart; two races never share all of them.
+    /// counter, track and results, moments apart; two races never share all of them, and
+    /// two known, different starts are two races.
     /// </summary>
     /// <returns>The race, and whether it was saved now rather than found.</returns>
     public async Task<(Race Race, bool Added)> SaveOrFindAsync(
@@ -85,7 +90,9 @@ public sealed class RaceResultStore
             .Include(r => r.Entries)
             .Where(r => r.EventCounter == race.EventCounter && r.TrackId == race.TrackId && r.EndedAt >= since)
             .ToListAsync(cancellationToken);
-        if (candidates.FirstOrDefault(saved => SameResults(saved.Entries, race.Entries)) is { } existing)
+        if (candidates.FirstOrDefault(saved =>
+                (saved.StartedAt is null || race.StartedAt is null || saved.StartedAt == race.StartedAt)
+                && SameResults(saved.Entries, race.Entries)) is { } existing)
         {
             return (existing, false);
         }
@@ -95,7 +102,11 @@ public sealed class RaceResultStore
         return (race, true);
     }
 
-    /// <summary>Every car finished the same: the same results screen, read twice.</summary>
+    /// <summary>
+    /// Every car finished the same: the same results screen, read twice. Only the race's
+    /// own car records count: the Steam id and the vehicle come from the player table,
+    /// which a player leaving the results screen clears between the two reads.
+    /// </summary>
     private static bool SameResults(IReadOnlyCollection<RaceEntry> saved, IReadOnlyCollection<RaceEntry> read)
     {
         if (saved.Count != read.Count)
@@ -103,9 +114,9 @@ public sealed class RaceResultStore
             return false;
         }
 
-        static IEnumerable<(int, string, int?, int?, int?, int?, long?, string)> Results(IEnumerable<RaceEntry> entries) =>
+        static IEnumerable<(int, string, int?, int?, int?, int?)> Results(IEnumerable<RaceEntry> entries) =>
             entries
-                .Select(e => (e.Slot, e.Name, e.Position, e.TimeMs, e.BestLapMs, e.FinishMs, e.SteamId, e.VehicleKey))
+                .Select(e => (e.Slot, e.Name, e.Position, e.TimeMs, e.BestLapMs, e.FinishMs))
                 .OrderBy(e => e.Slot)
                 .ThenBy(e => e.Name, StringComparer.Ordinal);
 
