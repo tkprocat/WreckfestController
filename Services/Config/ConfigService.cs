@@ -509,6 +509,10 @@ public class ConfigService
             try
             {
                 write();
+                // Inside the try: a change that cannot be read back cannot be undone later
+                // either, so it is undone now.
+                var after = File.ReadAllBytes(configPath);
+                return before.AsSpan().SequenceEqual(after) ? null : new RestorePoint(configPath, before, after);
             }
             catch
             {
@@ -523,9 +527,6 @@ public class ConfigService
 
                 throw;
             }
-
-            var after = File.ReadAllBytes(configPath);
-            return before.AsSpan().SequenceEqual(after) ? null : new RestorePoint(configPath, before, after);
         }
     }
 
