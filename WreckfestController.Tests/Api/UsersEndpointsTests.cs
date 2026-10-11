@@ -1,6 +1,10 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.DependencyInjection;
+using WreckfestController.Controllers;
+using WreckfestController.Data;
 
 namespace WreckfestController.Tests.Api;
 
@@ -247,6 +251,8 @@ public class UsersEndpointsTests
         var edit = new ConcurrentEditInterceptor();
         await using var host = await ApiTestHost.StartAsync(
             configureDatabase: options => options.AddInterceptors(edit));
+        // Someone left to sign in, or the last-account guard refuses before the race.
+        await host.CreateUserAsync();
         var other = await host.CreateUserAsync("other");
         using var script = host.CreateAuthenticatedClient();
 
@@ -258,6 +264,111 @@ public class UsersEndpointsTests
         Assert.False(stored.GetProperty("isLockedOut").GetBoolean());
     }
 
+    // #226: a script has no account of its own, so without a floor it could lock them all.
+    [Fact]
+    public async Task Lock_ByScript_LeavesOneAccountThatCanSignIn()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using var script = host.CreateAuthenticatedClient();
+
+        using var one = await script.PostAsync($"/api/users/{first.Id}/lock", null, Ct);
+        using var last = await script.PostAsync($"/api/users/{second.Id}/lock", null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, one.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, last.StatusCode);
+        using var browser = host.CreateBrowser();
+        await browser.SignInAsync("second");
+    }
+
+    // A failed-sign-in lockout ends by itself: that account still counts as one that
+    // can sign in, so another can be locked.
+    [Fact]
+    public async Task Lock_CountsAnAccountInAFailedSignInLockout()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using (var scope = host.Services.CreateScope())
+        {
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+            var stored = await users.FindByIdAsync(second.Id);
+            await users.SetLockoutEndDateAsync(stored!, DateTimeOffset.UtcNow.AddMinutes(15));
+        }
+        using var script = host.CreateAuthenticatedClient();
+
+        using var locked = await script.PostAsync($"/api/users/{first.Id}/lock", null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, locked.StatusCode);
+    }
+
+    // Two admins lock each other at the same moment. Each sees the other unlocked when
+    // it reads; unless the read and the lock are serialized, both go ahead.
+    [Fact]
+    public async Task ConcurrentLocks_NeverLockEveryAccount()
+    {
+        await using var host = await ApiTestHost.StartAsync(
+            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor(UsersController.SignInFloorTag)));
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using var script = host.CreateAuthenticatedClient();
+
+        var responses = await Task.WhenAll(
+            script.PostAsync($"/api/users/{first.Id}/lock", null, Ct),
+            script.PostAsync($"/api/users/{second.Id}/lock", null, Ct));
+
+        var statuses = responses.Select(r => r.StatusCode).OrderBy(s => s).ToList();
+        Assert.Equal([HttpStatusCode.OK, HttpStatusCode.Conflict], statuses);
+        foreach (var response in responses)
+        {
+            response.Dispose();
+        }
+    }
+
+    // #226: one admin locks A while another deletes B. Delete counted rows, so after the
+    // lock it still saw two and went ahead, leaving only a locked account. Either order
+    // must leave one that can sign in.
+    [Fact]
+    public async Task ConcurrentLockAndDelete_LeaveAnAccountThatCanSignIn()
+    {
+        await using var host = await ApiTestHost.StartAsync(
+            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor(UsersController.SignInFloorTag)));
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using var script = host.CreateAuthenticatedClient();
+
+        var responses = await Task.WhenAll(
+            script.PostAsync($"/api/users/{first.Id}/lock", null, Ct),
+            script.DeleteAsync($"/api/users/{second.Id}", Ct));
+
+        Assert.Single(responses, r => r.StatusCode == HttpStatusCode.Conflict);
+        var remaining = await script.GetFromJsonAsync<JsonElement>("/api/users", Ct);
+        Assert.Contains(remaining.EnumerateArray(), u => !u.GetProperty("isLockedOut").GetBoolean());
+        foreach (var response in responses)
+        {
+            response.Dispose();
+        }
+    }
+
+    // Delete counts accounts that can sign in, not rows.
+    [Fact]
+    public async Task Delete_RefusesTheLastAccountThatCanSignIn()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using var script = host.CreateAuthenticatedClient();
+        using (var locked = await script.PostAsync($"/api/users/{first.Id}/lock", null, Ct))
+        {
+            Assert.Equal(HttpStatusCode.OK, locked.StatusCode);
+        }
+
+        using var deleted = await script.DeleteAsync($"/api/users/{second.Id}", Ct);
+
+        Assert.Equal(HttpStatusCode.Conflict, deleted.StatusCode);
+    }
+
     // Two admins delete the other two accounts at the same moment. Each sees two
     // accounts when it counts; unless the count and delete are serialized, both go
     // ahead and nobody can sign in any more.
@@ -265,7 +376,7 @@ public class UsersEndpointsTests
     public async Task ConcurrentDeletes_NeverRemoveTheLastAccount()
     {
         await using var host = await ApiTestHost.StartAsync(
-            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor()));
+            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor(UsersController.SignInFloorTag)));
         var first = await host.CreateUserAsync("first");
         var second = await host.CreateUserAsync("second");
         using var script = host.CreateAuthenticatedClient();

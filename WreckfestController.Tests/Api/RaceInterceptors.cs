@@ -34,8 +34,10 @@ public sealed class ConcurrentEditInterceptor : SaveChangesInterceptor
 /// Holds each request that has just counted the users until a second one has counted
 /// too, or until a timeout. Without serialization both see the same count before
 /// either deletes; with it, the second cannot count until the first has committed.
+/// <paramref name="marker"/> picks the query, such as the users controller's
+/// <c>SignInFloorTag</c>, which lock and delete both read.
 /// </summary>
-public sealed class CountRendezvousInterceptor : DbCommandInterceptor
+public sealed class CountRendezvousInterceptor(string marker = "COUNT(*)") : DbCommandInterceptor
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(2);
 
@@ -47,7 +49,7 @@ public sealed class CountRendezvousInterceptor : DbCommandInterceptor
         DataReaderClosingEventData eventData,
         InterceptionResult result)
     {
-        if (command.CommandText.Contains("COUNT(*)", StringComparison.OrdinalIgnoreCase)
+        if (command.CommandText.Contains(marker, StringComparison.OrdinalIgnoreCase)
             && command.CommandText.Contains("\"AspNetUsers\"", StringComparison.Ordinal))
         {
             Interlocked.Increment(ref _arrived);

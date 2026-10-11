@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
+using WreckfestController.Hubs;
 using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Controllers;
@@ -22,6 +23,7 @@ public class UsersController : ControllerBase
     private readonly UserManager<AppUser> _users;
     private readonly SignInManager<AppUser> _signIn;
     private readonly ControllerDbContext _db;
+    private readonly AdminHubConnections _hubConnections;
     private readonly TimeProvider _time;
     private readonly ILogger<UsersController> _logger;
 
@@ -30,12 +32,14 @@ public class UsersController : ControllerBase
         UserManager<AppUser> users,
         SignInManager<AppUser> signIn,
         ControllerDbContext db,
+        AdminHubConnections hubConnections,
         TimeProvider time,
         ILogger<UsersController> logger)
     {
         _users = users;
         _signIn = signIn;
         _db = db;
+        _hubConnections = hubConnections;
         _time = time;
         _logger = logger;
     }
@@ -117,6 +121,12 @@ public class UsersController : ControllerBase
             await _signIn.RefreshSignInAsync(user);
         }
 
+        if (loginChanged)
+        {
+            // Its sessions ended: so does its live console (#227).
+            _hubConnections.EndSessionsOf(user.Id);
+        }
+
         return UserResponse.From(user, _time);
     }
 
@@ -140,10 +150,12 @@ public class UsersController : ControllerBase
             return Refused("You cannot delete your own account.");
         }
 
-        // Also guards API-key callers, who have no account of their own.
-        if (await _users.Users.CountAsync() <= 1)
+        // Also guards API-key callers, who have no account of their own. Counts accounts
+        // that can sign in, not rows: deleting the last unlocked one, next to accounts an
+        // admin locked, would shut everyone out just the same (#226).
+        if (!await AnotherAccountCanSignInAsync(user.Id))
         {
-            return Refused("The last account cannot be deleted. Create another one first.");
+            return Refused("The last account that can sign in cannot be deleted. Unlock or create another one first.");
         }
 
         var result = await _users.DeleteAsync(user);
@@ -153,6 +165,7 @@ public class UsersController : ControllerBase
         }
 
         await transaction.CommitAsync();
+        _hubConnections.EndSessionsOf(user.Id);
         _logger.LogInformation("{Caller} deleted web account {UserName}", Caller, user.UserName);
         return NoContent();
     }
@@ -186,6 +199,7 @@ public class UsersController : ControllerBase
             await _signIn.RefreshSignInAsync(user);
         }
 
+        _hubConnections.EndSessionsOf(user.Id);
         _logger.LogInformation("{Caller} reset the password of web account {UserName}", Caller, user.UserName);
         return NoContent();
     }
@@ -194,6 +208,10 @@ public class UsersController : ControllerBase
     [HttpPost("{id}/lock")]
     public async Task<ActionResult<UserResponse>> Lock(string id)
     {
+        // As Delete: BEGIN IMMEDIATE takes the write lock before the count below, so two
+        // admins locking each other at once cannot both pass it (#226).
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+
         var user = await _users.FindByIdAsync(id);
         if (user is null)
         {
@@ -203,6 +221,13 @@ public class UsersController : ControllerBase
         if (IsCaller(user))
         {
             return Refused("You cannot lock your own account.");
+        }
+
+        // Also guards API-key callers, who have no account of their own and so are never
+        // refused above.
+        if (!await AnotherAccountCanSignInAsync(user.Id))
+        {
+            return Refused("The last account that can sign in cannot be locked. Unlock or create another one first.");
         }
 
         // One save, so the lock and the new stamp that ends the account's sessions land
@@ -215,6 +240,8 @@ public class UsersController : ControllerBase
             return this.IdentityFailure(result);
         }
 
+        await transaction.CommitAsync();
+        _hubConnections.EndSessionsOf(user.Id);
         _logger.LogInformation("{Caller} locked web account {UserName}", Caller, user.UserName);
         return UserResponse.From(user, _time);
     }
@@ -239,6 +266,26 @@ public class UsersController : ControllerBase
 
         _logger.LogInformation("{Caller} unlocked web account {UserName}", Caller, user.UserName);
         return UserResponse.From(user, _time);
+    }
+
+    /// <summary>Tags the query below, so a test can hold requests at exactly that point.</summary>
+    internal const string SignInFloorTag = "sign-in floor";
+
+    /// <summary>
+    /// Whether an account other than <paramref name="exceptId"/> could still sign in. A
+    /// failed-sign-in lockout ends by itself, so only an admin lock (until MaxValue) takes
+    /// an account out. Read inside the caller's BEGIN IMMEDIATE transaction, so a
+    /// competing lock or delete waits until this one commits and then reads again.
+    /// </summary>
+    private async Task<bool> AnotherAccountCanSignInAsync(string exceptId)
+    {
+        // Compared here rather than in SQL: SQLite cannot compare DateTimeOffset values.
+        var lockEnds = await _users.Users
+            .TagWith(SignInFloorTag)
+            .Where(u => u.Id != exceptId)
+            .Select(u => u.LockoutEnd)
+            .ToListAsync();
+        return lockEnds.Any(end => end != DateTimeOffset.MaxValue);
     }
 
     /// <summary>For the log: the signed-in user's name, or "ApiKey" for a script.</summary>
