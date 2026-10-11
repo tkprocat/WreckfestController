@@ -270,4 +270,45 @@ public sealed class RaceResultStoreTests : IDisposable
 
         Assert.Empty(await AllRacesAsync());
     }
+    // #234: a hook injected again while the results screen is still up has a fresh
+    // watcher, which reports the race on screen once more: later, without a start.
+    [Fact]
+    public async Task The_same_race_reported_again_is_not_saved_twice()
+    {
+        var first = await _store.SaveOrFindAsync(LiveRace);
+        var again = await _store.SaveOrFindAsync(LiveRace with
+        {
+            StartedAt = null,
+            EndedAt = LiveRace.EndedAt.AddMinutes(2),
+        });
+
+        Assert.True(first.Added);
+        Assert.False(again.Added);
+        Assert.Equal(first.Race.Id, again.Race.Id);
+        Assert.Single(await AllRacesAsync());
+    }
+
+    // A server restarted soon after a race starts its counter again: the next race can
+    // share the counter and the track, but not every car's result.
+    [Fact]
+    public async Task A_different_race_with_the_same_counter_and_track_is_saved()
+    {
+        await _store.SaveAsync(LiveRace);
+        var cars = LiveRace.Cars.Select((car, i) => i == 0 ? car with { TimeMs = (car.TimeMs ?? 0) + 1000 } : car).ToList();
+
+        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { Cars = cars, EndedAt = LiveRace.EndedAt.AddMinutes(10) });
+
+        Assert.True(added);
+        Assert.Equal(2, (await AllRacesAsync()).Count);
+    }
+
+    [Fact]
+    public async Task The_same_results_long_after_are_another_race()
+    {
+        await _store.SaveAsync(LiveRace);
+
+        var (_, added) = await _store.SaveOrFindAsync(LiveRace with { EndedAt = LiveRace.EndedAt + RaceResultStore.DuplicateWindow + TimeSpan.FromMinutes(1) });
+
+        Assert.True(added);
+    }
 }
