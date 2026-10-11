@@ -97,6 +97,82 @@ public class ServerHubTests
         Assert.Single(log.ConsoleBatches);
     }
 
+    // #227: the hub lets a connection into the admin group once, when it opens. Locking
+    // the account ends its HTTP sessions, and must end that stream too.
+    [Fact]
+    public async Task LockingAnAccount_EndsItsLiveConsole()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        var publisher = host.MainServices.GetRequiredService<HubServerEventPublisher>();
+        await host.CreateUserAsync();
+        var other = await host.CreateUserAsync("other");
+        var cookie = (await host.SignInAsync(other)).Split(';')[0];
+
+        await using var connection = host.CreateHubConnection(o => o.Headers["Cookie"] = cookie);
+        var closed = ClosedSignal(connection);
+        var log = Record(connection);
+        await connection.StartAsync(Ct);
+        await PublishUntilAsync(() => publisher.TrackChangedAsync("ready"), () => log.TrackIds.Contains("ready"));
+
+        using var script = host.CreateAuthenticatedClient();
+        using var locked = await script.PostAsync($"/api/users/{other.Id}/lock", null, Ct);
+        Assert.Equal(System.Net.HttpStatusCode.OK, locked.StatusCode);
+        await closed.WaitAsync(Timeout, Ct);
+
+        // Back on the same cookie, now ended: public events only.
+        await using var again = host.CreateHubConnection(o => o.Headers["Cookie"] = cookie);
+        var againLog = Record(again);
+        await again.StartAsync(Ct);
+        await PublishUntilAsync(() => publisher.TrackChangedAsync("back"), () => againLog.TrackIds.Contains("back"));
+        publisher.AddConsoleLog("after the lock");
+        await publisher.FlushConsoleLogAsync();
+        await PublishUntilAsync(() => publisher.TrackChangedAsync("fields14"), () => againLog.TrackIds.Contains("fields14"));
+
+        Assert.Empty(againLog.ConsoleLines);
+    }
+
+    // Dropped connections whose session is still valid come back as admins.
+    [Fact]
+    public async Task EndedHubSessions_OfAValidSignIn_ReconnectAsAdmin()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        var publisher = host.MainServices.GetRequiredService<HubServerEventPublisher>();
+        var user = await host.CreateUserAsync();
+        var cookie = (await host.SignInAsync(user)).Split(';')[0];
+
+        await using var connection = host.CreateHubConnection(o => o.Headers["Cookie"] = cookie);
+        var closed = ClosedSignal(connection);
+        await connection.StartAsync(Ct);
+        var admins = host.Services.GetRequiredService<AdminHubConnections>();
+        var deadline = DateTime.UtcNow + Timeout;
+        while (admins.EndSessionsOf(user.Id) == 0)
+        {
+            Assert.True(DateTime.UtcNow < deadline, "The connection never joined the admin list.");
+            await Task.Delay(20, Ct);
+        }
+        await closed.WaitAsync(Timeout, Ct);
+
+        await using var again = host.CreateHubConnection(o => o.Headers["Cookie"] = cookie);
+        var log = Record(again);
+        await again.StartAsync(Ct);
+        await PublishUntilAsync(() => publisher.TrackChangedAsync("back"), () => log.TrackIds.Contains("back"));
+        publisher.AddConsoleLog("still an admin");
+        await publisher.FlushConsoleLogAsync();
+
+        await WaitUntilAsync(() => log.ConsoleLines.Contains("still an admin"));
+    }
+
+    private static Task ClosedSignal(HubConnection connection)
+    {
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        connection.Closed += _ =>
+        {
+            closed.TrySetResult();
+            return Task.CompletedTask;
+        };
+        return closed.Task;
+    }
+
     [Fact]
     public async Task ServerEvents_ArriveWithCamelCasePayloads()
     {

@@ -17,18 +17,37 @@ public sealed class ServerHub : Hub<IServerHubClient>
     public const string AdminGroup = "admin";
 
     private readonly IAuthorizationService _authorization;
+    private readonly AdminHubConnections _admins;
 
-    public ServerHub(IAuthorizationService authorization)
+    public ServerHub(IAuthorizationService authorization, AdminHubConnections admins)
     {
         _authorization = authorization;
+        _admins = admins;
     }
 
     public override async Task OnConnectedAsync()
     {
+        // An account's sessions ended while this one was being let in would miss it:
+        // compared again once the connection is on the list (#227).
+        var userId = Context.UserIdentifier;
+        var endings = userId is null ? 0 : _admins.EndingsOf(userId);
+
         // The policy rather than IsAuthenticated, so roles added later decide this too.
         if (Context.User is { } user
             && (await _authorization.AuthorizeAsync(user, ApiAuthentication.AdminPolicy)).Succeeded)
         {
+            // An API-key caller has no account, so nothing can end its session but the key.
+            if (userId is not null)
+            {
+                _admins.Add(userId, Context);
+                if (_admins.EndingsOf(userId) != endings)
+                {
+                    _admins.Remove(userId, Context.ConnectionId);
+                    Context.Abort();
+                    return;
+                }
+            }
+
             await Groups.AddToGroupAsync(Context.ConnectionId, AdminGroup);
         }
 
@@ -37,5 +56,15 @@ public sealed class ServerHub : Hub<IServerHubClient>
         await Groups.AddToGroupAsync(Context.ConnectionId, PublicGroup);
 
         await base.OnConnectedAsync();
+    }
+
+    public override Task OnDisconnectedAsync(Exception? exception)
+    {
+        if (Context.UserIdentifier is { } userId)
+        {
+            _admins.Remove(userId, Context.ConnectionId);
+        }
+
+        return base.OnDisconnectedAsync(exception);
     }
 }

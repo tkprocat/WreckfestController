@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
+using WreckfestController.Hubs;
 using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Controllers;
@@ -22,6 +23,7 @@ public class AuthController : ControllerBase
     private readonly UserManager<AppUser> _users;
     private readonly SignInManager<AppUser> _signIn;
     private readonly IAntiforgery _antiforgery;
+    private readonly AdminHubConnections _hubConnections;
     private readonly TimeProvider _time;
     private readonly ILogger<AuthController> _logger;
 
@@ -29,12 +31,14 @@ public class AuthController : ControllerBase
         UserManager<AppUser> users,
         SignInManager<AppUser> signIn,
         IAntiforgery antiforgery,
+        AdminHubConnections hubConnections,
         TimeProvider time,
         ILogger<AuthController> logger)
     {
         _users = users;
         _signIn = signIn;
         _antiforgery = antiforgery;
+        _hubConnections = hubConnections;
         _time = time;
         _logger = logger;
     }
@@ -114,7 +118,15 @@ public class AuthController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> Logout()
     {
+        var userId = _users.GetUserId(User);
         await _signIn.SignOutAsync();
+        // This browser's hub connection still runs as the signed-in user (#227). The
+        // account's other connections are dropped too and come back on their own cookies.
+        if (userId is not null)
+        {
+            _hubConnections.EndSessionsOf(userId);
+        }
+
         return NoContent();
     }
 
@@ -159,6 +171,7 @@ public class AuthController : ControllerBase
         if (emailChanged)
         {
             await _signIn.RefreshSignInAsync(user);
+            _hubConnections.EndSessionsOf(user.Id);
         }
 
         return UserResponse.From(user, _time);
@@ -183,6 +196,8 @@ public class AuthController : ControllerBase
 
         // The new stamp would otherwise end this session too.
         await _signIn.RefreshSignInAsync(user);
+        // The other sessions' live consoles end with them (#227); this one reconnects.
+        _hubConnections.EndSessionsOf(user.Id);
         _logger.LogInformation("{UserName} changed their password", user.UserName);
         return NoContent();
     }

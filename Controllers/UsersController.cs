@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
+using WreckfestController.Hubs;
 using WreckfestController.Services.Auth;
 
 namespace WreckfestController.Controllers;
@@ -22,6 +23,7 @@ public class UsersController : ControllerBase
     private readonly UserManager<AppUser> _users;
     private readonly SignInManager<AppUser> _signIn;
     private readonly ControllerDbContext _db;
+    private readonly AdminHubConnections _hubConnections;
     private readonly TimeProvider _time;
     private readonly ILogger<UsersController> _logger;
 
@@ -30,12 +32,14 @@ public class UsersController : ControllerBase
         UserManager<AppUser> users,
         SignInManager<AppUser> signIn,
         ControllerDbContext db,
+        AdminHubConnections hubConnections,
         TimeProvider time,
         ILogger<UsersController> logger)
     {
         _users = users;
         _signIn = signIn;
         _db = db;
+        _hubConnections = hubConnections;
         _time = time;
         _logger = logger;
     }
@@ -117,6 +121,12 @@ public class UsersController : ControllerBase
             await _signIn.RefreshSignInAsync(user);
         }
 
+        if (loginChanged)
+        {
+            // Its sessions ended: so does its live console (#227).
+            _hubConnections.EndSessionsOf(user.Id);
+        }
+
         return UserResponse.From(user, _time);
     }
 
@@ -153,6 +163,7 @@ public class UsersController : ControllerBase
         }
 
         await transaction.CommitAsync();
+        _hubConnections.EndSessionsOf(user.Id);
         _logger.LogInformation("{Caller} deleted web account {UserName}", Caller, user.UserName);
         return NoContent();
     }
@@ -186,6 +197,7 @@ public class UsersController : ControllerBase
             await _signIn.RefreshSignInAsync(user);
         }
 
+        _hubConnections.EndSessionsOf(user.Id);
         _logger.LogInformation("{Caller} reset the password of web account {UserName}", Caller, user.UserName);
         return NoContent();
     }
@@ -230,6 +242,7 @@ public class UsersController : ControllerBase
         }
 
         await transaction.CommitAsync();
+        _hubConnections.EndSessionsOf(user.Id);
         _logger.LogInformation("{Caller} locked web account {UserName}", Caller, user.UserName);
         return UserResponse.From(user, _time);
     }

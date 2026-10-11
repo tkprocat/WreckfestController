@@ -225,6 +225,7 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddTrustedProxies(configuration);
         builder.Services.AddRateLimits();
         builder.Services.AddSignalR();
+        builder.Services.AddSingleton<AdminHubConnections>();
         builder.Services.AddSingleton(WebApp.Resolve(configuration));
         // HTTPS status: StartAsync registers the real one first; a test host has none.
         builder.Services.TryAddSingleton(HttpsStatusSource.None);
