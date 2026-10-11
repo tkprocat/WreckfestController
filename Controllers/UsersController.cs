@@ -194,6 +194,10 @@ public class UsersController : ControllerBase
     [HttpPost("{id}/lock")]
     public async Task<ActionResult<UserResponse>> Lock(string id)
     {
+        // As Delete: BEGIN IMMEDIATE takes the write lock before the count below, so two
+        // admins locking each other at once cannot both pass it (#226).
+        await using var transaction = await _db.Database.BeginTransactionAsync();
+
         var user = await _users.FindByIdAsync(id);
         if (user is null)
         {
@@ -203,6 +207,16 @@ public class UsersController : ControllerBase
         if (IsCaller(user))
         {
             return Refused("You cannot lock your own account.");
+        }
+
+        // Also guards API-key callers, who have no account of their own and so are never
+        // refused above. A failed-sign-in lockout ends by itself, so only an admin lock
+        // (until MaxValue) takes an account out of the count. Compared here rather than in
+        // SQL: SQLite cannot compare DateTimeOffset values.
+        var lockEnds = await _users.Users.Where(u => u.Id != user.Id).Select(u => u.LockoutEnd).ToListAsync();
+        if (!lockEnds.Any(end => end != DateTimeOffset.MaxValue))
+        {
+            return Refused("The last account that can sign in cannot be locked. Unlock or create another one first.");
         }
 
         // One save, so the lock and the new stamp that ends the account's sessions land
@@ -215,6 +229,7 @@ public class UsersController : ControllerBase
             return this.IdentityFailure(result);
         }
 
+        await transaction.CommitAsync();
         _logger.LogInformation("{Caller} locked web account {UserName}", Caller, user.UserName);
         return UserResponse.From(user, _time);
     }

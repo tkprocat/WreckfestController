@@ -202,7 +202,7 @@ position, name, isBot, vehicleName, outcome, timeMs, bestLapMs }] }]`.
 | PUT | `{id}` | `{ userName, email, displayName, timeZone }`. A new username or email ends that account's sessions (not the caller's own). |
 | DELETE | `{id}` | 204. **409** for your own account or the last one. |
 | POST | `{id}/password` | `{ newPassword }`. Admin reset: 204, ends the account's sessions. A rejected password leaves the old one in place. |
-| POST | `{id}/lock` | Locks until unlocked and ends the account's sessions. **409** for your own account. |
+| POST | `{id}/lock` | Locks until unlocked and ends the account's sessions. **409** for your own account, and for the last account not locked by an admin (an API-key script included): a failed-sign-in lockout ends by itself, so it does not count. |
 | POST | `{id}/unlock` | Lifts an admin lock or a failed-sign-in lockout. |
 
 Any account write answers **409** when the account was changed by another request

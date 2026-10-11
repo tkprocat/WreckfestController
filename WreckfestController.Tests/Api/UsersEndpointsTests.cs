@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.DependencyInjection;
+using WreckfestController.Data;
 
 namespace WreckfestController.Tests.Api;
 
@@ -247,6 +250,8 @@ public class UsersEndpointsTests
         var edit = new ConcurrentEditInterceptor();
         await using var host = await ApiTestHost.StartAsync(
             configureDatabase: options => options.AddInterceptors(edit));
+        // Someone left to sign in, or the last-account guard refuses before the race.
+        await host.CreateUserAsync();
         var other = await host.CreateUserAsync("other");
         using var script = host.CreateAuthenticatedClient();
 
@@ -256,6 +261,68 @@ public class UsersEndpointsTests
         Assert.Equal(HttpStatusCode.Conflict, locked.StatusCode);
         var stored = await script.GetFromJsonAsync<JsonElement>($"/api/users/{other.Id}", Ct);
         Assert.False(stored.GetProperty("isLockedOut").GetBoolean());
+    }
+
+    // #226: a script has no account of its own, so without a floor it could lock them all.
+    [Fact]
+    public async Task Lock_ByScript_LeavesOneAccountThatCanSignIn()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using var script = host.CreateAuthenticatedClient();
+
+        using var one = await script.PostAsync($"/api/users/{first.Id}/lock", null, Ct);
+        using var last = await script.PostAsync($"/api/users/{second.Id}/lock", null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, one.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, last.StatusCode);
+        using var browser = host.CreateBrowser();
+        await browser.SignInAsync("second");
+    }
+
+    // A failed-sign-in lockout ends by itself: that account still counts as one that
+    // can sign in, so another can be locked.
+    [Fact]
+    public async Task Lock_CountsAnAccountInAFailedSignInLockout()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using (var scope = host.Services.CreateScope())
+        {
+            var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
+            var stored = await users.FindByIdAsync(second.Id);
+            await users.SetLockoutEndDateAsync(stored!, DateTimeOffset.UtcNow.AddMinutes(15));
+        }
+        using var script = host.CreateAuthenticatedClient();
+
+        using var locked = await script.PostAsync($"/api/users/{first.Id}/lock", null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, locked.StatusCode);
+    }
+
+    // Two admins lock each other at the same moment. Each sees the other unlocked when
+    // it reads; unless the read and the lock are serialized, both go ahead.
+    [Fact]
+    public async Task ConcurrentLocks_NeverLockEveryAccount()
+    {
+        await using var host = await ApiTestHost.StartAsync(
+            configureDatabase: options => options.AddInterceptors(new CountRendezvousInterceptor("\"LockoutEnd\"")));
+        var first = await host.CreateUserAsync("first");
+        var second = await host.CreateUserAsync("second");
+        using var script = host.CreateAuthenticatedClient();
+
+        var responses = await Task.WhenAll(
+            script.PostAsync($"/api/users/{first.Id}/lock", null, Ct),
+            script.PostAsync($"/api/users/{second.Id}/lock", null, Ct));
+
+        var statuses = responses.Select(r => r.StatusCode).OrderBy(s => s).ToList();
+        Assert.Equal([HttpStatusCode.OK, HttpStatusCode.Conflict], statuses);
+        foreach (var response in responses)
+        {
+            response.Dispose();
+        }
     }
 
     // Two admins delete the other two accounts at the same moment. Each sees two
