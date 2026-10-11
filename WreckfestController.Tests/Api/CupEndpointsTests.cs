@@ -223,10 +223,9 @@ public class CupEndpointsTests
     }
 
     // #241: the delete reads the cups linked to the collection, rewrites them, then saves.
-    // A linked cup edited in between would fail that save on its version token. SQLite's
-    // own locking happened to order these two even before the delete took the write lock
-    // up front, so this guards the outcome rather than reproducing a failure: the delete
-    // succeeds, the edit lands after it, and the cup keeps the collection's tracks.
+    // A linked cup edited in between failed that save on its version token: an unhandled
+    // 500, and nothing deleted. Now the delete holds the write lock from the start, so the
+    // edit waits for it - and then finds the cup changed, as it should.
     [Fact]
     public async Task ALinkedCupEditedWhileItsCollectionIsDeleted_DoesNotFailTheDelete()
     {
@@ -239,6 +238,7 @@ public class CupEndpointsTests
         var collectionId = (await collection.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("id").GetInt32();
         var id = await CreateAsync(client, CupBody(extra: new { collectionId }));
 
+        pause.Arm();
         var delete = client.DeleteAsync($"/api/collections/{collectionId}", Ct);
         await pause.Paused.WaitAsync(TimeSpan.FromSeconds(10), Ct);
         var edit = SendAsync(client, HttpMethod.Put, $"/api/cups/{id}", CupBody(name: "Renamed", extra: new { collectionId }), "\"1\"");
@@ -246,7 +246,10 @@ public class CupEndpointsTests
         using var edited = await edit;
 
         Assert.Equal(HttpStatusCode.NoContent, deleted.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, edited.StatusCode);
         var cup = await client.GetFromJsonAsync<JsonElement>($"/api/cups/{id}", Ct);
+        Assert.Equal("Race night", cup.GetProperty("name").GetString());
+        Assert.Equal(2, cup.GetProperty("version").GetInt32());
         Assert.Equal(JsonValueKind.Null, cup.GetProperty("collectionId").ValueKind);
         Assert.Equal(["speedway2_figure_8"], cup.GetProperty("tracks").EnumerateArray().Select(t => t.GetProperty("track").GetString()));
     }
