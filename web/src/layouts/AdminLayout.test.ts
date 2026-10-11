@@ -17,7 +17,7 @@ vi.mock('vue-router', () => ({
 
 const { default: AdminLayout } = await import('./AdminLayout.vue')
 
-const NOTICE = 'Live updates are disconnected'
+const NOTICE = 'Live updates are disconnected and reconnecting.'
 let wrapper: VueWrapper | undefined
 
 beforeEach(() => {
@@ -40,6 +40,9 @@ describe('AdminLayout', () => {
     hub.status!.value = 'reconnecting'
     await vi.advanceTimersByTimeAsync(4_000)
     expect(wrapper!.text()).toContain(NOTICE)
+    // Announced once, politely: NAlert's own role="alert" would nest an assertive region.
+    expect(wrapper!.find('[role="status"]').text()).toContain(NOTICE)
+    expect(wrapper!.find('[role="alert"]').exists()).toBe(false)
 
     hub.status!.value = 'connected'
     await nextTick()

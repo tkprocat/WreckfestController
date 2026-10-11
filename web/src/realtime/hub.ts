@@ -64,7 +64,13 @@ export const hubStatus = readonly(status)
 let connection: HubConnection | null = null
 let retryTimer: ReturnType<typeof setTimeout> | undefined
 let retries = 0
-// restartHub's stop: the close it causes is not a loss to recover from.
+// Whether updates may have been missed since the connection last ran: set by a drop, a
+// close or a failed start, and cleared only by the connect that follows. Kept apart from
+// the shown status, so a deliberate restart neither hides a loss nor makes one up.
+let lost = false
+// Bumped by restartHub: a start it cancels on purpose is not a loss.
+let attempt = 0
+// restartHub's stop: the close it causes is not a loss either.
 let stopping = false
 const reconnectedHandlers = new Set<() => void>()
 
@@ -75,15 +81,13 @@ function hub(): HubConnection {
       .withAutomaticReconnect({ nextRetryDelayInMilliseconds: ({ previousRetryCount }) => retryDelay(previousRetryCount) })
       .configureLogging(LogLevel.Warning)
       .build()
-    connection.onreconnecting(() => {
-      status.value = 'reconnecting'
-    })
+    connection.onreconnecting(markLost)
     connection.onreconnected(connected)
     // The retry policy never gives up, but a reconnect the server refuses still ends
     // here: start again from scratch.
     connection.onclose(() => {
       if (!stopping) {
-        status.value = 'reconnecting'
+        markLost()
         scheduleStart()
       }
     })
@@ -91,8 +95,14 @@ function hub(): HubConnection {
   return connection
 }
 
+function markLost(): void {
+  lost = true
+  status.value = 'reconnecting'
+}
+
 function connected(): void {
-  const recovered = status.value === 'reconnecting'
+  const recovered = lost
+  lost = false
   status.value = 'connected'
   retries = 0
   if (recovered) {
@@ -135,22 +145,32 @@ export async function startHub(): Promise<void> {
   }
 
   clearTimeout(retryTimer)
+  const mine = attempt
   try {
     await connection.start()
   } catch (error) {
-    status.value = 'reconnecting'
-    scheduleStart()
+    // Cancelled by restartHub, which starts again itself: nothing was lost.
+    if (mine === attempt) {
+      markLost()
+      scheduleStart()
+    }
     throw error
   }
 
-  connected()
+  if (mine === attempt) {
+    connected()
+  }
 }
 
 /** Reconnects so the server puts this connection in the groups for who is now signed in. */
 export async function restartHub(): Promise<void> {
   const connection = hub()
   clearTimeout(retryTimer)
-  status.value = 'connecting'
+  attempt++
+  // A loss already under way still is one: its pages refetch once this connects.
+  if (!lost) {
+    status.value = 'connecting'
+  }
   if (connection.state !== HubConnectionState.Disconnected) {
     stopping = true
     try {

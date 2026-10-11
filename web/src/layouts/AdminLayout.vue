@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { NAlert, NButton, NDrawer, NDrawerContent, NMenu, type MenuOption } from 'naive-ui'
+import { NButton, NDrawer, NDrawerContent, NMenu, type MenuOption } from 'naive-ui'
+import StatusBadge from '@/components/StatusBadge.vue'
 import { hubStatus } from '@/realtime/hub'
 
 const route = useRoute()
@@ -117,10 +118,13 @@ async function afterDrawerClosed() {
         </NButton>
         <span>Control room</span>
       </div>
+      <!-- One polite live region, always there so the notice is announced when it appears.
+           Not NAlert: it renders an assertive role="alert" that cannot be overridden. -->
       <div role="status">
-        <NAlert v-if="liveUpdatesLost" type="warning" class="live-updates-lost" title="Live updates are disconnected">
-          Reconnecting. What this page shows may be out of date until then; it refreshes once the connection is back.
-        </NAlert>
+        <p v-if="liveUpdatesLost" class="live-updates-lost">
+          <StatusBadge compact tone="warning">NO CONNECTION</StatusBadge>
+          <span>Live updates are disconnected and reconnecting. This page may be out of date until then; it refreshes once the connection is back.</span>
+        </p>
       </div>
       <div ref="content" class="admin-content"><RouterView /></div>
     </div>
@@ -142,7 +146,7 @@ async function afterDrawerClosed() {
 .public-link { display: block; margin: 12px 20px 0; padding: 16px 4px 4px; border-top: 1px solid var(--header-border); color: var(--text-muted); text-decoration: none; font-size: var(--font-meta); }
 .public-link:hover { color: var(--accent); }
 .mobile-navigation { display: none; }
-.live-updates-lost { margin-bottom: var(--space-6); }
+.live-updates-lost { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin: 0 0 var(--space-6); color: var(--text-secondary); }
 .admin-content :deep(section) { min-width: 0; }
 .admin-content :deep(.n-data-table) { max-width: 100%; overflow-x: auto; }
 @media (max-width: 959px) {

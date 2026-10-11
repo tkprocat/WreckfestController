@@ -113,4 +113,28 @@ describe('DashboardView', () => {
     wrapper.unmount()
   })
 
+  // #231: the load after reconnecting can overlap the first; answering last, the older
+  // roster must not replace the newer one.
+  it('reloads the roster after reconnecting, keeping the newest answer', async () => {
+    const first = deferred<unknown>()
+    const second = deferred<unknown>()
+    const rosters = [first.promise, second.promise]
+    api.GET.mockImplementation((path: string) =>
+      path === '/api/server/players'
+        ? rosters.shift()
+        : Promise.resolve(answer({ isRunning: true, processId: 42, uptimeSeconds: 60, currentTrack: null })),
+    )
+    const wrapper = mount(DashboardView)
+    await flushPromises()
+
+    hub.get('Reconnected')!({})
+    second.resolve(answer({ players: [player('After the drop')], totalPlayers: 1, maxPlayers: 24, lastUpdated: '' }))
+    await flushPromises()
+    first.resolve(answer({ players: [player('Before the drop')], totalPlayers: 1, maxPlayers: 24, lastUpdated: '' }))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('After the drop')
+    expect(wrapper.text()).not.toContain('Before the drop')
+    wrapper.unmount()
+  })
 })

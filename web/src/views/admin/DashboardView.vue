@@ -21,18 +21,23 @@ const rosterKey = (p: PlayerSummary) =>
 // A roster from the hub is newer than a load that was on its way when it arrived: the
 // load's answer must not put the older roster back. A failed load keeps what is shown.
 let hubRosterSeen = false
+// Only the latest load is used: one after reconnecting can overlap the first, and an
+// older answer arriving last must not put an older roster back.
+let playersRequest = 0
 
 async function loadPlayers() {
+  const mine = ++playersRequest
+  const superseded = () => mine !== playersRequest || hubRosterSeen
   hubRosterSeen = false
   playersLoading.value = true
   try {
     const { data, error: problem } = await api.GET('/api/server/players')
     if (!data) {
-      if (!hubRosterSeen) playersError.value = problemMessage(problem, 'The players could not be loaded.')
+      if (!superseded()) playersError.value = problemMessage(problem, 'The players could not be loaded.')
       return
     }
 
-    if (hubRosterSeen) return
+    if (superseded()) return
     playersError.value = null
     players.value = (data.players ?? []).map((p) => ({
       name: p.name ?? '',
@@ -45,9 +50,9 @@ async function loadPlayers() {
     }))
     playersLoaded.value = true
   } catch {
-    if (!hubRosterSeen) playersError.value = 'The players could not be loaded: no answer from the controller.'
+    if (!superseded()) playersError.value = 'The players could not be loaded: no answer from the controller.'
   } finally {
-    playersLoading.value = false
+    if (mine === playersRequest) playersLoading.value = false
   }
 }
 

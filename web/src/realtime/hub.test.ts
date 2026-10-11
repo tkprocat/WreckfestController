@@ -142,6 +142,45 @@ describe('hub', () => {
     expect(hub.hubStatus.value).toBe('connected')
   })
 
+  // Signing out while the connection is down: the restart must not hide that updates
+  // were missed.
+  it('still resyncs a loss that a deliberate restart lands in', async () => {
+    const resyncs = vi.fn()
+    hub.onHub('Reconnected', resyncs)
+    await hub.startHub()
+    fake.reconnecting.forEach((callback) => callback())
+
+    await hub.restartHub()
+
+    expect(resyncs).toHaveBeenCalledTimes(1)
+    expect(hub.hubStatus.value).toBe('connected')
+  })
+
+  // A restart while the first start is still on its way cancels it: that is not a loss.
+  it('does not take a start a restart cancelled for a loss', async () => {
+    const resyncs = vi.fn()
+    hub.onHub('Reconnected', resyncs)
+    let cancelFirst!: (error: Error) => void
+    fake.start.mockImplementationOnce(
+      () => new Promise<void>((_, reject) => (cancelFirst = reject)),
+    )
+    fake.stop.mockImplementationOnce(async () => {
+      fake.state = 'Disconnected'
+      cancelFirst(new Error('The connection was stopped during negotiation.'))
+    })
+    fake.state = 'Disconnected'
+    const first = hub.startHub()
+    fake.state = 'Connecting'
+
+    await hub.restartHub()
+    await expect(first).rejects.toThrow('stopped during negotiation')
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(resyncs).not.toHaveBeenCalled()
+    expect(fake.start).toHaveBeenCalledTimes(2)
+    expect(hub.hubStatus.value).toBe('connected')
+  })
+
   // Signing in or out restarts it on purpose: nothing was lost, so nothing to refetch.
   it('does not retry or resync around a deliberate restart', async () => {
     const resyncs = vi.fn()
