@@ -103,9 +103,10 @@ public sealed class RaceResultStore
     }
 
     /// <summary>
-    /// Every car finished the same: the same results screen, read twice. Only the race's
-    /// own car records count: the Steam id and the vehicle come from the player table,
-    /// which a player leaving the results screen clears between the two reads.
+    /// Every car finished the same: the same results screen, read twice. Only the results
+    /// themselves count: the Steam id comes from the player table, which a player leaving
+    /// the results screen clears between the two reads, and the vehicle is read through a
+    /// pointer from the car record rather than being part of the result.
     /// </summary>
     private static bool SameResults(IReadOnlyCollection<RaceEntry> saved, IReadOnlyCollection<RaceEntry> read)
     {
