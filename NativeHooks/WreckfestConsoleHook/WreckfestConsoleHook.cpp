@@ -106,6 +106,9 @@ volatile LONG g_droppedLines = 0;
 
 CRITICAL_SECTION g_hookLock;
 CRITICAL_SECTION g_outputLock;
+// Innermost: taken only inside WriteFallbackLog, which takes nothing else, so any
+// thread may write the fallback log whatever it already holds (#229).
+CRITICAL_SECTION g_fallbackLogLock;
 CRITICAL_SECTION g_dispatchLock;
 bool g_hookInstalled = false;
 bool g_inputStarted = false;
@@ -729,11 +732,31 @@ void ClosePipe()
     LeaveCriticalSection(&g_outputLock);
 }
 
-void WriteFallbackLog(const char* text)
+// The hook's own trouble, and lines the controller could not be given: written only
+// when the pipe cannot take them (#229), and started over past FallbackLogMaxBytes so
+// a server that runs for weeks without a controller cannot fill the disk.
+constexpr LONGLONG FallbackLogMaxBytes = 1024 * 1024;
+
+// onlyIfFree: shutdown's own diagnostics, written when a worker failed to stop - which
+// may be a worker stuck inside this very function. They are dropped rather than wait
+// for it, so shutdown keeps its deadline.
+void WriteFallbackLog(const char* text, bool onlyIfFree = false)
 {
     if (g_fallbackLogPath[0] == L'\0' || text == nullptr)
     {
         return;
+    }
+
+    if (onlyIfFree)
+    {
+        if (!TryEnterCriticalSection(&g_fallbackLogLock))
+        {
+            return;
+        }
+    }
+    else
+    {
+        EnterCriticalSection(&g_fallbackLogLock);
     }
 
     HANDLE file = CreateFileW(
@@ -745,15 +768,35 @@ void WriteFallbackLog(const char* text)
         FILE_ATTRIBUTE_NORMAL,
         nullptr);
 
-    if (file == INVALID_HANDLE_VALUE)
+    LARGE_INTEGER size = {};
+    if (file != INVALID_HANDLE_VALUE && GetFileSizeEx(file, &size) && size.QuadPart > FallbackLogMaxBytes)
     {
-        return;
+        CloseHandle(file);
+        file = CreateFileW(
+            g_fallbackLogPath,
+            GENERIC_WRITE,
+            FILE_SHARE_READ,
+            nullptr,
+            CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
+        if (file != INVALID_HANDLE_VALUE)
+        {
+            constexpr char restarted[] = "(earlier lines removed: the log had reached its size limit)\r\n";
+            DWORD marker = 0;
+            WriteFile(file, restarted, sizeof(restarted) - 1, &marker, nullptr);
+        }
     }
 
-    DWORD written = 0;
-    WriteFile(file, text, static_cast<DWORD>(std::strlen(text)), &written, nullptr);
-    WriteFile(file, "\r\n", 2, &written, nullptr);
-    CloseHandle(file);
+    if (file != INVALID_HANDLE_VALUE)
+    {
+        DWORD written = 0;
+        WriteFile(file, text, static_cast<DWORD>(std::strlen(text)), &written, nullptr);
+        WriteFile(file, "\r\n", 2, &written, nullptr);
+        CloseHandle(file);
+    }
+
+    LeaveCriticalSection(&g_fallbackLogLock);
 }
 
 // Writes to the output pipe; the caller holds g_outputLock. The pipe is overlapped
@@ -796,16 +839,24 @@ void WriteHookLineBlocking(const char* text)
 
     EnterCriticalSection(&g_outputLock);
 
+    bool delivered = false;
     if (g_pipe != INVALID_HANDLE_VALUE)
     {
-        if (!WritePipeLocked(text, static_cast<DWORD>(std::strlen(text))) || !WritePipeLocked("\n", 1))
+        delivered = WritePipeLocked(text, static_cast<DWORD>(std::strlen(text))) && WritePipeLocked("\n", 1);
+        if (!delivered)
         {
             CloseHandle(g_pipe);
             g_pipe = INVALID_HANDLE_VALUE;
         }
     }
 
-    WriteFallbackLog(text);
+    // Only what the controller did not get: every line used to be copied here too,
+    // chat and player names included, into a file that only grew (#229).
+    if (!delivered)
+    {
+        WriteFallbackLog(text);
+    }
+
     LeaveCriticalSection(&g_outputLock);
 }
 
@@ -2458,7 +2509,7 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookShutdown()
         if (!JoinWorker(thread, inputThread, deadline))
         {
             // Not through the pipe: the worker still running may hold g_outputLock.
-            WriteFallbackLog("WreckfestConsoleHook shutdown timed out waiting for a worker thread.");
+            WriteFallbackLog("WreckfestConsoleHook shutdown timed out waiting for a worker thread.", true);
             LeaveCriticalSection(&g_teardownLock);
             return WAIT_TIMEOUT;
         }
@@ -2482,7 +2533,7 @@ extern "C" __declspec(dllexport) DWORD WreckfestConsoleHookShutdown()
 
     if (!RemoveHooks(deadline))
     {
-        WriteFallbackLog("WreckfestConsoleHook shutdown could not remove the hooks before its deadline.");
+        WriteFallbackLog("WreckfestConsoleHook shutdown could not remove the hooks before its deadline.", true);
         LeaveCriticalSection(&g_teardownLock);
         return WAIT_TIMEOUT;
     }
@@ -2514,6 +2565,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
         DisableThreadLibraryCalls(module);
         InitializeCriticalSection(&g_hookLock);
         InitializeCriticalSection(&g_outputLock);
+        InitializeCriticalSection(&g_fallbackLogLock);
         InitializeCriticalSection(&g_dispatchLock);
         InitializeCriticalSection(&g_queueLock);
         InitializeCriticalSection(&g_threadsLock);
@@ -2545,6 +2597,7 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID reserved)
         // every worker and removed the hooks, or that nothing was ever started.
         // Either way no other thread can be using any of this.
         DeleteCriticalSection(&g_outputLock);
+        DeleteCriticalSection(&g_fallbackLogLock);
         DeleteCriticalSection(&g_hookLock);
         DeleteCriticalSection(&g_dispatchLock);
         DeleteCriticalSection(&g_queueLock);

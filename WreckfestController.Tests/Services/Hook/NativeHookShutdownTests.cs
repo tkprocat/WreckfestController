@@ -52,6 +52,12 @@ public sealed class NativeHookShutdownTests
         await reader;
         Assert.Equal("WreckfestConsoleHook shut down.", lines[^1]);
 
+        // What the controller was given is not copied to the fallback log as well:
+        // that copied chat and player names into a file that only grew (#229).
+        Assert.Contains(lines, line => line.Contains(RefusedDispatch, StringComparison.Ordinal));
+        Assert.Equal(0, host.CountFallbackLines(RefusedDispatch));
+        Assert.Equal(0, host.CountFallbackLines("WreckfestConsoleHook shut down."));
+
         // Already done: answers 0 again, and the start exports refuse.
         host.Shutdown();
         Assert.Equal(ErrorShutdownInProgress, host.Call("WreckfestConsoleHookInitialize"));
@@ -75,11 +81,11 @@ public sealed class NativeHookShutdownTests
         await output.WaitForConnectionAsync(timeout.Token);
 
         // The controller connects and never reads. Every refused command queues a
-        // line, and the hook writes each line to its fallback log only after the
-        // pipe has taken it. Once the log stops moving with lines still owed, the
-        // writer is stuck on a full pipe, however large Windows made the buffer.
+        // line. Once the pipe's contents stop growing while it holds fewer lines than
+        // were sent, the writer is stuck on a full pipe with lines still owed, however
+        // large Windows made the buffer.
         var sent = 0;
-        var logged = 0;
+        var inPipe = 0;
         var stalled = false;
         while (!stalled && sent < 1500)
         {
@@ -88,13 +94,14 @@ public sealed class NativeHookShutdownTests
                 await host.SendInputCommandAsync("list", timeout.Token);
             }
 
-            var before = host.CountFallbackLines(RefusedDispatch);
+            var before = Waiting(output);
             await Task.Delay(500, timeout.Token);
-            logged = host.CountFallbackLines(RefusedDispatch);
-            stalled = logged < sent && logged == before;
+            var waiting = Waiting(output);
+            inPipe = CompleteLines(waiting).Count(l => l.Contains(RefusedDispatch, StringComparison.Ordinal));
+            stalled = waiting.Length == before.Length && inPipe < sent;
         }
 
-        Assert.True(stalled, $"The pipe never filled: {sent} sent, {logged} written");
+        Assert.True(stalled, $"The pipe never filled: {sent} sent, {inPipe} in the pipe");
 
         var elapsed = host.Shutdown();
         Assert.True(elapsed < TimeSpan.FromSeconds(4), $"Shutdown took {elapsed}");
@@ -103,8 +110,11 @@ public sealed class NativeHookShutdownTests
         // reached rather than inferring it from timing.
         Assert.Equal(1, host.CountFallbackLines("gave up on a controller that stopped reading"));
 
-        // Abandoning the controller loses nothing the fallback log would keep.
-        Assert.Equal(sent, host.CountFallbackLines(RefusedDispatch));
+        // Abandoning the controller loses nothing: each line is either whole in the pipe
+        // or, once the pipe could not take it, in the fallback log - never both, since
+        // lines the pipe took are no longer copied there (#229).
+        var delivered = CompleteLines(await ReadToEndAsync(output, timeout.Token)).Count(l => l.Contains(RefusedDispatch, StringComparison.Ordinal));
+        Assert.Equal(sent, delivered + host.CountFallbackLines(RefusedDispatch));
         Assert.Equal(1, host.CountFallbackLines("WreckfestConsoleHook shut down."));
 
         host.FreeLibrary();
@@ -188,6 +198,50 @@ public sealed class NativeHookShutdownTests
             await Task.Delay(50, cancellationToken);
         }
     }
+
+    /// <summary>What was written into the pipe and not read yet, left there for the reader.</summary>
+    private static string Waiting(NamedPipeServerStream pipe)
+    {
+        if (!PeekNamedPipe(pipe.SafePipeHandle, null, 0, out _, out var available, IntPtr.Zero))
+        {
+            throw new Win32Exception();
+        }
+
+        var buffer = new byte[available];
+        if (!PeekNamedPipe(pipe.SafePipeHandle, buffer, available, out var read, out _, IntPtr.Zero))
+        {
+            throw new Win32Exception();
+        }
+
+        return Encoding.UTF8.GetString(buffer, 0, (int)read);
+    }
+
+    /// <summary>Everything left in the pipe, once the hook has closed its end.</summary>
+    private static async Task<string> ReadToEndAsync(Stream pipe, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        await pipe.CopyToAsync(buffer, cancellationToken);
+        return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    /// <summary>
+    /// The newline-terminated lines: a write cancelled part-way can leave the start of a
+    /// line in the pipe, and that line was then written to the fallback log instead.
+    /// </summary>
+    private static IEnumerable<string> CompleteLines(string text)
+    {
+        var lines = text.Split('\n');
+        return lines.Take(lines.Length - 1);
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool PeekNamedPipe(
+        Microsoft.Win32.SafeHandles.SafePipeHandle pipe,
+        byte[]? buffer,
+        uint bufferSize,
+        out uint bytesRead,
+        out uint totalBytesAvailable,
+        IntPtr bytesLeftThisMessage);
 
     /// <summary>A disposable child process to inject the hook into.</summary>
     private sealed class HookHost : IAsyncDisposable
