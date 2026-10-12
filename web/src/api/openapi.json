@@ -3315,6 +3315,192 @@
         }
       }
     },
+    "/api/public/tracks": {
+      "get": {
+        "tags": [
+          "PublicTracks"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicTrackSummary"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicTrackSummary"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicTrackSummary"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/tracks/{key}": {
+      "get": {
+        "tags": [
+          "PublicTracks"
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicTrackDetail"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicTrackDetail"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicTrackDetail"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/public/variants/{variantId}": {
+      "get": {
+        "tags": [
+          "PublicTracks"
+        ],
+        "parameters": [
+          {
+            "name": "variantId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVariantDetail"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVariantDetail"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicVariantDetail"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/server/version": {
       "get": {
         "tags": [
@@ -6263,6 +6449,59 @@
           "Cup"
         ]
       },
+      "PublicImages": {
+        "required": [
+          "small",
+          "large",
+          "layout"
+        ],
+        "type": "object",
+        "properties": {
+          "small": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "large": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "layout": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "PublicLapRecord": {
+        "required": [
+          "name",
+          "vehicleName",
+          "lapMs",
+          "endedAt"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "vehicleName": {
+            "type": "string"
+          },
+          "lapMs": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "endedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "PublicOverview": {
         "required": [
           "serverName",
@@ -6494,6 +6733,7 @@
         "required": [
           "id",
           "name",
+          "trackKey",
           "gameMode",
           "laps"
         ],
@@ -6504,6 +6744,12 @@
           },
           "name": {
             "type": "string"
+          },
+          "trackKey": {
+            "type": [
+              "null",
+              "string"
+            ]
           },
           "gameMode": {
             "type": [
@@ -6559,7 +6805,8 @@
       "PublicTrack": {
         "required": [
           "id",
-          "name"
+          "name",
+          "trackKey"
         ],
         "type": "object",
         "properties": {
@@ -6568,6 +6815,123 @@
           },
           "name": {
             "type": "string"
+          },
+          "trackKey": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "PublicTrackCup": {
+        "required": [
+          "name",
+          "isActive",
+          "nextOccurrence",
+          "repeat"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "isActive": {
+            "type": "boolean"
+          },
+          "nextOccurrence": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "repeat": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "PublicTrackDetail": {
+        "required": [
+          "key",
+          "name",
+          "origin",
+          "modName",
+          "workshopId",
+          "images",
+          "variants"
+        ],
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/TrackOrigin"
+          },
+          "modName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "workshopId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "images": {
+            "$ref": "#/components/schemas/PublicImages"
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicVariantSummary"
+            }
+          }
+        }
+      },
+      "PublicTrackSummary": {
+        "required": [
+          "key",
+          "name",
+          "origin",
+          "modName",
+          "images",
+          "variants"
+        ],
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/TrackOrigin"
+          },
+          "modName": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "images": {
+            "$ref": "#/components/schemas/PublicImages"
+          },
+          "variants": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicVariantSummary"
+            }
           }
         }
       },
@@ -6611,6 +6975,120 @@
               "string"
             ],
             "format": "date-time"
+          }
+        }
+      },
+      "PublicVariantDetail": {
+        "required": [
+          "variantId",
+          "raceCount",
+          "typicalLapMs",
+          "typicalLapFinishes",
+          "recentRaces",
+          "fastestLaps",
+          "mostWins",
+          "cups"
+        ],
+        "type": "object",
+        "properties": {
+          "variantId": {
+            "type": "string"
+          },
+          "raceCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "typicalLapMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "typicalLapFinishes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "recentRaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicRace"
+            }
+          },
+          "fastestLaps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicLapRecord"
+            }
+          },
+          "mostWins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicWinRecord"
+            }
+          },
+          "cups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicTrackCup"
+            }
+          }
+        }
+      },
+      "PublicVariantSummary": {
+        "required": [
+          "variantId",
+          "name",
+          "gameMode",
+          "trackLengthM",
+          "images",
+          "raceCount"
+        ],
+        "type": "object",
+        "properties": {
+          "variantId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "gameMode": {
+            "$ref": "#/components/schemas/GameMode"
+          },
+          "trackLengthM": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "images": {
+            "$ref": "#/components/schemas/PublicImages"
+          },
+          "raceCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "PublicWinRecord": {
+        "required": [
+          "name",
+          "wins",
+          "races"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "wins": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "races": {
+            "type": "integer",
+            "format": "int32"
           }
         }
       },
@@ -7557,6 +8035,9 @@
     },
     {
       "name": "Public"
+    },
+    {
+      "name": "PublicTracks"
     },
     {
       "name": "Server"

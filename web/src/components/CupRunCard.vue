@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { NSwitch, NTag } from 'naive-ui'
 import StatusBadge from '@/components/StatusBadge.vue'
 import RaceResultsTable from '@/components/RaceResultsTable.vue'
+import TrackLink from '@/components/TrackLink.vue'
 import type { PublicCupRun, PublicRace } from '@/composables/usePublicFeed'
 import { formatFromNow, formatWhen } from '@/utils/format'
 import { laps } from '@/utils/raceResults'
@@ -113,7 +114,7 @@ function winner(race: PublicRace): string | undefined {
           <li v-for="race in cup.races" :key="race.id">
             <details>
               <summary>
-                <span class="race-name">{{ race.track.name }}</span>
+                <span class="race-name"><TrackLink :track="race.track" /></span>
                 <span class="race-meta">
                   <time :datetime="race.endedAt" :title="formatWhen(race.endedAt)">{{ ago(race) }}</time>
                   <template v-if="laps(race)"> · {{ laps(race) }}</template>

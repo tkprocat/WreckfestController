@@ -2838,6 +2838,170 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/public/tracks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["PublicTrackSummary"][];
+                        "application/json": components["schemas"]["PublicTrackSummary"][];
+                        "text/json": components["schemas"]["PublicTrackSummary"][];
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/public/tracks/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    key: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["PublicTrackDetail"];
+                        "application/json": components["schemas"]["PublicTrackDetail"];
+                        "text/json": components["schemas"]["PublicTrackDetail"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/public/variants/{variantId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    variantId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["PublicVariantDetail"];
+                        "application/json": components["schemas"]["PublicVariantDetail"];
+                        "text/json": components["schemas"]["PublicVariantDetail"];
+                    };
+                };
+                /** @description Not Found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["ProblemDetails"];
+                        "application/json": components["schemas"]["ProblemDetails"];
+                        "text/json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/server/version": {
         parameters: {
             query?: never;
@@ -4579,6 +4743,19 @@ export interface components {
         };
         /** @enum {unknown} */
         PublicFeedItemKind: "Race" | "Cup";
+        PublicImages: {
+            small: null | string;
+            large: null | string;
+            layout: null | string;
+        };
+        PublicLapRecord: {
+            name: string;
+            vehicleName: string;
+            /** Format: int32 */
+            lapMs: number;
+            /** Format: date-time */
+            endedAt: string;
+        };
         PublicOverview: {
             serverName: null | string;
             /** Format: int32 */
@@ -4636,6 +4813,7 @@ export interface components {
         PublicRotationTrack: {
             id: string;
             name: string;
+            trackKey: null | string;
             gameMode: null | string;
             /** Format: int32 */
             laps: null | number;
@@ -4654,6 +4832,31 @@ export interface components {
         PublicTrack: {
             id: string;
             name: string;
+            trackKey: null | string;
+        };
+        PublicTrackCup: {
+            name: string;
+            isActive: boolean;
+            /** Format: date-time */
+            nextOccurrence: null | string;
+            repeat: null | string;
+        };
+        PublicTrackDetail: {
+            key: string;
+            name: string;
+            origin: components["schemas"]["TrackOrigin"];
+            modName: null | string;
+            workshopId: null | string;
+            images: components["schemas"]["PublicImages"];
+            variants: components["schemas"]["PublicVariantSummary"][];
+        };
+        PublicTrackSummary: {
+            key: string;
+            name: string;
+            origin: components["schemas"]["TrackOrigin"];
+            modName: null | string;
+            images: components["schemas"]["PublicImages"];
+            variants: components["schemas"]["PublicVariantSummary"][];
         };
         PublicUpcomingCup: {
             name: string;
@@ -4665,6 +4868,36 @@ export interface components {
             warmupAt: null | string;
             /** Format: date-time */
             endsAt: null | string;
+        };
+        PublicVariantDetail: {
+            variantId: string;
+            /** Format: int32 */
+            raceCount: number;
+            /** Format: int32 */
+            typicalLapMs: null | number;
+            /** Format: int32 */
+            typicalLapFinishes: number;
+            recentRaces: components["schemas"]["PublicRace"][];
+            fastestLaps: components["schemas"]["PublicLapRecord"][];
+            mostWins: components["schemas"]["PublicWinRecord"][];
+            cups: components["schemas"]["PublicTrackCup"][];
+        };
+        PublicVariantSummary: {
+            variantId: string;
+            name: string;
+            gameMode: components["schemas"]["GameMode"];
+            /** Format: double */
+            trackLengthM: null | number;
+            images: components["schemas"]["PublicImages"];
+            /** Format: int32 */
+            raceCount: number;
+        };
+        PublicWinRecord: {
+            name: string;
+            /** Format: int32 */
+            wins: number;
+            /** Format: int32 */
+            races: number;
         };
         /** @enum {unknown} */
         RaceOutcome: "Finished" | "Projected" | "DidNotFinish" | "Unknown";

@@ -38,7 +38,7 @@ A missing or rejected credential returns **401** with no body, never a redirect.
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
 (`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`,
-`GET public/overview`, `GET public/races`, `GET public/feed`, the [catalogue images](#images--apiimages)
+`GET public/overview`, `GET public/races`, `GET public/feed`, the public track pages (`GET public/tracks`, `public/tracks/{key}`, `public/variants/{variantId}`), the [catalogue images](#images--apiimages)
 under `GET images/...`, and the [live-update hub](#live-updates--hubsserver)), so one
 cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
@@ -168,23 +168,28 @@ why. Numbers must be JSON numbers: `"5"` for an integer is a 400.
 | --- | --- | --- |
 | GET | `overview` | Anonymous. The public home page's data, below. |
 | GET | `races` | Anonymous. The latest 10 finished races, newest first, below. |
+| GET | `feed` | Anonymous. The front page's results, below. |
+| GET | `tracks` | Anonymous. Every track for the public track pages, below. |
+| GET | `tracks/{key}` | Anonymous. One track and its layouts. **404** for a hidden or unknown track. |
+| GET | `variants/{variantId}` | Anonymous. What the race log says about one layout. **404** for a hidden one. |
 
 `overview` is `{ serverName, maxPlayers, status: { isRunning, uptimeSeconds }, currentTrack,
 players: { humans, bots, list: [{ name, isBot }] }, rotation: { name, tracks: [{ id, name,
-gameMode, laps }] }, activeCup: { name, activatedAt, phase, startsAt, endsAt },
+trackKey, gameMode, laps }] }, activeCup: { name, activatedAt, phase, startsAt, endsAt },
 upcomingCups: [{ name, description, nextOccurrence, repeat, warmupAt, endsAt }], updatedAt }`.
 - The active cup's `phase` is `Warmup` until `startsAt`, then `Running` until `endsAt`
   (null: no end). An upcoming cup's `warmupAt` is when the server restarts into it: its
   `nextOccurrence` when it has no warmup.
 - A track's `name` is the catalogue's "Track - Variant", or its id when the catalogue does
-  not know it. `serverName`, `maxPlayers` and the rotation are null or empty while the
+  not know it. `trackKey` is its catalogue track's key, for a link to `/tracks/{trackKey}/{id}`;
+  null when the catalogue does not know it, or the track or the variant is hidden. `serverName`, `maxPlayers` and the rotation are null or empty while the
   server config cannot be read.
 - It is built from public fields only: never the server password, the admin or moderator
   Steam ids, or a cup's server settings.
 - 60 requests a minute per client IP; beyond that **429** with `Retry-After`. Live changes
   come from the hub's public group, so a page need not poll.
 
-`races` is `[{ id, startedAt, endedAt, track: { id, name }, laps, cupName, warmup, entries: [{
+`races` is `[{ id, startedAt, endedAt, track: { id, name, trackKey }, laps, cupName, warmup, entries: [{
 position, name, isBot, vehicleName, outcome, timeMs, bestLapMs }] }]`, the latest 10.
 - `entries` are in finishing order, bots in their real places; a car the game never placed
   has a null `position` and comes last. `outcome` is `Finished`, `Projected` (a bot's time
@@ -213,6 +218,31 @@ position, name, isBot, vehicleName, outcome, timeMs, bestLapMs }] }]`, the lates
 - `races` are the newest 50 of `raceCount`, warmup races included and marked.
 - It shares `overview`'s rate limit. Reload on `RaceRecorded`, `CupActivated`,
   `CupStarted` and `CupEnded`.
+
+**Track pages** (#261). Tracks and layouts are named by `key` and `variantId`, ignoring
+case, never by database id, so links survive a re-import. Hidden tracks and hidden layouts
+are left out everywhere; so are admin fields (voting, tags, built-in) and Steam ids.
+
+`tracks` is `[{ key, name, origin, modName, images, variants: [{ variantId, name, gameMode,
+trackLengthM, images, raceCount }] }]`, by name, for tracks with at least one visible
+layout. `tracks/{key}` is the same for one track, plus `workshopId`, with each layout's
+`raceCount` filled in. `images` is `{ small, large, layout }`: the hash of the picture each
+[image link](#images--apiimages) answers with, or null where it answers 404, so a page can
+link with `?v=<hash>` and the image is cached for good. `layout` is a layout's outline, to
+draw over its picture.
+
+`variants/{variantId}` is `{ variantId, raceCount, typicalLapMs, typicalLapFinishes,
+recentRaces, fastestLaps: [{ name, vehicleName, lapMs, endedAt }], mostWins: [{ name, wins,
+races }], cups: [{ name, isActive, nextOccurrence, repeat }] }`.
+- `recentRaces` are its latest 10, shaped as in `races`.
+- `fastestLaps` and `mostWins` are the top 5 players, bots left out. A player is counted by
+  Steam id when the log has one, else by name, and shown by the name they last raced under.
+- `typicalLapMs` is the median of race time over laps for every finish here, bots' too, so
+  it includes the standing start and traffic; the page multiplies it by a lap count for an
+  estimated race time. Null before anyone has finished here.
+- `cups` are those whose rotation has the layout (a linked collection's, else the cup's own
+  list): the active one first, then by next occurrence.
+- All three share `overview`'s rate limit.
 
 ### Users — `api/users`
 

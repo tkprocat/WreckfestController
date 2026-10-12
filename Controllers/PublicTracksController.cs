@@ -112,7 +112,7 @@ public class PublicTracksController : ControllerBase
         var recent = await PublicFeed.Races(races.OrderByDescending(r => r.EndedAt).ThenByDescending(r => r.Id).Take(RaceLimit))
             .ToListAsync(cancellationToken);
         var name = new CatalogueTrackName($"{variant.TrackName} - {variant.Name}", variant.TrackKey);
-        var names = ids.Append(variant.VariantId).Distinct().ToDictionary(id => id, _ => name, StringComparer.OrdinalIgnoreCase);
+        var names = ids.Append(variant.VariantId).Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(id => id, _ => name, StringComparer.OrdinalIgnoreCase);
 
         var entries = await _db.RaceEntries
             .AsNoTracking()

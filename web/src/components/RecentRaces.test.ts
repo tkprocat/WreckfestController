@@ -25,7 +25,7 @@ const race: PublicRace = {
   id: 7,
   startedAt: null,
   endedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
-  track: { id: 'fields14', name: 'Fields - Long' },
+  track: { id: 'fields14', name: 'Fields - Long', trackKey: 'fields' },
   laps: 3,
   cupName: 'Friday Cup',
   warmup: false,
@@ -142,7 +142,7 @@ describe('RecentRaces', () => {
         { position: 3, name: 'Bob', isBot: false, points: 6 },
       ],
       raceCount: 2,
-      races: [race, { ...race, id: 6, warmup: true, track: { id: 'speedway2', name: 'Speedway' } }],
+      races: [race, { ...race, id: 6, warmup: true, track: { id: 'speedway2', name: 'Speedway', trackKey: null } }],
       ...extra,
     })
     const asCup = (c: PublicCupRun): PublicFeedItem => ({ kind: 'Cup', race: null, cup: c })
