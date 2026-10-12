@@ -44,6 +44,7 @@ const arena = () =>
   track(2, 'Crash Arena', [variant(21, 2, 'bowl', 'Bowl', { gameMode: 'Derby', isBuiltIn: false })], { isBuiltIn: false, origin: 'Custom', weather: ['clear', 'rain'] })
 const hiddenTrack = () => track(3, 'Old Quarry', [variant(31, 3, 'quarry', 'Quarry')], { isHidden: true })
 
+const counts = () => ({ added: 0, updated: 0, unchanged: 0, skipped: 0 })
 const answer = (data: unknown, status = 200) => ({ data, error: undefined, response: new Response(null, { status }) })
 const refused = (error: unknown, status: number) => ({ data: undefined, error, response: new Response(null, { status }) })
 
@@ -547,5 +548,34 @@ describe('TracksView', () => {
       expect(body().text()).toContain('Changed elsewhere')
       expect(body().text()).toContain('Loop (theirs)')
     })
+  })
+
+  it("shows a variant's track length", async () => {
+    api.GET.mockImplementation((path: string) =>
+      Promise.resolve(answer(path === '/api/catalogue/tracks' ? [track(1, 'Fields', [variant(11, 1, 'loop', 'Loop', { trackLengthM: 3912.5 })])] : [])),
+    )
+    await mountPage()
+
+    await expand('Fields')
+
+    expect(wrapper!.text()).toContain('3.91 km')
+  })
+
+  it('reloads the tracks after a track dump import', async () => {
+    api.POST.mockResolvedValue(
+      answer({ tool: null, generatedAt: null, mods: counts(), tracks: counts(), variants: { ...counts(), added: 1 }, skipped: [], diagnostics: [] }),
+    )
+    await mountPage()
+
+    await body().findAll('button').find((b) => b.text().trim() === 'Import track dump')!.trigger('click')
+    await flushPromises()
+    const input = body().find('input[type="file"]')
+    Object.defineProperty(input.element, 'files', { value: [new File(['{}'], 'tracks.json')] })
+    await input.trigger('change')
+    await body().findAll('button').find((b) => b.text().trim() === 'Import')!.trigger('click')
+    await flushPromises()
+
+    expect(api.POST).toHaveBeenCalledWith('/api/catalogue/import/trackdump', expect.objectContaining({ body: '{}' }))
+    expect(api.GET.mock.calls.filter(([path]) => path === '/api/catalogue/tracks')).toHaveLength(2)
   })
 })

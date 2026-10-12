@@ -22,6 +22,7 @@ import { useResourceList } from '@/crud/useResourceList'
 import { textOn } from '@/utils/color'
 import TrackEditor from './tracks/TrackEditor.vue'
 import VariantEditor from './tracks/VariantEditor.vue'
+import TrackDumpImport from './tracks/TrackDumpImport.vue'
 import { vSelectFocus } from '@/crud/selectFocus'
 
 type Track = components['schemas']['TrackResponse']
@@ -40,6 +41,7 @@ const { items: tracks, loading, loaded, error } = list
 
 const trackEditor = ref<InstanceType<typeof TrackEditor> | null>(null)
 const variantEditor = ref<InstanceType<typeof VariantEditor> | null>(null)
+const dumpImport = ref<InstanceType<typeof TrackDumpImport> | null>(null)
 
 const ORIGINS: Record<Origin, string> = { BaseGame: 'Base game', Dlc: 'DLC', Workshop: 'Workshop', Custom: 'Custom' }
 
@@ -247,6 +249,8 @@ const variantColumns = (track: Track): DataTableColumns<Variant> => [
     ]),
   },
   { title: 'Mode', key: 'gameMode', width: 90 },
+  // From a track dump import; derby arenas have none.
+  { title: 'Length', key: 'trackLengthM', width: 100, render: (v) => (v.trackLengthM ? `${(v.trackLengthM / 1000).toFixed(2)} km` : '') },
   {
     title: 'Tags',
     key: 'tags',
@@ -352,6 +356,7 @@ onMounted(() => void list.reload())
   <section>
     <PageHeader title="Tracks" description="Browse and edit tracks and layouts. Hidden ones stay out of votes and pickers.">
       <template #actions>
+        <NButton :disabled="!loaded" @click="dumpImport?.start()">Import track dump</NButton>
         <NButton type="primary" :disabled="!loaded" @click="trackEditor?.start(null)">Add track</NButton>
       </template>
     </PageHeader>
@@ -420,6 +425,8 @@ onMounted(() => void list.reload())
     </NCard>
     <TrackEditor ref="trackEditor" @saved="list.replace" />
     <VariantEditor ref="variantEditor" @saved="replaceVariant" />
+    <!-- An import can add tracks anywhere in the list: reload it rather than merge. -->
+    <TrackDumpImport ref="dumpImport" @imported="list.reload()" />
   </section>
 </template>
 
