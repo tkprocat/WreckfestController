@@ -172,20 +172,23 @@ defineExpose({ start })
       <p v-if="report.tool || report.generatedAt" class="meta">
         {{ report.tool ?? 'Unknown tool' }}<template v-if="report.generatedAt">, dumped {{ report.generatedAt }}</template>
       </p>
-      <NTable size="small" :bordered="false" class="counts">
-        <thead>
-          <tr>
-            <th scope="col"><span class="visually-hidden">Kind</span></th>
-            <th v-for="column in COLUMNS" :key="column.key" scope="col">{{ column.label }}</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="row in ROWS" :key="row.key">
-            <th scope="row">{{ row.label }}</th>
-            <td v-for="column in COLUMNS" :key="column.key" class="count">{{ report[row.key][column.key] }}</td>
-          </tr>
-        </tbody>
-      </NTable>
+      <!-- Scrolls inside the dialog on a phone rather than running past its edge. -->
+      <div class="table-scroll">
+        <NTable size="small" :bordered="false" class="counts">
+          <thead>
+            <tr>
+              <th scope="col"><span class="visually-hidden">Kind</span></th>
+              <th v-for="column in COLUMNS" :key="column.key" scope="col">{{ column.label }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="row in ROWS" :key="row.key">
+              <th scope="row">{{ row.label }}</th>
+              <td v-for="column in COLUMNS" :key="column.key" class="count">{{ report[row.key][column.key] }}</td>
+            </tr>
+          </tbody>
+        </NTable>
+      </div>
 
       <template v-if="report.skipped.length > 0">
         <h3 class="result-heading">Skipped</h3>
@@ -211,6 +214,10 @@ defineExpose({ start })
 </template>
 
 <style scoped>
+.table-scroll {
+  overflow-x: auto;
+}
+
 .help,
 .meta {
   color: var(--text-muted);
