@@ -340,6 +340,51 @@ public sealed class PublicEndpointsTests : IDisposable
         Assert.Equal(40, feed[0].GetProperty("cup").GetProperty("standings")[0].GetProperty("points").GetInt32());
     }
 
+    // More races in one run than a scan batch: the older items are still found, and the
+    // standings come from each car's latest race only.
+    [Fact]
+    public async Task Feed_FindsItemsBeyondALongCupRun()
+    {
+        await using var host = await ApiTestHost.StartAsync(Settings);
+        var run = new DateTime(2026, 10, 9, 19, 0, 0, DateTimeKind.Utc);
+        await AddRaceAsync(host, "fields14", run.AddMinutes(-20), cupName: "");
+        await AddRaceAsync(host, "bigstadium_demolition_arena", run.AddMinutes(-10), cupName: "");
+
+        var contexts = host.MainServices.GetRequiredService<IDbContextFactory<ControllerDbContext>>();
+        await using (var db = await contexts.CreateDbContextAsync(Ct))
+        {
+            for (var i = 1; i <= 450; i++)
+            {
+                db.Races.Add(new Race
+                {
+                    TrackId = "fields14",
+                    EndedAt = run.AddMinutes(i),
+                    CupName = "Marathon",
+                    CupActivatedAt = run,
+                    CupPhase = CupPhase.Running,
+                    Entries =
+                    [
+                        new RaceEntry { Position = 1, Name = "Alice", SteamId = 1001, CupPointsTotal = i },
+                        new RaceEntry { Position = 2, Name = "Bot Ann", IsBot = true, CupPointsTotal = i / 2 },
+                    ],
+                });
+            }
+
+            await db.SaveChangesAsync(Ct);
+        }
+
+        using var client = host.CreateClient();
+        var feed = await client.GetFromJsonAsync<JsonElement>("/api/public/feed", Ct);
+
+        Assert.Equal(["Cup", "Race", "Race"], feed.EnumerateArray().Select(i => i.GetProperty("kind").GetString()));
+        var cup = feed[0].GetProperty("cup");
+        Assert.Equal(450, cup.GetProperty("raceCount").GetInt32());
+        Assert.Equal(PublicFeed.CupRaceLimit, cup.GetProperty("races").GetArrayLength());
+        Assert.Equal(
+            ["Alice 450", "Bot Ann 225"],
+            cup.GetProperty("standings").EnumerateArray().Select(s => $"{s.GetProperty("name").GetString()} {s.GetProperty("points").GetInt32()}"));
+    }
+
     [Fact]
     public async Task Feed_LeadsWithTheActiveCup_BeforeItsFirstRace()
     {

@@ -37,6 +37,25 @@ public class PublicFeedStandingsTests
     }
 
     [Fact]
+    public void AHumanWithoutASteamId_JoinsTheOneSteamIdOfTheSameName()
+    {
+        Assert.Equal(["1 Alice 25"], Shown([Car(1, "Alice", 20, steamId: 1), Car(2, "Alice", 25)]));
+        Assert.Equal(["1 Alice 25"], Shown([Car(2, "Alice", 25, steamId: 1), Car(1, "Alice", 20)]));
+    }
+
+    [Fact]
+    public void AHumanWithoutASteamId_StaysApart_WhenTheNameIsAmbiguous()
+    {
+        // Two Steam IDs share the name: which one it was is not known.
+        Assert.Equal(
+            ["1 Alice 30", "2 Alice 25", "3 Alice 20"],
+            Shown([Car(1, "Alice", 20, steamId: 1), Car(1, "Alice", 30, steamId: 2), Car(2, "Alice", 25)]));
+
+        // And a bot of that name is never merged.
+        Assert.Equal(["1 Alice 20", "2 Alice* 5"], Shown([Car(1, "Alice", 20, steamId: 1), Car(2, "Alice", 5, isBot: true)]));
+    }
+
+    [Fact]
     public void WithoutAPointAnywhere_ThereIsNoTable()
     {
         Assert.Empty(PublicFeed.Standings([Car(1, "Alice", 0, steamId: 1), Car(1, "Bot", 0, isBot: true)]));

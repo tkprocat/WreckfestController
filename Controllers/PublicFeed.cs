@@ -45,15 +45,26 @@ public static class PublicFeed
             runs.Add(activeRun);
         }
 
-        for (var skip = 0; keys.Count < count; skip += ScanBatch)
+        // Newest first, a batch at a time, each starting after the last one read (no Skip,
+        // which would walk every earlier row again). A run already found is left out of
+        // later batches, so a cup with thousands of races costs one batch, not hundreds.
+        (DateTime EndedAt, int Id)? after = null;
+        while (keys.Count < count)
         {
-            var batch = await db.Races
+            var known = runs.ToList();
+            var query = db.Races
                 .AsNoTracking()
+                .Where(r => r.CupActivatedAt == null || !known.Contains(r.CupActivatedAt.Value));
+            if (after is { } last)
+            {
+                query = query.Where(r => r.EndedAt < last.EndedAt || (r.EndedAt == last.EndedAt && r.Id < last.Id));
+            }
+
+            var batch = await query
                 .OrderByDescending(r => r.EndedAt)
                 .ThenByDescending(r => r.Id)
-                .Skip(skip)
                 .Take(ScanBatch)
-                .Select(r => new { r.Id, r.CupActivatedAt })
+                .Select(r => new { r.Id, r.EndedAt, r.CupActivatedAt })
                 .ToListAsync(cancellationToken);
 
             foreach (var race in batch)
@@ -77,6 +88,8 @@ public static class PublicFeed
             {
                 break;
             }
+
+            after = (batch[^1].EndedAt, batch[^1].Id);
         }
 
         var loopIds = keys.Where(k => k.RaceId != null).Select(k => k.RaceId!.Value).ToList();
@@ -91,13 +104,7 @@ public static class PublicFeed
                 .ToListAsync(cancellationToken);
             var total = await ofRun.CountAsync(cancellationToken);
 
-            // Only the races once the cup started: the warmup's points are reset at the start.
-            var rows = await db.RaceEntries
-                .AsNoTracking()
-                .Where(e => e.Race.CupActivatedAt == run && e.Race.CupPhase == CupPhase.Running)
-                .Select(e => new StandingRow(e.RaceId, e.Race.EndedAt, e.SteamId, e.Name, e.IsBot, e.Position, e.CupPointsTotal))
-                .ToListAsync(cancellationToken);
-            cupRaces[run] = (listed, total, rows);
+            cupRaces[run] = (listed, total, await LatestRowsAsync(db, run, cancellationToken));
         }
 
         var names = await trackNames(
@@ -141,9 +148,61 @@ public static class PublicFeed
     }
 
     /// <summary>
+    /// Each car's row from the last race it was in during <paramref name="run"/>, once the
+    /// cup started (the warmup's points are reset at the start): a few dozen rows, however
+    /// long the run. Cars are told apart as <see cref="Standings"/> does.
+    /// </summary>
+    private static async Task<List<StandingRow>> LatestRowsAsync(ControllerDbContext db, DateTime run, CancellationToken cancellationToken)
+    {
+        // Stored as the column's converter writes it: UTC, and the phase by name.
+        var activatedAt = DateTime.SpecifyKind(run, DateTimeKind.Utc);
+        var running = nameof(CupPhase.Running);
+        var rows = await db.Database
+            .SqlQuery<LatestRow>($"""
+                SELECT "RaceId", "EndedAt", "SteamId", "Name", "IsBot", "Position", "CupPointsTotal"
+                FROM (
+                    SELECT e."RaceId", r."EndedAt", e."SteamId", e."Name", e."IsBot", e."Position", e."CupPointsTotal",
+                        ROW_NUMBER() OVER (
+                            PARTITION BY CASE
+                                WHEN e."SteamId" IS NOT NULL THEN 's' || e."SteamId"
+                                WHEN e."IsBot" THEN 'b' || e."Name"
+                                ELSE 'n' || e."Name"
+                            END
+                            ORDER BY r."EndedAt" DESC, r."Id" DESC) AS "Latest"
+                    FROM "RaceEntries" AS e
+                    JOIN "Races" AS r ON r."Id" = e."RaceId"
+                    WHERE r."CupActivatedAt" = {activatedAt} AND r."CupPhase" = {running}
+                )
+                WHERE "Latest" = 1
+                """)
+            .ToListAsync(cancellationToken);
+        return rows.Select(r => new StandingRow(r.RaceId, r.EndedAt, r.SteamId, r.Name, r.IsBot, r.Position, r.CupPointsTotal)).ToList();
+    }
+
+    /// <summary>A row of <see cref="LatestRowsAsync"/>'s query.</summary>
+    private sealed class LatestRow
+    {
+        public int RaceId { get; set; }
+
+        public DateTime EndedAt { get; set; }
+
+        public long? SteamId { get; set; }
+
+        public string Name { get; set; } = string.Empty;
+
+        public bool IsBot { get; set; }
+
+        public int? Position { get; set; }
+
+        public int CupPointsTotal { get; set; }
+    }
+
+    /// <summary>
     /// The cup points table: each car's total after the last race it was in, as the game
-    /// keeps it. Humans are told apart by Steam ID (they rename), bots by name. Empty when
-    /// nobody has a point: a cup run without cup points has no table to show.
+    /// keeps it. Humans are told apart by Steam ID (they rename), bots by name. A human
+    /// recorded once without a Steam ID joins the one Steam ID whose latest name is theirs;
+    /// with none, or several, they stay a row of their own. Empty when nobody has a point:
+    /// a cup run without cup points has no table to show.
     /// </summary>
     /// <remarks>
     /// Equal totals share a place (1, 2, 2, 4), listed by who raced last, then by their
@@ -155,6 +214,17 @@ public static class PublicFeed
             .GroupBy(r => r.SteamId is { } steamId ? "steam:" + steamId : (r.IsBot ? "bot:" : "name:") + r.Name)
             .Select(g => g.OrderByDescending(r => r.EndedAt).ThenByDescending(r => r.RaceId).First())
             .ToList();
+
+        foreach (var nameless in latest.Where(r => r.SteamId is null && !r.IsBot).ToList())
+        {
+            var same = latest.Where(r => r.SteamId is not null && r.Name == nameless.Name).ToList();
+            if (same.Count == 1)
+            {
+                var older = IsNewer(nameless, same[0]) ? same[0] : nameless;
+                latest.Remove(older);
+            }
+        }
+
         if (latest.All(r => r.CupPointsTotal <= 0))
         {
             return [];
@@ -176,6 +246,9 @@ public static class PublicFeed
 
         return standings;
     }
+
+    private static bool IsNewer(StandingRow a, StandingRow b) =>
+        a.EndedAt > b.EndedAt || (a.EndedAt == b.EndedAt && a.RaceId > b.RaceId);
 
     /// <summary>A race as the public lists show it, from <paramref name="query"/>'s races.</summary>
     internal static IQueryable<RaceRow> Races(IQueryable<Race> query) => query

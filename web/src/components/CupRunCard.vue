@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NTag } from 'naive-ui'
+import { computed, ref } from 'vue'
+import { NSwitch, NTag } from 'naive-ui'
 import StatusBadge from '@/components/StatusBadge.vue'
 import RaceResultsTable from '@/components/RaceResultsTable.vue'
 import type { PublicCupRun, PublicRace } from '@/composables/usePublicFeed'
@@ -8,6 +8,18 @@ import { formatFromNow, formatWhen } from '@/utils/format'
 import { laps } from '@/utils/raceResults'
 
 const props = defineProps<{ cup: PublicCupRun; now: Date }>()
+
+// Off by default: the people are what most visitors look for. Hidden bots leave their
+// places empty rather than moving everyone up, so a position always means the same.
+const showBots = ref(false)
+const hasBots = computed(
+  () => props.cup.standings.some((s) => s.isBot) || props.cup.races.some((r) => r.entries.some((e) => e.isBot)),
+)
+const standings = computed(() => (showBots.value ? props.cup.standings : props.cup.standings.filter((s) => !s.isBot)))
+
+function entries(race: PublicRace) {
+  return showBots.value ? race.entries : race.entries.filter((e) => !e.isBot)
+}
 
 const status = computed(() => {
   switch (props.cup.status) {
@@ -36,10 +48,13 @@ const raceCount = computed(() => {
   return races.length < count ? `${text}, the latest ${races.length} listed` : text
 })
 
-/** Why there is no table: not started, nothing raced yet, or a cup without cup points. */
+/** Why there is no table: not started, nothing raced yet, a cup without cup points, or only bots scored. */
 const noStandings = computed(() => {
+  if (props.cup.standings.length) return 'Only bots have cup points. Turn on Show bots to see them.'
   if (props.cup.status === 'Warmup') return 'The standings begin when the cup starts.'
-  if (!props.cup.races.some((r) => !r.warmup)) return 'No races yet.'
+  if (!props.cup.races.some((r) => !r.warmup)) {
+    return props.cup.status === 'Ended' ? 'The cup never started: its races were all in the warmup.' : 'No races yet.'
+  }
   return 'No cup points were awarded.'
 })
 
@@ -48,8 +63,11 @@ function ago(race: PublicRace): string {
   return text === 'now' ? 'just now' : text
 }
 
+/** "won by Allan", or with bots hidden and a bot first, the best player shown: "best player Allan (P2)". */
 function winner(race: PublicRace): string | undefined {
-  return race.entries.find((e) => e.position === 1)?.name
+  const first = entries(race).find((e) => e.position != null)
+  if (!first) return undefined
+  return first.position === 1 ? 'won by ' + first.name : `best player ${first.name} (P${first.position})`
 }
 </script>
 
@@ -64,14 +82,20 @@ function winner(race: PublicRace): string | undefined {
           <span>{{ raceCount }}</span>
         </p>
       </div>
-      <StatusBadge compact :tone="status.tone">{{ status.label }}</StatusBadge>
+      <div class="cup-controls">
+        <label v-if="hasBots" class="bots-switch">
+          <NSwitch v-model:value="showBots" size="small" />
+          <span>Show bots</span>
+        </label>
+        <StatusBadge compact :tone="status.tone">{{ status.label }}</StatusBadge>
+      </div>
     </div>
 
     <div class="cup-body">
       <section class="standings" :aria-label="'Standings, ' + cup.name">
         <h4>{{ cup.status === 'Ended' ? 'Final standings' : 'Standings' }}</h4>
-        <ol v-if="cup.standings.length" class="standings-list">
-          <li v-for="(row, index) in cup.standings" :key="index" :class="{ bot: row.isBot, leader: row.position === 1 }">
+        <ol v-if="standings.length" class="standings-list">
+          <li v-for="(row, index) in standings" :key="index" :class="{ bot: row.isBot, leader: row.position === 1 }">
             <span class="place">{{ row.position }}</span>
             <span class="driver">
               <strong>{{ row.name }}</strong>
@@ -93,11 +117,11 @@ function winner(race: PublicRace): string | undefined {
                 <span class="race-meta">
                   <time :datetime="race.endedAt" :title="formatWhen(race.endedAt)">{{ ago(race) }}</time>
                   <template v-if="laps(race)"> · {{ laps(race) }}</template>
-                  <template v-if="winner(race)"> · won by {{ winner(race) }}</template>
+                  <template v-if="winner(race)"> · {{ winner(race) }}</template>
                   <NTag v-if="race.warmup" size="small" :bordered="false" title="Ended in the warmup: it does not count toward the cup">Warmup</NTag>
                 </span>
               </summary>
-              <RaceResultsTable :entries="race.entries" />
+              <RaceResultsTable :entries="entries(race)" />
             </details>
           </li>
         </ol>
@@ -110,6 +134,8 @@ function winner(race: PublicRace): string | undefined {
 .cup { display: flex; flex-direction: column; gap: 24px; min-width: 0; padding: 24px; background: var(--surface); border-radius: 12px; }
 .cup-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px 20px; }
 .cup-title { min-width: 0; }
+.cup-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; }
+.bots-switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; font-size: var(--font-support); color: var(--text-secondary); }
 .eyebrow { font-size: var(--font-label); font-weight: 650; color: var(--text-secondary); margin: 0; letter-spacing: .06em; text-transform: uppercase; }
 .cup-heading h3 { margin: 8px 0 0; font-size: var(--font-event); line-height: 1.3; overflow-wrap: anywhere; }
 .cup-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 8px 0 0; font-size: var(--font-support); color: var(--text-secondary); }
@@ -126,8 +152,12 @@ h4 { margin: 0 0 8px; font-size: var(--font-label); font-weight: 650; color: var
 /* Dimmed, not faded: muted text stays readable. */
 .bot strong, .bot .place, .bot .points { color: var(--text-muted); font-weight: 400; }
 .cup-race-list li { border-top: 1px solid var(--border-color); }
-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; cursor: pointer; padding: 12px 0; list-style-position: inside; }
-summary::-webkit-details-marker { color: var(--accent); }
+/* A flex summary loses the native marker, so the arrow is drawn here and turns when open. */
+summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; cursor: pointer; padding: 12px 0; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::before { content: ''; flex: 0 0 auto; align-self: center; width: 0; height: 0; border-style: solid; border-width: 5px 0 5px 8px; border-color: transparent transparent transparent var(--accent); transition: transform .15s; }
+details[open] > summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { summary::before { transition: none; } }
 summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .race-name { font-size: var(--font-body); font-weight: 600; overflow-wrap: anywhere; }
 .race-meta { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; font-size: var(--font-support); color: var(--text-secondary); }

@@ -81,6 +81,7 @@ describe('usePublicFeed', () => {
     hub.handlers.get('CupEnded')!({ cupId: 1 })
     hub.handlers.get('CupActivated')!({ cupId: 2 })
     hub.handlers.get('CupStarted')!({ cupId: 2 })
+    hub.handlers.get('Reconnected')!({})
     await vi.advanceTimersByTimeAsync(2_000)
 
     expect(api.GET).toHaveBeenCalledTimes(2)
@@ -97,6 +98,6 @@ describe('usePublicFeed', () => {
     await vi.advanceTimersByTimeAsync(600_000)
 
     expect(api.GET).toHaveBeenCalledTimes(1)
-    expect(hub.unsubscribed).toEqual(['RaceRecorded', 'CupActivated', 'CupStarted', 'CupEnded'])
+    expect(hub.unsubscribed).toEqual(['RaceRecorded', 'CupActivated', 'CupStarted', 'CupEnded', 'Reconnected'])
   })
 })

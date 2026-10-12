@@ -15,8 +15,11 @@ const REFETCH_DELAY_MS = 1500
 /** A slow fallback for when the hub is unreachable; races end minutes apart. */
 const POLL_INTERVAL_MS = 300_000
 
-/** What changes the feed: a race saved, or a cup beginning, starting or ending. */
-const EVENTS = ['RaceRecorded', 'CupActivated', 'CupStarted', 'CupEnded'] as const
+/**
+ * What changes the feed: a race saved, or a cup beginning, starting or ending. After a
+ * reconnect any of those may have been missed.
+ */
+const EVENTS = ['RaceRecorded', 'CupActivated', 'CupStarted', 'CupEnded', 'Reconnected'] as const
 
 /** /api/public/feed, reloaded when the hub reports a race or a cup change. */
 export function usePublicFeed() {

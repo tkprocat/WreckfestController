@@ -147,7 +147,7 @@ describe('RecentRaces', () => {
     })
     const asCup = (c: PublicCupRun): PublicFeedItem => ({ kind: 'Cup', race: null, cup: c })
 
-    it('shows the standings on top and its races below, warmup marked, taking the whole row', () => {
+    it('shows the standings on top and its races below, warmup marked, taking the whole row', async () => {
       state.items = [asCup(cup()), asItem({ ...race, id: 9 })]
 
       const wrapper = mount(RecentRaces)
@@ -161,6 +161,10 @@ describe('RecentRaces', () => {
       expect(card.find('h4').text()).toBe('Final standings')
       const row = (li: { find: (s: string) => { text: () => string } }) =>
         [li.find('.place').text(), li.find('strong').text(), li.find('.points').text()].join(' ')
+      // Bots are hidden until asked for; the others keep their places.
+      expect(card.findAll('.standings-list li').map(row)).toEqual(['1 Alice 18 pts', '3 Bob 6 pts'])
+      expect(card.findAll('.cup-race-list details')[0]!.findAll('tbody tr')).toHaveLength(4)
+      await card.find('.bots-switch [role="switch"]').trigger('click')
       expect(card.findAll('.standings-list li').map(row)).toEqual(['1 Alice 18 pts', '1 Bot Ann 18 pts', '3 Bob 6 pts'])
       expect(card.findAll('.standings-list li')[1]!.classes()).toContain('bot')
 
@@ -170,6 +174,25 @@ describe('RecentRaces', () => {
       expect(races[0]!.find('summary').text()).not.toContain('Warmup')
       expect(races[1]!.find('summary').text()).toContain('Warmup')
       expect(races[0]!.findAll('tbody tr')).toHaveLength(5)
+    })
+
+    it('names the best player shown when a hidden bot won', () => {
+      const botWon = {
+        ...race,
+        entries: race.entries.map((e) => (e.position === 1 ? { ...e, isBot: true, name: 'Speedy AI' } : e.position === 2 ? { ...e, isBot: false, name: 'Ann' } : e)),
+      }
+      state.items = [asCup(cup({ races: [botWon] }))]
+
+      expect(mount(RecentRaces).find('.cup-race-list summary').text()).toContain('best player Ann (P2)')
+    })
+
+    it('has no bots switch without bots, and says when only bots scored', () => {
+      const humans = { ...race, entries: race.entries.filter((e) => !e.isBot) }
+      state.items = [asCup(cup({ standings: [{ position: 1, name: 'Alice', isBot: false, points: 3 }], races: [humans] }))]
+      expect(mount(RecentRaces).find('.bots-switch').exists()).toBe(false)
+
+      state.items = [asCup(cup({ standings: [{ position: 1, name: 'Bot Ann', isBot: true, points: 3 }] }))]
+      expect(mount(RecentRaces).text()).toContain('Only bots have cup points. Turn on Show bots to see them.')
     })
 
     it('says when the standings begin during the warmup', () => {
@@ -182,12 +205,15 @@ describe('RecentRaces', () => {
       expect(card.find('.cup-races').exists()).toBe(false)
     })
 
-    it('tells a cup without cup points from one with no races yet', () => {
+    it('tells a cup without cup points from one with no races yet, or one that never started', () => {
       state.items = [asCup(cup({ status: 'Running', standings: [] }))]
       expect(mount(RecentRaces).text()).toContain('No cup points were awarded.')
 
       state.items = [asCup(cup({ status: 'Running', standings: [], races: [{ ...race, warmup: true }], raceCount: 1 }))]
       expect(mount(RecentRaces).text()).toContain('No races yet.')
+
+      state.items = [asCup(cup({ standings: [], races: [{ ...race, warmup: true }], raceCount: 1 }))]
+      expect(mount(RecentRaces).text()).toContain('The cup never started: its races were all in the warmup.')
     })
 
     it('says when only the latest races are listed', () => {
