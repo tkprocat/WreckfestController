@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, h } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import { usePublicRaces, type PublicRace } from './usePublicRaces'
+import { usePublicFeed, type PublicFeedItem } from './usePublicFeed'
 
 const api = vi.hoisted(() => ({ GET: vi.fn() }))
 const hub = vi.hoisted(() => ({
@@ -17,16 +17,17 @@ vi.mock('@/realtime/hub', () => ({
   },
 }))
 
-const race = (id: number) => ({ id, track: { id: 't', name: 'Track ' + id }, entries: [] }) as unknown as PublicRace
-const ok = (data: PublicRace[]) => ({ data, response: new Response(null, { status: 200 }) })
+const race = (id: number) =>
+  ({ kind: 'Race', cup: null, race: { id, track: { id: 't', name: 'Track ' + id }, entries: [] } }) as unknown as PublicFeedItem
+const ok = (data: PublicFeedItem[]) => ({ data, response: new Response(null, { status: 200 }) })
 const failed = (status: number) => ({ data: undefined, response: new Response(null, { status }) })
 
-function mountRaces() {
-  let state!: ReturnType<typeof usePublicRaces>
+function mountFeed() {
+  let state!: ReturnType<typeof usePublicFeed>
   const wrapper = mount(
     defineComponent({
       setup() {
-        state = usePublicRaces()
+        state = usePublicFeed()
         return () => h('div')
       },
     }),
@@ -42,42 +43,44 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers())
 
-describe('usePublicRaces', () => {
-  it('loads the races', async () => {
+describe('usePublicFeed', () => {
+  it('loads the feed', async () => {
     api.GET.mockResolvedValueOnce(ok([race(2), race(1)]))
 
-    const { state } = mountRaces()
+    const { state } = mountFeed()
     await flushPromises()
 
-    expect(api.GET).toHaveBeenCalledWith('/api/public/races')
+    expect(api.GET).toHaveBeenCalledWith('/api/public/feed')
     expect(state().loading.value).toBe(false)
-    expect(state().races.value?.map((r) => r.id)).toEqual([2, 1])
+    expect(state().items.value?.map((i) => i.race?.id)).toEqual([2, 1])
   })
 
   it('keeps the last list and reports a later failure', async () => {
     api.GET.mockResolvedValueOnce(ok([race(1)]))
-    const { state } = mountRaces()
+    const { state } = mountFeed()
     await flushPromises()
 
     api.GET.mockResolvedValueOnce(failed(503))
     await state().reload()
 
-    expect(state().races.value?.map((r) => r.id)).toEqual([1])
-    expect(state().error.value).toBe('Recent races could not be loaded.')
+    expect(state().items.value?.map((i) => i.race?.id)).toEqual([1])
+    expect(state().error.value).toBe('Recent results could not be loaded.')
 
     api.GET.mockRejectedValueOnce(new TypeError('Failed to fetch'))
     await state().reload()
-    expect(state().error.value).toBe('Recent races could not be loaded.')
+    expect(state().error.value).toBe('Recent results could not be loaded.')
   })
 
-  it('reloads once after a newly recorded race', async () => {
+  it('reloads once after a burst of races and cup changes', async () => {
     vi.useFakeTimers()
     api.GET.mockResolvedValue(ok([race(1)]))
-    mountRaces()
+    mountFeed()
     await flushPromises()
 
     hub.handlers.get('RaceRecorded')!({ raceId: 2 })
-    hub.handlers.get('RaceRecorded')!({ raceId: 3 })
+    hub.handlers.get('CupEnded')!({ cupId: 1 })
+    hub.handlers.get('CupActivated')!({ cupId: 2 })
+    hub.handlers.get('CupStarted')!({ cupId: 2 })
     await vi.advanceTimersByTimeAsync(2_000)
 
     expect(api.GET).toHaveBeenCalledTimes(2)
@@ -86,7 +89,7 @@ describe('usePublicRaces', () => {
   it('stops listening and polling when unmounted', async () => {
     vi.useFakeTimers()
     api.GET.mockResolvedValue(ok([]))
-    const { wrapper } = mountRaces()
+    const { wrapper } = mountFeed()
     await flushPromises()
     hub.handlers.get('RaceRecorded')!({ raceId: 2 })
 
@@ -94,6 +97,6 @@ describe('usePublicRaces', () => {
     await vi.advanceTimersByTimeAsync(600_000)
 
     expect(api.GET).toHaveBeenCalledTimes(1)
-    expect(hub.unsubscribed).toEqual(['RaceRecorded'])
+    expect(hub.unsubscribed).toEqual(['RaceRecorded', 'CupActivated', 'CupStarted', 'CupEnded'])
   })
 })

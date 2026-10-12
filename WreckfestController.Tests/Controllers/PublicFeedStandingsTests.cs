@@ -1,0 +1,45 @@
+using WreckfestController.Controllers;
+using Row = WreckfestController.Controllers.PublicFeed.StandingRow;
+
+namespace WreckfestController.Tests.Controllers;
+
+public class PublicFeedStandingsTests
+{
+    private static readonly DateTime Start = new(2026, 10, 9, 19, 0, 0, DateTimeKind.Utc);
+
+    private static Row Car(int race, string name, int points, long? steamId = null, bool isBot = false, int? position = 1) =>
+        new(race, Start.AddMinutes(race * 10), steamId, name, isBot, position, points);
+
+    private static List<string> Shown(IEnumerable<Row> rows) =>
+        PublicFeed.Standings(rows).Select(s => $"{s.Position} {s.Name}{(s.IsBot ? "*" : "")} {s.Points}").ToList();
+
+    [Fact]
+    public void ACarsTotal_IsFromTheLastRaceItWasIn_NotTheHighest()
+    {
+        // The game's total drops when the server restarts mid-cup; the table follows the game.
+        Assert.Equal(["1 Alice 4"], Shown([Car(1, "Alice", 20, steamId: 1), Car(2, "Alice", 4, steamId: 1)]));
+    }
+
+    [Fact]
+    public void ABotAndAHumanOfTheSameName_AreTwoRows()
+    {
+        Assert.Equal(
+            ["1 Ann 10", "2 Ann* 5"],
+            Shown([Car(1, "Ann", 10, steamId: 1), Car(1, "Ann", 5, isBot: true, position: 2)]));
+    }
+
+    [Fact]
+    public void EqualTotals_ShareAPlace_AndTheNextPlaceSkips()
+    {
+        Assert.Equal(
+            ["1 B 10", "1 A 10", "3 C 2"],
+            Shown([Car(1, "A", 10, steamId: 1, position: 2), Car(1, "B", 10, steamId: 2, position: 1), Car(1, "C", 2, steamId: 3, position: 3)]));
+    }
+
+    [Fact]
+    public void WithoutAPointAnywhere_ThereIsNoTable()
+    {
+        Assert.Empty(PublicFeed.Standings([Car(1, "Alice", 0, steamId: 1), Car(1, "Bot", 0, isBot: true)]));
+        Assert.Empty(PublicFeed.Standings([]));
+    }
+}

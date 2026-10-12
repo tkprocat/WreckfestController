@@ -47,6 +47,7 @@ internal static class SettingsApi
         // is Steam's fixed id for the dedicated server, with nothing to edit. Both are
         // set in the desktop app only; the web keeps the Update action itself.
         new SettingsApiSection<VoteSettings>("vote", hidden: [nameof(VoteSettings.Enabled)], ValidateVote),
+        new SettingsApiSection<PublicSiteSettings>("publicSite", hidden: [], ValidatePublicSite),
     ];
 
     public static ISettingsApiSection? Find(string name) =>
@@ -70,6 +71,9 @@ internal static class SettingsApi
             ?? Range("maxLapsAllowed", vote.MaxLapsAllowed, 1, 999)
             ?? Range("messageDelayMs", vote.MessageDelayMs, 0, 5000);
     }
+
+    private static (string Field, string Message)? ValidatePublicSite(PublicSiteSettings site) =>
+        Range("feedItemCount", site.FeedItemCount, 1, PublicSiteSettings.MaxFeedItemCount);
 
     private static (string Field, string Message)? Range(string field, int value, int min, int max) =>
         value < min || value > max ? (field, $"{field} must be between {min} and {max}.") : null;
