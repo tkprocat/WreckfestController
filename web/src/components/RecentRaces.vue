@@ -49,7 +49,7 @@ function key(item: PublicFeedItem): string {
 
     <NEmpty v-if="items && !list.length" description="No races recorded yet" />
     <ol v-else-if="list.length" class="race-list">
-      <li v-for="item in list" :key="key(item)" :class="{ wide: item.cup }">
+      <li v-for="item in list" :key="key(item)">
         <CupRunCard v-if="item.cup" :cup="item.cup" :now="now" />
         <RaceCard v-else-if="item.race" :race="item.race" :now="now" />
       </li>
@@ -68,10 +68,8 @@ function key(item: PublicFeedItem): string {
 .races-error { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 16px; margin-bottom: 24px; color: var(--text-secondary); }
 .races-error p { margin: 0; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 24px; margin: 24px 0 0; font-size: var(--font-meta); color: var(--text-secondary); }
-.race-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; }
+/* One column, newest first: two columns read across the rows as well as down them. */
+.race-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 32px; }
 .race-list > li { min-width: 0; }
-/* A cup run takes the whole row: its standings and races need the width. */
-.race-list > li.wide { grid-column: 1 / -1; }
 .recent-races :deep(.n-empty__description) { font-size: var(--font-body); color: var(--text-secondary); }
-@media (max-width: 1100px) { .race-list { grid-template-columns: minmax(0, 1fr); } }
 </style>

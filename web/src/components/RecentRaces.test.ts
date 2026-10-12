@@ -147,13 +147,12 @@ describe('RecentRaces', () => {
     })
     const asCup = (c: PublicCupRun): PublicFeedItem => ({ kind: 'Cup', race: null, cup: c })
 
-    it('shows the standings on top and its races below, warmup marked, taking the whole row', async () => {
+    it('shows the standings on top and its races below, warmup marked', async () => {
       state.items = [asCup(cup()), asItem({ ...race, id: 9 })]
 
       const wrapper = mount(RecentRaces)
       const items = wrapper.findAll('.race-list > li')
-      expect(items[0]!.classes()).toContain('wide')
-      expect(items[1]!.classes()).not.toContain('wide')
+      expect(items).toHaveLength(2)
 
       const card = items[0]!
       expect(card.find('h3').text()).toBe('Friday Cup')
