@@ -250,6 +250,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/catalogue/import/trackdump": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["JsonElement"];
+                    "text/json": components["schemas"]["JsonElement"];
+                    "application/*+json": components["schemas"]["JsonElement"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["TrackDumpImportReport"];
+                        "application/json": components["schemas"]["TrackDumpImportReport"];
+                        "text/json": components["schemas"]["TrackDumpImportReport"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Payload Too Large */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/catalogue/mods": {
         parameters: {
             query?: never;
@@ -3958,6 +4019,27 @@ export interface components {
             lastRefresh: null | string;
             error: null | string;
         };
+        ImportCounts: {
+            /** Format: int32 */
+            added: number;
+            /** Format: int32 */
+            updated: number;
+            /** Format: int32 */
+            unchanged: number;
+            /** Format: int32 */
+            skipped: number;
+        };
+        ImportDiagnostic: {
+            code: string;
+            severity: string;
+            /** Format: int32 */
+            count: number;
+            meaning: string;
+        };
+        ImportSkip: {
+            id: string;
+            reason: string;
+        };
         InjectResponse: {
             message: string;
             /** Format: int32 */
@@ -4262,6 +4344,15 @@ export interface components {
         TagSlugsRequest: {
             tags: string[];
         };
+        TrackDumpImportReport: {
+            tool: null | string;
+            generatedAt: null | string;
+            mods: components["schemas"]["ImportCounts"];
+            tracks: components["schemas"]["ImportCounts"];
+            variants: components["schemas"]["ImportCounts"];
+            skipped: components["schemas"]["ImportSkip"][];
+            diagnostics: components["schemas"]["ImportDiagnostic"][];
+        };
         /** @enum {unknown} */
         TrackOrigin: "BaseGame" | "Dlc" | "Workshop" | "Custom";
         TrackRequest: {
@@ -4344,6 +4435,8 @@ export interface components {
             /** Format: int32 */
             version: number;
             tags: components["schemas"]["TagResponse"][];
+            /** Format: double */
+            trackLengthM: null | number;
         };
         VersionResponse: {
             version: string;

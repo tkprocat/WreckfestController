@@ -148,6 +148,7 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
             track.Property(t => t.Name).HasMaxLength(Track.NameMaxLength);
             track.Property(t => t.Origin).HasConversion<string>().HasMaxLength(16);
             track.Property(t => t.DlcName).HasMaxLength(Track.NameMaxLength);
+            track.Property(t => t.DumpId).HasMaxLength(Track.DumpIdMaxLength).UseCollation(NoCase);
             track.Property(t => t.Version).IsConcurrencyToken();
 
             // A mod cannot go while tracks still come from it.

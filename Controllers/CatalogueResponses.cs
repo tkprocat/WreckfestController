@@ -31,7 +31,8 @@ public sealed record VariantResponse(
     bool IsBuiltIn,
     bool IsHidden,
     int Version,
-    IReadOnlyList<TagResponse> Tags)
+    IReadOnlyList<TagResponse> Tags,
+    double? TrackLengthM)
 {
     public static VariantResponse From(TrackVariant variant) => new(
         variant.Id,
@@ -45,7 +46,8 @@ public sealed record VariantResponse(
         variant.IsBuiltIn,
         variant.IsHidden,
         variant.Version,
-        variant.Tags.OrderBy(t => t.Name).Select(TagResponse.From).ToList());
+        variant.Tags.OrderBy(t => t.Name).Select(TagResponse.From).ToList(),
+        variant.TrackLengthM);
 }
 
 /// <summary>A track as the API returns it, with the variants that were loaded.</summary>

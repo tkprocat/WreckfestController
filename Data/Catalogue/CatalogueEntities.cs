@@ -34,6 +34,7 @@ public class Track : IVersioned
 {
     public const int KeyMaxLength = 64;
     public const int NameMaxLength = 128;
+    public const int DumpIdMaxLength = 200;
 
     public int Id { get; set; }
 
@@ -60,6 +61,13 @@ public class Track : IVersioned
 
     /// <summary>Retired without being deleted: gone from pickers and voting, still resolvable.</summary>
     public bool IsHidden { get; set; }
+
+    /// <summary>
+    /// The WreckfestTrackDump track id (<c>&lt;source&gt;/&lt;folder&gt;</c>, lower case) of a
+    /// track an import created, so a later import finds it again even when its key had to
+    /// differ from the folder. Null for built-in and admin-added tracks. Not shown or edited.
+    /// </summary>
+    public string? DumpId { get; set; }
 
     public int Version { get; set; } = 1;
 
@@ -97,6 +105,13 @@ public class TrackVariant : IVersioned
 
     /// <inheritdoc cref="Track.IsHidden"/>
     public bool IsHidden { get; set; }
+
+    /// <summary>
+    /// One lap in metres, as the game's <c>.tcat</c> stores it. Null for a derby arena, or
+    /// until a WreckfestTrackDump import supplies it. Only the import sets it: it is the
+    /// game's value, not something an admin edits, so reset leaves it alone.
+    /// </summary>
+    public double? TrackLengthM { get; set; }
 
     public int Version { get; set; } = 1;
 
