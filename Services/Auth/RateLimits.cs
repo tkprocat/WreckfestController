@@ -17,6 +17,8 @@ namespace WreckfestController.Services.Auth;
 /// this slows a client that sprays many accounts.</item>
 /// <item><see cref="PublicPolicy"/> caps the anonymous public overview, which reads the
 /// server config and the database on every call.</item>
+/// <item><see cref="ImagesPolicy"/> caps the anonymous catalogue images. A page of tracks
+/// loads dozens at once, so it allows more than the overview.</item>
 /// </list>
 /// </remarks>
 public static class RateLimits
@@ -26,6 +28,9 @@ public static class RateLimits
 
     public const string PublicPolicy = "public";
     public const int PublicPermitsPerWindow = 60;
+
+    public const string ImagesPolicy = "images";
+    public const int ImagesPermitsPerWindow = 600;
 
     public static readonly TimeSpan Window = TimeSpan.FromMinutes(1);
 
@@ -61,6 +66,7 @@ public static class RateLimits
 
             options.AddPolicy(LoginPolicy, context => PerClient(context, LoginPermitsPerWindow));
             options.AddPolicy(PublicPolicy, context => PerClient(context, PublicPermitsPerWindow));
+            options.AddPolicy(ImagesPolicy, context => PerClient(context, ImagesPermitsPerWindow));
         });
     }
 

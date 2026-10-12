@@ -9,6 +9,8 @@ import { NO_ANSWER, hasId, send, type Outcome } from '@/crud/outcome'
 import { useResourceEditor } from '@/crud/useResourceEditor'
 import { vSelectFocus } from '@/crud/selectFocus'
 import { modalSize } from '@/crud/modal'
+import { imagesOfTrack, type CatalogueImage } from '@/api/images'
+import ImageSlots from './ImageSlots.vue'
 
 /**
  * Adds or edits a track: its key, name, origin and the weather it supports. Weather has its
@@ -29,7 +31,8 @@ interface TrackDraft {
   weather: string[]
 }
 
-const emit = defineEmits<{ saved: [track: Track] }>()
+const props = defineProps<{ images: CatalogueImage[] }>()
+const emit = defineEmits<{ saved: [track: Track]; imagesChanged: [owner: { trackId: number }, own: CatalogueImage[]] }>()
 const message = useMessage()
 
 const ORIGINS: { value: Origin; label: string }[] = [
@@ -118,6 +121,7 @@ async function saveWeather(track: Track, weather: string[]): Promise<Outcome<Tra
 }
 
 const builtIn = computed(() => editor.editing.value?.isBuiltIn ?? false)
+const trackImages = computed(() => (editor.editing.value ? imagesOfTrack(props.images, editor.editing.value) : []))
 const weatherOptions = computed(() =>
   [...new Set([...allWeather.value, ...draft.weather])].map((w) => ({ value: w, label: w })),
 )
@@ -179,6 +183,14 @@ defineExpose({ start })
       <FormField v-slot="{ inputProps }" label="Weather it supports" field="weather" :errors="errors">
         <NSelect v-model:value="draft.weather" :options="weatherOptions" multiple filterable v-select-focus="inputProps" :input-props="inputProps" />
       </FormField>
+      <ImageSlots
+        v-if="editor.editing.value"
+        kind="track"
+        :id="editor.editing.value.id"
+        :name="editor.editing.value.key"
+        :images="trackImages"
+        @changed="(own) => emit('imagesChanged', { trackId: editor.editing.value!.id }, own)"
+      />
       <div class="form-actions">
         <NButton :disabled="saving" @click="editor.close()">Cancel</NButton>
         <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">

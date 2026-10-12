@@ -163,3 +163,63 @@ public class Mod
 
     public List<Track> Tracks { get; set; } = new();
 }
+
+/// <summary>The menu image sizes the catalogue keeps, as the game's menus use them.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ImageSize>))]
+public enum ImageSize
+{
+    /// <summary>250x116: lists and cards.</summary>
+    Small,
+
+    /// <summary>832x386: a track's own page.</summary>
+    Large,
+}
+
+/// <summary>Where a catalogue image came from. An upload wins over an import of the same size.</summary>
+[JsonConverter(typeof(JsonStringEnumConverter<ImageOrigin>))]
+public enum ImageOrigin
+{
+    /// <summary>From a WreckfestTrackDump image dump. Replaced by the next one.</summary>
+    Import,
+
+    /// <summary>An admin's upload. Only an admin removes it.</summary>
+    Upload,
+}
+
+/// <summary>
+/// A track's or variant's menu image (#260). Exactly one of <see cref="TrackId"/> and
+/// <see cref="TrackVariantId"/> is set, and the image goes with its row. Kept in the
+/// database rather than beside it, so an import saves in one transaction and a backup
+/// carries the images. No navigation points here: loading a track never loads the bytes.
+/// </summary>
+public class CatalogueImage
+{
+    public const int ContentTypeMaxLength = 32;
+    public const int HashLength = 16;
+
+    public int Id { get; set; }
+
+    public int? TrackId { get; set; }
+
+    public int? TrackVariantId { get; set; }
+
+    public ImageSize Size { get; set; }
+
+    public ImageOrigin Origin { get; set; }
+
+    /// <summary>image/png, image/jpeg or image/webp: whatever <see cref="Data"/> starts with.</summary>
+    public string ContentType { get; set; } = string.Empty;
+
+    /// <summary>The first 16 hex digits of the bytes' SHA-256: the ETag, and the URL's cache key.</summary>
+    public string Hash { get; set; } = string.Empty;
+
+    public byte[] Data { get; set; } = [];
+
+    /// <summary>
+    /// A layout outline on a clear background (<see cref="Services.Catalogue.PngTransparency"/>),
+    /// as the game's variant images are: drawn over a picture, never shown as one.
+    /// </summary>
+    public bool IsOverlay { get; set; }
+
+    public DateTime UpdatedAt { get; set; }
+}

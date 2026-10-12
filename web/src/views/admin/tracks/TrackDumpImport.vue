@@ -5,18 +5,28 @@ import { api } from '@/api/client'
 import type { components } from '@/api/schema'
 import { NO_ANSWER, send } from '@/crud/outcome'
 import { modalSize } from '@/crud/modal'
+import { batches, dumpImageKeys, uploadKey } from '@/api/images'
 
 /**
  * Uploads a WreckfestTrackDump tracks.json (`wftracks dump`) to fill the catalogue in, and
  * shows what the import did. Only the file's content is sent: the controller never reads
  * a path on this PC. The server adds what the catalogue lacks and leaves existing rows
  * alone, apart from track lengths (docs/API.md).
+ *
+ * Choosing the folder the dump was written to instead also imports the menu images
+ * `wftracks imagedump` wrote there (#260): after the tracks.json, the small and large
+ * images it names are sent in batches, each with the tracks.json.
  */
 type Report = components['schemas']['TrackDumpImportReport']
 type Counts = components['schemas']['ImportCounts']
+type ImageReport = components['schemas']['TrackDumpImageReport']
 
 /** The server's limit (CatalogueImportController.MaxBodyBytes), checked here before uploading. */
 const MAX_BYTES = 16 * 1024 * 1024
+
+/** One image batch, well under the server's 64 MB and 500 files (MaxImageBatchBytes, MaxImageBatchFiles). */
+const BATCH_BYTES = 24 * 1024 * 1024
+const BATCH_FILES = 200
 
 const emit = defineEmits<{ imported: [report: Report] }>()
 
@@ -26,12 +36,30 @@ const importing = ref(false)
 const failure = ref<string | null>(null)
 const report = shallowRef<Report | null>(null)
 const inputId = `${useId()}-file`
+const folderId = `${useId()}-folder`
+
+/** An image found in a chosen folder, with the path it had in it. */
+interface FolderImage {
+  file: File
+  path: string
+  size: number
+}
+const images = shallowRef<FolderImage[]>([])
+/** A dump folder was chosen: its images are imported, even none, which removes ones the dump no longer names. */
+const fromFolder = ref(false)
+const imageReport = shallowRef<ImageReport | null>(null)
+const imageFailure = ref<string | null>(null)
+const progress = ref<string | null>(null)
 
 function start() {
   if (importing.value) return
   file.value = null
+  images.value = []
   failure.value = null
   report.value = null
+  imageReport.value = null
+  imageFailure.value = null
+  progress.value = null
   open.value = true
 }
 
@@ -40,10 +68,86 @@ function close() {
 }
 
 function choose(event: Event) {
-  const chosen = (event.target as HTMLInputElement).files?.[0] ?? null
+  pick((event.target as HTMLInputElement).files?.[0] ?? null, [], false)
+}
+
+function pick(chosen: File | null, found: FolderImage[], folder: boolean) {
   file.value = chosen
+  images.value = found
+  fromFolder.value = folder
   report.value = null
+  imageReport.value = null
+  imageFailure.value = null
   failure.value = chosen && chosen.size > MAX_BYTES ? `The file is over the ${MAX_BYTES / (1024 * 1024)} MB a track dump import takes.` : null
+}
+
+/** A dump folder: its tracks.json (the one nearest the top), and the small and large images it names. */
+async function chooseFolder(event: Event) {
+  const all = [...((event.target as HTMLInputElement).files ?? [])]
+  const path = (f: File) => f.webkitRelativePath || f.name
+  const depth = (f: File) => path(f).split('/').length
+  const dump = all.filter((f) => f.name.toLowerCase() === 'tracks.json').sort((a, b) => depth(a) - depth(b))[0]
+  if (!dump) {
+    pick(null, [], false)
+    if (all.length > 0) failure.value = 'There is no tracks.json in that folder. Write the dump there: wftracks dump <game folder> -o <folder>/tracks.json.'
+    return
+  }
+
+  let keys = new Set<string>()
+  try {
+    if (dump.size <= MAX_BYTES) keys = dumpImageKeys(JSON.parse(await dump.text()))
+  } catch {
+    // Not JSON: the server says what is wrong with it when it is imported.
+  }
+
+  const found = all
+    .filter((f) => f !== dump)
+    .map((f) => ({ file: f, path: path(f), size: f.size }))
+    .filter((f) => {
+      const key = uploadKey(f.path)
+      return key !== null && keys.has(key)
+    })
+  pick(dump, found, true)
+}
+
+const isImageReport = (body: unknown): body is ImageReport => typeof body === 'object' && body !== null && 'stored' in body
+
+/** Sends the folder's images in batches, adding up what each did. Stops at the first refusal. */
+async function uploadImages(dump: File, found: FolderImage[]) {
+  const total: ImageReport = { stored: 0, unchanged: 0, removed: 0, notUsed: 0, refused: 0, unmatched: 0 }
+  let sent = 0
+  let reported = false
+  // No images at all is still one batch: the server removes those the dump no longer names.
+  const parts = found.length > 0 ? batches(found, BATCH_BYTES, BATCH_FILES) : [[]]
+  for (const part of parts) {
+    progress.value = `Importing images: ${sent} of ${found.length}`
+    const form = new FormData()
+    form.append('dump', dump, 'tracks.json')
+    for (const image of part) form.append('images', image.file, image.path)
+    const outcome = await send(
+      () => api.POST('/api/catalogue/import/trackdump/images', { body: {} as never, bodySerializer: () => form }),
+      isImageReport,
+      'The images were not imported.',
+    )
+    if (outcome.kind !== 'ok' || !isImageReport(outcome.row)) {
+      const reason = outcome.kind === 'no-answer' ? NO_ANSWER : 'message' in outcome ? outcome.message : 'The images were not imported.'
+      imageFailure.value = sent === 0 ? reason : `Stopped after ${sent} of ${found.length} images: ${reason}`
+      break
+    }
+
+    const row = outcome.row
+    total.stored += row.stored
+    total.unchanged += row.unchanged
+    total.removed += row.removed
+    total.notUsed += row.notUsed
+    total.refused += row.refused
+    // The same in every batch: it depends only on the dump and the catalogue.
+    total.unmatched = row.unmatched
+    sent += part.length
+    reported = true
+  }
+
+  imageReport.value = reported ? total : null
 }
 
 const isReport = (body: unknown): body is Report => typeof body === 'object' && body !== null && 'variants' in body
@@ -77,6 +181,8 @@ async function upload() {
     )
     if (outcome.kind === 'ok' && isReport(outcome.row)) {
       report.value = outcome.row
+      // After the tracks.json: images go only to tracks and variants the catalogue has.
+      if (fromFolder.value) await uploadImages(chosen, images.value)
       emit('imported', outcome.row)
     } else if (outcome.kind === 'no-answer') {
       failure.value = NO_ANSWER
@@ -85,6 +191,7 @@ async function upload() {
     }
   } finally {
     importing.value = false
+    progress.value = null
   }
 }
 
@@ -129,6 +236,17 @@ const summary = computed(() => {
   return parts.join(' ')
 })
 
+/** One line for what the image batches did. */
+const imageSummary = computed(() => {
+  const r = imageReport.value
+  if (!r) return ''
+  const parts = [`Images: ${r.stored} stored, ${r.unchanged} already here.`]
+  if (r.removed > 0) parts.push(`Removed ${count(r.removed, 'image', 'images')} the dump no longer has.`)
+  if (r.refused > 0) parts.push(`${count(r.refused, 'file was', 'files were')} not a PNG, or too large.`)
+  if (r.unmatched > 0) parts.push(`${count(r.unmatched, 'track or variant', 'tracks and variants')} with images are not in the catalogue.`)
+  return parts.join(' ')
+})
+
 defineExpose({ start })
 </script>
 
@@ -157,6 +275,13 @@ defineExpose({ start })
         :disabled="importing"
         @change="choose"
       />
+      <label :for="folderId" class="picker-label">Or a dump folder, to import the images too</label>
+      <p class="meta">
+        The folder holding <code>tracks.json</code> and what <code>wftracks imagedump</code> wrote. Only the small and large images
+        are sent. The base game's images come from a dump of the game itself: the dedicated server has none.
+      </p>
+      <input :id="folderId" type="file" webkitdirectory :disabled="importing" @change="chooseFolder" />
+      <p v-if="file && images.length > 0" class="meta" role="status">{{ file.name }} and {{ images.length }} images found.</p>
       <div class="form-actions">
         <NButton :disabled="importing" @click="close()">{{ report ? 'Close' : 'Cancel' }}</NButton>
         <NButton type="primary" attr-type="submit" :loading="importing" :disabled="importing || !file || (file?.size ?? 0) > MAX_BYTES">
@@ -166,9 +291,12 @@ defineExpose({ start })
     </form>
 
     <NAlert v-if="failure" type="error" :title="failure" class="gap" />
+    <p v-if="progress" class="meta gap" role="status">{{ progress }}</p>
 
     <section v-if="report" class="result" aria-label="Import result">
       <p class="summary" role="status">{{ summary }}</p>
+      <p v-if="imageSummary" class="summary">{{ imageSummary }}</p>
+      <NAlert v-if="imageFailure" type="error" :title="imageFailure" class="gap" />
       <p v-if="report.tool || report.generatedAt" class="meta">
         {{ report.tool ?? 'Unknown tool' }}<template v-if="report.generatedAt">, dumped {{ report.generatedAt }}</template>
       </p>

@@ -24,6 +24,7 @@ import TrackEditor from './tracks/TrackEditor.vue'
 import VariantEditor from './tracks/VariantEditor.vue'
 import TrackDumpImport from './tracks/TrackDumpImport.vue'
 import { vSelectFocus } from '@/crud/selectFocus'
+import { hasPicture, imagesOfTrack, imagesVersion, trackImageUrl, type CatalogueImage } from '@/api/images'
 
 type Track = components['schemas']['TrackResponse']
 type Variant = components['schemas']['VariantResponse']
@@ -38,6 +39,31 @@ const confirm = useConfirm()
 // Hidden ones too: the page is where they are unhidden.
 const list = useResourceList<Track>(() => api.GET('/api/catalogue/tracks', { params: { query: { includeHidden: true } } }), 'tracks')
 const { items: tracks, loading, loaded, error } = list
+
+/**
+ * Every stored image, without the bytes: which rows have one, for the list's thumbnails and
+ * the editors. Loaded beside the tracks; without it the page works, just without pictures.
+ */
+const images = ref<CatalogueImage[]>([])
+async function loadImages() {
+  try {
+    const { data } = await api.GET('/api/catalogue/images')
+    if (data) images.value = data
+  } catch {
+    // No thumbnails until the next load.
+  }
+}
+
+/** An editor's upload or removal: the row's own images, replaced. */
+function replaceImages(owner: { trackId?: number; variantId?: number }, own: CatalogueImage[]) {
+  const others = images.value.filter((i) => (owner.trackId != null ? i.trackId !== owner.trackId : i.variantId !== owner.variantId))
+  images.value = [...others, ...own]
+}
+
+function reloadAll() {
+  void list.reload()
+  void loadImages()
+}
 
 const trackEditor = ref<InstanceType<typeof TrackEditor> | null>(null)
 const variantEditor = ref<InstanceType<typeof VariantEditor> | null>(null)
@@ -308,10 +334,19 @@ const columns: DataTableColumns<Row> = [
     title: 'Track',
     key: 'name',
     sorter: (a, b) => a.name.localeCompare(b.name),
-    render: (t) => h('div', { class: 'row-identity' }, [
-      h('span', { class: 'row-name' }, [t.name, t.isHidden ? h(NTag, { size: 'small', class: 'flag' }, () => 'Hidden') : null]),
-      h('code', { class: 'row-id' }, t.key),
-    ]),
+    render: (t) => {
+      const own = imagesOfTrack(images.value, t)
+      return h('div', { class: 'track-cell' }, [
+        // Only when there is a picture to show: no request, and no broken image, for the rest.
+        hasPicture(own)
+          ? h('img', { class: 'thumb', src: trackImageUrl(t.key, 'Small', imagesVersion(own)), alt: '', loading: 'lazy' })
+          : h('span', { class: 'thumb' }),
+        h('div', { class: 'row-identity' }, [
+          h('span', { class: 'row-name' }, [t.name, t.isHidden ? h(NTag, { size: 'small', class: 'flag' }, () => 'Hidden') : null]),
+          h('code', { class: 'row-id' }, t.key),
+        ]),
+      ])
+    },
   },
   { title: 'Origin', key: 'origin', width: 120, render: (t) => (t.origin === 'Dlc' && t.dlcName ? `DLC: ${t.dlcName}` : t.mod ? `Workshop: ${t.mod.name}` : ORIGINS[t.origin]) },
   { title: 'Variants', key: 'variants', width: 90, render: (t) => String(variantsOf(t).length) },
@@ -349,7 +384,7 @@ const columns: DataTableColumns<Row> = [
 const expandIcon = ({ expanded, rowData }: { expanded: boolean; rowData: object }) =>
   h('button', { type: 'button', class: 'expander', 'aria-expanded': String(expanded), 'aria-label': `Variants of ${(rowData as Track).name}` }, '›')
 
-onMounted(() => void list.reload())
+onMounted(reloadAll)
 </script>
 
 <template>
@@ -373,7 +408,7 @@ onMounted(() => void list.reload())
         :loading="loading"
         :error="error"
         :render-expand-icon="expandIcon"
-        @retry="list.reload()"
+        @retry="reloadAll()"
         @reset-filters="resetFilters"
       >
         <template #filters>
@@ -423,16 +458,28 @@ onMounted(() => void list.reload())
         </template>
       </ResourceTable>
     </NCard>
-    <TrackEditor ref="trackEditor" @saved="list.replace" />
-    <VariantEditor ref="variantEditor" @saved="replaceVariant" />
+    <TrackEditor ref="trackEditor" :images="images" @saved="list.replace" @images-changed="replaceImages" />
+    <VariantEditor ref="variantEditor" :images="images" @saved="replaceVariant" @images-changed="replaceImages" />
     <!-- An import can add tracks anywhere in the list: reload it rather than merge. -->
-    <TrackDumpImport ref="dumpImport" @imported="list.reload()" />
+    <TrackDumpImport ref="dumpImport" @imported="reloadAll" />
   </section>
 </template>
 
 <style scoped>
 .filters {
   flex-wrap: wrap;
+}
+:deep(.track-cell) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+}
+:deep(.thumb) {
+  width: 64px;
+  aspect-ratio: 250 / 116;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 :deep(.flag) {
   margin-left: 6px;
