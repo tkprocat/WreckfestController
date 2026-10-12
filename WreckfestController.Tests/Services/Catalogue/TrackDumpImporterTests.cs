@@ -1,0 +1,320 @@
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using WreckfestController.Data;
+using WreckfestController.Data.Catalogue;
+using WreckfestController.Data.Collections;
+using WreckfestController.Services.Catalogue;
+
+namespace WreckfestController.Tests.Services.Catalogue;
+
+/// <summary>
+/// #121: a WreckfestTrackDump import adds what the catalogue lacks and never changes what
+/// is there, the INSERT OR IGNORE rule of #79, on a migrated database with the shipped catalogue.
+/// </summary>
+public sealed class TrackDumpImporterTests : IAsyncLifetime
+{
+    private readonly string _directory =
+        Path.Combine(Path.GetTempPath(), "wfc-db-tests", Guid.NewGuid().ToString("N"));
+
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    public async ValueTask InitializeAsync()
+    {
+        Directory.CreateDirectory(_directory);
+        await using var db = CreateContext();
+        await db.Database.MigrateAsync(Ct);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        SqlitePools.ReleaseFolder(_directory);
+        if (Directory.Exists(_directory))
+        {
+            Directory.Delete(_directory, recursive: true);
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    private static TrackDumpFixture AsanPack() => new TrackDumpFixture()
+        .Workshop("2276098616", "The Very TrackPack 2")
+        .Track("workshop:2276098616", "asan", "Asan Circuit",
+            ("asan_main", "Main", 1, 3912.5),
+            ("asan_reverse", "Reverse", 1, 3912.5),
+            ("asan_arena", "Arena", 4, 21120));
+
+    [Fact]
+    public async Task NewWorkshopTrack_AddsItsModTrackAndVariants_NotBuiltInAndNotVotable()
+    {
+        var report = await ImportAsync(AsanPack());
+
+        Assert.Equal(new ImportCounts(1, 0, 0, 0), report.Mods);
+        Assert.Equal(new ImportCounts(1, 0, 0, 0), report.Tracks);
+        Assert.Equal(new ImportCounts(3, 0, 0, 0), report.Variants);
+
+        await using var db = CreateContext();
+        var track = await db.Tracks.Include(t => t.Mod).Include(t => t.Variants).Include(t => t.WeatherConditions)
+            .SingleAsync(t => t.Key == "asan", Ct);
+        Assert.Equal("Asan Circuit", track.Name);
+        Assert.Equal(TrackOrigin.Workshop, track.Origin);
+        Assert.False(track.IsBuiltIn);
+        Assert.Equal(5, track.WeatherConditions.Count);
+        Assert.Equal(("The Very TrackPack 2", "2276098616", "2276098616"), (track.Mod!.Name, track.Mod.FolderName, track.Mod.WorkshopId));
+
+        Assert.All(track.Variants, v => Assert.False(v.IsBuiltIn || v.AllowedForVoting || v.IsHidden, v.VariantId));
+        var main = track.Variants.Single(v => v.VariantId == "asan_main");
+        Assert.Equal(("Main", GameMode.Racing, 3912.5), (main.Name, main.GameMode, main.TrackLengthM));
+        var arena = track.Variants.Single(v => v.VariantId == "asan_arena");
+        Assert.Equal(GameMode.Derby, arena.GameMode);
+        Assert.Null(arena.TrackLengthM);
+    }
+
+    [Fact]
+    public async Task ImportingTheSameFileAgain_ChangesNothing()
+    {
+        await ImportAsync(AsanPack());
+        var before = await SnapshotAsync();
+
+        var report = await ImportAsync(AsanPack());
+
+        Assert.Equal(new ImportCounts(0, 0, 1, 0), report.Mods);
+        Assert.Equal(new ImportCounts(0, 0, 1, 0), report.Tracks);
+        Assert.Equal(new ImportCounts(0, 0, 3, 0), report.Variants);
+        Assert.Equal(before, await SnapshotAsync());
+    }
+
+    [Fact]
+    public async Task AnEditedBuiltIn_KeepsEveryAdminValue_AndOnlyGetsItsTrackLength()
+    {
+        await using (var db = CreateContext())
+        {
+            var edited = await db.TrackVariants.SingleAsync(v => v.VariantId == "bigstadium_figure_8", Ct);
+            edited.Name = "Admin's name";
+            edited.GameMode = GameMode.Derby;
+            edited.AllowedForVoting = false;
+            edited.IsHidden = true;
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var report = await ImportAsync(new TrackDumpFixture().Base()
+            .Track("base", "bigstadium", "Big Stadium", ("bigstadium_figure_8", "Figure 8 from the dump", 1, 512.25)));
+
+        Assert.Equal(new ImportCounts(0, 1, 0, 0), report.Variants);
+        Assert.Equal(new ImportCounts(0, 0, 1, 0), report.Tracks);
+
+        await using var check = CreateContext();
+        var variant = await check.TrackVariants.Include(v => v.Track).SingleAsync(v => v.VariantId == "bigstadium_figure_8", Ct);
+        Assert.Equal(("Admin's name", GameMode.Derby, false, true, true), (variant.Name, variant.GameMode, variant.AllowedForVoting, variant.IsHidden, variant.IsBuiltIn));
+        Assert.Equal(512.25, variant.TrackLengthM);
+        Assert.Equal("madman_stadium", variant.Track.Key);
+        Assert.Equal("Madman Stadium", variant.Track.Name);
+        Assert.False(await check.Tracks.AnyAsync(t => t.Key == "bigstadium", Ct));
+    }
+
+    [Fact]
+    public async Task ANewLayoutOfABuiltInTrack_JoinsTheTrackItsSiblingsAreIn()
+    {
+        var report = await ImportAsync(new TrackDumpFixture().Base()
+            .Track("base", "bigstadium", "Big Stadium",
+                ("bigstadium_figure_8", "Figure 8", 1, null),
+                ("bigstadium_new_loop", "New Loop", 1, 700)));
+
+        Assert.Equal(new ImportCounts(0, 0, 1, 0), report.Tracks);
+        Assert.Equal(new ImportCounts(1, 0, 1, 0), report.Variants);
+
+        await using var db = CreateContext();
+        var added = await db.TrackVariants.Include(v => v.Track).SingleAsync(v => v.VariantId == "bigstadium_new_loop", Ct);
+        Assert.Equal("madman_stadium", added.Track.Key);
+        Assert.False(added.IsBuiltIn);
+        Assert.True(added.Track.IsBuiltIn);
+    }
+
+    [Fact]
+    public async Task AnAdminAddedVariantWithTheSameId_IsLeftWhereItIs()
+    {
+        await using (var db = CreateContext())
+        {
+            var track = new Track { Key = "my_track", Name = "Mine", Origin = TrackOrigin.Custom };
+            track.Variants.Add(new TrackVariant { VariantId = "ASAN_MAIN", Name = "Mine too", GameMode = GameMode.Derby, AllowedForVoting = true });
+            db.Tracks.Add(track);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var report = await ImportAsync(AsanPack());
+
+        Assert.Equal(new ImportCounts(2, 1, 0, 0), report.Variants);
+        await using var check = CreateContext();
+        var mine = await check.TrackVariants.Include(v => v.Track).SingleAsync(v => v.VariantId == "asan_main", Ct);
+        Assert.Equal(("ASAN_MAIN", "Mine too", GameMode.Derby, true, "my_track"), (mine.VariantId, mine.Name, mine.GameMode, mine.AllowedForVoting, mine.Track.Key));
+        Assert.Equal(3912.5, mine.TrackLengthM);
+        Assert.Equal(1, await check.TrackVariants.CountAsync(v => v.VariantId == "asan_main", Ct));
+
+        // Its siblings follow it, rather than starting a second Asan track.
+        var reverse = await check.TrackVariants.Include(v => v.Track).SingleAsync(v => v.VariantId == "asan_reverse", Ct);
+        Assert.Equal("my_track", reverse.Track.Key);
+        Assert.False(await check.Tracks.AnyAsync(t => t.Key == "asan", Ct));
+    }
+
+    [Fact]
+    public async Task AnExistingMod_KeepsItsName_AndOnlyGetsAMissingWorkshopId()
+    {
+        await using (var db = CreateContext())
+        {
+            db.Mods.Add(new Mod { Name = "TVTP2 (admin)", FolderName = "2276098616" });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        var report = await ImportAsync(AsanPack());
+
+        Assert.Equal(new ImportCounts(0, 1, 0, 0), report.Mods);
+        await using var check = CreateContext();
+        var mod = await check.Mods.Include(m => m.Tracks).SingleAsync(Ct);
+        Assert.Equal(("TVTP2 (admin)", "2276098616"), (mod.Name, mod.WorkshopId));
+        Assert.Equal("asan", Assert.Single(mod.Tracks).Key);
+    }
+
+    [Fact]
+    public async Task VariantsTheCatalogueCannotHold_AreSkippedWithAReason()
+    {
+        var report = await ImportAsync(new TrackDumpFixture().Base().Workshop("2276098616", "Pack")
+            .Track("base", "fields", "Fields", ("fields_loop", "Loop", 1, 1000))
+            .Track("workshop:2276098616", "gardemoen", "Gardemoen",
+                ("gardemoen_head-on", "Head-on", 1, 900),
+                ("gardemoen_odd", "Odd mode", 2, 900),
+                ("FIELDS_LOOP", "A mod's copy", 1, 1100),
+                ("gardemoen_main", "Main", 1, 900)));
+
+        Assert.Equal(new ImportCounts(2, 0, 0, 3), report.Variants);
+        Assert.Equal(3, report.Skipped.Count);
+        Assert.Contains(report.Skipped, s => s.Id.EndsWith("gardemoen_head-on", StringComparison.Ordinal) && s.Reason.Contains("letters, digits"));
+        Assert.Contains(report.Skipped, s => s.Id.EndsWith("gardemoen_odd", StringComparison.Ordinal) && s.Reason.Contains("game mode 2"));
+        Assert.Contains(report.Skipped, s => s.Id.EndsWith("fields_loop", StringComparison.Ordinal) && s.Reason.Contains("first one"));
+
+        // The base game's copy of a shared id is the one kept.
+        await using var db = CreateContext();
+        var loop = await db.TrackVariants.Include(v => v.Track).SingleAsync(v => v.VariantId == "fields_loop", Ct);
+        Assert.Equal(("Loop", "fields", TrackOrigin.BaseGame), (loop.Name, loop.Track.Key, loop.Track.Origin));
+    }
+
+    [Fact]
+    public async Task ATrackWithNothingToImport_IsSkipped()
+    {
+        var report = await ImportAsync(new TrackDumpFixture().Workshop("1", "Pack")
+            .Track("workshop:1", "broken", "Broken", ("bad-id", "Bad", 1, null)));
+
+        Assert.Equal(new ImportCounts(0, 0, 0, 1), report.Tracks);
+        await using var db = CreateContext();
+        Assert.False(await db.Tracks.AnyAsync(t => t.Key == "broken", Ct));
+    }
+
+    [Fact]
+    public async Task TwoModsWithTheSameTrackFolder_GetTracksOfTheirOwn()
+    {
+        var report = await ImportAsync(new TrackDumpFixture().Workshop("111", "First").Workshop("222", "Second")
+            .Track("workshop:111", "gardemoen", "Gardemoen", ("gardemoen_a", "A", 1, null))
+            .Track("workshop:222", "gardemoen", "Gardemoen", ("gardemoen_b", "B", 1, null)));
+
+        Assert.Equal(new ImportCounts(2, 0, 0, 0), report.Tracks);
+        await using var db = CreateContext();
+        var keys = await db.Tracks.Include(t => t.Mod).Where(t => t.Key.StartsWith("gardemoen"))
+            .Select(t => new { t.Key, t.Mod!.FolderName }).OrderBy(t => t.Key).ToListAsync(Ct);
+        Assert.Equal(["gardemoen:111", "gardemoen_222:222"], keys.Select(k => $"{k.Key}:{k.FolderName}"));
+
+        // Again: each finds its own track by key and mod.
+        var again = await ImportAsync(new TrackDumpFixture().Workshop("111", "First").Workshop("222", "Second")
+            .Track("workshop:111", "gardemoen", "Gardemoen", ("gardemoen_a2", "A2", 1, null))
+            .Track("workshop:222", "gardemoen", "Gardemoen", ("gardemoen_b2", "B2", 1, null)));
+        Assert.Equal(new ImportCounts(0, 0, 2, 0), again.Tracks);
+        var b2 = await db.TrackVariants.Include(v => v.Track).SingleAsync(v => v.VariantId == "gardemoen_b2", Ct);
+        Assert.Equal("gardemoen_222", b2.Track.Key);
+    }
+
+    [Fact]
+    public async Task ACollectionEntryForAnUnknownId_IsLinkedOnceImported()
+    {
+        await using (var db = CreateContext())
+        {
+            var collection = new TrackCollection { Name = "Workshop night" };
+            collection.Entries.Add(new TrackCollectionEntry { Position = 0, TrackId = "asan_main" });
+            db.TrackCollections.Add(collection);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await ImportAsync(AsanPack());
+
+        await using var check = CreateContext();
+        var entry = await check.TrackCollectionEntries.Include(e => e.TrackVariant).SingleAsync(Ct);
+        Assert.Equal("asan_main", entry.TrackVariant?.VariantId);
+    }
+
+    [Fact]
+    public async Task TheReport_SummarisesTheDumpsDiagnosticsByCode()
+    {
+        var report = await ImportAsync(AsanPack()
+            .Diagnostic("missing-value", "A blank description.")
+            .Diagnostic("missing-value", "Another.")
+            .Diagnostic("malformed", "The pack did not decode.", "error"));
+
+        Assert.Equal(
+            [new ImportDiagnostic("missing-value", "warning", 2, "A blank description."), new ImportDiagnostic("malformed", "error", 1, "The pack did not decode.")],
+            report.Diagnostics);
+        Assert.Equal("WreckfestTrackDump 1.0.0", report.Tool);
+    }
+
+    [Theory]
+    [InlineData("""{"formatVersion": 2, "sources": [], "tracks": []}""", "formatVersion 2")]
+    [InlineData("""{"formatVersion": 1.5, "sources": [], "tracks": []}""", "unknown formatVersion")]
+    [InlineData("""{"sources": [], "tracks": []}""", "no formatVersion")]
+    [InlineData("""[1, 2]""", "not a JSON object")]
+    [InlineData("""{"formatVersion": 1, "sources": [], "tracks": [{"id": 5}]}""", "$.tracks[0].id")]
+    [InlineData("""{"formatVersion": 1, "sources": []}""", "no sources or tracks")]
+    public void Read_RefusesWhatIsNotADumpItReads(string json, string expected)
+    {
+        using var document = JsonDocument.Parse(json);
+
+        var dump = TrackDump.Read(document.RootElement, out var refusal);
+
+        Assert.Null(dump);
+        Assert.Contains(expected, refusal);
+    }
+
+    [Fact]
+    public void Read_IgnoresPropertiesItDoesNotKnow()
+    {
+        var json = AsanPack().ToJsonObject();
+        json["somethingNew"] = new System.Text.Json.Nodes.JsonObject { ["x"] = 1 };
+        using var document = JsonDocument.Parse(json.ToJsonString());
+
+        var dump = TrackDump.Read(document.RootElement, out var refusal);
+
+        Assert.Null(refusal);
+        Assert.Equal(3, Assert.Single(dump!.Tracks!).Variants!.Count);
+    }
+
+    private async Task<TrackDumpImportReport> ImportAsync(TrackDumpFixture fixture)
+    {
+        var dump = TrackDump.Read(fixture.ToElement(), out var refusal);
+        Assert.Null(refusal);
+        await using var db = CreateContext();
+        return await TrackDumpImporter.ImportAsync(db, dump!, Ct);
+    }
+
+    /// <summary>Every catalogue row's values and version, to show an import touched nothing.</summary>
+    private async Task<string> SnapshotAsync()
+    {
+        await using var db = CreateContext();
+        var tracks = await db.Tracks.AsNoTracking().OrderBy(t => t.Id)
+            .Select(t => $"{t.Id}|{t.Key}|{t.Name}|{t.Origin}|{t.ModId}|{t.Version}").ToListAsync(Ct);
+        var variants = await db.TrackVariants.AsNoTracking().OrderBy(v => v.Id)
+            .Select(v => $"{v.Id}|{v.VariantId}|{v.Name}|{v.GameMode}|{v.TrackId}|{v.AllowedForVoting}|{v.TrackLengthM}|{v.Version}").ToListAsync(Ct);
+        var mods = await db.Mods.AsNoTracking().OrderBy(m => m.Id).Select(m => $"{m.Id}|{m.Name}|{m.FolderName}|{m.WorkshopId}").ToListAsync(Ct);
+        return string.Join("\n", tracks.Concat(variants).Concat(mods));
+    }
+
+    private ControllerDbContext CreateContext()
+    {
+        var options = new DbContextOptionsBuilder<ControllerDbContext>();
+        ControllerDbContext.Configure(options, Path.Combine(_directory, "controller.db"));
+        return new ControllerDbContext(options.Options);
+    }
+}

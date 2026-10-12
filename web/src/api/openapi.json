@@ -215,6 +215,75 @@
         }
       }
     },
+    "/api/catalogue/import/trackdump": {
+      "post": {
+        "tags": [
+          "CatalogueImport"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackDumpImportReport"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackDumpImportReport"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackDumpImportReport"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Payload Too Large",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/catalogue/mods": {
       "get": {
         "tags": [
@@ -4977,6 +5046,72 @@
           }
         }
       },
+      "ImportCounts": {
+        "required": [
+          "added",
+          "updated",
+          "unchanged",
+          "skipped"
+        ],
+        "type": "object",
+        "properties": {
+          "added": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "updated": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "unchanged": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "ImportDiagnostic": {
+        "required": [
+          "code",
+          "severity",
+          "count",
+          "example"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "example": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportSkip": {
+        "required": [
+          "id",
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
       "InjectResponse": {
         "required": [
           "message",
@@ -5923,6 +6058,53 @@
           }
         }
       },
+      "TrackDumpImportReport": {
+        "required": [
+          "tool",
+          "generatedAt",
+          "mods",
+          "tracks",
+          "variants",
+          "skipped",
+          "diagnostics"
+        ],
+        "type": "object",
+        "properties": {
+          "tool": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "generatedAt": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "mods": {
+            "$ref": "#/components/schemas/ImportCounts"
+          },
+          "tracks": {
+            "$ref": "#/components/schemas/ImportCounts"
+          },
+          "variants": {
+            "$ref": "#/components/schemas/ImportCounts"
+          },
+          "skipped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportSkip"
+            }
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportDiagnostic"
+            }
+          }
+        }
+      },
       "TrackOrigin": {
         "enum": [
           "BaseGame",
@@ -6257,7 +6439,8 @@
           "isBuiltIn",
           "isHidden",
           "version",
-          "tags"
+          "tags",
+          "trackLengthM"
         ],
         "type": "object",
         "properties": {
@@ -6302,6 +6485,13 @@
             "items": {
               "$ref": "#/components/schemas/TagResponse"
             }
+          },
+          "trackLengthM": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
           }
         }
       },
@@ -6394,6 +6584,9 @@
   "tags": [
     {
       "name": "Auth"
+    },
+    {
+      "name": "CatalogueImport"
     },
     {
       "name": "CatalogueMods"

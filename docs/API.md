@@ -506,6 +506,7 @@ track, named "Track - Variant". A change counts at once.
 | GET | `weather` | The weather names, in the game's order. |
 | GET, POST | `mods` | List, or create `{ name, folderName, workshopId }`. `folderName` is the name `mods=` uses. |
 | DELETE | `mods/{id}` | 204. **409** while tracks still come from it. |
+| POST | `import/trackdump` | The content of a WreckfestTrackDump `tracks.json` as the JSON body. Adds what the catalogue lacks (below) and answers with a report. **400** for anything but `formatVersion` 1, **413** over 16 MB. |
 
 **Concurrency.** A track or variant carries a `version`, and `GET {id}` returns it as
 `ETag: "3"`. `PUT {id}` must send it back as `If-Match: "3"`: without the header the answer is
@@ -514,6 +515,40 @@ track, named "Track - Variant". A change counts at once.
 
 A **409** for a row in use names the collections in its title and lists them in
 `collections`, so the Track Browser can say what to change first.
+
+**Importing a track dump** (#121). WreckfestTrackDump
+(`wftracks dump <dir> -o tracks.json`) reads the game's and mods' files on whatever PC has
+them; the admin uploads the resulting file from the Tracks page. Only the file's content is
+sent: the controller reads no game files and takes no path. The import follows the rule of
+the catalogue's own data migrations: **it adds what is missing and never changes what is
+there**, built-in or admin-added, edited or not.
+
+- **Variants** match by `gameId` against `variantId`, ignoring case. A match keeps its name,
+  mode, voting flag, tags, hidden flag and track. Only its `trackLengthM` (metres per lap,
+  the game's `.tcat` value, which nothing else sets and `reset` leaves alone) is filled in
+  or refreshed when the dump has one; derby arenas have none. A new variant is added with
+  `isBuiltIn: false` and `allowedForVoting: false`, so nothing reaches votes until an admin
+  allows it. An id outside `^[A-Za-z0-9_]{1,64}$`, a game mode other than 1 (racing) or 4
+  (derby), or an id a second source in the same file repeats (the base game's wins) is
+  skipped.
+- **Tracks** are never changed. A new variant joins the track that holds most of its
+  siblings from the same dump track, so a new layout of a built-in joins the built-in.
+  Otherwise it goes to the track keyed by the dump's track folder from the same mod, or a
+  new one: not built-in, every weather, origin `BaseGame` for the base game (the dump does
+  not say which DLC a track is from) or `Workshop` for a mod, linked to its mod. When
+  another mod's track already has the folder's key, the new one is `<folder>_<workshop id>`.
+- **Mods** match by `folderName` (the workshop id for a workshop item). A match keeps its
+  name; only a missing `workshopId` is filled in. A new mod is added for each mod in the
+  file that has tracks, named from its `modinfo.modi`. Existing tracks are not linked to it:
+  the built-in workshop tracks keep `mod: null` until an admin sets it.
+- Collection entries saved with a variant id the catalogue did not know are linked to it.
+- Importing the same file again changes nothing. The whole import is one transaction.
+
+The report: `{ tool, generatedAt, mods, tracks, variants, skipped, diagnostics }`. `mods`,
+`tracks` and `variants` are `{ added, updated, unchanged, skipped }` (tracks are never
+`updated`); `skipped` lists the first 100 `{ id, reason }` by the dump's ids; `diagnostics`
+groups the dump's own diagnostics as `{ code, severity, count, example }`. The dump's local
+source paths are neither kept nor echoed.
 
 ### Collections — `api/collections`
 

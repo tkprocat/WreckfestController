@@ -98,6 +98,13 @@ public class TrackVariant : IVersioned
     /// <inheritdoc cref="Track.IsHidden"/>
     public bool IsHidden { get; set; }
 
+    /// <summary>
+    /// One lap in metres, as the game's <c>.tcat</c> stores it. Null for a derby arena, or
+    /// until a WreckfestTrackDump import supplies it. Only the import sets it: it is the
+    /// game's value, not something an admin edits, so reset leaves it alone.
+    /// </summary>
+    public double? TrackLengthM { get; set; }
+
     public int Version { get; set; } = 1;
 
     public List<Tag> Tags { get; set; } = new();

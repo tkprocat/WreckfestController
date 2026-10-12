@@ -20,6 +20,7 @@ const variant = (id: number, variantId: string, trackName: string, name: string,
   isHidden: false,
   version: 1,
   tags: [],
+  trackLengthM: null,
 })
 
 const variants = [variant(1, 'loop', 'Fields', 'Loop'), variant(2, 'arena', 'Crash Arena', 'Bowl', 'Derby'), { ...variant(3, 'quarry', 'Old Quarry', 'Pit'), isHidden: true }]

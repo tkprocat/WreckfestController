@@ -382,6 +382,9 @@ namespace WreckfestController.Data.Migrations
                     b.Property<int>("TrackId")
                         .HasColumnType("INTEGER");
 
+                    b.Property<double?>("TrackLengthM")
+                        .HasColumnType("REAL");
+
                     b.Property<string>("VariantId")
                         .IsRequired()
                         .HasMaxLength(64)
