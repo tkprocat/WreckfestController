@@ -18,8 +18,8 @@ vi.mock('@/composables/usePublicOverview', () => ({
 }))
 
 // The race list has its own tests; here it only has to stay out of the way.
-vi.mock('@/composables/usePublicRaces', () => ({
-  usePublicRaces: () => ({ races: ref([]), error: ref(null), loading: ref(false), reload: vi.fn() }),
+vi.mock('@/composables/usePublicFeed', () => ({
+  usePublicFeed: () => ({ items: ref([]), error: ref(null), loading: ref(false), reload: vi.fn() }),
 }))
 
 const overview: PublicOverview = {

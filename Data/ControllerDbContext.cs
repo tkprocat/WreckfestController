@@ -326,6 +326,9 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
             race.HasIndex(r => new { r.TrackId, r.EndedAt });
             race.HasIndex(r => new { r.CupId, r.CupActivatedAt });
 
+            // A cup run's races, for the public feed: by activation alone, the cup may be gone.
+            race.HasIndex(r => new { r.CupActivatedAt, r.CupPhase });
+
             // Results outlive their cup; the copied name keeps them readable.
             race.HasOne(r => r.Cup)
                 .WithMany()

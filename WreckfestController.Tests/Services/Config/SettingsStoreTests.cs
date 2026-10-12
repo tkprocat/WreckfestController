@@ -82,7 +82,7 @@ public sealed class SettingsStoreTests : IDisposable
 
         Assert.Equal((VoteModes.Direct, 100, 1), (vote.Value.Mode, vote.Value.MessageDelayMs, vote.Version));
         Assert.Equal(
-            [SettingsSections.SteamCmd, SettingsSections.Vote, SettingsSections.WreckfestServer],
+            [SettingsSections.PublicSite, SettingsSections.SteamCmd, SettingsSections.Vote, SettingsSections.WreckfestServer],
             Rows().Select(r => r.Section));
     }
 
@@ -101,7 +101,7 @@ public sealed class SettingsStoreTests : IDisposable
         var vote = store.GetEntry<VoteSettings>();
 
         Assert.Equal((VoteModes.Off, 0, 7), (vote.Value.Mode, vote.Value.MessageDelayMs, vote.Version));
-        Assert.Equal(3, Rows().Count);
+        Assert.Equal(SettingsSections.Types.Count, Rows().Count);
     }
 
     [Fact]

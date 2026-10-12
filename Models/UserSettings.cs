@@ -92,6 +92,20 @@ public class VoteSettings
     public bool SuppressCommandsDuringRace { get; set; }
 }
 
+/// <summary>The public home page's settings.</summary>
+public class PublicSiteSettings
+{
+    public const int DefaultFeedItemCount = 10;
+    public const int MaxFeedItemCount = 50;
+
+    /// <summary>
+    /// How many items the front page's results feed shows: a race outside a cup is one
+    /// item, and so is a cup run, however many races it had.
+    /// </summary>
+    [JsonPropertyName("FeedItemCount")]
+    public int FeedItemCount { get; set; } = DefaultFeedItemCount;
+}
+
 /// <summary>
 /// A votable track as voting uses it: the game's variant id and a display name. Comes
 /// from the catalogue (<c>IVotableTracks</c>).

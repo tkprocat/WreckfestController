@@ -9,7 +9,7 @@ using WreckfestController.Services.Config;
 namespace WreckfestController.Controllers;
 
 /// <summary>
-/// The settings a person edits over the web: today only voting. One section at a time,
+/// The settings a person edits over the web: voting and the public home page. One section at a time,
 /// with its version as the ETag; a PUT changes only the fields it sends and needs
 /// If-Match, so the web app and the WPF window cannot silently undo each other.
 /// </summary>
@@ -27,6 +27,7 @@ namespace WreckfestController.Controllers;
 public class SettingsController : ControllerBase
 {
     private const string Vote = "vote";
+    private const string PublicSite = "publicSite";
 
     private readonly ISettingsStore _store;
     private readonly ILogger<SettingsController> _logger;
@@ -39,7 +40,9 @@ public class SettingsController : ControllerBase
 
     /// <summary>Every section, each with its version.</summary>
     [HttpGet]
-    public SettingsResponse List() => new(VoteSettingsResponse.From(_store.GetEntry<VoteSettings>()));
+    public SettingsResponse List() => new(
+        VoteSettingsResponse.From(_store.GetEntry<VoteSettings>()),
+        PublicSiteSettingsResponse.From(_store.GetEntry<PublicSiteSettings>()));
 
     /// <summary>The voting settings, with their version as the ETag.</summary>
     [HttpGet(Vote)]
@@ -73,10 +76,40 @@ public class SettingsController : ControllerBase
 
         return result;
     }
+
+    /// <summary>The public home page's settings, with their version as the ETag.</summary>
+    [HttpGet(PublicSite)]
+    public ActionResult<PublicSiteSettingsResponse> GetPublicSite()
+    {
+        var entry = _store.GetEntry<PublicSiteSettings>();
+        this.SetETag(entry.Version);
+        return PublicSiteSettingsResponse.From(entry);
+    }
+
+    /// <summary>Changes the public home page fields in the body, as for <see cref="PutVote"/>.</summary>
+    [HttpPut(PublicSite)]
+    [ProducesResponseType<PublicSiteSettingsResponse>(StatusCodes.Status200OK)]
+    [ProducesResponseType<PublicSiteSettingsResponse>(StatusCodes.Status409Conflict)]
+    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired, "application/problem+json")]
+    public async Task<IActionResult> PutPublicSite([FromBody] JsonElement body)
+    {
+        if (this.ReadIfMatch(out var expected) is { } badPrecondition)
+        {
+            return badPrecondition;
+        }
+
+        var result = await SettingsApi.Find(PublicSite)!.PutAsync(this, _store, body, expected);
+        if (result is OkObjectResult)
+        {
+            _logger.LogInformation("{Caller} saved the public site settings", this.Caller());
+        }
+
+        return result;
+    }
 }
 
 /// <summary>Every settings section the web may edit.</summary>
-public sealed record SettingsResponse(VoteSettingsResponse Vote);
+public sealed record SettingsResponse(VoteSettingsResponse Vote, PublicSiteSettingsResponse PublicSite);
 
 /// <summary>
 /// The voting settings as the API shows them: <see cref="VoteSettings"/> without the legacy
@@ -100,4 +133,11 @@ public sealed record VoteSettingsResponse(
         entry.Value.MessageDelayMs,
         entry.Value.SuppressCommandsDuringRace,
         entry.Version);
+}
+
+/// <summary>The public home page's settings as the API shows them.</summary>
+public sealed record PublicSiteSettingsResponse(int FeedItemCount, int Version)
+{
+    public static PublicSiteSettingsResponse From(SettingsEntry<PublicSiteSettings> entry) =>
+        new(entry.Value.FeedItemCount, entry.Version);
 }

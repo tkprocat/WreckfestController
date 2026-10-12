@@ -18,6 +18,7 @@ public static class SettingsSections
     public const string WreckfestServer = "WreckfestServer";
     public const string SteamCmd = "SteamCmd";
     public const string Vote = "Vote";
+    public const string PublicSite = "PublicSite";
 
     public const string DefaultServerArguments = "-s server_config=server_config.cfg";
     public const string DefaultWreckfestAppId = "361580";
@@ -27,6 +28,7 @@ public static class SettingsSections
         [typeof(WreckfestServerSettings)] = new(WreckfestServer, DefaultServer, s => Normalize((WreckfestServerSettings)s)),
         [typeof(SteamCmdSettings)] = new(SteamCmd, DefaultSteamCmd, s => Normalize((SteamCmdSettings)s)),
         [typeof(VoteSettings)] = new(Vote, DefaultVote, s => Normalize((VoteSettings)s)),
+        [typeof(PublicSiteSettings)] = new(PublicSite, DefaultPublicSite, s => Normalize((PublicSiteSettings)s)),
     };
 
     /// <summary>Every section type the store keeps.</summary>
@@ -72,6 +74,13 @@ public static class SettingsSections
         return vote;
     }
 
+    private static PublicSiteSettings DefaultPublicSite(IConfiguration shipped)
+    {
+        var site = new PublicSiteSettings();
+        site.FeedItemCount = shipped.GetSection(PublicSite).GetValue(nameof(PublicSiteSettings.FeedItemCount), site.FeedItemCount);
+        return site;
+    }
+
     private static WreckfestServerSettings Normalize(WreckfestServerSettings server)
     {
         server.ServerPath = server.ServerPath?.Trim() ?? string.Empty;
@@ -101,6 +110,12 @@ public static class SettingsSections
         vote.MaxLapsAllowed = Math.Max(1, vote.MaxLapsAllowed);
         vote.MessageDelayMs = Math.Clamp(vote.MessageDelayMs, 0, 5000);
         return vote;
+    }
+
+    private static PublicSiteSettings Normalize(PublicSiteSettings site)
+    {
+        site.FeedItemCount = Math.Clamp(site.FeedItemCount, 1, PublicSiteSettings.MaxFeedItemCount);
+        return site;
     }
 
     private sealed record Definition(string Name, Func<IConfiguration, object> Default, Func<object, object> Normalize);

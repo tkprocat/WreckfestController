@@ -2306,6 +2306,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/public/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["PublicFeedItem"][];
+                        "application/json": components["schemas"]["PublicFeedItem"][];
+                        "text/json": components["schemas"]["PublicFeedItem"][];
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/server/version": {
         parameters: {
             query?: never;
@@ -3291,6 +3346,108 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/publicSite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["PublicSiteSettingsResponse"];
+                        "application/json": components["schemas"]["PublicSiteSettingsResponse"];
+                        "text/json": components["schemas"]["PublicSiteSettingsResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+            };
+        };
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["JsonElement"];
+                    "text/json": components["schemas"]["JsonElement"];
+                    "application/*+json": components["schemas"]["JsonElement"];
+                };
+            };
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["PublicSiteSettingsResponse"];
+                        "application/json": components["schemas"]["PublicSiteSettingsResponse"];
+                        "text/json": components["schemas"]["PublicSiteSettingsResponse"];
+                    };
+                };
+                /** @description Bad Request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ValidationProblemDetails"];
+                    };
+                };
+                /** @description Conflict */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["PublicSiteSettingsResponse"];
+                        "application/json": components["schemas"]["PublicSiteSettingsResponse"];
+                        "text/json": components["schemas"]["PublicSiteSettingsResponse"];
+                    };
+                };
+                /** @description Precondition Required */
+                428: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/users": {
         parameters: {
             query?: never;
@@ -3875,6 +4032,37 @@ export interface components {
             /** Format: date-time */
             endsAt: null | string;
         };
+        PublicCupRun: {
+            name: string;
+            /** Format: date-time */
+            activatedAt: string;
+            status: components["schemas"]["PublicCupRunStatus"];
+            /** Format: date-time */
+            startsAt: null | string;
+            /** Format: date-time */
+            endsAt: null | string;
+            standings: components["schemas"]["PublicCupStanding"][];
+            /** Format: int32 */
+            raceCount: number;
+            races: components["schemas"]["PublicRace"][];
+        };
+        /** @enum {unknown} */
+        PublicCupRunStatus: "Warmup" | "Running" | "Ended";
+        PublicCupStanding: {
+            /** Format: int32 */
+            position: number;
+            name: string;
+            isBot: boolean;
+            /** Format: int32 */
+            points: number;
+        };
+        PublicFeedItem: {
+            kind: components["schemas"]["PublicFeedItemKind"];
+            race: null | components["schemas"]["PublicRace"];
+            cup: null | components["schemas"]["PublicCupRun"];
+        };
+        /** @enum {unknown} */
+        PublicFeedItemKind: "Race" | "Cup";
         PublicOverview: {
             serverName: null | string;
             /** Format: int32 */
@@ -3910,6 +4098,7 @@ export interface components {
             /** Format: int32 */
             laps: number;
             cupName: null | string;
+            warmup: boolean;
             entries: components["schemas"]["PublicRaceEntry"][];
         };
         PublicRaceEntry: {
@@ -3934,6 +4123,12 @@ export interface components {
             gameMode: null | string;
             /** Format: int32 */
             laps: null | number;
+        };
+        PublicSiteSettingsResponse: {
+            /** Format: int32 */
+            feedItemCount: number;
+            /** Format: int32 */
+            version: number;
         };
         PublicStatus: {
             isRunning: boolean;
@@ -4050,6 +4245,7 @@ export interface components {
         };
         SettingsResponse: {
             vote: components["schemas"]["VoteSettingsResponse"];
+            publicSite: components["schemas"]["PublicSiteSettingsResponse"];
         };
         TagRequest: {
             name: string;
