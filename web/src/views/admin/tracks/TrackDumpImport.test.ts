@@ -13,7 +13,7 @@ const report = (extra: Record<string, unknown> = {}) => ({
   tracks: counts(2, 0, 1),
   variants: counts(7, 3, 40, 2),
   skipped: [{ id: 'workshop:1/gardemoen/gardemoen_head-on', reason: 'Its id has characters the catalogue does not allow.' }],
-  diagnostics: [{ code: 'missing-value', severity: 'warning', count: 12, example: 'The .tcat lists no surfaces.' }],
+  diagnostics: [{ code: 'missing-value', severity: 'warning', count: 12, meaning: 'A value that should be set was empty.' }],
   ...extra,
 })
 
@@ -61,7 +61,9 @@ describe('TrackDumpImport', () => {
     expect(options.headers).toEqual({ 'Content-Type': 'application/json' })
 
     const text = body().text()
-    expect(text).toContain('7 new variants are not votable until you allow them')
+    expect(text).toContain('Added 1 mod, 2 tracks and 7 variants. Filled in 3 track lengths. Skipped 2 items, listed below.')
+    expect(text).toContain('New variants are not votable until you allow them.')
+    expect(text).toContain('A value that should be set was empty.')
     expect(text).toContain('WreckfestTrackDump 1.0.0')
     const variants = body().findAll('tbody tr').find((r) => r.find('th').text() === 'Variants')!
     expect(variants.findAll('td').map((c) => c.text())).toEqual(['7', '3', '40', '2'])
@@ -82,6 +84,33 @@ describe('TrackDumpImport', () => {
     expect(body().text()).toContain('Nothing new')
     // No skipped list and no diagnostics: only the counts.
     expect(body().findAll('h3')).toHaveLength(0)
+  })
+
+  it('says nothing was imported when every new item was skipped', async () => {
+    api.POST.mockResolvedValue(
+      answer(report({ mods: counts(0, 0, 1), tracks: counts(0, 0, 0, 1), variants: counts(0, 0, 0, 3), diagnostics: [] })),
+    )
+    await openWith(new File(['{}'], 'tracks.json'))
+
+    await button('Import').trigger('click')
+    await flushPromises()
+
+    const text = body().text()
+    expect(text).toContain('Nothing was imported: 4 items were skipped, listed below.')
+    expect(text).not.toContain('Nothing new')
+    expect(text).toContain('gardemoen_head-on')
+  })
+
+  it('says what was filled in when nothing was added', async () => {
+    api.POST.mockResolvedValue(
+      answer(report({ mods: counts(0, 1), tracks: counts(0, 0, 3), variants: counts(0, 5, 35), skipped: [], diagnostics: [] })),
+    )
+    await openWith(new File(['{}'], 'tracks.json'))
+
+    await button('Import').trigger('click')
+    await flushPromises()
+
+    expect(body().find('[role="status"]').text()).toBe('Filled in 5 track lengths. Filled in 1 missing mod workshop id.')
   })
 
   it("shows the server's refusal, such as an unknown format version", async () => {

@@ -5078,7 +5078,7 @@
           "code",
           "severity",
           "count",
-          "example"
+          "meaning"
         ],
         "type": "object",
         "properties": {
@@ -5092,7 +5092,7 @@
             "type": "integer",
             "format": "int32"
           },
-          "example": {
+          "meaning": {
             "type": "string"
           }
         }

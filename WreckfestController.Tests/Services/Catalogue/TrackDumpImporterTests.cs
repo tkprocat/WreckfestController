@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
 using WreckfestController.Data.Catalogue;
@@ -188,7 +189,7 @@ public sealed class TrackDumpImporterTests : IAsyncLifetime
         Assert.Equal(3, report.Skipped.Count);
         Assert.Contains(report.Skipped, s => s.Id.EndsWith("gardemoen_head-on", StringComparison.Ordinal) && s.Reason.Contains("letters, digits"));
         Assert.Contains(report.Skipped, s => s.Id.EndsWith("gardemoen_odd", StringComparison.Ordinal) && s.Reason.Contains("game mode 2"));
-        Assert.Contains(report.Skipped, s => s.Id.EndsWith("fields_loop", StringComparison.Ordinal) && s.Reason.Contains("first one"));
+        Assert.Contains(report.Skipped, s => s.Id.EndsWith("fields_loop", StringComparison.OrdinalIgnoreCase) && s.Reason.Contains("first one"));
 
         // The base game's copy of a shared id is the one kept.
         await using var db = CreateContext();
@@ -255,10 +256,114 @@ public sealed class TrackDumpImporterTests : IAsyncLifetime
             .Diagnostic("missing-value", "Another.")
             .Diagnostic("malformed", "The pack did not decode.", "error"));
 
-        Assert.Equal(
-            [new ImportDiagnostic("missing-value", "warning", 2, "A blank description."), new ImportDiagnostic("malformed", "error", 1, "The pack did not decode.")],
-            report.Diagnostics);
+        Assert.Equal(["missing-value", "malformed"], report.Diagnostics.Select(d => d.Code));
+        Assert.Equal([2, 1], report.Diagnostics.Select(d => d.Count));
+        Assert.Equal(["warning", "error"], report.Diagnostics.Select(d => d.Severity));
+        // Our words for each code, never the dump's message.
+        Assert.All(report.Diagnostics, d => Assert.DoesNotContain(d.Meaning, new[] { "A blank description.", "The pack did not decode." }));
+        Assert.All(report.Diagnostics, d => Assert.False(string.IsNullOrEmpty(d.Meaning)));
         Assert.Equal("WreckfestTrackDump 1.0.0", report.Tool);
+        Assert.Equal("2026-10-06T14:03:12Z", report.GeneratedAt);
+    }
+
+    /// <summary>A dump can carry local paths: duplicate-source names both folders, a read failure its exception text.</summary>
+    public static readonly string[] Paths = [@"C:\Users\allan\steamapps", "/home/allan/.steam", @"\\nas\games\wreckfest", "D:/SteamLibrary"];
+
+    [Fact]
+    public async Task NoTextFromTheDump_ThatCouldHoldAPath_ReachesTheReport()
+    {
+        var json = AsanPack()
+            .Diagnostic("duplicate-source", $"Two folders give workshop:1: {Paths[0]}\\1 and {Paths[1]}/1. Only the first was read.", "error")
+            .Diagnostic("malformed", $"Could not read {Paths[2]}\\x.envi: The process cannot access the file.")
+            .Diagnostic($"{Paths[3]}/made-up-code", $"Unknown at {Paths[3]}")
+            .ToJsonObject();
+        json["tool"] = new JsonObject { ["name"] = Paths[0], ["version"] = Paths[1] };
+        json["generatedAt"] = Paths[2];
+        // A track id and a game id with path text in them: skipped, and listed without it.
+        json["tracks"]!.AsArray().Add(new JsonObject
+        {
+            ["id"] = "workshop:2276098616/" + Paths[1], ["source"] = "workshop:2276098616", ["title"] = null, ["variants"] = new JsonArray(),
+        });
+        json["tracks"]![0]!["variants"]!.AsArray().Add(new JsonObject
+        {
+            ["id"] = "x", ["gameId"] = Paths[0], ["name"] = null, ["gameMode"] = 1, ["trackData"] = null,
+        });
+        using var document = JsonDocument.Parse(json.ToJsonString());
+        var dump = TrackDump.Read(document.RootElement, out var refusal);
+        Assert.Null(refusal);
+
+        TrackDumpImportReport report;
+        await using (var db = CreateContext())
+        {
+            report = await TrackDumpImporter.ImportAsync(db, dump!, Ct);
+        }
+
+        var text = JsonSerializer.Serialize(report);
+        foreach (var fragment in Paths.Concat(["Users", "home", "nas", "SteamLibrary", "steamapps"]))
+        {
+            Assert.DoesNotContain(fragment, text, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.Equal(["duplicate-source", "malformed", "other"], report.Diagnostics.Select(d => d.Code).Order());
+        Assert.Null(report.Tool);
+        Assert.Null(report.GeneratedAt);
+        Assert.Contains(report.Skipped, s => s.Id == "workshop:2276098616/?");
+        Assert.Contains(report.Skipped, s => s.Id == "workshop:2276098616/asan/?");
+    }
+
+    [Fact]
+    public async Task FoldersThatCollideOnlyAsKeys_GetTracksOfTheirOwn()
+    {
+        var report = await ImportAsync(new TrackDumpFixture().Workshop("111", "Pack")
+            .Track("workshop:111", "foo-bar", "Foo Bar (dash)", ("foobar_dash", "Dash", 1, null))
+            .Track("workshop:111", "foo_bar", "Foo Bar (underscore)", ("foobar_under", "Under", 1, null)));
+
+        Assert.Equal(new ImportCounts(2, 0, 0, 0), report.Tracks);
+        await using var db = CreateContext();
+        var dash = await db.TrackVariants.Include(v => v.Track).SingleAsync(v => v.VariantId == "foobar_dash", Ct);
+        var under = await db.TrackVariants.Include(v => v.Track).SingleAsync(v => v.VariantId == "foobar_under", Ct);
+        Assert.NotEqual(dash.TrackId, under.TrackId);
+        Assert.Equal(("Foo Bar (dash)", "Foo Bar (underscore)"), (dash.Track.Name, under.Track.Name));
+
+        // A later import, in the other order, puts each new variant with its own folder's track.
+        await ImportAsync(new TrackDumpFixture().Workshop("111", "Pack")
+            .Track("workshop:111", "foo_bar", "Foo Bar (underscore)", ("foobar_under2", "Under 2", 1, null))
+            .Track("workshop:111", "foo-bar", "Foo Bar (dash)", ("foobar_dash2", "Dash 2", 1, null)));
+        Assert.Equal(dash.TrackId, (await db.TrackVariants.AsNoTracking().SingleAsync(v => v.VariantId == "foobar_dash2", Ct)).TrackId);
+        Assert.Equal(under.TrackId, (await db.TrackVariants.AsNoTracking().SingleAsync(v => v.VariantId == "foobar_under2", Ct)).TrackId);
+    }
+
+    [Fact]
+    public async Task AFolderNamedLikeAGeneratedKey_DoesNotJoinThatTrack()
+    {
+        // 222's "gardemoen" becomes gardemoen_222, and then 222 has a real folder of that name.
+        var report = await ImportAsync(new TrackDumpFixture().Workshop("111", "First").Workshop("222", "Second")
+            .Track("workshop:111", "gardemoen", "Gardemoen", ("g_first", "First", 1, null))
+            .Track("workshop:222", "gardemoen", "Gardemoen", ("g_second", "Second", 1, null))
+            .Track("workshop:222", "gardemoen_222", "Gardemoen 222", ("g_real", "Real", 1, null)));
+
+        Assert.Equal(new ImportCounts(3, 0, 0, 0), report.Tracks);
+        await using var db = CreateContext();
+        var tracks = await db.TrackVariants.Include(v => v.Track).Where(v => v.VariantId.StartsWith("g_"))
+            .ToDictionaryAsync(v => v.VariantId, v => v.Track.Name, Ct);
+        Assert.Equal(3, await db.TrackVariants.Where(v => v.VariantId.StartsWith("g_")).Select(v => v.TrackId).Distinct().CountAsync(Ct));
+        Assert.Equal("Gardemoen 222", tracks["g_real"]);
+    }
+
+    [Fact]
+    public async Task AnAdminTrackKeyedByTheFolder_IsUsed_ButNeverChanged()
+    {
+        await using (var db = CreateContext())
+        {
+            db.Tracks.Add(new Track { Key = "fields", Name = "Admin's Fields", Origin = TrackOrigin.Custom });
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await ImportAsync(new TrackDumpFixture().Base().Track("base", "fields", "Fields", ("fields_loop", "Loop", 1, null)));
+
+        await using var check = CreateContext();
+        var loop = await check.TrackVariants.Include(v => v.Track).SingleAsync(v => v.VariantId == "fields_loop", Ct);
+        Assert.Equal(("fields", "Admin's Fields", null as string), (loop.Track.Key, loop.Track.Name, loop.Track.DumpId));
     }
 
     [Theory]

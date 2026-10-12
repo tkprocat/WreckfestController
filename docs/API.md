@@ -533,10 +533,14 @@ there**, built-in or admin-added, edited or not.
   skipped.
 - **Tracks** are never changed. A new variant joins the track that holds most of its
   siblings from the same dump track, so a new layout of a built-in joins the built-in.
-  Otherwise it goes to the track keyed by the dump's track folder from the same mod, or a
-  new one: not built-in, every weather, origin `BaseGame` for the base game (the dump does
-  not say which DLC a track is from) or `Workshop` for a mod, linked to its mod. When
-  another mod's track already has the folder's key, the new one is `<folder>_<workshop id>`.
+  Otherwise it goes to the track an earlier import made for the same dump track (kept
+  internally as its dump id, `<source>/<folder>`), then to a built-in or admin track whose
+  key is exactly the folder name, from the same source. Failing both, a new track is made:
+  not built-in, every weather, origin `BaseGame` for the base game (the dump does not say
+  which DLC a track is from) or `Workshop` for a mod, linked to its mod. Its key is the
+  first one no track has: the folder (with characters outside `[A-Za-z0-9_]` made `_`),
+  then `<folder>_<workshop id>`, then numbered. Two dump tracks are never merged because
+  their keys collide: `foo-bar` and `foo_bar` get tracks of their own.
 - **Mods** match by `folderName` (the workshop id for a workshop item). A match keeps its
   name; only a missing `workshopId` is filled in. A new mod is added for each mod in the
   file that has tracks, named from its `modinfo.modi`. Existing tracks are not linked to it:
@@ -546,9 +550,15 @@ there**, built-in or admin-added, edited or not.
 
 The report: `{ tool, generatedAt, mods, tracks, variants, skipped, diagnostics }`. `mods`,
 `tracks` and `variants` are `{ added, updated, unchanged, skipped }` (tracks are never
-`updated`); `skipped` lists the first 100 `{ id, reason }` by the dump's ids; `diagnostics`
-groups the dump's own diagnostics as `{ code, severity, count, example }`. The dump's local
-source paths are neither kept nor echoed.
+`updated`); `skipped` lists the first 100 `{ id, reason }`; `diagnostics` counts the dump's
+own diagnostics as `{ code, severity, count, meaning }`.
+
+**No text from the dump that could hold a path is answered.** The dump's diagnostic messages
+can name local folders (`duplicate-source` does, and read failures carry exception text),
+so they are never passed on: `meaning` is the controller's own sentence for the code, and an
+unknown code counts as `other`. A skipped item's `id` is rebuilt as `source/folder/gameId`
+from parts that are plain names, with `?` for any part that is not. `tool` and `generatedAt`
+are null unless they are plain text and a date. Source `path`s are not read at all.
 
 ### Collections — `api/collections`
 

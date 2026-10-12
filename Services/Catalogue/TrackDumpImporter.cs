@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using WreckfestController.Data;
@@ -9,11 +10,17 @@ namespace WreckfestController.Services.Catalogue;
 /// <summary>How many rows of one kind an import added, changed, left as they were, or could not use.</summary>
 public sealed record ImportCounts(int Added, int Updated, int Unchanged, int Skipped);
 
-/// <summary>Something in the dump the import did not use. <c>Id</c> is the dump's own id for it.</summary>
+/// <summary>
+/// Something in the dump the import did not use. <c>Id</c> is <c>source/folder/gameId</c>,
+/// built from parts the import checked, so it never carries a path from the dump.
+/// </summary>
 public sealed record ImportSkip(string Id, string Reason);
 
-/// <summary>The dump's own diagnostics of one code: how many, the worst severity, and the first message.</summary>
-public sealed record ImportDiagnostic(string Code, string Severity, int Count, string Example);
+/// <summary>
+/// The dump's own diagnostics of one code: how many, the worst severity, and what the code
+/// means, in our words. The dump's messages are not passed on: some name local folders.
+/// </summary>
+public sealed record ImportDiagnostic(string Code, string Severity, int Count, string Meaning);
 
 /// <summary>What a track dump import did. The counts are complete; <c>Skipped</c> lists the first <see cref="TrackDumpImporter.SkipListLimit"/>.</summary>
 public sealed record TrackDumpImportReport(
@@ -38,9 +45,12 @@ public sealed record TrackDumpImportReport(
 /// dump has one. A new variant is added not built-in and not votable, for an admin to opt in.</item>
 /// <item><b>Tracks</b> are never changed. A new variant goes under the track that already
 /// holds most of its siblings from the same dump track (so a new layout of a built-in
-/// joins it), else a track with the dump folder's key from the same mod, else a new
-/// track: not built-in, every weather, origin BaseGame for the base game (a DLC pack is not
-/// in the dump) or Workshop for a mod. A track is created only for a new variant.</item>
+/// joins it), else the track an earlier import made for the same dump track
+/// (<see cref="Track.DumpId"/>), else a built-in or admin track keyed exactly by the folder
+/// from the same source, else a new track: not built-in, every weather, origin BaseGame for
+/// the base game (a DLC pack is not in the dump) or Workshop for a mod. A track is created
+/// only for a new variant, with a key no other track has: two dump tracks are never merged
+/// by a key collision.</item>
 /// <item><b>Mods</b> are matched by folder name. A match keeps its name; only a missing
 /// workshop id is filled in. A new mod is added for each mod source with tracks.</item>
 /// </list>
@@ -50,7 +60,26 @@ public static class TrackDumpImporter
 {
     public const int SkipListLimit = 100;
 
-    private const int DiagnosticExampleMaxLength = 300;
+    /// <summary>What each WreckfestTrackDump diagnostic code means (its docs/output.md). Any other code counts as "other".</summary>
+    private static readonly Dictionary<string, string> DiagnosticMeanings = new(StringComparer.Ordinal)
+    {
+        ["unsupported-schema-version"] = "A file's schema version is one the dump tool does not read, so what it held was left out.",
+        ["encrypted"] = "A file is encrypted and could not be read.",
+        ["malformed"] = "A file did not decode.",
+        ["missing-track-data"] = "A variant's .tcat was not found, so it has no track length.",
+        ["missing-environment"] = "A track folder has no .envi, so the track has no title.",
+        ["missing-value"] = "A value that should be set was empty, such as a blank description.",
+        ["invalid-value"] = "A value was unusable, such as a zero track length.",
+        ["duplicate-track"] = "Two sources define the same track folder or variant.",
+        ["duplicate-source"] = "Two folders would get the same source id; only the first was read.",
+    };
+
+    private const string OtherDiagnostic = "other";
+
+    /// <summary>A part of an id that is safe to show: no separators, drive letters or anything else a path needs.</summary>
+    private static readonly Regex SafePart = new(@"^[A-Za-z0-9_.\- ]{1,128}$", RegexOptions.CultureInvariant);
+
+    private static readonly Regex SafeToolText = new(@"^[A-Za-z0-9_.\-+ ]{1,64}$", RegexOptions.CultureInvariant);
 
     private static readonly Regex GameIdPattern = new(TrackVariant.VariantIdPattern, RegexOptions.CultureInvariant);
     private static readonly Regex FolderNamePattern = new(Controllers.ModRequest.FolderNamePattern, RegexOptions.CultureInvariant);
@@ -80,8 +109,10 @@ public static class TrackDumpImporter
         await transaction.CommitAsync(cancellationToken);
 
         return new TrackDumpImportReport(
-            Tool: dump.Tool is { Name: { } name } ? Truncate($"{name} {dump.Tool.Version}".Trim(), 64) : null,
-            GeneratedAt: dump.GeneratedAt is null ? null : Truncate(dump.GeneratedAt, 40),
+            Tool: ToolText(dump.Tool),
+            GeneratedAt: DateTimeOffset.TryParse(dump.GeneratedAt, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var at)
+                ? at.UtcDateTime.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture)
+                : null,
             Mods: run.Mods.ToCounts(),
             Tracks: run.Tracks.ToCounts(),
             Variants: run.Variants.ToCounts(),
@@ -89,18 +120,50 @@ public static class TrackDumpImporter
             Diagnostics: Summarise(dump.Diagnostics));
     }
 
+    /// <summary>The dump's diagnostics, counted by code. Only the code and severity are read, never the free text.</summary>
     private static IReadOnlyList<ImportDiagnostic> Summarise(IReadOnlyList<TrackDumpDiagnostic>? diagnostics) =>
         (diagnostics ?? [])
             .Where(d => d is not null)
-            .GroupBy(d => string.IsNullOrWhiteSpace(d.Code) ? "unknown" : Truncate(d.Code, 64))
+            .GroupBy(d => d.Code is not null && DiagnosticMeanings.ContainsKey(d.Code) ? d.Code : OtherDiagnostic)
             .Select(g => new ImportDiagnostic(
                 g.Key,
                 g.Any(d => d.Severity == "error") ? "error" : "warning",
                 g.Count(),
-                Truncate(g.Select(d => d.Message).FirstOrDefault(m => !string.IsNullOrWhiteSpace(m)) ?? string.Empty, DiagnosticExampleMaxLength)))
+                DiagnosticMeanings.GetValueOrDefault(g.Key) ?? "Diagnostics of a kind this controller does not know."))
             .OrderByDescending(d => d.Count)
             .ThenBy(d => d.Code, StringComparer.Ordinal)
             .ToList();
+
+    /// <summary>"WreckfestTrackDump 1.0.0", or null when the name or version is not plain text.</summary>
+    private static string? ToolText(TrackDumpTool? tool)
+    {
+        var text = $"{tool?.Name} {tool?.Version}".Trim();
+        return SafeToolText.IsMatch(text) ? text : null;
+    }
+
+    /// <summary>A source id to show: base, workshop:&lt;digits&gt;, or mod:&lt;a plain folder name&gt;.</summary>
+    private static string ShowSource(string? source)
+    {
+        const string Workshop = "workshop:";
+        const string ModPrefix = "mod:";
+        if (source == "base")
+        {
+            return source;
+        }
+
+        if (source is not null && source.StartsWith(Workshop, StringComparison.Ordinal))
+        {
+            var digits = source[Workshop.Length..];
+            return digits.Length is > 0 and <= Mod.WorkshopIdMaxLength && digits.All(char.IsAsciiDigit) ? source : "workshop:?";
+        }
+
+        return source is not null && source.StartsWith(ModPrefix, StringComparison.Ordinal)
+            ? ModPrefix + ShowPart(source[ModPrefix.Length..])
+            : "?";
+    }
+
+    /// <summary>One part of a dump id to show, or "?" when it holds anything a path could hide in.</summary>
+    private static string ShowPart(string? part) => part is not null && SafePart.IsMatch(part) ? part : "?";
 
     private static string Truncate(string text, int length) => text.Length <= length ? text : text[..length];
 
@@ -120,6 +183,10 @@ public static class TrackDumpImporter
     private sealed class ImportRun
     {
         private readonly Dictionary<string, Track> _tracksByKey;
+        private readonly Dictionary<string, Track> _tracksByDumpId;
+
+        /// <summary>Built-in and admin tracks reused by key in this import, and the dump track that took each.</summary>
+        private readonly Dictionary<Track, string> _claimed = new();
         private readonly Dictionary<string, TrackVariant> _variantsById;
         private readonly Dictionary<string, Mod> _modsByFolder;
         private readonly IReadOnlyList<WeatherCondition> _weather;
@@ -137,6 +204,10 @@ public static class TrackDumpImporter
             IReadOnlyList<TrackDumpSource> sources)
         {
             _tracksByKey = tracks.ToDictionary(t => t.Key, StringComparer.OrdinalIgnoreCase);
+            _tracksByDumpId = tracks
+                .Where(t => t.DumpId is not null)
+                .GroupBy(t => t.DumpId!, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.OrderBy(t => t.Id).First(), StringComparer.OrdinalIgnoreCase);
             _variantsById = tracks.SelectMany(t => t.Variants).ToDictionary(v => v.VariantId, StringComparer.OrdinalIgnoreCase);
             _modsByFolder = mods.ToDictionary(m => m.FolderName, StringComparer.OrdinalIgnoreCase);
             _weather = weather;
@@ -157,11 +228,11 @@ public static class TrackDumpImporter
 
         public void Import(ControllerDbContext db, TrackDumpTrack dumpTrack)
         {
-            var id = dumpTrack.Id ?? "(no id)";
             var source = dumpTrack.Source is null ? null : Resolve(db, dumpTrack.Source);
             var folder = dumpTrack.Source is not null && dumpTrack.Id?.StartsWith(dumpTrack.Source + "/", StringComparison.Ordinal) == true
                 ? dumpTrack.Id[(dumpTrack.Source.Length + 1)..]
                 : null;
+            var id = $"{ShowSource(dumpTrack.Source)}/{ShowPart(folder)}";
             if (source is null || string.IsNullOrEmpty(folder))
             {
                 Skip(Tracks, id, "Its source is not base, workshop:<id> or mod:<folder>, or its id is not under it.");
@@ -177,8 +248,8 @@ public static class TrackDumpImporter
                     continue;
                 }
 
-                var variantId = variant.Id ?? $"{id}/{variant.GameId}";
                 var gameId = variant.GameId?.Trim() ?? string.Empty;
+                var variantId = $"{id}/{ShowPart(gameId)}";
                 if (!GameIdPattern.IsMatch(gameId))
                 {
                     Skip(Variants, variantId, "Its id has characters the catalogue does not allow: only letters, digits and _, up to 64.");
@@ -247,7 +318,7 @@ public static class TrackDumpImporter
             var created = false;
             if (target is null)
             {
-                (target, created) = FindOrCreateTrack(db, source, folder, dumpTrack.Title?.Text);
+                (target, created) = FindOrCreateTrack(db, source, dumpTrack.Id!.ToLowerInvariant(), folder, dumpTrack.Title?.Text);
             }
 
             foreach (var (dump, gameId, mode) in added)
@@ -287,54 +358,64 @@ public static class TrackDumpImporter
         }
 
         /// <summary>
-        /// The track a new variant goes into when none of its siblings is in the catalogue:
-        /// one with the folder's key from the same mod (an admin may have added it), else a
-        /// new one. A key another mod's track already has gets the source as a suffix.
+        /// The track a new variant goes into when none of its siblings is in the catalogue.
+        /// <list type="number">
+        /// <item>The track an earlier import made for this dump track, by <see cref="Track.DumpId"/>.</item>
+        /// <item>A built-in or admin track whose key is exactly the folder, from the same
+        /// source, that no other dump track in this import has taken.</item>
+        /// <item>A new track, with the first key no track has: the folder, then
+        /// <c>&lt;folder&gt;_&lt;workshop id&gt;</c>, then numbered.</item>
+        /// </list>
+        /// So folders that only collide once made into a key (<c>foo-bar</c> and <c>foo_bar</c>),
+        /// or a folder named like a generated key, get tracks of their own.
         /// </summary>
-        private (Track Track, bool Created) FindOrCreateTrack(ControllerDbContext db, SourceInfo source, string folder, string? title)
+        private (Track Track, bool Created) FindOrCreateTrack(ControllerDbContext db, SourceInfo source, string dumpId, string folder, string? title)
         {
+            if (_tracksByDumpId.TryGetValue(dumpId, out var earlier))
+            {
+                return (earlier, false);
+            }
+
             var key = Key(folder, Track.KeyMaxLength);
-            var candidates = new List<string> { key };
-            if (!source.IsBase)
+            if (string.Equals(key, folder, StringComparison.OrdinalIgnoreCase)
+                && _tracksByKey.TryGetValue(key, out var named)
+                && named.DumpId is null
+                && Fits(named, source)
+                && (!_claimed.TryGetValue(named, out var takenBy) || takenBy == dumpId))
             {
-                candidates.Add(Key(folder, Track.KeyMaxLength - source.Suffix.Length - 1) + "_" + source.Suffix);
+                _claimed[named] = dumpId;
+                return (named, false);
             }
 
-            for (var n = 2; candidates.Count < 50; n++)
+            var free = _tracksByKey.ContainsKey(key) ? null : key;
+            if (free is null && !source.IsBase)
             {
-                var number = "_" + n;
-                candidates.Add(Key(folder, Track.KeyMaxLength - number.Length) + number);
+                var suffixed = Key(folder, Track.KeyMaxLength - source.Suffix.Length - 1) + "_" + source.Suffix;
+                free = _tracksByKey.ContainsKey(suffixed) ? null : suffixed;
             }
 
-            foreach (var candidate in candidates)
+            for (var n = 2; free is null; n++)
             {
-                if (_tracksByKey.TryGetValue(candidate, out var existing))
-                {
-                    if (Fits(existing, source))
-                    {
-                        return (existing, false);
-                    }
-
-                    continue;
-                }
-
-                var name = title?.Trim();
-                var track = new Track
-                {
-                    Key = candidate,
-                    Name = Truncate(string.IsNullOrEmpty(name) ? folder : name, Track.NameMaxLength),
-                    Origin = source.IsBase ? TrackOrigin.BaseGame : TrackOrigin.Workshop,
-                    Mod = source.Mod,
-                    IsBuiltIn = false,
-                    WeatherConditions = _weather.ToList(),
-                };
-                db.Tracks.Add(track);
-                _tracksByKey[candidate] = track;
-                return (track, true);
+                var number = "_" + n.ToString(CultureInfo.InvariantCulture);
+                var numbered = Key(folder, Track.KeyMaxLength - number.Length) + number;
+                free = _tracksByKey.ContainsKey(numbered) ? null : numbered;
             }
 
-            // Fifty taken keys for one folder: not a real catalogue.
-            throw new InvalidOperationException($"No free track key for '{folder}'.");
+            var name = title?.Trim();
+            var track = new Track
+            {
+                Key = free,
+                Name = Truncate(string.IsNullOrEmpty(name) ? folder : name, Track.NameMaxLength),
+                Origin = source.IsBase ? TrackOrigin.BaseGame : TrackOrigin.Workshop,
+                Mod = source.Mod,
+                IsBuiltIn = false,
+                DumpId = dumpId.Length <= Track.DumpIdMaxLength ? dumpId : null,
+                WeatherConditions = _weather.ToList(),
+            };
+            db.Tracks.Add(track);
+            _tracksByKey[free] = track;
+            _tracksByDumpId[dumpId] = track;
+            return (track, true);
         }
 
         /// <summary>Whether an existing track with the right key is this source's: the same mod, or both from the base game.</summary>
@@ -397,7 +478,7 @@ public static class TrackDumpImporter
             if (!FolderNamePattern.IsMatch(folder))
             {
                 // The track can still be imported, as a workshop track without a mod.
-                Skip(Mods, sourceId, "Its folder name is not one the mods= setting can name.");
+                Skip(Mods, ShowSource(sourceId), "Its folder name is not one the mods= setting can name.");
                 return new SourceInfo(IsBase: false, suffix, Mod: null);
             }
 
@@ -434,7 +515,7 @@ public static class TrackDumpImporter
             tally.Skipped++;
             if (_skips.Count < SkipListLimit)
             {
-                _skips.Add(new ImportSkip(Truncate(id, 200), reason));
+                _skips.Add(new ImportSkip(id, reason));
             }
         }
     }

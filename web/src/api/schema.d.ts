@@ -3877,7 +3877,7 @@ export interface components {
             severity: string;
             /** Format: int32 */
             count: number;
-            example: string;
+            meaning: string;
         };
         ImportSkip: {
             id: string;

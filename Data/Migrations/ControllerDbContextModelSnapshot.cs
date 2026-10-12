@@ -315,6 +315,11 @@ namespace WreckfestController.Data.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("DumpId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT")
+                        .UseCollation("NOCASE");
+
                     b.Property<bool>("IsBuiltIn")
                         .HasColumnType("INTEGER");
 

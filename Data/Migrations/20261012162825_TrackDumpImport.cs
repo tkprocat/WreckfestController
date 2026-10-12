@@ -5,7 +5,7 @@
 namespace WreckfestController.Data.Migrations
 {
     /// <inheritdoc />
-    public partial class VariantTrackLength : Migration
+    public partial class TrackDumpImport : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -15,6 +15,14 @@ namespace WreckfestController.Data.Migrations
                 table: "TrackVariants",
                 type: "REAL",
                 nullable: true);
+
+            migrationBuilder.AddColumn<string>(
+                name: "DumpId",
+                table: "Tracks",
+                type: "TEXT",
+                maxLength: 200,
+                nullable: true,
+                collation: "NOCASE");
         }
 
         /// <inheritdoc />
@@ -23,6 +31,10 @@ namespace WreckfestController.Data.Migrations
             migrationBuilder.DropColumn(
                 name: "TrackLengthM",
                 table: "TrackVariants");
+
+            migrationBuilder.DropColumn(
+                name: "DumpId",
+                table: "Tracks");
         }
     }
 }

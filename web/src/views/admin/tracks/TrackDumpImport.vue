@@ -101,11 +101,32 @@ const COLUMNS: { label: string; key: keyof Counts }[] = [
 ]
 
 const skippedTotal = computed(() => (report.value ? ROWS.reduce((sum, row) => sum + report.value![row.key].skipped, 0) : 0))
+const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+
+/** One line for what happened, from what was added, updated and skipped. */
 const summary = computed(() => {
   const r = report.value
   if (!r) return ''
   const added = r.mods.added + r.tracks.added + r.variants.added
-  return added === 0 && r.variants.updated === 0 ? 'Nothing new: the catalogue already had everything in this file.' : `Imported. ${r.variants.added} new variants are not votable until you allow them.`
+  const updated = r.mods.updated + r.variants.updated
+  const skipped = skippedTotal.value
+  if (added === 0 && updated === 0) {
+    return skipped === 0
+      ? 'Nothing new: the catalogue already had everything in this file.'
+      : `Nothing was imported: ${count(skipped, 'item was', 'items were')} skipped, listed below.`
+  }
+
+  const parts: string[] = []
+  if (added > 0) {
+    parts.push(
+      `Added ${count(r.mods.added, 'mod', 'mods')}, ${count(r.tracks.added, 'track', 'tracks')} and ${count(r.variants.added, 'variant', 'variants')}.`,
+    )
+  }
+  if (r.variants.updated > 0) parts.push(`Filled in ${count(r.variants.updated, 'track length', 'track lengths')}.`)
+  if (r.mods.updated > 0) parts.push(`Filled in ${count(r.mods.updated, 'missing mod workshop id', 'missing mod workshop ids')}.`)
+  if (skipped > 0) parts.push(`Skipped ${count(skipped, 'item', 'items')}, listed below.`)
+  if (r.variants.added > 0) parts.push('New variants are not votable until you allow them.')
+  return parts.join(' ')
 })
 
 defineExpose({ start })
@@ -170,7 +191,7 @@ defineExpose({ start })
         <h3 class="result-heading">Skipped</h3>
         <p v-if="skippedTotal > report.skipped.length" class="meta">The first {{ report.skipped.length }} of {{ skippedTotal }}.</p>
         <ul class="list">
-          <li v-for="skip in report.skipped" :key="skip.id">
+          <li v-for="(skip, index) in report.skipped" :key="index">
             <code class="row-id">{{ skip.id }}</code> {{ skip.reason }}
           </li>
         </ul>
@@ -181,7 +202,7 @@ defineExpose({ start })
         <ul class="list">
           <li v-for="diagnostic in report.diagnostics" :key="diagnostic.code">
             <code class="row-id">{{ diagnostic.code }}</code> &times; {{ diagnostic.count }}<template v-if="diagnostic.severity === 'error'"> (error)</template>:
-            {{ diagnostic.example }}
+            {{ diagnostic.meaning }}
           </li>
         </ul>
       </template>

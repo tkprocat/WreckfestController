@@ -63,6 +63,28 @@ public class CatalogueImportEndpointsTests
     }
 
     [Fact]
+    public async Task PathsInTheDumpsMessages_NeverReachTheAnswer()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+        var paths = TrackDumpImporterTests.Paths;
+        var dump = Pack()
+            .Diagnostic("duplicate-source", $"Two folders give workshop:1: {paths[0]}\\1 and {paths[1]}/1.", "error")
+            .Diagnostic("malformed", $"Could not read {paths[2]}\\x.envi: Access to the path '{paths[3]}/x' is denied.");
+
+        using var response = await PostAsync(client, dump.ToJson());
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync(Ct);
+        foreach (var fragment in paths.Concat(["Users", "home", "nas", "SteamLibrary"]))
+        {
+            Assert.DoesNotContain(fragment, text, StringComparison.OrdinalIgnoreCase);
+        }
+
+        Assert.Contains("duplicate-source", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ABuiltInVariant_KeepsItsValues_AndGetsItsLength()
     {
         await using var host = await ApiTestHost.StartAsync();

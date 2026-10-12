@@ -11,8 +11,8 @@ using WreckfestController.Data;
 namespace WreckfestController.Data.Migrations
 {
     [DbContext(typeof(ControllerDbContext))]
-    [Migration("20261012160927_VariantTrackLength")]
-    partial class VariantTrackLength
+    [Migration("20261012162825_TrackDumpImport")]
+    partial class TrackDumpImport
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -317,6 +317,11 @@ namespace WreckfestController.Data.Migrations
                     b.Property<string>("DlcName")
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
+
+                    b.Property<string>("DumpId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT")
+                        .UseCollation("NOCASE");
 
                     b.Property<bool>("IsBuiltIn")
                         .HasColumnType("INTEGER");
