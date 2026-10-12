@@ -164,6 +164,7 @@ describe('RecentRaces', () => {
       // Bots are hidden until asked for; the others keep their places.
       expect(card.findAll('.standings-list li').map(row)).toEqual(['1 Alice 18 pts', '3 Bob 6 pts'])
       expect(card.findAll('.cup-race-list details')[0]!.findAll('tbody tr')).toHaveLength(4)
+      expect(card.find('.bots-switch [role="switch"]').attributes('aria-label')).toBe('Show bots')
       await card.find('.bots-switch [role="switch"]').trigger('click')
       expect(card.findAll('.standings-list li').map(row)).toEqual(['1 Alice 18 pts', '1 Bot Ann 18 pts', '3 Bob 6 pts'])
       expect(card.findAll('.standings-list li')[1]!.classes()).toContain('bot')

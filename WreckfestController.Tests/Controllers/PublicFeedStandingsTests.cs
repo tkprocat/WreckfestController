@@ -44,6 +44,19 @@ public class PublicFeedStandingsTests
     }
 
     [Fact]
+    public void AHumanWithoutASteamId_JoinsAPlayerWhoHasSinceRenamed()
+    {
+        // Alice (ID 1), then Alice without an ID, then the same player as Bob.
+        Assert.Equal(["1 Bob 30"], Shown([Car(1, "Alice", 20, steamId: 1), Car(2, "Alice", 25), Car(3, "Bob", 30, steamId: 1)]));
+
+        // As the feed calls it: only each identity's latest row, and the names used beside.
+        Assert.Equal(
+            ["1 Bob 30"],
+            PublicFeed.Standings([Car(2, "Alice", 25), Car(3, "Bob", 30, steamId: 1)], [(1, "Alice"), (1, "Bob")])
+                .Select(s => $"{s.Position} {s.Name} {s.Points}"));
+    }
+
+    [Fact]
     public void AHumanWithoutASteamId_StaysApart_WhenTheNameIsAmbiguous()
     {
         // Two Steam IDs share the name: which one it was is not known.

@@ -96,7 +96,7 @@ public static class PublicFeed
         var races = await Races(db.Races.Where(r => loopIds.Contains(r.Id)))
             .ToDictionaryAsync(r => r.Id, cancellationToken);
 
-        var cupRaces = new Dictionary<DateTime, (List<RaceRow> Races, int Count, List<StandingRow> Rows)>();
+        var cupRaces = new Dictionary<DateTime, (List<RaceRow> Races, int Count, List<StandingRow> Rows, List<(long SteamId, string Name)> NamesUsed)>();
         foreach (var run in keys.Where(k => k.Run != null).Select(k => k.Run!.Value))
         {
             var ofRun = db.Races.Where(r => r.CupActivatedAt == run);
@@ -104,7 +104,15 @@ public static class PublicFeed
                 .ToListAsync(cancellationToken);
             var total = await ofRun.CountAsync(cancellationToken);
 
-            cupRaces[run] = (listed, total, await LatestRowsAsync(db, run, cancellationToken));
+            // Every name each Steam ID raced under, so a row without an ID can be matched
+            // to a player who has since renamed. Distinct pairs: a few per player.
+            var namesUsed = await db.RaceEntries
+                .AsNoTracking()
+                .Where(e => e.Race.CupActivatedAt == run && e.Race.CupPhase == CupPhase.Running && e.SteamId != null && !e.IsBot)
+                .Select(e => new { SteamId = e.SteamId!.Value, e.Name })
+                .Distinct()
+                .ToListAsync(cancellationToken);
+            cupRaces[run] = (listed, total, await LatestRowsAsync(db, run, cancellationToken), namesUsed.Select(n => (n.SteamId, n.Name)).ToList());
         }
 
         var names = await trackNames(
@@ -125,7 +133,7 @@ public static class PublicFeed
             }
 
             var run = key.Run!.Value;
-            var (listed, raceCount, standingRows) = cupRaces[run];
+            var (listed, raceCount, standingRows, namesUsed) = cupRaces[run];
             var isActive = active?.ActivatedAt == run;
             items.Add(new PublicFeedItem(
                 PublicFeedItemKind.Cup,
@@ -139,7 +147,7 @@ public static class PublicFeed
                         : PublicCupRunStatus.Running,
                     isActive ? active!.StartsAt : null,
                     isActive ? active!.EndsAt : null,
-                    Standings(standingRows),
+                    Standings(standingRows, namesUsed),
                     raceCount,
                     listed.Select(r => ToPublic(r, names)).ToList())));
         }
@@ -200,27 +208,36 @@ public static class PublicFeed
     /// <summary>
     /// The cup points table: each car's total after the last race it was in, as the game
     /// keeps it. Humans are told apart by Steam ID (they rename), bots by name. A human
-    /// recorded once without a Steam ID joins the one Steam ID whose latest name is theirs;
-    /// with none, or several, they stay a row of their own. Empty when nobody has a point:
+    /// recorded without a Steam ID joins the one Steam ID that raced under that name, in
+    /// <paramref name="rows"/> or <paramref name="namesUsed"/>; with none, or several, they
+    /// stay a row of their own. Empty when nobody has a point:
     /// a cup run without cup points has no table to show.
     /// </summary>
     /// <remarks>
     /// Equal totals share a place (1, 2, 2, 4), listed by who raced last, then by their
     /// place in that race, then by name.
     /// </remarks>
-    public static List<PublicCupStanding> Standings(IEnumerable<StandingRow> rows)
+    public static List<PublicCupStanding> Standings(
+        IEnumerable<StandingRow> rows,
+        IEnumerable<(long SteamId, string Name)>? namesUsed = null)
     {
-        var latest = rows
+        var all = rows.ToList();
+        var used = all
+            .Where(r => r.SteamId is not null && !r.IsBot)
+            .Select(r => (SteamId: r.SteamId!.Value, r.Name))
+            .Concat(namesUsed ?? [])
+            .ToList();
+        var latest = all
             .GroupBy(r => r.SteamId is { } steamId ? "steam:" + steamId : (r.IsBot ? "bot:" : "name:") + r.Name)
             .Select(g => g.OrderByDescending(r => r.EndedAt).ThenByDescending(r => r.RaceId).First())
             .ToList();
 
         foreach (var nameless in latest.Where(r => r.SteamId is null && !r.IsBot).ToList())
         {
-            var same = latest.Where(r => r.SteamId is not null && r.Name == nameless.Name).ToList();
-            if (same.Count == 1)
+            var ids = used.Where(u => u.Name == nameless.Name).Select(u => u.SteamId).Distinct().ToList();
+            if (ids.Count == 1 && latest.FirstOrDefault(r => r.SteamId == ids[0]) is { } player)
             {
-                var older = IsNewer(nameless, same[0]) ? same[0] : nameless;
+                var older = IsNewer(nameless, player) ? player : nameless;
                 latest.Remove(older);
             }
         }

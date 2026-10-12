@@ -84,7 +84,7 @@ function winner(race: PublicRace): string | undefined {
       </div>
       <div class="cup-controls">
         <label v-if="hasBots" class="bots-switch">
-          <NSwitch v-model:value="showBots" size="small" />
+          <NSwitch v-model:value="showBots" size="small" aria-label="Show bots" />
           <span>Show bots</span>
         </label>
         <StatusBadge compact :tone="status.tone">{{ status.label }}</StatusBadge>
