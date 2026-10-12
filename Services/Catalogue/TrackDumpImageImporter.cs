@@ -82,6 +82,9 @@ public static class TrackDumpImageImporter
         DateTime now,
         CancellationToken cancellationToken = default)
     {
+        // BEGIN IMMEDIATE before the catalogue is read: no admin deletes a matched row
+        // between the match and the write.
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var tracks = await db.Tracks.AsNoTracking().Select(t => new { t.Id, t.DumpId }).ToListAsync(cancellationToken);
         var variants = await db.TrackVariants.AsNoTracking().Select(v => new { v.Id, v.VariantId, v.TrackId }).ToListAsync(cancellationToken);
         var tracksByDumpId = tracks
@@ -107,9 +110,12 @@ public static class TrackDumpImageImporter
                     continue;
                 }
 
-                matchedVariants.Add(row.TrackId);
+                // A variant an earlier dump track placed (the base game's, repeated by a
+                // mod) is not this one's: it neither gets this one's image nor says which
+                // track this one is, as the tracks.json import skips it too.
                 if (claimed.Add(ImageOwner.Variant(row.Id)))
                 {
+                    matchedVariants.Add(row.TrackId);
                     targets.Add((ImageOwner.Variant(row.Id), source, variant.Images));
                 }
             }
@@ -132,7 +138,6 @@ public static class TrackDumpImageImporter
             }
         }
 
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         int stored = 0, unchanged = 0, removed = 0;
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

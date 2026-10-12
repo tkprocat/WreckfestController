@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
 import { NO_ANSWER, send } from '@/crud/outcome'
+import { problemMessage } from '@/api/problems'
 import {
   IMAGE_SIZES,
   imagesVersion,
@@ -112,22 +113,26 @@ async function remove(size: ImageSize) {
   if (busy.value) return
   busy.value = size
   try {
-    const outcome = await send(
-      () =>
+    let answer: { error?: unknown; response: Response }
+    try {
+      answer =
         props.kind === 'track'
-          ? api.DELETE('/api/catalogue/tracks/{id}/images/{size}', path(size))
-          : api.DELETE('/api/catalogue/variants/{id}/images/{size}', path(size)),
-      isImages,
-      'The image was not removed.',
-    )
-    // A 404: it was gone already. Either way, it is not there now.
-    if (outcome.kind === 'ok' || outcome.kind === 'refused') {
+          ? await api.DELETE('/api/catalogue/tracks/{id}/images/{size}', path(size))
+          : await api.DELETE('/api/catalogue/variants/{id}/images/{size}', path(size))
+    } catch {
+      message.error(NO_ANSWER)
+      return
+    }
+
+    // Removed, or a 404: it was gone already. Any other answer leaves it as it was.
+    const { response, error } = answer
+    if (response.ok || response.status === 404) {
       broken.value.delete(size)
       emit('changed', own.value.filter((i) => !(i.size === size && i.origin === 'Upload')))
-      if (outcome.kind === 'ok') message.success('Upload removed.')
-      else message.warning(outcome.message)
+      if (response.ok) message.success('Upload removed.')
+      else message.warning('The upload was already gone.')
     } else {
-      message.error(outcome.kind === 'no-answer' ? NO_ANSWER : 'message' in outcome ? outcome.message : 'The image was not removed.')
+      message.error(problemMessage(error, 'The image was not removed.'))
     }
   } finally {
     busy.value = null

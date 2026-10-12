@@ -14,6 +14,9 @@ describe('image links', () => {
     expect(imagesVersion([])).toBeUndefined()
     expect(imagesVersion([image('b'), image('a')])).toBe(imagesVersion([image('a'), image('b')]))
     expect(imagesVersion([image('a'), image('c')])).not.toBe(imagesVersion([image('a'), image('b')]))
+    // Every image counts, not only the first few.
+    const many = ['1111111111111111', '2222222222222222', '8888888888888888'].map(image)
+    expect(imagesVersion([...many.slice(0, 2), image('9999999999999999')])).not.toBe(imagesVersion(many))
   })
 })
 

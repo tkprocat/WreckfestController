@@ -31,9 +31,22 @@ export function variantLayoutUrl(variantId: string, version?: string): string {
   return withVersion(`/api/images/variants/${encodeURIComponent(variantId)}/layout`, version)
 }
 
-/** One string that changes when any of these images does: a cache key for a link to the one picked from them. */
+/**
+ * One string that changes when any of these images does: a cache key for a link to the one
+ * picked from them. Two FNV-1a hashes of every hash, sorted, so it stays short however many
+ * images a track has.
+ */
 export function imagesVersion(images: CatalogueImage[]): string | undefined {
-  return images.length === 0 ? undefined : images.map((i) => i.hash).sort().join('').slice(0, 32)
+  if (images.length === 0) return undefined
+  const text = images.map((i) => i.hash).sort().join(',')
+  let a = 0x811c9dc5
+  let b = 0x01000193 ^ text.length
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    a = Math.imul(a ^ c, 0x01000193) >>> 0
+    b = Math.imul(b ^ c, 0x5bd1e995) >>> 0
+  }
+  return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0')
 }
 
 /** Whether any of these is a picture rather than a layout outline: one the picture links can show. */

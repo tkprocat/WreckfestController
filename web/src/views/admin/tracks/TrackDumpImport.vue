@@ -45,6 +45,8 @@ interface FolderImage {
   size: number
 }
 const images = shallowRef<FolderImage[]>([])
+/** A dump folder was chosen: its images are imported, even none, which removes ones the dump no longer names. */
+const fromFolder = ref(false)
 const imageReport = shallowRef<ImageReport | null>(null)
 const imageFailure = ref<string | null>(null)
 const progress = ref<string | null>(null)
@@ -66,12 +68,13 @@ function close() {
 }
 
 function choose(event: Event) {
-  pick((event.target as HTMLInputElement).files?.[0] ?? null, [])
+  pick((event.target as HTMLInputElement).files?.[0] ?? null, [], false)
 }
 
-function pick(chosen: File | null, found: FolderImage[]) {
+function pick(chosen: File | null, found: FolderImage[], folder: boolean) {
   file.value = chosen
   images.value = found
+  fromFolder.value = folder
   report.value = null
   imageReport.value = null
   imageFailure.value = null
@@ -85,7 +88,7 @@ async function chooseFolder(event: Event) {
   const depth = (f: File) => path(f).split('/').length
   const dump = all.filter((f) => f.name.toLowerCase() === 'tracks.json').sort((a, b) => depth(a) - depth(b))[0]
   if (!dump) {
-    pick(null, [])
+    pick(null, [], false)
     if (all.length > 0) failure.value = 'There is no tracks.json in that folder. Write the dump there: wftracks dump <game folder> -o <folder>/tracks.json.'
     return
   }
@@ -104,7 +107,7 @@ async function chooseFolder(event: Event) {
       const key = uploadKey(f.path)
       return key !== null && keys.has(key)
     })
-  pick(dump, found)
+  pick(dump, found, true)
 }
 
 const isImageReport = (body: unknown): body is ImageReport => typeof body === 'object' && body !== null && 'stored' in body
@@ -113,7 +116,10 @@ const isImageReport = (body: unknown): body is ImageReport => typeof body === 'o
 async function uploadImages(dump: File, found: FolderImage[]) {
   const total: ImageReport = { stored: 0, unchanged: 0, removed: 0, notUsed: 0, refused: 0, unmatched: 0 }
   let sent = 0
-  for (const part of batches(found, BATCH_BYTES, BATCH_FILES)) {
+  let reported = false
+  // No images at all is still one batch: the server removes those the dump no longer names.
+  const parts = found.length > 0 ? batches(found, BATCH_BYTES, BATCH_FILES) : [[]]
+  for (const part of parts) {
     progress.value = `Importing images: ${sent} of ${found.length}`
     const form = new FormData()
     form.append('dump', dump, 'tracks.json')
@@ -138,9 +144,10 @@ async function uploadImages(dump: File, found: FolderImage[]) {
     // The same in every batch: it depends only on the dump and the catalogue.
     total.unmatched = row.unmatched
     sent += part.length
+    reported = true
   }
 
-  imageReport.value = sent > 0 ? total : null
+  imageReport.value = reported ? total : null
 }
 
 const isReport = (body: unknown): body is Report => typeof body === 'object' && body !== null && 'variants' in body
@@ -175,7 +182,7 @@ async function upload() {
     if (outcome.kind === 'ok' && isReport(outcome.row)) {
       report.value = outcome.row
       // After the tracks.json: images go only to tracks and variants the catalogue has.
-      if (images.value.length > 0) await uploadImages(chosen, images.value)
+      if (fromFolder.value) await uploadImages(chosen, images.value)
       emit('imported', outcome.row)
     } else if (outcome.kind === 'no-answer') {
       failure.value = NO_ANSWER

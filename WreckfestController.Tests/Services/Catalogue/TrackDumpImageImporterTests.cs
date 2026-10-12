@@ -231,6 +231,61 @@ public sealed class TrackDumpImageImporterTests : IAsyncLifetime
         Assert.Null(await CatalogueImageStore.ForVariantLayoutAsync(db, "bigstadium_demolition_arena", Ct));
     }
 
+    [Fact]
+    public async Task ReplacingAnOutlineWithAPicture_MakesItAPicture()
+    {
+        var trackId = await TrackIdAsync("madman_stadium");
+        var picture = TestImages.RgbaPng(25, 12, (_, _) => 255);
+        await using (var db = CreateContext())
+        {
+            await CatalogueImageStore.PutAsync(db, ImageOwner.Track(trackId), ImageSize.Small, ImageOrigin.Upload, TestImages.Outline(25, 12), CatalogueImageStore.Png, Now, Ct);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await using (var db = CreateContext())
+        {
+            await CatalogueImageStore.PutAsync(db, ImageOwner.Track(trackId), ImageSize.Small, ImageOrigin.Upload, picture, CatalogueImageStore.Png, Now, Ct);
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await using var check = CreateContext();
+        Assert.False(Assert.Single(await CatalogueImageStore.SlotsAsync(check, ImageOwner.Track(trackId), Ct)).IsOverlay);
+        Assert.Equal(picture, (await CatalogueImageStore.ForTrackAsync(check, "madman_stadium", ImageSize.Small, Ct))!.Data);
+    }
+
+    [Fact]
+    public async Task AModRepeatingBaseGameIds_KeepsItsOwnTrackPicture()
+    {
+        // The mod's own variant made its own track; it also repeats two of Madman's ids,
+        // which the base game placed first.
+        var mod = new TrackDumpFixture()
+            .Base()
+            .Track("base", "bigstadium", "Madman Stadium",
+                ("bigstadium_demolition_arena", "Demolition Arena", 4, 1000),
+                ("bigstadium_figure_8", "Figure 8", 1, 800))
+            .Workshop("77", "Copycat")
+            .Track("workshop:77", "copycat", "Copycat",
+                ("bigstadium_demolition_arena", "Demolition Arena", 4, 1000),
+                ("bigstadium_figure_8", "Figure 8", 1, 800),
+                ("copycat_main", "Main", 1, 900))
+            .Images("base/bigstadium", "env_bigstadium_small", null)
+            .Images("workshop:77/copycat", "env_copycat_small", null);
+        await using (var db = CreateContext())
+        {
+            await TrackDumpImporter.ImportAsync(db, TrackDump.Read(mod.ToElement(), out _)!, Ct);
+            // As if an admin made the track, so it has no dump id to be found by.
+            await db.Tracks.Where(t => t.Key == "copycat").ExecuteUpdateAsync(u => u.SetProperty(t => t.DumpId, (string?)null), Ct);
+        }
+
+        await ImportAsync(mod, Files(
+            ("base/env_bigstadium_small.png", TestImages.Png(1)),
+            ("workshop_77/env_copycat_small.png", TestImages.Png(2))));
+
+        await using var check = CreateContext();
+        Assert.Equal(TestImages.Png(1), (await CatalogueImageStore.ForTrackAsync(check, "madman_stadium", ImageSize.Small, Ct))!.Data);
+        Assert.Equal(TestImages.Png(2), (await CatalogueImageStore.ForTrackAsync(check, "copycat", ImageSize.Small, Ct))!.Data);
+    }
+
     [Theory]
     [InlineData(0, 1.0)]
     [InlineData(255, 0.0)]
