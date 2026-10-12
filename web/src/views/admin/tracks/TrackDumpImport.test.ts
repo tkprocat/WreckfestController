@@ -218,6 +218,19 @@ describe('TrackDumpImport', () => {
       expect(wrapper!.emitted('imported')).toHaveLength(1)
     })
 
+    it('sends the dump alone when the folder has no images, so dropped ones are removed', async () => {
+      api.POST.mockResolvedValueOnce(answer(report())).mockResolvedValueOnce(answer(imageReport({ stored: 0, unchanged: 0, removed: 3 })))
+      await openFolder([inFolder('dump/tracks.json', dumpJson)])
+
+      await button('Import').trigger('click')
+      await flushPromises()
+
+      expect(api.POST).toHaveBeenCalledTimes(2)
+      const form = api.POST.mock.calls[1]![1].bodySerializer() as FormData
+      expect(form.getAll('images')).toHaveLength(0)
+      expect(body().text()).toContain('Removed 3 images')
+    })
+
     it('needs a tracks.json in the folder', async () => {
       await openFolder([inFolder('dump/base/env_a_small.png')])
 

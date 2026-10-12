@@ -96,13 +96,23 @@ public static class CatalogueImageStore
         if (existing is not null)
         {
             // Updated through a stub, so the old bytes are never read just to be overwritten.
-            var stored = new CatalogueImage { Id = existing.Id };
-            db.CatalogueImages.Attach(stored);
-            stored.ContentType = contentType;
-            stored.Hash = hash;
-            stored.Data = data;
-            stored.IsOverlay = contentType == Png && PngTransparency.IsOverlay(data);
-            stored.UpdatedAt = now;
+            // Each column is marked: a value equal to the stub's default (IsOverlay false)
+            // would otherwise not count as a change, and the old one would stay.
+            var stored = new CatalogueImage
+            {
+                Id = existing.Id,
+                ContentType = contentType,
+                Hash = hash,
+                Data = data,
+                IsOverlay = contentType == Png && PngTransparency.IsOverlay(data),
+                UpdatedAt = now,
+            };
+            var entry = db.CatalogueImages.Attach(stored);
+            entry.Property(i => i.ContentType).IsModified = true;
+            entry.Property(i => i.Hash).IsModified = true;
+            entry.Property(i => i.Data).IsModified = true;
+            entry.Property(i => i.IsOverlay).IsModified = true;
+            entry.Property(i => i.UpdatedAt).IsModified = true;
         }
         else
         {

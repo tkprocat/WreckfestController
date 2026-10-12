@@ -103,4 +103,15 @@ describe('ImageSlots', () => {
     expect(api.DELETE).toHaveBeenCalledWith('/api/catalogue/tracks/{id}/images/{size}', { params: { path: { id: 4, size: 'Large' } } })
     expect(changed).toHaveBeenCalledWith([imported])
   })
+
+  it('keeps the upload when the removal failed', async () => {
+    api.DELETE.mockResolvedValue({ data: undefined, error: { title: 'Database is locked.' }, response: new Response(null, { status: 500 }) })
+    const changed = mountSlots({ kind: 'track', id: 4, name: 't', images: [image({ size: 'Large', origin: 'Upload' })] })
+
+    await buttons('Remove upload')[0]!.trigger('click')
+    await flushPromises()
+
+    expect(changed).not.toHaveBeenCalled()
+    expect(buttons('Remove upload')).toHaveLength(1)
+  })
 })
