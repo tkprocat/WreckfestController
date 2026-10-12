@@ -184,6 +184,74 @@ public class PublicTrackEndpointsTests
             races.EnumerateArray().Select(r => r.GetProperty("track")).Select(t => $"{t.GetProperty("id").GetString()} {(t.GetProperty("trackKey").ValueKind == JsonValueKind.Null ? "-" : t.GetProperty("trackKey").GetString())}"));
     }
 
+    [Fact]
+    public async Task ARaceWithoutASteamId_CountsForThePlayerWhoUsedThatName()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        // Alice's second win lost its Steam id; "Sam" is used by two Steam ids, so a
+        // name-only Sam stays apart.
+        await AddRaceAsync(host, "bigstadium_figure_8", Day, ("Alice", 1001, 1, 60_000, 19_000), ("Sam", 2001, 2, 61_000, 20_000));
+        await AddRaceAsync(host, "bigstadium_figure_8", Day.AddHours(1), ("Alice", NoSteamId, 1, 60_000, 19_500), ("Sam", 2002, 2, 61_000, 20_000));
+        await AddRaceAsync(host, "bigstadium_figure_8", Day.AddHours(2), ("Sam", NoSteamId, 1, 60_000, 18_000));
+        using var client = host.CreateClient();
+
+        var detail = await client.GetFromJsonAsync<JsonElement>("/api/public/variants/bigstadium_figure_8", Ct);
+
+        Assert.Equal(
+            ["Alice 2/2", "Sam 1/1"],
+            detail.GetProperty("mostWins").EnumerateArray().Select(r => $"{r.GetProperty("name").GetString()} {r.GetProperty("wins").GetInt32()}/{r.GetProperty("races").GetInt32()}"));
+        var laps = detail.GetProperty("fastestLaps").EnumerateArray().Select(r => $"{r.GetProperty("name").GetString()} {r.GetProperty("lapMs").GetInt32()} {r.GetProperty("vehicleName").GetString()}").ToList();
+        Assert.Equal(["Sam 18000 Roadslayer", "Alice 19000 Roadslayer", "Sam 20000 Roadslayer", "Sam 20000 Roadslayer"], laps);
+    }
+
+    [Fact]
+    public async Task ALinkedCollectionEntry_CountsForItsVariant_NotForTheIdItWasSavedWith()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        await WithDbAsync(host, async db =>
+        {
+            var figure8 = await db.TrackVariants.SingleAsync(v => v.VariantId == "bigstadium_figure_8", Ct);
+            var collection = new WreckfestController.Data.Collections.TrackCollection { Name = "Renamed", Entries = [new() { Position = 0, TrackId = "speedway2_figure_8", TrackVariantId = figure8.Id }] };
+            db.TrackCollections.Add(collection);
+            await db.SaveChangesAsync(Ct);
+            db.Cups.Add(new Cup { Name = "Linked", StartTime = Day, CollectionId = collection.Id });
+            await db.SaveChangesAsync(Ct);
+        });
+        using var client = host.CreateClient();
+
+        var figure8 = await client.GetFromJsonAsync<JsonElement>("/api/public/variants/bigstadium_figure_8", Ct);
+        var speedway = await client.GetFromJsonAsync<JsonElement>("/api/public/variants/speedway2_figure_8", Ct);
+
+        Assert.Equal("Linked", Assert.Single(figure8.GetProperty("cups").EnumerateArray()).GetProperty("name").GetString());
+        Assert.Empty(speedway.GetProperty("cups").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task ALayoutsRaces_AreFoundThroughTheNoCaseIndex()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        await WithDbAsync(host, async db =>
+        {
+            var sql = db.Races.Where(r => EF.Functions.Collate(r.TrackId, "NOCASE") == "x").ToQueryString();
+            Assert.Contains("COLLATE NOCASE", sql, StringComparison.Ordinal);
+
+            var connection = db.Database.GetDbConnection();
+            await connection.OpenAsync(Ct);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM \"Races\" AS \"r\" WHERE \"r\".\"TrackId\" COLLATE NOCASE = 'x'";
+            await using var reader = await command.ExecuteReaderAsync(Ct);
+            var plan = new List<string>();
+            while (await reader.ReadAsync(Ct))
+            {
+                plan.Add(reader.GetString(3));
+            }
+
+            Assert.Contains(plan, line => line.Contains("IX_Races_TrackId_NoCase", StringComparison.Ordinal));
+        });
+    }
+
+    private const long NoSteamId = -1;
+
     private static async Task AddRaceAsync(ApiTestHost host, string trackId, DateTime endedAt, params (string Name, long? SteamId, int Position, int TimeMs, int BestLapMs)[] cars) =>
         await WithDbAsync(host, async db =>
         {
@@ -195,7 +263,7 @@ public class PublicTrackEndpointsTests
                 Entries = cars.Select(c => new RaceEntry
                 {
                     Name = c.Name,
-                    SteamId = c.SteamId,
+                    SteamId = c.SteamId == NoSteamId ? null : c.SteamId,
                     IsBot = c.SteamId is null,
                     Position = c.Position,
                     Outcome = RaceOutcome.Finished,

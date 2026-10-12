@@ -162,17 +162,19 @@ public static class CatalogueImageStore
     {
         var track = await db.Tracks.AsNoTracking()
             .Where(t => t.Key == key)
-            .Select(t => new { t.Id, Variants = t.Variants.Where(v => !v.IsHidden).OrderBy(v => v.Name).Select(v => v.Id).ToList() })
+            .Select(t => new { t.Id, Variants = t.Variants.Where(v => !v.IsHidden).Select(v => new { v.Id, v.Name }).ToList() })
             .SingleOrDefaultAsync(cancellationToken);
         if (track is null)
         {
             return null;
         }
 
-        var slots = await Slots(db.CatalogueImages.Where(i => i.TrackId == track.Id || track.Variants.Contains(i.TrackVariantId!.Value)))
+        var variantIds = FallbackOrder(track.Variants.Select(v => (v.Id, v.Name))).ToList();
+
+        var slots = await Slots(db.CatalogueImages.Where(i => i.TrackId == track.Id || variantIds.Contains(i.TrackVariantId!.Value)))
             .ToListAsync(cancellationToken);
         var chosen = Pick(slots, size, track.Id, variantId: null)
-            ?? track.Variants.Select(v => Pick(slots, size, trackId: null, v)).FirstOrDefault(s => s is not null);
+            ?? variantIds.Select(v => Pick(slots, size, trackId: null, v)).FirstOrDefault(s => s is not null);
         return await LoadAsync(db, chosen, cancellationToken);
     }
 
@@ -196,6 +198,13 @@ public static class CatalogueImageStore
             .ToListAsync(cancellationToken);
         return await LoadAsync(db, Pick(slots, size, variant.TrackId, variant.Id), cancellationToken);
     }
+
+    /// <summary>
+    /// The order a track's visible variants are tried in for its picture: by name, ordinal,
+    /// then id. In .NET, so the image endpoint and the pages that link to it agree.
+    /// </summary>
+    public static IEnumerable<int> FallbackOrder(IEnumerable<(int Id, string Name)> variants) =>
+        variants.OrderBy(v => v.Name, StringComparer.Ordinal).ThenBy(v => v.Id).Select(v => v.Id);
 
     /// <summary>
     /// A variant's layout outline: its own outline image, an upload first, the small size

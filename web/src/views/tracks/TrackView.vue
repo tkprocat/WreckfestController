@@ -37,19 +37,29 @@ const laps = ref<number | null>(5)
 const failure = (status: number, what: string) =>
   status === 429 ? 'Too many requests. Wait a minute and try again.' : `${what} could not be loaded.`
 
+let trackRequest = 0
+/**
+ * Loads the address's track. Another track's page is cleared first, so it never shows
+ * under this address; only the latest request's answer counts.
+ */
 async function loadTrack() {
+  const ticket = ++trackRequest
+  if (track.value && track.value.key.toLowerCase() !== key.value.toLowerCase()) track.value = null
   loadingTrack.value = true
   trackError.value = null
   notFound.value = false
   try {
     const { data, response } = await api.GET('/api/public/tracks/{key}', { params: { path: { key: key.value } } })
+    if (ticket !== trackRequest) return
     if (data) track.value = data
-    else if (response.status === 404) notFound.value = true
-    else trackError.value = failure(response.status, 'The track')
+    else if (response.status === 404) {
+      track.value = null
+      notFound.value = true
+    } else trackError.value = failure(response.status, 'The track')
   } catch {
-    trackError.value = 'No answer from the server. Check your connection and try again.'
+    if (ticket === trackRequest) trackError.value = 'No answer from the server. Check your connection and try again.'
   } finally {
-    loadingTrack.value = false
+    if (ticket === trackRequest) loadingTrack.value = false
   }
 }
 
@@ -127,6 +137,10 @@ const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : 
     </NAlert>
 
     <template v-else-if="track">
+      <NAlert v-if="trackError" type="warning" :title="trackError" class="notice">
+        Showing what was loaded before.
+        <NButton size="medium" @click="loadTrack()">Try again</NButton>
+      </NAlert>
       <header class="hero">
         <div class="picture">
           <img v-if="pictureUrl" :src="pictureUrl" alt="" />
@@ -261,7 +275,7 @@ h1 { margin: 12px 0 0; font-size: var(--font-display); line-height: 1.15; letter
 .layouts a.current { background: var(--accent); color: var(--surface); font-weight: 600; }
 .variant-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; }
 h2 { margin: 0; font-size: var(--font-section); line-height: 1.3; }
-.variant-id { color: var(--text-muted); font-size: var(--font-meta); }
+.variant-id { min-width: 0; color: var(--text-muted); font-size: var(--font-meta); overflow-wrap: anywhere; }
 .facts { display: flex; flex-wrap: wrap; gap: 16px 48px; margin: 24px 0; }
 .facts div { min-width: 0; }
 .facts dt { font-size: var(--font-label); color: var(--text-secondary); }

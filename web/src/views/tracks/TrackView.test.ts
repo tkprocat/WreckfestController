@@ -127,6 +127,24 @@ describe('TrackView', () => {
     expect(wrapper!.text()).toContain('77')
   })
 
+  it('shows only the latest track when an earlier answer comes back last', async () => {
+    let releaseFirst: (value: unknown) => void = () => {}
+    const first = new Promise((resolve) => (releaseFirst = resolve))
+    const other = { ...track, key: 'other', name: 'Other Track' }
+    api.GET.mockImplementation(async (path: string, options?: { params?: { path?: Record<string, string> } }) => {
+      if (path === '/api/public/tracks/{key}') return options?.params?.path?.key === 'madman_stadium' ? first : answer(other)
+      return answer(detail())
+    })
+    await open('/tracks/madman_stadium')
+
+    await router.push('/tracks/other')
+    await flushPromises()
+    releaseFirst(answer(track))
+    await flushPromises()
+
+    expect(wrapper!.find('h1').text()).toBe('Other Track')
+  })
+
   it('says when there is no such track', async () => {
     respond({})
 

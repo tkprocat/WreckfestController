@@ -36,6 +36,8 @@ public class PublicTracksController : ControllerBase
     /// <summary>How many players each of a variant's records lists.</summary>
     public const int RecordLimit = 5;
 
+    private const string NoCase = "NOCASE";
+
     private readonly ControllerDbContext _db;
 
     public PublicTracksController(ControllerDbContext db)
@@ -105,52 +107,53 @@ public class PublicTracksController : ControllerBase
             return NotFound();
         }
 
-        // The race log keeps the id as the game sent it; the catalogue matches ignoring case.
-        var ids = await RaceTrackIdsAsync([variant.VariantId], cancellationToken);
-        var races = _db.Races.Where(r => ids.Contains(r.TrackId));
+        // The race log keeps the id as the game sent it; it is matched ignoring case, through
+        // the NOCASE index on Races.TrackId (migration RaceTrackIdNoCase). Everything below is
+        // counted in the database: this is anonymous, and a layout can have years of races.
+        var races = _db.Races.AsNoTracking().Where(r => EF.Functions.Collate(r.TrackId, NoCase) == variant.VariantId);
+        var entries = _db.RaceEntries.AsNoTracking().Where(e => EF.Functions.Collate(e.Race.TrackId, NoCase) == variant.VariantId);
 
         var recent = await PublicFeed.Races(races.OrderByDescending(r => r.EndedAt).ThenByDescending(r => r.Id).Take(RaceLimit))
             .ToListAsync(cancellationToken);
         var name = new CatalogueTrackName($"{variant.TrackName} - {variant.Name}", variant.TrackKey);
-        var names = ids.Append(variant.VariantId).Distinct(StringComparer.OrdinalIgnoreCase).ToDictionary(id => id, _ => name, StringComparer.OrdinalIgnoreCase);
+        var names = recent.Select(r => r.TrackId)
+            .Append(variant.VariantId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(id => id, _ => name, StringComparer.OrdinalIgnoreCase);
 
-        var entries = await _db.RaceEntries
-            .AsNoTracking()
-            .Where(e => ids.Contains(e.Race.TrackId))
-            .Select(e => new
-            {
-                e.SteamId,
-                e.Name,
-                e.IsBot,
-                e.Position,
-                e.Outcome,
-                e.BestLapMs,
-                e.TimeMs,
-                e.VehicleName,
-                e.Race.Laps,
-                e.Race.EndedAt,
-            })
-            .ToListAsync(cancellationToken);
-
-        // Records are players' only: a bot's lap is no record. A player is counted by Steam
-        // id when the log has one, else by name, and shown by the name they last raced under.
-        var players = entries
+        // Records are players' only: a bot's lap is no record. One row per name a player raced
+        // under, then joined into players (PlayerRecords.Join).
+        var rows = await entries
             .Where(e => !e.IsBot)
-            .GroupBy(e => e.SteamId is { } steamId ? $"s{steamId}" : $"n{e.Name}")
-            .Select(g => new { Entries = g.ToList(), Name = g.OrderByDescending(e => e.EndedAt).First().Name })
-            .ToList();
+            .Select(e => new { e.SteamId, e.Name, e.BestLapMs, e.Position, e.Race.EndedAt })
+            .GroupBy(e => new { e.SteamId, e.Name })
+            .Select(g => new PlayerRecords.Row(
+                g.Key.SteamId,
+                g.Key.Name,
+                g.Min(e => e.BestLapMs > 0 ? e.BestLapMs : null),
+                g.Count(e => e.Position == 1),
+                g.Count(),
+                g.Max(e => e.EndedAt)))
+            .ToListAsync(cancellationToken);
+        var players = PlayerRecords.Join(rows);
 
-        var fastestLaps = players
-            .Select(p => (p.Name, Best: p.Entries.Where(e => e.BestLapMs is > 0).OrderBy(e => e.BestLapMs).ThenBy(e => e.EndedAt).FirstOrDefault()))
-            .Where(p => p.Best is not null)
-            .OrderBy(p => p.Best!.BestLapMs)
-            .ThenBy(p => p.Best!.EndedAt)
-            .Take(RecordLimit)
-            .Select(p => new PublicLapRecord(p.Name, p.Best!.VehicleName, p.Best.BestLapMs!.Value, p.Best.EndedAt))
-            .ToList();
+        var fastestLaps = new List<PublicLapRecord>();
+        foreach (var player in players.Where(p => p.BestLapMs is not null).OrderBy(p => p.BestLapMs).ThenBy(p => p.Name, StringComparer.Ordinal).Take(RecordLimit))
+        {
+            // The race of that lap, for its car and date: the earliest, when it was matched.
+            var lap = player.BestLapMs!.Value;
+            var steamId = player.SteamId;
+            var nameOnly = player.NameOnlyNames;
+            var best = await entries
+                .Where(e => !e.IsBot && e.BestLapMs == lap
+                    && ((steamId != null && e.SteamId == steamId) || (e.SteamId == null && nameOnly.Contains(e.Name))))
+                .OrderBy(e => e.Race.EndedAt)
+                .Select(e => new { e.VehicleName, e.Race.EndedAt })
+                .FirstOrDefaultAsync(cancellationToken);
+            fastestLaps.Add(new PublicLapRecord(player.Name, best?.VehicleName ?? string.Empty, lap, best?.EndedAt ?? player.LastRaced));
+        }
 
         var mostWins = players
-            .Select(p => (p.Name, Wins: p.Entries.Count(e => e.Position == 1), Races: p.Entries.Count))
             .Where(p => p.Wins > 0)
             .OrderByDescending(p => p.Wins)
             .ThenBy(p => p.Races)
@@ -160,21 +163,24 @@ public class PublicTracksController : ControllerBase
             .ToList();
 
         // A race's time over its laps, for everyone who crossed the line: a pace that
-        // includes the standing start and traffic, as a race does.
-        var laps = entries
-            .Where(e => e.Outcome == RaceOutcome.Finished && e.TimeMs is > 0 && e.Laps > 0)
-            .Select(e => (double)e.TimeMs!.Value / e.Laps)
-            .Order()
-            .ToList();
-        int? typicalLapMs = laps.Count == 0
-            ? null
-            : (int)Math.Round(laps.Count % 2 == 1 ? laps[laps.Count / 2] : (laps[(laps.Count / 2) - 1] + laps[laps.Count / 2]) / 2);
+        // includes the standing start and traffic, as a race does. The median, read from
+        // the middle of the sorted list rather than the whole of it.
+        var paces = entries
+            .Where(e => e.Outcome == RaceOutcome.Finished && e.TimeMs > 0 && e.Race.Laps > 0)
+            .Select(e => (double)e.TimeMs!.Value / e.Race.Laps);
+        var finishes = await paces.CountAsync(cancellationToken);
+        int? typicalLapMs = null;
+        if (finishes > 0)
+        {
+            var middle = await paces.OrderBy(p => p).Skip((finishes - 1) / 2).Take(2 - (finishes % 2)).ToListAsync(cancellationToken);
+            typicalLapMs = (int)Math.Round(middle.Average());
+        }
 
         return new PublicVariantDetail(
             variant.VariantId,
             await races.CountAsync(cancellationToken),
             typicalLapMs,
-            laps.Count,
+            finishes,
             recent.Select(r => PublicFeed.ToPublic(r, names)).ToList(),
             fastestLaps,
             mostWins,
@@ -189,27 +195,13 @@ public class PublicTracksController : ControllerBase
         .Include(t => t.Variants.Where(v => !v.IsHidden))
         .Where(t => !t.IsHidden);
 
-    /// <summary>The race log's spellings of these variant ids, ignoring case: few, and each matched by its index.</summary>
-    private async Task<List<string>> RaceTrackIdsAsync(IReadOnlyCollection<string> variantIds, CancellationToken cancellationToken)
-    {
-        var wanted = new HashSet<string>(variantIds, StringComparer.OrdinalIgnoreCase);
-        var logged = await _db.Races.AsNoTracking().Select(r => r.TrackId).Distinct().ToListAsync(cancellationToken);
-        return logged.Where(wanted.Contains).ToList();
-    }
-
+    /// <summary>Races logged on each of these variant ids, matched ignoring case, by the catalogue's spelling.</summary>
     private async Task<Dictionary<string, int>> RaceCountsAsync(List<string> variantIds, CancellationToken cancellationToken)
     {
-        var ids = await RaceTrackIdsAsync(variantIds, cancellationToken);
-        var counts = await _db.Races
-            .AsNoTracking()
-            .Where(r => ids.Contains(r.TrackId))
-            .GroupBy(r => r.TrackId)
-            .Select(g => new { g.Key, Count = g.Count() })
-            .ToListAsync(cancellationToken);
         var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var count in counts)
+        foreach (var id in variantIds)
         {
-            result[count.Key] = result.GetValueOrDefault(count.Key) + count.Count;
+            result[id] = await _db.Races.AsNoTracking().CountAsync(r => EF.Functions.Collate(r.TrackId, NoCase) == id, cancellationToken);
         }
 
         return result;
@@ -239,7 +231,9 @@ public class PublicTracksController : ControllerBase
 
         return cups
             .Where(c => c.Linked is not null
-                ? c.Linked.Any(e => e.TrackVariantId == variantRowId || string.Equals(e.TrackId, variantId, StringComparison.OrdinalIgnoreCase))
+                ? c.Linked.Any(e => e.TrackVariantId is { } linked
+                    ? linked == variantRowId
+                    : string.Equals(e.TrackId, variantId, StringComparison.OrdinalIgnoreCase))
                 : c.Tracks.Any(t => string.Equals(t.Track, variantId, StringComparison.OrdinalIgnoreCase)))
             .OrderByDescending(c => c.IsActive)
             .ThenBy(c => c.NextOccurrence is null)
@@ -270,9 +264,12 @@ public class PublicTracksController : ControllerBase
                 return CatalogueImageStore.Pick(slots, size, trackId, variantId)?.Hash;
             }
 
-            // A track with no picture of its own shows its first visible variant's, by name.
+            // A track with no picture of its own shows its first visible variant's, in the
+            // order the image endpoint uses.
             return (CatalogueImageStore.Pick(slots, size, trackId, variantId: null)
-                ?? variants.OrderBy(v => v.Name).Select(v => CatalogueImageStore.Pick(slots, size, trackId: null, v.Id)).FirstOrDefault(s => s is not null))?.Hash;
+                ?? CatalogueImageStore.FallbackOrder(variants.Select(v => (v.Id, v.Name)))
+                    .Select(id => CatalogueImageStore.Pick(slots, size, trackId: null, id))
+                    .FirstOrDefault(s => s is not null))?.Hash;
         }
 
         var layout = variantId is null
