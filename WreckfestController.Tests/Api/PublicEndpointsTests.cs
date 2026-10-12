@@ -75,7 +75,7 @@ public sealed class PublicEndpointsTests : IDisposable
         Assert.Equal(["isRunning", "uptimeSeconds"], Names(body.GetProperty("status")));
         Assert.Equal(["bots", "humans", "list"], Names(body.GetProperty("players")));
         Assert.Equal(["name", "tracks"], Names(body.GetProperty("rotation")));
-        Assert.Equal(["gameMode", "id", "laps", "name"], Names(body.GetProperty("rotation").GetProperty("tracks")[0]));
+        Assert.Equal(["gameMode", "id", "laps", "name", "trackKey"], Names(body.GetProperty("rotation").GetProperty("tracks")[0]));
 
         Assert.Equal("Friday Wrecks", body.GetProperty("serverName").GetString());
         Assert.Equal(16, body.GetProperty("maxPlayers").GetInt32());

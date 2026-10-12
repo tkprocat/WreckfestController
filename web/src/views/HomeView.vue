@@ -2,6 +2,7 @@
 import StatusBadge from '@/components/StatusBadge.vue'
 import ContentSection from '@/components/ContentSection.vue'
 import RecentRaces from '@/components/RecentRaces.vue'
+import TrackLink from '@/components/TrackLink.vue'
 import { computed } from 'vue'
 import { NAlert, NButton, NCard, NEmpty, NSkeleton, NTag } from 'naive-ui'
 import { usePublicOverview } from '@/composables/usePublicOverview'
@@ -66,7 +67,7 @@ const statusLabel = computed(() =>
           </div>
           <div class="current-race">
             <p v-if="error" class="stale-label">Last known · {{ connectionUnavailable ? 'connection unavailable' : 'updates paused' }}</p>
-            <h2 v-if="overview.status.isRunning && overview.currentTrack">{{ overview.currentTrack.name }}</h2>
+            <h2 v-if="overview.status.isRunning && overview.currentTrack"><TrackLink :track="overview.currentTrack" /></h2>
             <h2 v-else-if="overview.status.isRunning">In lobby</h2>
             <h2 v-else>Server offline</h2>
             <p v-if="overview.activeCup" class="cup-name">
@@ -90,7 +91,7 @@ const statusLabel = computed(() =>
             <li v-for="(track, index) in overview.rotation.tracks" :key="index + '-' + track.id">
               <span class="rotation-number">{{ String(index + 1).padStart(2, '0') }}</span>
               <span class="rotation-track">
-                <strong>{{ track.name }}</strong>
+                <strong><TrackLink :track="track" /></strong>
                 <small v-if="track.gameMode || track.laps != null">
                   <template v-if="track.gameMode">{{ track.gameMode }}</template>
                   <template v-if="track.gameMode && track.laps != null"> · </template>

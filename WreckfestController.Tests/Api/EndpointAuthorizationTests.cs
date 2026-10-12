@@ -33,6 +33,10 @@ public class EndpointAuthorizationTests
         "GET /api/public/overview",
         "GET /api/public/races",
         "GET /api/public/feed",
+        // The public track pages (#261): visible rows only, through public DTOs. Rate-limited.
+        "GET /api/public/tracks",
+        "GET /api/public/tracks/{key}",
+        "GET /api/public/variants/{variantId}",
         // Catalogue menu images (#260): the game's pictures, or ones an admin chose to show. Rate-limited.
         "GET /api/images/tracks/{key}/{size}",
         "GET /api/images/variants/{variantId}/{size}",

@@ -89,7 +89,7 @@ public class PublicController : ControllerBase
             _logger.LogDebug(ex, "Public overview without the server config");
         }
 
-        Dictionary<string, string> names;
+        Dictionary<string, CatalogueTrackName> names;
         (CupSummary? Active, List<CupSummary> Upcoming) cups;
         try
         {
@@ -108,14 +108,18 @@ public class PublicController : ControllerBase
             serverName,
             maxPlayers,
             new PublicStatus(status.IsRunning, status.Uptime is { } uptime ? (long)uptime.TotalSeconds : null),
-            string.IsNullOrEmpty(status.CurrentTrack) ? null : Track(status.CurrentTrack, names),
+            string.IsNullOrEmpty(status.CurrentTrack) ? null : PublicFeed.Track(status.CurrentTrack, names),
             new PublicPlayers(
                 players.Count(p => !p.IsBot),
                 players.Count(p => p.IsBot),
                 players.Select(p => new PublicPlayer(p.Name, p.IsBot)).ToList()),
             new PublicRotation(
                 string.IsNullOrWhiteSpace(rotationName) ? null : rotationName,
-                rotation.Select(t => new PublicRotationTrack(t.Track, Name(t.Track, names), t.Gamemode, t.Laps)).ToList()),
+                rotation.Select(t =>
+                {
+                    var track = PublicFeed.Track(t.Track, names);
+                    return new PublicRotationTrack(t.Track, track.Name, track.TrackKey, t.Gamemode, t.Laps);
+                }).ToList()),
             cups.Active is { } active
                 ? new PublicActiveCup(active.Name, active.ActivatedAt, active.Phase, active.StartsAt, active.EndsAt)
                 : null,
@@ -180,24 +184,24 @@ public class PublicController : ControllerBase
     /// Catalogue names for just these variant ids, hidden ones too: this is display, not a
     /// picker. Ids match ignoring case, as the catalogue stores them.
     /// </summary>
-    private async Task<Dictionary<string, string>> TrackNamesAsync(List<string> ids, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, CatalogueTrackName>> TrackNamesAsync(List<string> ids, CancellationToken cancellationToken)
     {
         if (ids.Count == 0)
         {
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            return new Dictionary<string, CatalogueTrackName>(StringComparer.OrdinalIgnoreCase);
         }
 
         var variants = await _db.TrackVariants
             .AsNoTracking()
             .Where(v => ids.Contains(v.VariantId))
-            .Select(v => new { v.VariantId, Name = v.Track.Name + " - " + v.Name })
+            .Select(v => new
+            {
+                v.VariantId,
+                Name = v.Track.Name + " - " + v.Name,
+                // Linked only where the public track page shows it.
+                TrackKey = v.IsHidden || v.Track.IsHidden ? null : v.Track.Key,
+            })
             .ToListAsync(cancellationToken);
-        return variants.ToDictionary(v => v.VariantId, v => v.Name, StringComparer.OrdinalIgnoreCase);
+        return variants.ToDictionary(v => v.VariantId, v => new CatalogueTrackName(v.Name, v.TrackKey), StringComparer.OrdinalIgnoreCase);
     }
-
-    private static PublicTrack Track(string id, Dictionary<string, string> names) => new(id, Name(id, names));
-
-    /// <summary>The catalogue's name, or the id itself for a track the catalogue does not know.</summary>
-    private static string Name(string id, Dictionary<string, string> names) =>
-        names.TryGetValue(id, out var name) ? name : id;
 }

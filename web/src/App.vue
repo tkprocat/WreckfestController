@@ -31,6 +31,7 @@ async function signOut() {
         <header class="app-header">
           <RouterLink to="/" class="app-title" aria-label="Wreckfest Controller"><span class="brand-mark" aria-hidden="true">W</span><span>Wreckfest<span class="brand-subtitle">Controller</span></span></RouterLink>
           <nav class="app-user">
+            <RouterLink :to="{ name: 'tracks' }">Tracks</RouterLink>
             <label class="appearance-control">
               <span>Theme</span>
               <select :value="preference" @change="setPreference(($event.target as HTMLSelectElement).value)">
@@ -50,7 +51,7 @@ async function signOut() {
             <RouterLink v-else to="/login">Sign in</RouterLink>
           </nav>
         </header>
-        <main id="main-content" class="app-main" :class="{ 'app-main-admin': isAdmin, 'app-main-spectator': route.name === 'home' }" tabindex="-1">
+        <main id="main-content" class="app-main" :class="{ 'app-main-admin': isAdmin, 'app-main-spectator': route.meta.spectator }" tabindex="-1">
           <RouterView />
         </main>
       </NDialogProvider>

@@ -20,8 +20,15 @@ public sealed record PublicOverview(
 
 public sealed record PublicStatus(bool IsRunning, long? UptimeSeconds);
 
-/// <summary>A track by the game's variant id, with the catalogue's name when it has one.</summary>
-public sealed record PublicTrack(string Id, string Name);
+/// <summary>
+/// A track by the game's variant id, with the catalogue's name when it has one.
+/// <see cref="TrackKey"/>: the catalogue track's key, for a link to its public page; null
+/// when the catalogue does not know the id, or the track or variant is hidden.
+/// </summary>
+public sealed record PublicTrack(string Id, string Name, string? TrackKey);
+
+/// <summary>A variant id's catalogue name, and its track's key when its public page shows it.</summary>
+public sealed record CatalogueTrackName(string Name, string? TrackKey);
 
 /// <summary><see cref="Humans"/> and <see cref="Bots"/> count <see cref="List"/>.</summary>
 public sealed record PublicPlayers(int Humans, int Bots, IReadOnlyList<PublicPlayer> List);
@@ -30,7 +37,8 @@ public sealed record PublicPlayer(string Name, bool IsBot);
 
 public sealed record PublicRotation(string? Name, IReadOnlyList<PublicRotationTrack> Tracks);
 
-public sealed record PublicRotationTrack(string Id, string Name, string? GameMode, int? Laps);
+/// <inheritdoc cref="PublicTrack"/>
+public sealed record PublicRotationTrack(string Id, string Name, string? TrackKey, string? GameMode, int? Laps);
 
 /// <summary>
 /// The active cup. <see cref="Phase"/> is <c>Warmup</c> until <see cref="StartsAt"/>, then

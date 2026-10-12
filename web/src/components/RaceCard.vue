@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { NTag } from 'naive-ui'
 import RaceResultsTable from '@/components/RaceResultsTable.vue'
+import TrackLink from '@/components/TrackLink.vue'
 import type { PublicRace } from '@/composables/usePublicFeed'
 import { formatFromNow, formatWhen } from '@/utils/format'
 import { laps, podium, result, resultTitle } from '@/utils/raceResults'
@@ -16,7 +17,7 @@ function ago(): string {
 <template>
   <article class="race">
     <div class="race-heading">
-      <h3>{{ race.track.name }}</h3>
+      <h3><TrackLink :track="race.track" /></h3>
       <p class="race-meta">
         <time :datetime="race.endedAt" :title="formatWhen(race.endedAt)">{{ ago() }}</time>
         <template v-if="laps(race)"> · {{ laps(race) }}</template>

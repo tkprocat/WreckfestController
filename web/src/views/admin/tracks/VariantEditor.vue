@@ -173,6 +173,13 @@ defineExpose({ start })
         <NSelect v-model:value="draft.tags" :options="tagOptions" multiple filterable v-select-focus="inputProps" :input-props="inputProps" />
       </FormField>
       <NCheckbox v-if="editor.isNew.value" v-model:checked="draft.allowedForVoting" class="gap">Players can vote for it</NCheckbox>
+      <p v-if="editor.editing.value && track && !editor.editing.value.isHidden && !track.isHidden" class="public-link">
+        <a
+          :href="`/tracks/${encodeURIComponent(track.key)}/${encodeURIComponent(editor.editing.value.variantId)}`"
+          target="_blank"
+          rel="noopener"
+        >Open its public page</a>
+      </p>
       <ImageSlots
         v-if="editor.editing.value"
         kind="variant"

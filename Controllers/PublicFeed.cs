@@ -30,7 +30,7 @@ public static class PublicFeed
         ControllerDbContext db,
         CupSummary? active,
         int count,
-        Func<List<string>, CancellationToken, Task<Dictionary<string, string>>> trackNames,
+        Func<List<string>, CancellationToken, Task<Dictionary<string, CatalogueTrackName>>> trackNames,
         CancellationToken cancellationToken)
     {
         // The items in order: a loop race by its id, a cup run by its activation.
@@ -290,15 +290,19 @@ public static class PublicFeed
                 .Select(e => new PublicRaceEntry(e.Position, e.Name, e.IsBot, e.VehicleName, e.Outcome, e.TimeMs, e.BestLapMs))
                 .ToList()));
 
-    internal static PublicRace ToPublic(RaceRow race, Dictionary<string, string> names) => new(
+    internal static PublicRace ToPublic(RaceRow race, Dictionary<string, CatalogueTrackName> names) => new(
         race.Id,
         race.StartedAt,
         race.EndedAt,
-        new PublicTrack(race.TrackId, names.TryGetValue(race.TrackId, out var name) ? name : race.TrackId),
+        Track(race.TrackId, names),
         race.Laps,
         string.IsNullOrEmpty(race.CupName) ? null : race.CupName,
         race.Warmup,
         race.Entries);
+
+    /// <summary>A variant id as the public pages show it: the catalogue's name, else the id itself.</summary>
+    internal static PublicTrack Track(string id, Dictionary<string, CatalogueTrackName> names) =>
+        names.TryGetValue(id, out var name) ? new PublicTrack(id, name.Name, name.TrackKey) : new PublicTrack(id, id, null);
 
     internal sealed record RaceRow(
         int Id,
