@@ -38,7 +38,13 @@ const refused = (error: unknown, status: number) => ({ data: undefined, error, r
 
 function serve(settings = vote(), variants = [variant(1, true), variant(2, false)]) {
   api.GET.mockImplementation((path: string) =>
-    Promise.resolve(path === '/api/settings/vote' ? answer(settings) : answer(variants)),
+    Promise.resolve(
+      path === '/api/settings/vote'
+        ? answer(settings)
+        : path === '/api/settings/publicSite'
+          ? answer({ feedItemCount: 10, version: 1 })
+          : answer(variants),
+    ),
   )
 }
 

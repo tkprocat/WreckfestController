@@ -215,6 +215,7 @@ public class Program
                 AddSettingsSection<WreckfestServerSettings>(services);
                 AddSettingsSection<SteamCmdSettings>(services);
                 AddSettingsSection<VoteSettings>(services);
+                AddSettingsSection<PublicSiteSettings>(services);
 
                 services.AddSingleton<VotingService>();
 

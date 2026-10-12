@@ -727,6 +727,8 @@ namespace WreckfestController.Data.Migrations
 
                     b.HasIndex("EndedAt");
 
+                    b.HasIndex("CupActivatedAt", "CupPhase");
+
                     b.HasIndex("CupId", "CupActivatedAt");
 
                     b.HasIndex("TrackId", "EndedAt");

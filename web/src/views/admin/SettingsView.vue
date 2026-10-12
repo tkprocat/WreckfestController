@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import PageHeader from '@/components/PageHeader.vue'
 import ResourceTable from '@/crud/ResourceTable.vue'
+import PublicSiteSettings from './PublicSiteSettings.vue'
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
   NAlert,
@@ -196,7 +197,7 @@ onMounted(() => {
 
 <template>
   <section>
-    <PageHeader title="Settings" description="Control how players vote and change tracks." />
+    <PageHeader title="Settings" description="Control how players vote and change tracks, and what the front page shows." />
 
     <NCard title="Voting" class="gap">
       <NAlert v-if="loadError" type="warning" :title="loadError" />
@@ -275,6 +276,8 @@ onMounted(() => {
         </div>
       </NForm>
     </NCard>
+
+    <PublicSiteSettings class="gap" />
 
     <NCard title="Votable tracks">
       <template #header-extra>

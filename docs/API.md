@@ -38,7 +38,7 @@ A missing or rejected credential returns **401** with no body, never a redirect.
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
 (`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`,
-`GET public/overview`, `GET public/races`, and the [live-update hub](#live-updates--hubsserver)), so one
+`GET public/overview`, `GET public/races`, `GET public/feed`, and the [live-update hub](#live-updates--hubsserver)), so one
 cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
 
@@ -183,14 +183,35 @@ upcomingCups: [{ name, description, nextOccurrence, repeat, warmupAt, endsAt }],
 - 60 requests a minute per client IP; beyond that **429** with `Retry-After`. Live changes
   come from the hub's public group, so a page need not poll.
 
-`races` is `[{ id, startedAt, endedAt, track: { id, name }, laps, cupName, entries: [{
-position, name, isBot, vehicleName, outcome, timeMs, bestLapMs }] }]`.
+`races` is `[{ id, startedAt, endedAt, track: { id, name }, laps, cupName, warmup, entries: [{
+position, name, isBot, vehicleName, outcome, timeMs, bestLapMs }] }]`, the latest 10.
 - `entries` are in finishing order, bots in their real places; a car the game never placed
   has a null `position` and comes last. `outcome` is `Finished`, `Projected` (a bot's time
   the game estimated when the last human finished), `DidNotFinish` or `Unknown`.
 - `startedAt` is null when the hook attached mid-race; `cupName` is null for a race outside
-  a cup. Track names work as in `overview`. No Steam ids.
+  a cup. `warmup` is true for a race that ended in its cup's warmup. Track names work as
+  in `overview`. No Steam ids.
 - It shares `overview`'s rate limit. `RaceRecorded` on the hub says when to reload.
+
+`feed` is the front page's results, newest first: `[{ kind, race, cup }]`. A `Race` item
+(`race` set, `cup` null) is one race outside any cup, shaped as in `races`. A `Cup` item
+(`cup` set, `race` null) is one cup run - one activation of a cup and every race in it - as
+`{ name, activatedAt, status, startsAt, endsAt, standings: [{ position, name, isBot, points
+}], raceCount, races }`.
+- A cup run counts as one item however many races it had, so it stays on the page until
+  enough newer items push it off. How many items there are is the `publicSite` setting
+  `feedItemCount` (default 10).
+- `status` is `Warmup` or `Running` for the active cup, which leads the feed from its
+  activation even before its first race, and `Ended` for any other. `startsAt` and
+  `endsAt` are the active run's, and null for an ended one.
+- `standings` are each car's cup points total after the last race it was in, as the game
+  keeps it (so a server restart mid-cup resets them, as it does in game). Only races once
+  the cup started count: the warmup's points are reset at the start. Humans are told apart
+  by Steam ID, which is not returned; bots by name. Equal totals share a place (1, 2, 2,
+  4). The list is empty in the warmup and for a run without cup points.
+- `races` are the newest 50 of `raceCount`, warmup races included and marked.
+- It shares `overview`'s rate limit. Reload on `RaceRecorded`, `CupActivated`,
+  `CupStarted` and `CupEnded`.
 
 ### Users — `api/users`
 
@@ -435,15 +456,18 @@ or the cup's settings cannot be written to the server config (with a `reason`).
 
 The settings a person edits over the web, kept in the controller's database one section
 at a time. Today that is `vote` (`mode`, `directCooldownSeconds`, `voteTimeoutSeconds`,
-`maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`); later settings pages
-add sections for what changes game behaviour, never programs or paths. The WPF
-Configuration tab edits the same sections.
+`maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`) and `publicSite`
+(`feedItemCount`); later settings pages add sections for what changes game behaviour,
+never programs or paths. The WPF Configuration tab edits the same `vote` section;
+`publicSite` is edited on the web only.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | | Every section: `{ vote }` (`SettingsResponse`), each with its `version` |
+| GET | | Every section: `{ vote, publicSite }` (`SettingsResponse`), each with its `version` |
 | GET | `vote` | The voting settings (`VoteSettingsResponse`), with its `ETag` |
 | PUT | `vote` | Change the fields in the body; the rest keep their values. Needs `If-Match`. Answers `VoteSettingsResponse` |
+| GET | `publicSite` | The front page's settings (`PublicSiteSettingsResponse`), with its `ETag` |
+| PUT | `publicSite` | As for `vote`. Answers `PublicSiteSettingsResponse` |
 
 Each section has its own typed route, so the web app gets types for it; a section that
 does not exist has no route (404).
@@ -452,7 +476,8 @@ does not exist has no route (404).
   A body that repeats `version` is fine: `If-Match` is what counts.
 - Unknown fields, wrong types and out-of-range values are 400 with a field error:
   `mode` is `Off`, `Voting` or `Direct` (any case); `directCooldownSeconds` 0-3600,
-  `voteTimeoutSeconds` 1-3600, `maxLapsAllowed` 1-999, `messageDelayMs` 0-5000.
+  `voteTimeoutSeconds` 1-3600, `maxLapsAllowed` 1-999, `messageDelayMs` 0-5000,
+  `feedItemCount` 1-50.
 - A change takes effect at once: voting reads it on the next command, and a saved `vote`
   change ends a `!voting` override.
 - The startup settings (`Api:*`, `Database:Path`) are not here and have no route. They stay
@@ -613,7 +638,7 @@ anonymously, but what a connection receives depends on its group:
 | `ServerRestarted` | public | `{ oldProcessId, newProcessId, restartMethod, timestamp }` |
 | `ServerAttached` | public | `{ processId, processName, startTime, timestamp }` |
 | `ServerRestartPending` | public | `{ minutesRemaining, cupName, cupId, scheduledRestartTime, timestamp }` |
-| `RaceRecorded` | public | `{ raceId, trackId, endedAt }` — a finished race was saved; `GET api/public/races` lists it |
+| `RaceRecorded` | public | `{ raceId, trackId, endedAt }` — a finished race was saved; `GET api/public/races` and `GET api/public/feed` list it |
 | `CupOccurrenceEnded` | admin | `{ cupId, cupName, occurrence, outcome, timestamp }` — a scheduled occurrence was dealt with; `outcome` is `Activated`, `Failed`, `Cancelled` or `Missed` |
 | `ConsoleLog` | admin | `{ logs: [string] }` — console lines, batched about once a second (at most 1000 per message) |
 

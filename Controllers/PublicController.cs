@@ -41,6 +41,7 @@ public class PublicController : ControllerBase
     private readonly ServerManager _serverManager;
     private readonly ConfigService _config;
     private readonly CupStore _cups;
+    private readonly ISettingsStore _settings;
     private readonly ControllerDbContext _db;
     private readonly TimeProvider _time;
     private readonly ILogger<PublicController> _logger;
@@ -49,6 +50,7 @@ public class PublicController : ControllerBase
         ServerManager serverManager,
         ConfigService config,
         CupStore cups,
+        ISettingsStore settings,
         ControllerDbContext db,
         TimeProvider time,
         ILogger<PublicController> logger)
@@ -56,6 +58,7 @@ public class PublicController : ControllerBase
         _serverManager = serverManager;
         _config = config;
         _cups = cups;
+        _settings = settings;
         _db = db;
         _time = time;
         _logger = logger;
@@ -134,45 +137,42 @@ public class PublicController : ControllerBase
     {
         try
         {
-            var races = await _db.Races
-                .AsNoTracking()
-                .OrderByDescending(r => r.EndedAt)
-                .ThenByDescending(r => r.Id)
-                .Take(RaceLimit)
-                .Select(r => new
-                {
-                    r.Id,
-                    r.StartedAt,
-                    r.EndedAt,
-                    r.TrackId,
-                    r.Laps,
-                    r.CupName,
-                    Entries = r.Entries
-                        .OrderBy(e => e.Position == null)
-                        .ThenBy(e => e.Position)
-                        .ThenBy(e => e.Id)
-                        .Select(e => new PublicRaceEntry(e.Position, e.Name, e.IsBot, e.VehicleName, e.Outcome, e.TimeMs, e.BestLapMs))
-                        .ToList(),
-                })
+            var races = await PublicFeed.Races(_db.Races
+                    .OrderByDescending(r => r.EndedAt)
+                    .ThenByDescending(r => r.Id)
+                    .Take(RaceLimit))
                 .ToListAsync(cancellationToken);
 
             var names = await TrackNamesAsync(races.Select(r => r.TrackId).Distinct().ToList(), cancellationToken);
-            return races
-                .Select(r => new PublicRace(
-                    r.Id,
-                    r.StartedAt,
-                    r.EndedAt,
-                    Track(r.TrackId, names),
-                    r.Laps,
-                    string.IsNullOrEmpty(r.CupName) ? null : r.CupName,
-                    r.Entries))
-                .ToList();
+            return races.Select(r => PublicFeed.ToPublic(r, names)).ToList();
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Anonymous callers get no detail, as for the overview.
             _logger.LogError(ex, "The public race list could not read the database");
             return Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Recent races are unavailable right now.");
+        }
+    }
+
+    /// <summary>
+    /// The front page's results, newest first: races outside a cup one by one, and each cup
+    /// run as one item with its standings and races. As many items as the public site
+    /// settings say.
+    /// </summary>
+    [HttpGet("feed")]
+    public async Task<ActionResult<List<PublicFeedItem>>> Feed(CancellationToken cancellationToken)
+    {
+        var count = _settings.Get<PublicSiteSettings>().FeedItemCount;
+        try
+        {
+            var (active, _) = await _cups.ScheduleAsync(0, cancellationToken);
+            return await PublicFeed.BuildAsync(_db, active, count, TrackNamesAsync, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Anonymous callers get no detail, as for the overview.
+            _logger.LogError(ex, "The public results feed could not read the database");
+            return Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Recent results are unavailable right now.");
         }
     }
 

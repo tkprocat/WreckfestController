@@ -2755,6 +2755,64 @@
         }
       }
     },
+    "/api/public/feed": {
+      "get": {
+        "tags": [
+          "Public"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicFeedItem"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicFeedItem"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicFeedItem"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/server/version": {
       "get": {
         "tags": [
@@ -3702,6 +3760,132 @@
               "text/json": {
                 "schema": {
                   "$ref": "#/components/schemas/VoteSettingsResponse"
+                }
+              }
+            }
+          },
+          "428": {
+            "description": "Precondition Required",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/publicSite": {
+      "get": {
+        "tags": [
+          "Settings"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSiteSettingsResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSiteSettingsResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSiteSettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Settings"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonElement"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSiteSettingsResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSiteSettingsResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSiteSettingsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationProblemDetails"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSiteSettingsResponse"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSiteSettingsResponse"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicSiteSettingsResponse"
                 }
               }
             }
@@ -5391,6 +5575,132 @@
           }
         }
       },
+      "PublicCupRun": {
+        "required": [
+          "name",
+          "activatedAt",
+          "status",
+          "startsAt",
+          "endsAt",
+          "standings",
+          "raceCount",
+          "races"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "activatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PublicCupRunStatus"
+          },
+          "startsAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "endsAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "standings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicCupStanding"
+            }
+          },
+          "raceCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "races": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PublicRace"
+            }
+          }
+        }
+      },
+      "PublicCupRunStatus": {
+        "enum": [
+          "Warmup",
+          "Running",
+          "Ended"
+        ]
+      },
+      "PublicCupStanding": {
+        "required": [
+          "position",
+          "name",
+          "isBot",
+          "points"
+        ],
+        "type": "object",
+        "properties": {
+          "position": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "isBot": {
+            "type": "boolean"
+          },
+          "points": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "PublicFeedItem": {
+        "required": [
+          "kind",
+          "race",
+          "cup"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/PublicFeedItemKind"
+          },
+          "race": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PublicRace"
+              }
+            ]
+          },
+          "cup": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PublicCupRun"
+              }
+            ]
+          }
+        }
+      },
+      "PublicFeedItemKind": {
+        "enum": [
+          "Race",
+          "Cup"
+        ]
+      },
       "PublicOverview": {
         "required": [
           "serverName",
@@ -5506,6 +5816,7 @@
           "track",
           "laps",
           "cupName",
+          "warmup",
           "entries"
         ],
         "type": "object",
@@ -5537,6 +5848,9 @@
               "null",
               "string"
             ]
+          },
+          "warmup": {
+            "type": "boolean"
           },
           "entries": {
             "type": "array",
@@ -5640,6 +5954,23 @@
               "null",
               "integer"
             ],
+            "format": "int32"
+          }
+        }
+      },
+      "PublicSiteSettingsResponse": {
+        "required": [
+          "feedItemCount",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "feedItemCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "version": {
+            "type": "integer",
             "format": "int32"
           }
         }
@@ -5981,12 +6312,16 @@
       },
       "SettingsResponse": {
         "required": [
-          "vote"
+          "vote",
+          "publicSite"
         ],
         "type": "object",
         "properties": {
           "vote": {
             "$ref": "#/components/schemas/VoteSettingsResponse"
+          },
+          "publicSite": {
+            "$ref": "#/components/schemas/PublicSiteSettingsResponse"
           }
         }
       },

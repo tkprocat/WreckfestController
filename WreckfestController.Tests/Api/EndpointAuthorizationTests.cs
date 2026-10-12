@@ -32,6 +32,7 @@ public class EndpointAuthorizationTests
         // The public home page. A dedicated DTO of public fields, and rate-limited.
         "GET /api/public/overview",
         "GET /api/public/races",
+        "GET /api/public/feed",
     };
 
     [Fact]

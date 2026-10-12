@@ -32,15 +32,17 @@ public class SettingsEndpointsTests
     }
 
     [Fact]
-    public async Task List_HasOnlyTheVoteSection_WithoutInternalFields()
+    public async Task List_HasTheVoteAndPublicSiteSections_WithoutInternalFields()
     {
         await using var host = await ApiTestHost.StartAsync();
         using var client = host.CreateAuthenticatedClient();
 
         var body = await client.GetFromJsonAsync<JsonElement>("/api/settings", Ct);
 
-        Assert.Equal(["vote"], body.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["vote", "publicSite"], body.EnumerateObject().Select(p => p.Name));
         Assert.Equal(1, body.GetProperty("vote").GetProperty("version").GetInt32());
+        Assert.Equal(1, body.GetProperty("publicSite").GetProperty("version").GetInt32());
+        Assert.Equal(10, body.GetProperty("publicSite").GetProperty("feedItemCount").GetInt32());
 
         // A legacy flag that only mirrors mode.
         Assert.False(body.GetProperty("vote").TryGetProperty("enabled", out _));
@@ -157,6 +159,27 @@ public class SettingsEndpointsTests
             expected);
     }
 
+    [Fact]
+    public async Task PublicSite_GetAndPut_AnswerWithTheSameFields()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+        var read = await client.GetFromJsonAsync<JsonElement>("/api/settings/publicSite", Ct);
+        var list = await client.GetFromJsonAsync<JsonElement>("/api/settings", Ct);
+
+        using var saved = await SendAsync(client, "/api/settings/publicSite", new { feedItemCount = 25 }, "\"1\"");
+        using var stale = await SendAsync(client, "/api/settings/publicSite", new { feedItemCount = 5 }, "\"1\"");
+
+        var expected = FieldsOf(read);
+        Assert.Equal(["feedItemCount", "version"], expected);
+        Assert.Equal(expected, FieldsOf(list.GetProperty("publicSite")));
+        var body = await saved.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(expected, FieldsOf(body));
+        Assert.Equal(25, body.GetProperty("feedItemCount").GetInt32());
+        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
+        Assert.Equal(expected, FieldsOf(await stale.Content.ReadFromJsonAsync<JsonElement>(Ct)));
+    }
+
     private static List<string> FieldsOf(JsonElement body) => body.EnumerateObject().Select(p => p.Name).Order().ToList();
 
     public static TheoryData<string, object, string> InvalidEdits => new()
@@ -168,6 +191,9 @@ public class SettingsEndpointsTests
         { "vote", new { suppressCommandsDuringRace = "yes" }, "suppressCommandsDuringRace" },
         { "vote", new { enabled = false }, "enabled" },
         { "vote", new { allowedTracks = Array.Empty<object>() }, "allowedTracks" },
+        { "publicSite", new { feedItemCount = 0 }, "feedItemCount" },
+        { "publicSite", new { feedItemCount = 51 }, "feedItemCount" },
+        { "publicSite", new { feedItemCount = "ten" }, "feedItemCount" },
     };
 
     [Theory]

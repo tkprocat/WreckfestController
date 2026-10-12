@@ -8,8 +8,11 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using WreckfestController.Controllers;
 using WreckfestController.Data;
+using WreckfestController.Data.Cups;
 using WreckfestController.Data.Races;
+using WreckfestController.Models;
 using WreckfestController.Services.Auth;
+using WreckfestController.Services.Config;
 using WreckfestController.Services.Hook;
 using WreckfestController.Services.Cups;
 using WreckfestController.Services.Tracking;
@@ -227,7 +230,7 @@ public sealed class PublicEndpointsTests : IDisposable
         var races = JsonDocument.Parse(text).RootElement;
 
         // A new field must be added here on purpose: this is what anyone can read.
-        Assert.Equal(["cupName", "endedAt", "entries", "id", "laps", "startedAt", "track"], Names(races[0]));
+        Assert.Equal(["cupName", "endedAt", "entries", "id", "laps", "startedAt", "track", "warmup"], Names(races[0]));
         Assert.Equal(["bestLapMs", "isBot", "name", "outcome", "position", "timeMs", "vehicleName"], Names(races[0].GetProperty("entries")[0]));
         Assert.DoesNotContain(PlayerSteamId.ToString(CultureInfo.InvariantCulture), text, StringComparison.Ordinal);
         Assert.DoesNotContain("steamId", text, StringComparison.OrdinalIgnoreCase);
@@ -270,6 +273,186 @@ public sealed class PublicEndpointsTests : IDisposable
         var races = await client.GetFromJsonAsync<JsonElement>("/api/public/races", Ct);
 
         Assert.Equal(0, races.GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Feed_IsAnonymous_AndACupRunIsOneItem_WithItsStandings()
+    {
+        await using var host = await ApiTestHost.StartAsync(Settings);
+        var run = new DateTime(2026, 10, 9, 19, 0, 0, DateTimeKind.Utc);
+        await AddRaceAsync(host, "fields14", run.AddMinutes(-30), cupName: "");
+        await AddCupRaceAsync(host, run, CupPhase.Warmup, run.AddMinutes(10), ("Alice", 1001L, 1, 99), ("Bot Ann", null, 2, 50));
+        await AddCupRaceAsync(host, run, CupPhase.Running, run.AddMinutes(30), ("Alice", 1001L, 2, 8), ("Bot Ann", null, 1, 10), ("Bob", 1002L, 3, 6));
+        // Alice renamed: still one row, by Steam ID, under the latest name. Bob left.
+        await AddCupRaceAsync(host, run, CupPhase.Running, run.AddMinutes(50), ("Alice B", 1001L, 1, 18), ("Bot Ann", null, 2, 18));
+        await AddRaceAsync(host, "bigstadium_demolition_arena", run.AddHours(3), cupName: "");
+        using var client = host.CreateClient();
+
+        var text = await client.GetStringAsync("/api/public/feed", Ct);
+        var feed = JsonDocument.Parse(text).RootElement;
+
+        Assert.DoesNotContain(PlayerSteamId.ToString(CultureInfo.InvariantCulture), text, StringComparison.Ordinal);
+        Assert.DoesNotContain("1001", text, StringComparison.Ordinal);
+        Assert.Equal(["Race", "Cup", "Race"], feed.EnumerateArray().Select(i => i.GetProperty("kind").GetString()));
+        Assert.Equal(["cup", "kind", "race"], Names(feed[0]));
+        Assert.Equal(JsonValueKind.Null, feed[0].GetProperty("cup").ValueKind);
+        Assert.Equal("bigstadium_demolition_arena", feed[0].GetProperty("race").GetProperty("track").GetProperty("id").GetString());
+
+        var cup = feed[1].GetProperty("cup");
+        Assert.Equal(JsonValueKind.Null, feed[1].GetProperty("race").ValueKind);
+        Assert.Equal(["activatedAt", "endsAt", "name", "raceCount", "races", "standings", "startsAt", "status"], Names(cup));
+        Assert.Equal("Friday Cup", cup.GetProperty("name").GetString());
+        Assert.Equal("Ended", cup.GetProperty("status").GetString());
+        Assert.Equal(3, cup.GetProperty("raceCount").GetInt32());
+        Assert.Equal([false, false, true], cup.GetProperty("races").EnumerateArray().Select(r => r.GetProperty("warmup").GetBoolean()));
+
+        // The warmup's 99 points do not count; equal totals share a place, the latest race's order first.
+        var standings = cup.GetProperty("standings");
+        Assert.Equal(["isBot", "name", "points", "position"], Names(standings[0]));
+        Assert.Equal(
+            ["1 Alice B 18", "1 Bot Ann 18", "3 Bob 6"],
+            standings.EnumerateArray().Select(s => $"{s.GetProperty("position").GetInt32()} {s.GetProperty("name").GetString()} {s.GetProperty("points").GetInt32()}"));
+        Assert.True(standings[1].GetProperty("isBot").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Feed_ShowsAsManyItemsAsTheSettingSays_CountingACupRunOnce()
+    {
+        await using var host = await ApiTestHost.StartAsync(Settings);
+        var settings = host.MainServices.GetRequiredService<ISettingsStore>();
+        var site = settings.GetEntry<PublicSiteSettings>();
+        site.Value.FeedItemCount = 2;
+        Assert.Equal(SettingsSaveStatus.Saved, (await settings.SaveAsync(site.Value, site.Version, Ct)).Status);
+
+        var run = new DateTime(2026, 10, 9, 19, 0, 0, DateTimeKind.Utc);
+        await AddRaceAsync(host, "fields14", run.AddMinutes(-20), cupName: "");
+        await AddRaceAsync(host, "fields14", run.AddMinutes(-10), cupName: "");
+        for (var i = 1; i <= 4; i++)
+        {
+            await AddCupRaceAsync(host, run, CupPhase.Running, run.AddMinutes(10 * i), ("Alice", 1001L, 1, 10 * i));
+        }
+
+        using var client = host.CreateClient();
+        var feed = await client.GetFromJsonAsync<JsonElement>("/api/public/feed", Ct);
+
+        Assert.Equal(["Cup", "Race"], feed.EnumerateArray().Select(i => i.GetProperty("kind").GetString()));
+        Assert.Equal(4, feed[0].GetProperty("cup").GetProperty("races").GetArrayLength());
+        Assert.Equal(40, feed[0].GetProperty("cup").GetProperty("standings")[0].GetProperty("points").GetInt32());
+    }
+
+    // More races in one run than a scan batch: the older items are still found, and the
+    // standings come from each car's latest race only.
+    [Fact]
+    public async Task Feed_FindsItemsBeyondALongCupRun()
+    {
+        await using var host = await ApiTestHost.StartAsync(Settings);
+        var run = new DateTime(2026, 10, 9, 19, 0, 0, DateTimeKind.Utc);
+        await AddRaceAsync(host, "fields14", run.AddMinutes(-20), cupName: "");
+        await AddRaceAsync(host, "bigstadium_demolition_arena", run.AddMinutes(-10), cupName: "");
+
+        var contexts = host.MainServices.GetRequiredService<IDbContextFactory<ControllerDbContext>>();
+        await using (var db = await contexts.CreateDbContextAsync(Ct))
+        {
+            for (var i = 1; i <= 450; i++)
+            {
+                db.Races.Add(new Race
+                {
+                    TrackId = "fields14",
+                    EndedAt = run.AddMinutes(i),
+                    CupName = "Marathon",
+                    CupActivatedAt = run,
+                    CupPhase = CupPhase.Running,
+                    Entries =
+                    [
+                        new RaceEntry { Position = 1, Name = "Alice", SteamId = 1001, CupPointsTotal = i },
+                        new RaceEntry { Position = 2, Name = "Bot Ann", IsBot = true, CupPointsTotal = i / 2 },
+                    ],
+                });
+            }
+
+            await db.SaveChangesAsync(Ct);
+        }
+
+        using var client = host.CreateClient();
+        var feed = await client.GetFromJsonAsync<JsonElement>("/api/public/feed", Ct);
+
+        Assert.Equal(["Cup", "Race", "Race"], feed.EnumerateArray().Select(i => i.GetProperty("kind").GetString()));
+        var cup = feed[0].GetProperty("cup");
+        Assert.Equal(450, cup.GetProperty("raceCount").GetInt32());
+        Assert.Equal(PublicFeed.CupRaceLimit, cup.GetProperty("races").GetArrayLength());
+        Assert.Equal(
+            ["Alice 450", "Bot Ann 225"],
+            cup.GetProperty("standings").EnumerateArray().Select(s => $"{s.GetProperty("name").GetString()} {s.GetProperty("points").GetInt32()}"));
+    }
+
+    [Fact]
+    public async Task Feed_LeadsWithTheActiveCup_BeforeItsFirstRace()
+    {
+        await using var host = await ApiTestHost.StartAsync(Settings);
+        using (var admin = host.CreateAuthenticatedClient())
+        {
+            await CreateCupAsync(admin, "Tonight", DateTime.UtcNow.AddHours(3), repeat: null);
+        }
+
+        var store = host.MainServices.GetRequiredService<CupStore>();
+        var tonight = (await store.ListAsync(Ct)).Single(c => c.Name == "Tonight");
+        var startsAt = DateTime.UtcNow.AddMinutes(30);
+        Assert.True(await store.SetActiveAsync(tonight.Id, startsAt, CupPhase.Starting, end: null, Ct));
+        await AddRaceAsync(host, "fields14", DateTime.UtcNow.AddHours(-1), cupName: "");
+        using var client = host.CreateClient();
+
+        var feed = await client.GetFromJsonAsync<JsonElement>("/api/public/feed", Ct);
+
+        Assert.Equal(["Cup", "Race"], feed.EnumerateArray().Select(i => i.GetProperty("kind").GetString()));
+        var cup = feed[0].GetProperty("cup");
+        Assert.Equal("Tonight", cup.GetProperty("name").GetString());
+        Assert.Equal("Warmup", cup.GetProperty("status").GetString());
+        Assert.Equal(startsAt, cup.GetProperty("startsAt").GetDateTime().ToUniversalTime(), TimeSpan.FromSeconds(1));
+        Assert.Equal(0, cup.GetProperty("raceCount").GetInt32());
+        Assert.Equal(0, cup.GetProperty("standings").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Feed_WithNoneRecorded_IsAnEmptyList()
+    {
+        await using var host = await ApiTestHost.StartAsync(Settings);
+        using var client = host.CreateClient();
+
+        var feed = await client.GetFromJsonAsync<JsonElement>("/api/public/feed", Ct);
+
+        Assert.Equal(0, feed.GetArrayLength());
+    }
+
+    private static async Task AddCupRaceAsync(
+        ApiTestHost host,
+        DateTime activatedAt,
+        CupPhase phase,
+        DateTime endedAt,
+        params (string Name, long? SteamId, int Position, int Points)[] cars)
+    {
+        var contexts = host.MainServices.GetRequiredService<IDbContextFactory<ControllerDbContext>>();
+        await using var db = await contexts.CreateDbContextAsync(Ct);
+        db.Races.Add(new Race
+        {
+            TrackId = "fields14",
+            EndedAt = endedAt,
+            Laps = 3,
+            CupName = "Friday Cup",
+            CupActivatedAt = activatedAt,
+            CupPhase = phase,
+            Entries = cars
+                .Select(c => new RaceEntry
+                {
+                    Position = c.Position,
+                    Name = c.Name,
+                    SteamId = c.SteamId,
+                    IsBot = c.SteamId is null,
+                    Outcome = RaceOutcome.Finished,
+                    CupPointsTotal = c.Points,
+                })
+                .ToList(),
+        });
+        await db.SaveChangesAsync(Ct);
     }
 
     private const long PlayerSteamId = 76561190000000001;
