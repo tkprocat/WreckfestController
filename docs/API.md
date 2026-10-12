@@ -574,6 +574,11 @@ there**, built-in or admin-added, edited or not.
   file that has tracks, named from its `modinfo.modi`. Existing tracks are not linked to it:
   the built-in workshop tracks keep `mod: null` until an admin sets it.
 - Collection entries saved with a variant id the catalogue did not know are linked to it.
+- **Names** of what it adds lose the game's colour codes (`^0`-`^9`, which would show as text)
+  and doubled spaces. A new variant's name also loses its track's name in front, as a whole
+  word, since the catalogue shows "Track - Variant": "Tomelilla 01" on Tomelilla becomes
+  "01". A name that would be left empty ("Gardemoen" on Gardemoen) is kept. Names already in
+  the catalogue are never changed.
 - Importing the same file again changes nothing. The whole import is one transaction.
 
 The report: `{ tool, generatedAt, mods, tracks, variants, skipped, diagnostics }`. `mods`,

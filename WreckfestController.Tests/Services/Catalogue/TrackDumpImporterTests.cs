@@ -70,6 +70,76 @@ public sealed class TrackDumpImporterTests : IAsyncLifetime
         Assert.Null(arena.TrackLengthM);
     }
 
+    // The mods' own strings: colour codes would show as text, and a layout named after its
+    // track would read "Tomelilla - Tomelilla 01" in the catalogue.
+    [Fact]
+    public async Task Names_LoseColourCodes_AndTheirTracksNameInFront()
+    {
+        var report = await ImportAsync(new TrackDumpFixture()
+            .Workshop("2276098616", "^5The Very ^7TrackPack 2")
+            .Track("workshop:2276098616", "tomelilla", "^2Tomelilla",
+                ("tomelilla_01", "Tomelilla 01", 1, null),
+                ("tomelilla_05", "tomelilla - 05  Rain", 1, null),
+                ("tomelilla", "Tomelilla", 1, null),
+                ("tomelillaby", "Tomelillaby", 1, null),
+                ("tomelilla_drag", "Dragstrip ^8(PTP)", 1, null)));
+
+        Assert.Equal(new ImportCounts(5, 0, 0, 0), report.Variants);
+        await using var db = CreateContext();
+        var track = await db.Tracks.Include(t => t.Mod).Include(t => t.Variants).SingleAsync(t => t.Key == "tomelilla", Ct);
+        Assert.Equal(("Tomelilla", "The Very TrackPack 2"), (track.Name, track.Mod!.Name));
+        Assert.Equal(
+            ["01", "05 Rain", "Dragstrip (PTP)", "Tomelilla", "Tomelillaby"],
+            track.Variants.Select(v => v.Name).Order(StringComparer.Ordinal));
+    }
+
+    // A track an earlier import added with its colour codes keeps them; a new layout of it is
+    // still compared against the clean name.
+    [Fact]
+    public async Task ANewVariant_OfATrackWhoseStoredNameHasColourCodes_StillLosesTheTrackName()
+    {
+        await ImportAsync(new TrackDumpFixture()
+            .Workshop("2276098616", "The Very TrackPack 2")
+            .Track("workshop:2276098616", "tomelilla", "Tomelilla", ("tomelilla_01", "Tomelilla 01", 1, null)));
+        await using (var db = CreateContext())
+        {
+            var stored = await db.Tracks.SingleAsync(t => t.Key == "tomelilla", Ct);
+            stored.Name = "^2Tomelilla";
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await ImportAsync(new TrackDumpFixture()
+            .Workshop("2276098616", "The Very TrackPack 2")
+            .Track("workshop:2276098616", "tomelilla", "Tomelilla",
+                ("tomelilla_01", "Tomelilla 01", 1, null),
+                ("tomelilla_02", "Tomelilla 02", 1, null)));
+
+        await using var check = CreateContext();
+        var track = await check.Tracks.Include(t => t.Variants).SingleAsync(t => t.Key == "tomelilla", Ct);
+        Assert.Equal("^2Tomelilla", track.Name);
+        Assert.Equal("02", track.Variants.Single(v => v.VariantId == "tomelilla_02").Name);
+    }
+
+    [Theory]
+    [InlineData("Tomelilla 01", "Tomelilla", "01")]
+    [InlineData("Gardemoen Rallycross Reverse", "Gardemoen", "Rallycross Reverse")]
+    [InlineData("Wild Horse Pass", "Wild Horse Pass", "Wild Horse Pass")]
+    [InlineData("Hayville Farm Dash", "Hayville Farm", "Dash")]
+    [InlineData("Lanker", "Lank", "Lanker")]
+    [InlineData("Main", "Asan Circuit", "Main")]
+    [InlineData("Asan Circuit: Main", "Asan Circuit", "Main")]
+    public void VariantName_DropsOnlyAWholeLeadingTrackName(string variant, string track, string expected) =>
+        Assert.Equal(expected, TrackDumpImporter.VariantName(variant, track));
+
+    [Theory]
+    [InlineData("Dragstrip ^8(PTP)", "Dragstrip (PTP)")]
+    [InlineData("^5Monday ^2Night", "Monday Night")]
+    [InlineData("  Spaced   out ", "Spaced out")]
+    [InlineData("Price ^ 5", "Price ^ 5")]
+    [InlineData(null, "")]
+    public void CleanName_RemovesColourCodesAndExtraSpaces(string? text, string expected) =>
+        Assert.Equal(expected, TrackDumpImporter.CleanName(text));
+
     [Fact]
     public async Task ImportingTheSameFileAgain_ChangesNothing()
     {
