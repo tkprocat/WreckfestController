@@ -34,6 +34,8 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
 
     public DbSet<Mod> Mods => Set<Mod>();
 
+    public DbSet<CatalogueImage> CatalogueImages => Set<CatalogueImage>();
+
     public DbSet<TrackCollection> TrackCollections => Set<TrackCollection>();
 
     public DbSet<TrackCollectionEntry> TrackCollectionEntries => Set<TrackCollectionEntry>();
@@ -186,6 +188,27 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
                     r => r.HasOne(typeof(Tag)).WithMany().HasForeignKey("TagId"),
                     l => l.HasOne(typeof(TrackVariant)).WithMany().HasForeignKey("TrackVariantId"),
                     j => j.HasKey("TrackVariantId", "TagId"));
+        });
+
+        builder.Entity<CatalogueImage>(image =>
+        {
+            image.Property(i => i.Size).HasConversion<string>().HasMaxLength(16);
+            image.Property(i => i.Origin).HasConversion<string>().HasMaxLength(16);
+            image.Property(i => i.ContentType).HasMaxLength(CatalogueImage.ContentTypeMaxLength);
+            image.Property(i => i.Hash).HasMaxLength(CatalogueImage.HashLength);
+
+            image.Property(i => i.UpdatedAt).HasConversion(UtcConverter);
+
+            // One image per row, size and origin. SQLite treats NULLs as distinct, so a
+            // track's rows (variant id NULL) and a variant's (track id NULL) never collide.
+            image.HasIndex(i => new { i.TrackId, i.Size, i.Origin }).IsUnique();
+            image.HasIndex(i => new { i.TrackVariantId, i.Size, i.Origin }).IsUnique();
+            image.ToTable(t => t.HasCheckConstraint(
+                "CK_CatalogueImages_Owner",
+                "(\"TrackId\" IS NULL) <> (\"TrackVariantId\" IS NULL)"));
+
+            image.HasOne<Track>().WithMany().HasForeignKey(i => i.TrackId).OnDelete(DeleteBehavior.Cascade);
+            image.HasOne<TrackVariant>().WithMany().HasForeignKey(i => i.TrackVariantId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<Tag>(tag =>

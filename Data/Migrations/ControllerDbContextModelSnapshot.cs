@@ -247,6 +247,62 @@ namespace WreckfestController.Data.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("WreckfestController.Data.Catalogue.CatalogueImage", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<byte[]>("Data")
+                        .IsRequired()
+                        .HasColumnType("BLOB");
+
+                    b.Property<string>("Hash")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsOverlay")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Size")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("TrackId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("TrackVariantId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TrackId", "Size", "Origin")
+                        .IsUnique();
+
+                    b.HasIndex("TrackVariantId", "Size", "Origin")
+                        .IsUnique();
+
+                    b.ToTable("CatalogueImages", t =>
+                        {
+                            t.HasCheckConstraint("CK_CatalogueImages_Owner", "(\"TrackId\" IS NULL) <> (\"TrackVariantId\" IS NULL)");
+                        });
+                });
+
             modelBuilder.Entity("WreckfestController.Data.Catalogue.Mod", b =>
                 {
                     b.Property<int>("Id")
@@ -915,6 +971,19 @@ namespace WreckfestController.Data.Migrations
                         .HasForeignKey("WeatherConditionId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("WreckfestController.Data.Catalogue.CatalogueImage", b =>
+                {
+                    b.HasOne("WreckfestController.Data.Catalogue.Track", null)
+                        .WithMany()
+                        .HasForeignKey("TrackId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("WreckfestController.Data.Catalogue.TrackVariant", null)
+                        .WithMany()
+                        .HasForeignKey("TrackVariantId")
+                        .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("WreckfestController.Data.Catalogue.Track", b =>

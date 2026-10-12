@@ -33,6 +33,10 @@ public class EndpointAuthorizationTests
         "GET /api/public/overview",
         "GET /api/public/races",
         "GET /api/public/feed",
+        // Catalogue menu images (#260): the game's pictures, or ones an admin chose to show. Rate-limited.
+        "GET /api/images/tracks/{key}/{size}",
+        "GET /api/images/variants/{variantId}/{size}",
+        "GET /api/images/variants/{variantId}/layout",
     };
 
     [Fact]

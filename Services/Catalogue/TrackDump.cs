@@ -84,14 +84,23 @@ public sealed record TrackDumpTrack(
     string? Id,
     string? Source,
     TrackDumpText? Title,
-    IReadOnlyList<TrackDumpVariant>? Variants);
+    IReadOnlyList<TrackDumpVariant>? Variants,
+    TrackDumpImages? Images = null);
 
 public sealed record TrackDumpVariant(
     string? Id,
     string? GameId,
     TrackDumpText? Name,
     long GameMode,
-    TrackDumpTrackData? TrackData);
+    TrackDumpTrackData? TrackData,
+    TrackDumpImages? Images = null);
+
+/// <summary>
+/// A track's or variant's menu images as source-relative <c>.bmap</c> paths; null where it has
+/// none. <c>wftracks imagedump</c> writes each as <c>&lt;source id, ":" as "_"&gt;/&lt;name&gt;.png</c>.
+/// The loading, skew and results sizes are not read: the catalogue keeps small and large (#260).
+/// </summary>
+public sealed record TrackDumpImages(string? Small, string? Large);
 
 public sealed record TrackDumpTrackData(double? TrackLengthM);
 

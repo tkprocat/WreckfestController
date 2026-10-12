@@ -9,6 +9,8 @@ import { NO_ANSWER, hasId, send, type Outcome } from '@/crud/outcome'
 import { useResourceEditor } from '@/crud/useResourceEditor'
 import { vSelectFocus } from '@/crud/selectFocus'
 import { modalSize } from '@/crud/modal'
+import type { CatalogueImage } from '@/api/images'
+import ImageSlots from './ImageSlots.vue'
 
 /**
  * Adds a variant under a track, or edits one: its id (what the game loads), name, game mode
@@ -29,7 +31,8 @@ interface VariantDraft {
   tags: string[]
 }
 
-const emit = defineEmits<{ saved: [variant: Variant] }>()
+const props = defineProps<{ images: CatalogueImage[] }>()
+const emit = defineEmits<{ saved: [variant: Variant]; imagesChanged: [owner: { variantId: number }, own: CatalogueImage[]] }>()
 const message = useMessage()
 
 const MODES: { value: Mode; label: string }[] = [
@@ -123,6 +126,12 @@ async function start(owner: Track, variant: Variant | null) {
   }
 }
 
+/** The variant's own images and its track's: what can show for it. */
+const variantImages = computed(() => {
+  const variant = editor.editing.value
+  return variant ? props.images.filter((i) => i.variantId === variant.id || i.trackId === variant.trackId) : []
+})
+
 defineExpose({ start })
 </script>
 
@@ -164,6 +173,14 @@ defineExpose({ start })
         <NSelect v-model:value="draft.tags" :options="tagOptions" multiple filterable v-select-focus="inputProps" :input-props="inputProps" />
       </FormField>
       <NCheckbox v-if="editor.isNew.value" v-model:checked="draft.allowedForVoting" class="gap">Players can vote for it</NCheckbox>
+      <ImageSlots
+        v-if="editor.editing.value"
+        kind="variant"
+        :id="editor.editing.value.id"
+        :name="editor.editing.value.variantId"
+        :images="variantImages"
+        @changed="(own) => emit('imagesChanged', { variantId: editor.editing.value!.id }, own)"
+      />
       <div class="form-actions">
         <NButton :disabled="saving" @click="editor.close()">Cancel</NButton>
         <NButton type="primary" attr-type="submit" :loading="saving" :disabled="saving">

@@ -38,7 +38,8 @@ A missing or rejected credential returns **401** with no body, never a redirect.
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
 (`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`,
-`GET public/overview`, `GET public/races`, `GET public/feed`, and the [live-update hub](#live-updates--hubsserver)), so one
+`GET public/overview`, `GET public/races`, `GET public/feed`, the [catalogue images](#images--apiimages)
+under `GET images/...`, and the [live-update hub](#live-updates--hubsserver)), so one
 cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
 
@@ -532,6 +533,10 @@ track, named "Track - Variant". A change counts at once.
 | GET, POST | `mods` | List, or create `{ name, folderName, workshopId }`. `folderName` is the name `mods=` uses. |
 | DELETE | `mods/{id}` | 204. **409** while tracks still come from it. |
 | POST | `import/trackdump` | The content of a WreckfestTrackDump `tracks.json` as the JSON body. Adds what the catalogue lacks (below) and answers with a report. **400** for anything but `formatVersion` 1, **413** over 16 MB. |
+| POST | `import/trackdump/images` | `multipart/form-data`: `dump` (the `tracks.json`) and `images` (the PNGs `wftracks imagedump` wrote, each named `<source>/<name>.png`). Stores the menu images (below). **400** for a bad dump or over 500 files, **413** over 64 MB. |
+| GET | `images` | Every stored image without its bytes: `{ trackId, variantId, size, origin, hash, bytes, isOverlay }`. |
+| PUT | `tracks/{id}/images/{size}`, `variants/{id}/images/{size}` | `multipart/form-data` with `file`: the admin's own image of that size (`small` or `large`), which shows instead of an imported one. PNG, JPEG or WebP, by its bytes, up to 4 MB. Answers the row's images. **400** for anything else. |
+| DELETE | `tracks/{id}/images/{size}`, `variants/{id}/images/{size}` | 204: removes the admin's upload; an imported image shows again. **404** when there is none. |
 
 **Concurrency.** A track or variant carries a `version`, and `GET {id}` returns it as
 `ETag: "3"`. `PUT {id}` must send it back as `If-Match: "3"`: without the header the answer is
@@ -592,6 +597,51 @@ so they are never passed on: `meaning` is the controller's own sentence for the 
 unknown code counts as `other`. A skipped item's `id` is rebuilt as `source/folder/gameId`
 from parts that are plain names, with `?` for any part that is not. `tool` and `generatedAt`
 are null unless they are plain text and a date. Source `path`s are not read at all.
+
+**Track and variant images** (#260). Each track and variant can have a *small* (250x116,
+for lists) and a *large* (832x386, for a track page) menu image, kept in the database. The
+loading, skew and results sizes the game also has are not kept. An image comes from a track
+dump or from an admin's upload; an upload wins, and only the admin removes it.
+
+- **Importing.** `wftracks imagedump <dir> -o <folder>` writes the images a dump names; the
+  Tracks page's import takes that folder (with its `tracks.json`), imports the `tracks.json`
+  first, then sends the small and large images in batches, each with the `tracks.json`.
+  Only the file contents are sent. Variants match by `gameId`; a track matches by its dump
+  id, else as the track holding most of the dump track's variants, which is how a built-in
+  track (no dump id; `madman_stadium` is folder `bigstadium`) finds its images. Images go
+  only to rows the catalogue has: import the `tracks.json` first. A re-import replaces an
+  imported image, and removes one the dump no longer names; uploads are never touched.
+  The report: `{ stored, unchanged, removed, notUsed, refused, unmatched }`, where `refused`
+  counts files that were not PNG or over 4 MB, and `unmatched` the dump's tracks and variants
+  with images that the catalogue lacks.
+- **The base game's images are not on the dedicated server.** Dump the game itself.
+- **Layout outlines.** The base game's variant images are not pictures: they are white
+  outlines of the layout on a clear background, which the game draws over the track's
+  picture. Mods ship both kinds. A PNG whose pixels are mostly clear is stored as an outline
+  (`isOverlay`): it is never shown as a picture, and is served as the variant's `layout`.
+
+### Images — `api/images`
+
+Anyone may fetch the catalogue's images: they are the game's own pictures, or ones an admin
+chose to show. Tracks and variants are named by `key` and `variantId`, ignoring case, so a
+link survives a re-import. Rate-limited per client, more loosely than `api/public`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `tracks/{key}/{size}` | The track's picture of that size: its own, else its first visible variant's (by name). |
+| GET | `variants/{variantId}/{size}` | The variant's picture, else its track's. |
+| GET | `variants/{variantId}/layout` | The variant's layout outline, to draw over its picture. |
+
+A picture is chosen by size first (a missing `small` falls back to `large`, never the other
+way), then the variant's own before its track's, then an upload before an import. Layout
+outlines are never pictures. **404** when there is none, **400** for a size other than
+`small` or `large`.
+
+Every answer has an `ETag` (the image's hash) and `X-Content-Type-Options: nosniff`, and
+honours `If-None-Match`. It is cached for five minutes, or for a year when the link's `?v=`
+names the hash of the image it gets: a page that knows the hash links the new image when it
+changes. The content type is the one the bytes were checked to be, never what an upload
+claimed.
 
 ### Collections — `api/collections`
 

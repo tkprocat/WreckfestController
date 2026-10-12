@@ -77,6 +77,40 @@ public sealed class TrackDumpFixture
         return this;
     }
 
+    /// <summary>
+    /// Sets the menu images of a track (by dump id, <c>source/folder</c>) or a variant (by
+    /// game id) to <c>data/menu/textures/&lt;name&gt;.bmap</c> paths; null for none.
+    /// </summary>
+    public TrackDumpFixture Images(string trackOrGameId, string? small, string? large)
+    {
+        foreach (var track in _tracks.Select(t => t!.AsObject()))
+        {
+            if ((string?)track["id"] == trackOrGameId)
+            {
+                SetImages(track, small, large);
+                return this;
+            }
+
+            foreach (var variant in track["variants"]!.AsArray().Select(v => v!.AsObject()))
+            {
+                if ((string?)variant["gameId"] == trackOrGameId)
+                {
+                    SetImages(variant, small, large);
+                    return this;
+                }
+            }
+        }
+
+        throw new ArgumentException($"No track or variant {trackOrGameId}.", nameof(trackOrGameId));
+
+        static void SetImages(JsonObject row, string? small, string? large)
+        {
+            var images = row["images"]!.AsObject();
+            images["small"] = small is null ? null : $"data/menu/textures/{small}.bmap";
+            images["large"] = large is null ? null : $"data/menu/textures/{large}.bmap";
+        }
+    }
+
     public TrackDumpFixture Diagnostic(string code, string message, string severity = "warning")
     {
         _diagnostics.Add(new JsonObject
