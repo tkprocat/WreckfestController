@@ -560,12 +560,15 @@ there**, built-in or admin-added, edited or not.
   siblings from the same dump track, so a new layout of a built-in joins the built-in.
   Otherwise it goes to the track an earlier import made for the same dump track (kept
   internally as its dump id, `<source>/<folder>`), then to a built-in or admin track whose
-  key is exactly the folder name, from the same source. Failing both, a new track is made:
+  key is exactly the folder name, from the same source, unless that track already holds
+  another folder's variants. Failing both, a new track is made:
   not built-in, every weather, origin `BaseGame` for the base game (the dump does not say
   which DLC a track is from) or `Workshop` for a mod, linked to its mod. Its key is the
   first one no track has: the folder (with characters outside `[A-Za-z0-9_]` made `_`),
   then `<folder>_<workshop id>`, then numbered. Two dump tracks are never merged because
-  their keys collide: `foo-bar` and `foo_bar` get tracks of their own.
+  their keys collide: `foo-bar` and `foo_bar` get tracks of their own. A dump track whose
+  id is over 200 characters (a very long folder name) is skipped whole, since a track made
+  from it could not be found again.
 - **Mods** match by `folderName` (the workshop id for a workshop item). A match keeps its
   name; only a missing `workshopId` is filled in. A new mod is added for each mod in the
   file that has tracks, named from its `modinfo.modi`. Existing tracks are not linked to it:

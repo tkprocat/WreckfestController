@@ -351,6 +351,54 @@ public sealed class TrackDumpImporterTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ATrackHoldingOneFoldersVariants_IsNotReusedByKeyForAnother()
+    {
+        // An admin's foo_bar track already holds a layout of the dump's foo-bar folder.
+        int adminTrackId;
+        await using (var db = CreateContext())
+        {
+            var track = new Track { Key = "foo_bar", Name = "Admin's Foo Bar", Origin = TrackOrigin.Custom };
+            track.Variants.Add(new TrackVariant { VariantId = "foobar_dash", Name = "Dash", GameMode = GameMode.Racing });
+            db.Tracks.Add(track);
+            await db.SaveChangesAsync(Ct);
+            adminTrackId = track.Id;
+        }
+
+        // foo_bar comes first, so only a claim made before any track is imported keeps it out.
+        var report = await ImportAsync(new TrackDumpFixture().Base()
+            .Track("base", "foo_bar", "Foo Bar (underscore)", ("foobar_under", "Under", 1, null))
+            .Track("base", "foo-bar", "Foo Bar (dash)", ("foobar_dash", "Dash", 1, null), ("foobar_dash2", "Dash 2", 1, null)));
+
+        Assert.Equal(new ImportCounts(1, 0, 1, 0), report.Tracks);
+        await using var check = CreateContext();
+        var dash2 = await check.TrackVariants.SingleAsync(v => v.VariantId == "foobar_dash2", Ct);
+        var under = await check.TrackVariants.Include(v => v.Track).SingleAsync(v => v.VariantId == "foobar_under", Ct);
+        Assert.Equal(adminTrackId, dash2.TrackId);
+        Assert.NotEqual(adminTrackId, under.TrackId);
+        Assert.Equal("Foo Bar (underscore)", under.Track.Name);
+        Assert.Equal("Admin's Foo Bar", (await check.Tracks.SingleAsync(t => t.Id == adminTrackId, Ct)).Name);
+    }
+
+    [Fact]
+    public async Task ATrackWhoseIdIsTooLongToKeep_IsSkippedWhole()
+    {
+        // "base/" and 196 characters: 201, one more than Track.DumpId holds.
+        var folder = new string('l', 196);
+        var fixture = new TrackDumpFixture().Base().Track("base", folder, "Long", ("long_main", "Main", 1, 1000), ("long_rev", "Reverse", 1, 1000));
+
+        var report = await ImportAsync(fixture);
+        var again = await ImportAsync(fixture);
+
+        Assert.Equal(new ImportCounts(0, 0, 0, 1), report.Tracks);
+        Assert.Equal(new ImportCounts(0, 0, 0, 2), report.Variants);
+        Assert.Contains(report.Skipped, s => s.Reason.Contains("too long", StringComparison.Ordinal));
+        Assert.Equal(report.Tracks, again.Tracks);
+        await using var db = CreateContext();
+        Assert.False(await db.TrackVariants.AnyAsync(v => v.VariantId.StartsWith("long_"), Ct));
+        Assert.False(await db.Tracks.AnyAsync(t => t.Name == "Long", Ct));
+    }
+
+    [Fact]
     public async Task AnAdminTrackKeyedByTheFolder_IsUsed_ButNeverChanged()
     {
         await using (var db = CreateContext())

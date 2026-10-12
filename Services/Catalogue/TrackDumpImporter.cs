@@ -100,7 +100,12 @@ public static class TrackDumpImporter
             dump.Sources!);
 
         // The base game first: when a mod also ships a base-game id, the base game's is the one kept.
-        foreach (var track in dump.Tracks!.Where(t => t is not null).OrderBy(t => t.Source == "base" ? 0 : 1))
+        var tracks = dump.Tracks!.Where(t => t is not null).OrderBy(t => t.Source == "base" ? 0 : 1).ToList();
+
+        // Before any track is reused by key: each existing track that already holds a dump
+        // folder's variants belongs to that folder, whichever order the folders come in.
+        run.ClaimSiblings(tracks);
+        foreach (var track in tracks)
         {
             run.Import(db, track);
         }
@@ -185,8 +190,12 @@ public static class TrackDumpImporter
         private readonly Dictionary<string, Track> _tracksByKey;
         private readonly Dictionary<string, Track> _tracksByDumpId;
 
-        /// <summary>Built-in and admin tracks reused by key in this import, and the dump track that took each.</summary>
-        private readonly Dictionary<Track, string> _claimed = new();
+        /// <summary>
+        /// The dump tracks (by dump id) each existing track belongs to in this import: those
+        /// whose variants it already holds, and the one that reused it by key. A track is
+        /// reused by key only by a dump track it belongs to, or when it belongs to none.
+        /// </summary>
+        private readonly Dictionary<Track, HashSet<string>> _claimed = new();
         private readonly Dictionary<string, TrackVariant> _variantsById;
         private readonly Dictionary<string, Mod> _modsByFolder;
         private readonly IReadOnlyList<WeatherCondition> _weather;
@@ -226,13 +235,49 @@ public static class TrackDumpImporter
 
         public IReadOnlyList<ImportSkip> Skips => _skips;
 
+        /// <summary>Claims each existing track for every dump track whose variants it already holds.</summary>
+        public void ClaimSiblings(IEnumerable<TrackDumpTrack> dumpTracks)
+        {
+            foreach (var dumpTrack in dumpTracks.Where(t => t.Id is not null))
+            {
+                var dumpId = dumpTrack.Id!.ToLowerInvariant();
+                foreach (var variant in dumpTrack.Variants ?? [])
+                {
+                    if (variant?.GameId?.Trim() is { } gameId && _variantsById.TryGetValue(gameId, out var existing))
+                    {
+                        Claim(existing.Track, dumpId);
+                    }
+                }
+            }
+        }
+
+        private void Claim(Track track, string dumpId)
+        {
+            if (!_claimed.TryGetValue(track, out var owners))
+            {
+                _claimed[track] = owners = new HashSet<string>(StringComparer.Ordinal);
+            }
+
+            owners.Add(dumpId);
+        }
+
         public void Import(ControllerDbContext db, TrackDumpTrack dumpTrack)
         {
-            var source = dumpTrack.Source is null ? null : Resolve(db, dumpTrack.Source);
             var folder = dumpTrack.Source is not null && dumpTrack.Id?.StartsWith(dumpTrack.Source + "/", StringComparison.Ordinal) == true
                 ? dumpTrack.Id[(dumpTrack.Source.Length + 1)..]
                 : null;
             var id = $"{ShowSource(dumpTrack.Source)}/{ShowPart(folder)}";
+            var dumpId = dumpTrack.Id?.ToLowerInvariant() ?? string.Empty;
+            if (dumpId.Length > Track.DumpIdMaxLength)
+            {
+                // A track made from it could not keep its identity, so a later import would
+                // make a second one. None of it is imported instead.
+                Skip(Tracks, id, $"Its id is longer than the {Track.DumpIdMaxLength} characters the catalogue keeps; its folder name is too long. None of its variants were imported.");
+                Variants.Skipped += dumpTrack.Variants?.Count(v => v is not null) ?? 0;
+                return;
+            }
+
+            var source = dumpTrack.Source is null ? null : Resolve(db, dumpTrack.Source);
             if (source is null || string.IsNullOrEmpty(folder))
             {
                 Skip(Tracks, id, "Its source is not base, workshop:<id> or mod:<folder>, or its id is not under it.");
@@ -318,8 +363,10 @@ public static class TrackDumpImporter
             var created = false;
             if (target is null)
             {
-                (target, created) = FindOrCreateTrack(db, source, dumpTrack.Id!.ToLowerInvariant(), folder, dumpTrack.Title?.Text);
+                (target, created) = FindOrCreateTrack(db, source, dumpId, folder, dumpTrack.Title?.Text);
             }
+
+            Claim(target, dumpId);
 
             foreach (var (dump, gameId, mode) in added)
             {
@@ -362,7 +409,7 @@ public static class TrackDumpImporter
         /// <list type="number">
         /// <item>The track an earlier import made for this dump track, by <see cref="Track.DumpId"/>.</item>
         /// <item>A built-in or admin track whose key is exactly the folder, from the same
-        /// source, that no other dump track in this import has taken.</item>
+        /// source, that holds no other dump folder's variants and no other dump track in this import has taken.</item>
         /// <item>A new track, with the first key no track has: the folder, then
         /// <c>&lt;folder&gt;_&lt;workshop id&gt;</c>, then numbered.</item>
         /// </list>
@@ -381,9 +428,8 @@ public static class TrackDumpImporter
                 && _tracksByKey.TryGetValue(key, out var named)
                 && named.DumpId is null
                 && Fits(named, source)
-                && (!_claimed.TryGetValue(named, out var takenBy) || takenBy == dumpId))
+                && (!_claimed.TryGetValue(named, out var owners) || owners.All(owner => owner == dumpId)))
             {
-                _claimed[named] = dumpId;
                 return (named, false);
             }
 
@@ -409,7 +455,7 @@ public static class TrackDumpImporter
                 Origin = source.IsBase ? TrackOrigin.BaseGame : TrackOrigin.Workshop,
                 Mod = source.Mod,
                 IsBuiltIn = false,
-                DumpId = dumpId.Length <= Track.DumpIdMaxLength ? dumpId : null,
+                DumpId = dumpId,
                 WeatherConditions = _weather.ToList(),
             };
             db.Tracks.Add(track);
