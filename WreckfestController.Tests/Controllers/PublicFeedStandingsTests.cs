@@ -57,6 +57,17 @@ public class PublicFeedStandingsTests
     }
 
     [Fact]
+    public void RowsWithoutASteamId_UnderSeveralOfAPlayersNames_AreOnePlayer()
+    {
+        Assert.Equal(
+            ["1 Bob 40"],
+            PublicFeed.Standings(
+                    [Car(2, "Alice", 10, steamId: 1), Car(3, "Alice", 30), Car(4, "Bob", 40)],
+                    [(1, "Alice"), (1, "Bob")])
+                .Select(s => $"{s.Position} {s.Name} {s.Points}"));
+    }
+
+    [Fact]
     public void AHumanWithoutASteamId_StaysApart_WhenTheNameIsAmbiguous()
     {
         // Two Steam IDs share the name: which one it was is not known.

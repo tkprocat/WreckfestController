@@ -227,20 +227,28 @@ public static class PublicFeed
             .Select(r => (SteamId: r.SteamId!.Value, r.Name))
             .Concat(namesUsed ?? [])
             .ToList();
+        // Whose row each is, decided before any row is dropped, so a player seen without an
+        // ID under several names still ends up as one.
+        string Identity(StandingRow r)
+        {
+            if (r.SteamId is { } steamId)
+            {
+                return "steam:" + steamId;
+            }
+
+            if (r.IsBot)
+            {
+                return "bot:" + r.Name;
+            }
+
+            var ids = used.Where(u => u.Name == r.Name).Select(u => u.SteamId).Distinct().Take(2).ToList();
+            return ids.Count == 1 ? "steam:" + ids[0] : "name:" + r.Name;
+        }
+
         var latest = all
-            .GroupBy(r => r.SteamId is { } steamId ? "steam:" + steamId : (r.IsBot ? "bot:" : "name:") + r.Name)
+            .GroupBy(Identity)
             .Select(g => g.OrderByDescending(r => r.EndedAt).ThenByDescending(r => r.RaceId).First())
             .ToList();
-
-        foreach (var nameless in latest.Where(r => r.SteamId is null && !r.IsBot).ToList())
-        {
-            var ids = used.Where(u => u.Name == nameless.Name).Select(u => u.SteamId).Distinct().ToList();
-            if (ids.Count == 1 && latest.FirstOrDefault(r => r.SteamId == ids[0]) is { } player)
-            {
-                var older = IsNewer(nameless, player) ? player : nameless;
-                latest.Remove(older);
-            }
-        }
 
         if (latest.All(r => r.CupPointsTotal <= 0))
         {
@@ -263,9 +271,6 @@ public static class PublicFeed
 
         return standings;
     }
-
-    private static bool IsNewer(StandingRow a, StandingRow b) =>
-        a.EndedAt > b.EndedAt || (a.EndedAt == b.EndedAt && a.RaceId > b.RaceId);
 
     /// <summary>A race as the public lists show it, from <paramref name="query"/>'s races.</summary>
     internal static IQueryable<RaceRow> Races(IQueryable<Race> query) => query
