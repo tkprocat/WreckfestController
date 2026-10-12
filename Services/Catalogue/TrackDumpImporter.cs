@@ -84,6 +84,11 @@ public static class TrackDumpImporter
     private static readonly Regex GameIdPattern = new(TrackVariant.VariantIdPattern, RegexOptions.CultureInvariant);
     private static readonly Regex FolderNamePattern = new(Controllers.ModRequest.FolderNamePattern, RegexOptions.CultureInvariant);
 
+    /// <summary>The game's colour codes, <c>^0</c> to <c>^9</c>, as mods put them in names.</summary>
+    private static readonly Regex ColourCode = new(@"\^[0-9]", RegexOptions.CultureInvariant);
+
+    private static readonly Regex Spaces = new(@"\s+", RegexOptions.CultureInvariant);
+
     public static async Task<TrackDumpImportReport> ImportAsync(
         ControllerDbContext db,
         TrackDump dump,
@@ -171,6 +176,36 @@ public static class TrackDumpImporter
     private static string ShowPart(string? part) => part is not null && SafePart.IsMatch(part) ? part : "?";
 
     private static string Truncate(string text, int length) => text.Length <= length ? text : text[..length];
+
+    /// <summary>
+    /// A name as it should read in the catalogue: without the game's colour codes, which
+    /// would show as text ("Dragstrip ^8(PTP)"), and with runs of spaces made one.
+    /// </summary>
+    public static string CleanName(string? text) =>
+        text is null ? string.Empty : Spaces.Replace(ColourCode.Replace(text, string.Empty), " ").Trim();
+
+    /// <summary>
+    /// A variant's name without its track's name in front: the catalogue shows "Track -
+    /// Variant", so "Tomelilla 01" on Tomelilla reads "Tomelilla - 01", not "Tomelilla -
+    /// Tomelilla 01". Only a whole leading word match is dropped, and a name that would be
+    /// left empty ("Gardemoen" on Gardemoen) is kept as it is.
+    /// </summary>
+    public static string VariantName(string variant, string track)
+    {
+        if (track.Length == 0 || !variant.StartsWith(track, StringComparison.OrdinalIgnoreCase))
+        {
+            return variant;
+        }
+
+        var rest = variant[track.Length..];
+        if (rest.Length == 0 || !(char.IsWhiteSpace(rest[0]) || rest[0] is '-' or ':' or '\u2013'))
+        {
+            return variant;
+        }
+
+        rest = rest.TrimStart(' ', '-', ':', '\u2013').Trim();
+        return rest.Length > 0 ? rest : variant;
+    }
 
     private sealed class Tally
     {
@@ -370,7 +405,7 @@ public static class TrackDumpImporter
 
             foreach (var (dump, gameId, mode) in added)
             {
-                var name = dump.Name?.Text?.Trim();
+                var name = VariantName(CleanName(dump.Name?.Text), target.Name);
                 var variant = new TrackVariant
                 {
                     VariantId = gameId,
@@ -447,7 +482,7 @@ public static class TrackDumpImporter
                 free = _tracksByKey.ContainsKey(numbered) ? null : numbered;
             }
 
-            var name = title?.Trim();
+            var name = CleanName(title);
             var track = new Track
             {
                 Key = free,
@@ -543,7 +578,7 @@ public static class TrackDumpImporter
                 return new SourceInfo(IsBase: false, suffix, mod);
             }
 
-            var name = _sources.GetValueOrDefault(sourceId)?.Name?.Trim();
+            var name = CleanName(_sources.GetValueOrDefault(sourceId)?.Name);
             mod = new Mod
             {
                 Name = Truncate(string.IsNullOrEmpty(name) ? folder : name, Mod.NameMaxLength),
