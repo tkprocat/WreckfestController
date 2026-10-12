@@ -405,7 +405,7 @@ public static class TrackDumpImporter
 
             foreach (var (dump, gameId, mode) in added)
             {
-                var name = VariantName(CleanName(dump.Name?.Text), target.Name);
+                var name = VariantName(CleanName(dump.Name?.Text), CleanName(target.Name));
                 var variant = new TrackVariant
                 {
                     VariantId = gameId,

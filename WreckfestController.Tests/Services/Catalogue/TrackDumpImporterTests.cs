@@ -93,6 +93,33 @@ public sealed class TrackDumpImporterTests : IAsyncLifetime
             track.Variants.Select(v => v.Name).Order(StringComparer.Ordinal));
     }
 
+    // A track an earlier import added with its colour codes keeps them; a new layout of it is
+    // still compared against the clean name.
+    [Fact]
+    public async Task ANewVariant_OfATrackWhoseStoredNameHasColourCodes_StillLosesTheTrackName()
+    {
+        await ImportAsync(new TrackDumpFixture()
+            .Workshop("2276098616", "The Very TrackPack 2")
+            .Track("workshop:2276098616", "tomelilla", "Tomelilla", ("tomelilla_01", "Tomelilla 01", 1, null)));
+        await using (var db = CreateContext())
+        {
+            var stored = await db.Tracks.SingleAsync(t => t.Key == "tomelilla", Ct);
+            stored.Name = "^2Tomelilla";
+            await db.SaveChangesAsync(Ct);
+        }
+
+        await ImportAsync(new TrackDumpFixture()
+            .Workshop("2276098616", "The Very TrackPack 2")
+            .Track("workshop:2276098616", "tomelilla", "Tomelilla",
+                ("tomelilla_01", "Tomelilla 01", 1, null),
+                ("tomelilla_02", "Tomelilla 02", 1, null)));
+
+        await using var check = CreateContext();
+        var track = await check.Tracks.Include(t => t.Variants).SingleAsync(t => t.Key == "tomelilla", Ct);
+        Assert.Equal("^2Tomelilla", track.Name);
+        Assert.Equal("02", track.Variants.Single(v => v.VariantId == "tomelilla_02").Name);
+    }
+
     [Theory]
     [InlineData("Tomelilla 01", "Tomelilla", "01")]
     [InlineData("Gardemoen Rallycross Reverse", "Gardemoen", "Rallycross Reverse")]
