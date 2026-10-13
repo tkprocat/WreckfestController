@@ -285,6 +285,49 @@ browser keeps it; the controller stores none), and answers `{ reply }` as plain 
 - A reply longer than 2000 characters is cut at a word, so the browser can send it back.
 - The request body may be at most 256 KiB, checked before it is read.
 
+### Admin AI assistant — `api/assistant`
+
+The admin panel's **AI assistant** page. It uses the `assistant` settings section's key,
+model and address, but needs only the key: `enabled` turns on the public page alone. Admins
+are not held to `dailyRequestLimit`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | — | `{ available }`: true when a key is set. |
+| POST | `chat` | The answer to a conversation, and the changes it proposes. |
+
+`chat` takes the same `{ messages }` as the [public assistant](#ai-assistant), with the same
+limits, and answers `{ reply, proposals }`. **404** without a key; **503** when the model
+cannot answer (the log has the reason).
+
+The model has the public tools, plus reads of the rotation, collections, cups and the server
+settings below, and tools that **propose** a change. Nothing is written: each proposal is
+`{ kind, summary, targetId, version, body }`, the request an admin page would send, and the
+web app's **Apply** button sends it with the admin's own session:
+
+| `kind` | Request |
+| --- | --- |
+| `setRotation` | `PUT /api/config/tracks`, `If-Match: version` |
+| `createCollection` | `POST /api/collections` |
+| `updateCollection` | `PUT /api/collections/{targetId}`, `If-Match: version` |
+| `deployCollection` | `POST /api/collections/{targetId}/deploy` (`body` is null) |
+| `createCup` | `POST /api/cups` |
+| `updateCup` | `PUT /api/cups/{targetId}`, `If-Match: version` |
+| `updateServerConfig` | `PUT /api/config/basic`, only the fields to change |
+
+- A proposal is checked by the endpoint's own rules when it is made, and again when it is
+  applied; a change made in between is a **409**, as for any stale edit.
+- The model never sees the server password, the admin and moderator Steam ids, or a cup's
+  password. Server settings it may read and propose are the race and lobby ones: name,
+  welcome message, max players, lobby countdown, ready players, session mode, grid order,
+  track vote, idle kick, bots, AI difficulty, teams, laps, time limit, elimination interval,
+  damage, car restrictions, car resets, wrong-way limiter, weather and frequency. Not the
+  password, Steam id lists, ports, LAN, log or mods.
+- A cup update keeps the cup's password; a proposal that sets one is refused.
+- At most 5 proposals per question.
+- Users, starting, stopping and updating the server, and launch settings are out of its
+  reach.
+
 ### Users — `api/users`
 
 | Method | Path | Purpose |

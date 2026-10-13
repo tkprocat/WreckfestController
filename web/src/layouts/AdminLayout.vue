@@ -19,6 +19,7 @@ const groups = [
     { name: 'admin-server', label: 'Server control', icon: 'M12 3v9 M6 6a8 8 0 1 0 12 0' },
     { name: 'admin-config', label: 'Server config', icon: 'M4 6h16 M4 12h16 M4 18h16 M8 3v6 M16 9v6 M10 15v6' },
     { name: 'admin-settings', label: 'Settings', icon: 'M4 7h16 M4 17h16 M8 4v6 M16 14v6' },
+    { name: 'admin-assistant', label: 'AI assistant', icon: 'M11 3l1.8 4.7 4.7 1.8-4.7 1.8L11 16l-1.8-4.7L4.5 9.5l4.7-1.8Z M18 14l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9Z' },
   ]},
   { label: 'Content', pages: [
     { name: 'admin-tracks', label: 'Tracks', icon: 'M8 3h8a5 5 0 0 1 5 5v8a5 5 0 0 1-5 5H8a5 5 0 0 1-5-5V8a5 5 0 0 1 5-5Z M9 7h6a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z' },

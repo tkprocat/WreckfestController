@@ -410,7 +410,7 @@ public sealed class AssistantEndpointsTests : IDisposable
             new { messages = new[] { new { role = "user", content = question } } },
             Ct);
 
-    private static string Text(string content) => new JsonObject
+    internal static string Text(string content) => new JsonObject
     {
         ["choices"] = new JsonArray(new JsonObject
         {
@@ -418,7 +418,7 @@ public sealed class AssistantEndpointsTests : IDisposable
         }),
     }.ToJsonString();
 
-    private static string ToolCalls(params (string Name, string Arguments)[] calls) => new JsonObject
+    internal static string ToolCalls(params (string Name, string Arguments)[] calls) => new JsonObject
     {
         ["choices"] = new JsonArray(new JsonObject
         {
@@ -473,7 +473,7 @@ public sealed class AssistantEndpointsTests : IDisposable
     }
 
     /// <summary>Stands in for the model's API: records each request and answers from a queue.</summary>
-    private sealed class FakeModel : HttpMessageHandler
+    internal sealed class FakeModel : HttpMessageHandler
     {
         private readonly Queue<string> _answers = new();
 

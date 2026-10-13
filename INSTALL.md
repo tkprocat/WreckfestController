@@ -234,6 +234,11 @@ until you turn it on under **Settings** > **AI assistant**:
 The controller makes the calls, so the key never reaches a browser, and it is never shown
 again once saved. The model can only look up what the public pages already show.
 
+With a key set, the admin panel has an **AI assistant** page too, whether or not the public
+page is on. There you can ask for changes to the rotation, collections, cups and server
+settings in plain language: the assistant proposes each one, and nothing changes until you
+click **Apply**. It cannot manage users, start or stop the server, or see passwords.
+
 ## Scripts and the API
 
 Scripts call the same API as the web site and authenticate with the `Key` from step 3:

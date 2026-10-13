@@ -31,6 +31,7 @@ export const router = createRouter({
         { path: 'server', name: 'admin-server', component: () => import('@/views/admin/ServerControlView.vue') },
         { path: 'config', name: 'admin-config', component: () => import('@/views/admin/ConfigView.vue') },
         { path: 'settings', name: 'admin-settings', component: () => import('@/views/admin/SettingsView.vue') },
+        { path: 'assistant', name: 'admin-assistant', component: () => import('@/views/admin/AdminAssistantView.vue') },
         { path: 'tags', name: 'admin-tags', component: () => import('@/views/admin/TagsView.vue') },
         { path: 'tracks', name: 'admin-tracks', component: () => import('@/views/admin/TracksView.vue') },
         { path: 'rotation', name: 'admin-rotation', component: () => import('@/views/admin/RotationView.vue') },
