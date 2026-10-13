@@ -73,11 +73,16 @@ public sealed class ApiTestHost : IAsyncDisposable
     /// Extra options for every context the hosts create, such as interceptors that
     /// make a race happen on cue.
     /// </param>
+    /// <param name="configureServices">
+    /// Changes to the API host's services after ApiServer has registered its own, such as
+    /// a fake handler for an outbound HTTP client.
+    /// </param>
     public static async Task<ApiTestHost> StartAsync(
         IDictionary<string, string?>? settings = null,
         DatabaseState? databaseState = null,
         string? dataDirectory = null,
-        Action<DbContextOptionsBuilder>? configureDatabase = null)
+        Action<DbContextOptionsBuilder>? configureDatabase = null,
+        Action<IServiceCollection>? configureServices = null)
     {
         var values = new Dictionary<string, string?>
         {
@@ -115,6 +120,7 @@ public sealed class ApiTestHost : IAsyncDisposable
         builder.WebHost.UseTestServer();
         builder.Services.AddSingleton<IStartupFilter, PeerAddressStartupFilter>();
         ApiServer.ConfigureServices(builder, main, configuration);
+        configureServices?.Invoke(builder.Services);
 
         var app = builder.Build();
         ApiServer.ConfigurePipeline(app);

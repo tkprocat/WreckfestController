@@ -38,7 +38,7 @@ A missing or rejected credential returns **401** with no body, never a redirect.
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
 (`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`,
-`GET public/overview`, `GET public/races`, `GET public/feed`, the public track pages (`GET public/tracks`, `public/tracks/{key}`, `public/variants/{variantId}`), the [catalogue images](#images--apiimages)
+`GET public/overview`, `GET public/races`, `GET public/feed`, the public track pages (`GET public/tracks`, `public/tracks/{key}`, `public/variants/{variantId}`), the [AI assistant](#ai-assistant) (`GET public/assistant`, `POST public/assistant/chat`), the [catalogue images](#images--apiimages)
 under `GET images/...`, and the [live-update hub](#live-updates--hubsserver)), so one
 cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
@@ -172,6 +172,8 @@ why. Numbers must be JSON numbers: `"5"` for an integer is a 400.
 | GET | `tracks` | Anonymous. Every track for the public track pages, below. |
 | GET | `tracks/{key}` | Anonymous. One track and its layouts. **404** for a hidden or unknown track. |
 | GET | `variants/{variantId}` | Anonymous. What the race log says about one layout. **404** for a hidden one. |
+| GET | `assistant` | Anonymous. Whether the AI assistant is on: `{ enabled }`. |
+| POST | `assistant/chat` | Anonymous. The AI assistant's answer to a question, below. |
 
 `overview` is `{ serverName, maxPlayers, status: { isRunning, uptimeSeconds }, currentTrack,
 players: { humans, bots, list: [{ name, isBot }] }, rotation: { name, tracks: [{ id, name,
@@ -243,6 +245,32 @@ races }], cups: [{ name, isActive, nextOccurrence, repeat }] }`.
 - `cups` are those whose rotation has the layout (a linked collection's, else the cup's own
   list): the active one first, then by next occurrence.
 - All three share `overview`'s rate limit.
+
+#### AI assistant
+
+Visitors ask about the server in plain language on the web app's `/ai` page. The controller
+sends the question to an OpenAI-compatible Chat Completions API (the `assistant` settings
+section: OpenAI by default, or OpenRouter, a local Ollama and the like) with its own key,
+which never reaches a browser. The model looks answers up with read-only tools that call
+the public endpoints above - `overview` (status, players, rotation; cups), `feed`, `races`,
+`tracks`, `tracks/{key}` and `variants/{variantId}` - so it sees exactly what the public
+pages show and nothing else.
+
+`assistant` is `{ enabled }`: true when the section has `enabled` on and a key set. The web
+app shows its AI link only then. It shares `overview`'s rate limit.
+
+`assistant/chat` takes `{ messages: [{ role, content }] }`, the conversation so far (the
+browser keeps it; the controller stores none), and answers `{ reply }` as plain text.
+- `role` is `user` or `assistant`, and the last message is the visitor's question. At most
+  20 messages of 1-2000 characters; anything else is **400** with a `messages` error.
+- **404** while the assistant is off. **503** when the model cannot be reached, times out
+  (90 seconds) or answers with nothing; the detail goes to the log only.
+- 10 questions a minute per client IP (**429** with `Retry-After`), and the section's
+  `dailyRequestLimit` across all visitors per UTC day (**429** once used up). The day's
+  count is kept in memory, so a restart starts it again.
+- Like any POST it needs the [antiforgery token](#csrf), anonymous or not.
+- The model may call tools for up to 6 rounds per question; the last round offers none, so
+  it answers with what it has.
 
 ### Users — `api/users`
 
@@ -487,18 +515,21 @@ or the cup's settings cannot be written to the server config (with a `reason`).
 
 The settings a person edits over the web, kept in the controller's database one section
 at a time. Today that is `vote` (`mode`, `directCooldownSeconds`, `voteTimeoutSeconds`,
-`maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`) and `publicSite`
-(`feedItemCount`); later settings pages add sections for what changes game behaviour,
+`maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`), `publicSite`
+(`feedItemCount`) and `assistant` (`enabled`, `baseUrl`, `model`, `apiKey`,
+`dailyRequestLimit`); later settings pages add sections for what changes game behaviour,
 never programs or paths. The WPF Configuration tab edits the same `vote` section;
-`publicSite` is edited on the web only.
+`publicSite` and `assistant` are edited on the web only.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | | Every section: `{ vote, publicSite }` (`SettingsResponse`), each with its `version` |
+| GET | | Every section: `{ vote, publicSite, assistant }` (`SettingsResponse`), each with its `version` |
 | GET | `vote` | The voting settings (`VoteSettingsResponse`), with its `ETag` |
 | PUT | `vote` | Change the fields in the body; the rest keep their values. Needs `If-Match`. Answers `VoteSettingsResponse` |
 | GET | `publicSite` | The front page's settings (`PublicSiteSettingsResponse`), with its `ETag` |
 | PUT | `publicSite` | As for `vote`. Answers `PublicSiteSettingsResponse` |
+| GET | `assistant` | The [AI assistant](#ai-assistant)'s settings (`AssistantSettingsResponse`), with its `ETag` |
+| PUT | `assistant` | As for `vote`. Answers `AssistantSettingsResponse` |
 
 Each section has its own typed route, so the web app gets types for it; a section that
 does not exist has no route (404).
@@ -508,7 +539,12 @@ does not exist has no route (404).
 - Unknown fields, wrong types and out-of-range values are 400 with a field error:
   `mode` is `Off`, `Voting` or `Direct` (any case); `directCooldownSeconds` 0-3600,
   `voteTimeoutSeconds` 1-3600, `maxLapsAllowed` 1-999, `messageDelayMs` 0-5000,
-  `feedItemCount` 1-50.
+  `feedItemCount` 1-50, `baseUrl` an http or https address, `dailyRequestLimit` 1-100000.
+- `apiKey` is **write-only**: no answer ever carries it, only `apiKeySet` (true when one is
+  stored). Send a new key to replace it and `""` to remove it; a body that repeats
+  `apiKeySet` is fine. A blank `baseUrl` or `model` goes back to the default
+  (`https://api.openai.com/v1`, `gpt-5-mini`). The key is kept in the controller's database
+  as it is, like the rest of the section, so treat the database and its backups as secret.
 - A change takes effect at once: voting reads it on the next command, and a saved `vote`
   change ends a `!voting` override.
 - The startup settings (`Api:*`, `Database:Path`) are not here and have no route. They stay

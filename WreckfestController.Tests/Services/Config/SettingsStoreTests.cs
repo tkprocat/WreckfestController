@@ -82,7 +82,7 @@ public sealed class SettingsStoreTests : IDisposable
 
         Assert.Equal((VoteModes.Direct, 100, 1), (vote.Value.Mode, vote.Value.MessageDelayMs, vote.Version));
         Assert.Equal(
-            [SettingsSections.PublicSite, SettingsSections.SteamCmd, SettingsSections.Vote, SettingsSections.WreckfestServer],
+            [SettingsSections.Assistant, SettingsSections.PublicSite, SettingsSections.SteamCmd, SettingsSections.Vote, SettingsSections.WreckfestServer],
             Rows().Select(r => r.Section));
     }
 

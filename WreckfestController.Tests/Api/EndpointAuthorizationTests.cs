@@ -37,6 +37,10 @@ public class EndpointAuthorizationTests
         "GET /api/public/tracks",
         "GET /api/public/tracks/{key}",
         "GET /api/public/variants/{variantId}",
+        // The public site's AI assistant: answers only from the public endpoints above,
+        // its key stays on the server, and questions are rate-limited and capped per day.
+        "GET /api/public/assistant",
+        "POST /api/public/assistant/chat",
         // Catalogue menu images (#260): the game's pictures, or ones an admin chose to show. Rate-limited.
         "GET /api/images/tracks/{key}/{size}",
         "GET /api/images/variants/{variantId}/{size}",

@@ -43,7 +43,9 @@ function serve(settings = vote(), variants = [variant(1, true), variant(2, false
         ? answer(settings)
         : path === '/api/settings/publicSite'
           ? answer({ feedItemCount: 10, version: 1 })
-          : answer(variants),
+          : path === '/api/settings/assistant'
+            ? answer({ enabled: false, baseUrl: 'https://api.openai.com/v1', model: 'gpt-5-mini', apiKeySet: false, dailyRequestLimit: 200, version: 1 })
+            : answer(variants),
     ),
   )
 }

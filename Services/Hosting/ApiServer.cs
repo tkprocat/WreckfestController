@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using WreckfestController.Data;
 using WreckfestController.Hubs;
+using WreckfestController.Services.Assistant;
 using WreckfestController.Services.Auth;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Cups;
@@ -220,6 +221,12 @@ public class ApiServer : IApiServer, IDisposable
         builder.Services.AddSingleton(main.GetRequiredService<SmartRestartService>());
         builder.Services.AddSingleton(main.GetRequiredService<DatabaseState>());
         builder.Services.AddSingleton(main.GetRequiredService<ISettingsStore>());
+
+        // The public site's AI assistant (AssistantController). Its own instances: nothing
+        // in the WPF app asks the model anything.
+        builder.Services.AddHttpClient(AssistantChat.HttpClientName);
+        builder.Services.AddSingleton<AssistantChat>();
+        builder.Services.AddSingleton<AssistantUsage>();
 
         builder.Services.AddApiAuthentication(main, configuration);
         builder.Services.AddTrustedProxies(configuration);

@@ -19,6 +19,8 @@ namespace WreckfestController.Services.Auth;
 /// server config and the database on every call.</item>
 /// <item><see cref="ImagesPolicy"/> caps the anonymous catalogue images. A page of tracks
 /// loads dozens at once, so it allows more than the overview.</item>
+/// <item><see cref="AssistantPolicy"/> caps questions to the AI assistant. Each one is a
+/// paid call upstream, so it allows far fewer; <c>AssistantUsage</c> caps the day's total.</item>
 /// </list>
 /// </remarks>
 public static class RateLimits
@@ -28,6 +30,9 @@ public static class RateLimits
 
     public const string PublicPolicy = "public";
     public const int PublicPermitsPerWindow = 60;
+
+    public const string AssistantPolicy = "assistant";
+    public const int AssistantPermitsPerWindow = 10;
 
     public const string ImagesPolicy = "images";
     public const int ImagesPermitsPerWindow = 600;
@@ -66,6 +71,7 @@ public static class RateLimits
 
             options.AddPolicy(LoginPolicy, context => PerClient(context, LoginPermitsPerWindow));
             options.AddPolicy(PublicPolicy, context => PerClient(context, PublicPermitsPerWindow));
+            options.AddPolicy(AssistantPolicy, context => PerClient(context, AssistantPermitsPerWindow));
             options.AddPolicy(ImagesPolicy, context => PerClient(context, ImagesPermitsPerWindow));
         });
     }

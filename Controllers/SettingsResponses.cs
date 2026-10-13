@@ -48,6 +48,9 @@ internal static class SettingsApi
         // set in the desktop app only; the web keeps the Update action itself.
         new SettingsApiSection<VoteSettings>("vote", hidden: [nameof(VoteSettings.Enabled)], ValidateVote),
         new SettingsApiSection<PublicSiteSettings>("publicSite", hidden: [], ValidatePublicSite),
+        // The key can be set or cleared, never read back: a web session, or anything that
+        // reads its answers, must not be able to take it away.
+        new SettingsApiSection<AssistantSettings>("assistant", hidden: [], ValidateAssistant, writeOnly: [nameof(AssistantSettings.ApiKey)]),
     ];
 
     public static ISettingsApiSection? Find(string name) =>
@@ -75,6 +78,18 @@ internal static class SettingsApi
     private static (string Field, string Message)? ValidatePublicSite(PublicSiteSettings site) =>
         Range("feedItemCount", site.FeedItemCount, 1, PublicSiteSettings.MaxFeedItemCount);
 
+    private static (string Field, string Message)? ValidateAssistant(AssistantSettings assistant)
+    {
+        if (!string.IsNullOrWhiteSpace(assistant.BaseUrl)
+            && (!Uri.TryCreate(assistant.BaseUrl.Trim(), UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)))
+        {
+            return ("baseUrl", "baseUrl must be an http or https address.");
+        }
+
+        return Range("dailyRequestLimit", assistant.DailyRequestLimit, 1, AssistantSettings.MaxDailyRequestLimit);
+    }
+
     private static (string Field, string Message)? Range(string field, int value, int min, int max) =>
         value < min || value > max ? (field, $"{field} must be between {min} and {max}.") : null;
 }
@@ -83,17 +98,26 @@ internal static class SettingsApi
 /// A section of type <typeparamref name="T"/>. Fields are its public properties in
 /// camelCase, less <c>hidden</c> ones. A PUT changes only the fields in the body; the
 /// rest keep their stored values. A hidden field is unknown here: a PUT naming one is
-/// rejected like any other unknown field.
+/// rejected like any other unknown field. A <c>writeOnly</c> string field can be changed
+/// but is never answered: reads carry <c>{field}Set</c> instead, true when it is not empty,
+/// and a PUT ignores that flag when a client sends back what it read.
 /// </summary>
 internal sealed class SettingsApiSection<T> : ISettingsApiSection
     where T : class
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    private const string SetSuffix = "Set";
+
     private readonly Dictionary<string, PropertyInfo> _fields;
+    private readonly HashSet<string> _writeOnly;
     private readonly Func<T, (string Field, string Message)?> _validate;
 
-    public SettingsApiSection(string name, string[] hidden, Func<T, (string Field, string Message)?> validate)
+    public SettingsApiSection(
+        string name,
+        string[] hidden,
+        Func<T, (string Field, string Message)?> validate,
+        string[]? writeOnly = null)
     {
         Name = name;
         _validate = validate;
@@ -101,6 +125,9 @@ internal sealed class SettingsApiSection<T> : ISettingsApiSection
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(p => p.CanRead && p.CanWrite && !hidden.Contains(p.Name))
             .ToDictionary(p => JsonNamingPolicy.CamelCase.ConvertName(p.Name), StringComparer.OrdinalIgnoreCase);
+        _writeOnly = new HashSet<string>(
+            (writeOnly ?? Array.Empty<string>()).Select(JsonNamingPolicy.CamelCase.ConvertName),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     public string Name { get; }
@@ -132,7 +159,7 @@ internal sealed class SettingsApiSection<T> : ISettingsApiSection
         foreach (var field in body.EnumerateObject())
         {
             // A client may send back what it read, version included; If-Match is what counts.
-            if (string.Equals(field.Name, "version", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(field.Name, "version", StringComparison.OrdinalIgnoreCase) || IsSetFlag(field.Name))
             {
                 continue;
             }
@@ -186,10 +213,26 @@ internal sealed class SettingsApiSection<T> : ISettingsApiSection
 
     private Dictionary<string, object?> ToBody(T value, int version)
     {
-        var body = _fields.ToDictionary(f => f.Key, f => f.Value.GetValue(value));
+        var body = new Dictionary<string, object?>();
+        foreach (var (name, property) in _fields)
+        {
+            if (_writeOnly.Contains(name))
+            {
+                body[name + SetSuffix] = property.GetValue(value) is string { Length: > 0 };
+            }
+            else
+            {
+                body[name] = property.GetValue(value);
+            }
+        }
+
         body["version"] = version;
         return body;
     }
+
+    private bool IsSetFlag(string field) =>
+        field.EndsWith(SetSuffix, StringComparison.OrdinalIgnoreCase)
+        && _writeOnly.Contains(field[..^SetSuffix.Length]);
 
     private static string Describe(Type type) =>
         type == typeof(int) ? "a whole number"

@@ -107,6 +107,43 @@ public class PublicSiteSettings
 }
 
 /// <summary>
+/// The AI assistant on the public site: an OpenAI-compatible chat API that the controller
+/// calls with its own key, never the visitor's browser.
+/// </summary>
+public class AssistantSettings
+{
+    public const string DefaultBaseUrl = "https://api.openai.com/v1";
+    public const string DefaultModel = "gpt-5-mini";
+    public const int DefaultDailyRequestLimit = 200;
+    public const int MaxDailyRequestLimit = 100_000;
+
+    /// <summary>Off until an admin turns it on; it also needs <see cref="ApiKey"/>.</summary>
+    [JsonPropertyName("Enabled")]
+    public bool Enabled { get; set; }
+
+    /// <summary>
+    /// The API's base address, ending before <c>/chat/completions</c>. OpenAI by default;
+    /// any OpenAI-compatible service (OpenRouter, a local Ollama) works.
+    /// </summary>
+    [JsonPropertyName("BaseUrl")]
+    public string BaseUrl { get; set; } = DefaultBaseUrl;
+
+    [JsonPropertyName("Model")]
+    public string Model { get; set; } = DefaultModel;
+
+    /// <summary>Write-only over the API: reads show only whether one is set.</summary>
+    [JsonPropertyName("ApiKey")]
+    public string ApiKey { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Questions answered per UTC day, across every visitor, to cap the bill. Counted in
+    /// memory, so a restart starts the day's count again.
+    /// </summary>
+    [JsonPropertyName("DailyRequestLimit")]
+    public int DailyRequestLimit { get; set; } = DefaultDailyRequestLimit;
+}
+
+/// <summary>
 /// A votable track as voting uses it: the game's variant id and a display name. Comes
 /// from the catalogue (<c>IVotableTracks</c>).
 /// </summary>
