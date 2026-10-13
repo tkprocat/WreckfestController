@@ -125,7 +125,9 @@ public class AssistantController : ControllerBase
             return reply;
         }
 
-        var cut = reply[..(MaxMessageLength - 1)];
+        // Never half an emoji: a high surrogate without its pair is not valid text.
+        var length = char.IsHighSurrogate(reply[MaxMessageLength - 2]) ? MaxMessageLength - 2 : MaxMessageLength - 1;
+        var cut = reply[..length];
         var space = cut.LastIndexOfAny([' ', '\n']);
         return (space > MaxMessageLength / 2 ? cut[..space] : cut).TrimEnd() + "…";
     }

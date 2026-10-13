@@ -227,6 +227,21 @@ public sealed class AssistantEndpointsTests : IDisposable
         Assert.Equal(AssistantChat.MaxToolCalls + 3, results.Count);
         Assert.All(results.Take(AssistantChat.MaxToolCalls), r => Assert.DoesNotContain("No more lookups", r, StringComparison.Ordinal));
         Assert.All(results.Skip(AssistantChat.MaxToolCalls), r => Assert.Contains("No more lookups", r, StringComparison.Ordinal));
+        // With the lookups used up, the next round offers no tools, so no more refusals pile up.
+        Assert.False(_model.Requests[1].Body.TryGetProperty("tools", out _));
+    }
+
+    [Theory]
+    [InlineData(1998)]
+    [InlineData(1997)]
+    public void Fit_NeverSplitsAnEmoji(int before)
+    {
+        var reply = new string('a', before) + string.Concat(Enumerable.Repeat("😀", 10));
+
+        var fitted = AssistantController.Fit(reply);
+
+        Assert.True(fitted.Length <= AssistantController.MaxMessageLength);
+        Assert.False(char.IsHighSurrogate(fitted.TrimEnd('…')[^1]));
     }
 
     // Escaping makes a quote-heavy result longer than the text taken from it; the cut must

@@ -279,7 +279,8 @@ browser keeps it; the controller stores none), and answers `{ reply }` as plain 
 - Like any POST it needs the [antiforgery token](#csrf), anonymous or not.
 - The model may call tools for up to 6 rounds per question; the last round offers none, so
   it answers with what it has. One question gets at most 12 lookups and 64,000 characters
-  of their output; one lookup's output is cut at 24,000. Each model call asks for at most
+  of their output; one lookup's output is cut at 24,000. Once either runs out, tools are no
+  longer offered, and calls already asked for get a short refusal. Each model call asks for at most
   4,000 tokens (`max_completion_tokens`, which Ollama ignores).
 - A reply longer than 2000 characters is cut at a word, so the browser can send it back.
 - The request body may be at most 256 KiB, checked before it is read.

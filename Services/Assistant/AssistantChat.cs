@@ -41,7 +41,11 @@ public sealed class AssistantChat
     /// </summary>
     public const int MaxToolCalls = 12;
 
-    /// <summary>Tool output one question may gather; it is resent with every later round.</summary>
+    /// <summary>
+    /// Tool output one question may gather; it is resent with every later round. Once it is
+    /// spent, tools are no longer offered; calls the model already asked for in that round
+    /// each get a short refusal, as every call must be answered.
+    /// </summary>
     public const int MaxToolOutputLength = 64_000;
 
     /// <summary>Below this much room left, a lookup is refused rather than cut to nothing.</summary>
@@ -89,8 +93,10 @@ public sealed class AssistantChat
         var toolOutput = 0;
         for (var round = 0; ; round++)
         {
-            // The last round offers no tools, so the model answers with what it has.
-            var offerTools = round < MaxToolRounds && tools.Count > 0;
+            // The last round offers no tools, so the model answers with what it has; so does
+            // the round after the lookups or their output run out.
+            var offerTools = round < MaxToolRounds && tools.Count > 0
+                && toolCalls < MaxToolCalls && MaxToolOutputLength - toolOutput >= MinToolResultRoom;
             var request = new JsonObject
             {
                 ["model"] = settings.Model,
