@@ -32,8 +32,14 @@ public class AssistantController : ControllerBase
     /// <summary>The most messages a conversation may carry, the new question included.</summary>
     public const int MaxMessages = 20;
 
-    /// <summary>The longest message, in characters.</summary>
+    /// <summary>The longest message, in characters. Longer replies are cut to it, so the browser can send them back.</summary>
     public const int MaxMessageLength = 2000;
+
+    /// <summary>
+    /// The largest request body, checked before it is read: a full conversation of
+    /// <see cref="MaxMessages"/> messages at <see cref="MaxMessageLength"/> fits with room to spare.
+    /// </summary>
+    public const int MaxRequestBytes = 256 * 1024;
 
     private readonly ISettingsStore _settings;
     private readonly AssistantChat _chat;
@@ -67,6 +73,7 @@ public class AssistantController : ControllerBase
     /// </summary>
     [HttpPost("chat")]
     [EnableRateLimiting(RateLimits.AssistantPolicy)]
+    [RequestSizeLimit(MaxRequestBytes)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest, "application/problem+json")]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, "application/problem+json")]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, "application/problem+json")]
@@ -96,7 +103,7 @@ public class AssistantController : ControllerBase
         try
         {
             var reply = await _chat.AskAsync(settings, conversation, AssistantTools.Definitions, tools.RunAsync, cancellationToken);
-            return new AssistantChatReply(reply);
+            return new AssistantChatReply(Fit(reply));
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -105,6 +112,22 @@ public class AssistantController : ControllerBase
             _logger.LogWarning(ex, "The AI assistant could not answer");
             return Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "The AI assistant cannot answer right now.");
         }
+    }
+
+    /// <summary>
+    /// A reply cut to <see cref="MaxMessageLength"/> at a word, or the browser could never send
+    /// the conversation back and every follow-up would be refused.
+    /// </summary>
+    internal static string Fit(string reply)
+    {
+        if (reply.Length <= MaxMessageLength)
+        {
+            return reply;
+        }
+
+        var cut = reply[..(MaxMessageLength - 1)];
+        var space = cut.LastIndexOfAny([' ', '\n']);
+        return (space > MaxMessageLength / 2 ? cut[..space] : cut).TrimEnd() + "…";
     }
 
     private static bool IsAvailable(AssistantSettings settings) => settings.Enabled && !string.IsNullOrEmpty(settings.ApiKey);

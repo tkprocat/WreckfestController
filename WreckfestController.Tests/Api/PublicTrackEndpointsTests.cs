@@ -204,6 +204,29 @@ public class PublicTrackEndpointsTests
         Assert.Equal(["Sam 18000 Roadslayer", "Alice 19000 Roadslayer", "Sam 20000 Roadslayer", "Sam 20000 Roadslayer"], laps);
     }
 
+    // The all-time standings join players the same way, over every layout, and leave bots out.
+    [Fact]
+    public async Task Players_RanksEveryLayoutsRaces_ByWinsThenPodiums_WithoutSteamIdsOrBots()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        // Alice raced as "Ally" last; one of her wins lost its Steam id. Bob has as many
+        // wins as Cat but more podiums. The bot wins the last race and is still left out.
+        await AddRaceAsync(host, "bigstadium_figure_8", Day, ("Ally", 1001, 1, 60_000, 19_000), ("Bob", 1002, 2, 61_000, 20_000), ("Cat", NoSteamId, 4, 62_000, 21_000));
+        await AddRaceAsync(host, "bigstadium_demolition_arena", Day.AddHours(1), ("Bob", 1002, 1, 60_000, 19_000), ("Ally", NoSteamId, 3, 61_000, 20_000));
+        await AddRaceAsync(host, "fields14_1", Day.AddHours(2), ("Cat", NoSteamId, 1, 60_000, 19_000), ("Alice", 1001, 5, 61_000, 20_000));
+        await AddRaceAsync(host, "fields14_1", Day.AddHours(3), ("Bot Carl", null, 1, 60_000, 19_000), ("Alice", NoSteamId, 2, 61_000, 20_000));
+        using var client = host.CreateClient();
+
+        var players = await client.GetFromJsonAsync<JsonElement>("/api/public/players", Ct);
+
+        Assert.Equal(
+            ["Alice 1/3/4", "Bob 1/2/2", "Cat 1/1/2"],
+            players.EnumerateArray().Select(p => $"{p.GetProperty("name").GetString()} {p.GetProperty("wins").GetInt32()}/{p.GetProperty("podiums").GetInt32()}/{p.GetProperty("races").GetInt32()}"));
+        Assert.Equal(Day.AddHours(3), players[0].GetProperty("lastRaced").GetDateTime());
+        Assert.DoesNotContain("1001", players.GetRawText(), StringComparison.Ordinal);
+        Assert.DoesNotContain("steamId", players.GetRawText(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ALinkedCollectionEntry_CountsForItsVariant_NotForTheIdItWasSavedWith()
     {

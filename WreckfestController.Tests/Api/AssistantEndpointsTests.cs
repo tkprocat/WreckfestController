@@ -4,7 +4,10 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.AspNetCore.Http.Metadata;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using WreckfestController.Controllers;
 using WreckfestController.Models;
 using WreckfestController.Services.Assistant;
@@ -24,6 +27,7 @@ public sealed class AssistantEndpointsTests : IDisposable
 
     private readonly string _directory = ApiTestHost.NewDataDirectory();
     private readonly FakeModel _model = new();
+    private readonly LogCapture _logs = new();
 
     public AssistantEndpointsTests()
     {
@@ -97,6 +101,7 @@ public sealed class AssistantEndpointsTests : IDisposable
             Assert.Equal($"Bearer {Key}", r.Authorization);
             Assert.Equal("https://llm.example.com/v1/chat/completions", r.Url);
             Assert.Equal("gpt-test", r.Body.GetProperty("model").GetString());
+            Assert.Equal(AssistantChat.MaxCompletionTokens, r.Body.GetProperty("max_completion_tokens").GetInt32());
         });
 
         var offered = _model.Requests[0].Body.GetProperty("tools").EnumerateArray()
@@ -183,6 +188,91 @@ public sealed class AssistantEndpointsTests : IDisposable
         Assert.DoesNotContain(Key, text, StringComparison.Ordinal);
     }
 
+    // OpenAI's 401 quotes the key back in its message, so the log keeps only the code and type.
+    [Fact]
+    public async Task Chat_WhenTheModelFails_LogsNoUpstreamMessage()
+    {
+        await using var host = await StartAsync();
+        await ConfigureAsync(host, enabled: true, apiKey: Key);
+        using var browser = await BrowserAsync(host);
+        _model.Status = HttpStatusCode.Unauthorized;
+        _model.Answer($$$"""{"error":{"message":"Incorrect API key provided: {{{Key}}}","type":"invalid_request_error","code":"invalid_api_key"}}""");
+
+        using var response = await AskAsync(browser, "Hello?");
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        var log = _logs.Text;
+        Assert.Contains("401 (invalid_api_key, invalid_request_error)", log, StringComparison.Ordinal);
+        Assert.DoesNotContain(Key, log, StringComparison.Ordinal);
+        Assert.DoesNotContain("Incorrect API key", log, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Chat_StopsLookingUp_AfterTheLastAllowedCall()
+    {
+        await using var host = await StartAsync();
+        await ConfigureAsync(host, enabled: true, apiKey: Key);
+        using var browser = await BrowserAsync(host);
+        _model.Answer(ToolCalls(Enumerable.Repeat(("get_cups", "{}"), AssistantChat.MaxToolCalls + 3).ToArray()));
+        _model.Answer(Text("No cups."));
+
+        using var response = await AskAsync(browser, "Any cups?");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var results = _model.Requests[1].Body.GetProperty("messages").EnumerateArray()
+            .Where(m => m.GetProperty("role").GetString() == "tool")
+            .Select(m => m.GetProperty("content").GetString()!)
+            .ToList();
+        // Every call is answered, or the API rejects the conversation; the extra ones with an error.
+        Assert.Equal(AssistantChat.MaxToolCalls + 3, results.Count);
+        Assert.All(results.Take(AssistantChat.MaxToolCalls), r => Assert.DoesNotContain("No more lookups", r, StringComparison.Ordinal));
+        Assert.All(results.Skip(AssistantChat.MaxToolCalls), r => Assert.Contains("No more lookups", r, StringComparison.Ordinal));
+    }
+
+    // The browser sends each reply back with the next question, so a reply over the message
+    // limit would get every follow-up refused.
+    [Fact]
+    public async Task Chat_CutsALongReply_SoTheConversationCanGoOn()
+    {
+        await using var host = await StartAsync();
+        await ConfigureAsync(host, enabled: true, apiKey: Key);
+        using var browser = await BrowserAsync(host);
+        _model.Answer(Text(string.Join(' ', Enumerable.Repeat("wreck", AssistantController.MaxMessageLength))));
+        _model.Answer(Text("Sure."));
+
+        using var first = await AskAsync(browser, "Tell me a long story.");
+        var reply = (await first.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("reply").GetString()!;
+        using var second = await browser.Http.PostAsJsonAsync(
+            "/api/public/assistant/chat",
+            new
+            {
+                messages = new[]
+                {
+                    new { role = "user", content = "Tell me a long story." },
+                    new { role = "assistant", content = reply },
+                    new { role = "user", content = "Shorter?" },
+                },
+            },
+            Ct);
+
+        Assert.True(reply.Length <= AssistantController.MaxMessageLength);
+        Assert.EndsWith("wreck…", reply, StringComparison.Ordinal);
+        Assert.Equal(HttpStatusCode.OK, second.StatusCode);
+    }
+
+    // The test server cannot enforce a body limit, so this checks the endpoint declares one.
+    [Fact]
+    public async Task Chat_LimitsTheRequestBody()
+    {
+        await using var host = await StartAsync();
+
+        var endpoint = host.Services.GetRequiredService<EndpointDataSource>().Endpoints
+            .OfType<RouteEndpoint>()
+            .Single(e => e.RoutePattern.RawText == "api/public/assistant/chat");
+
+        Assert.Equal(AssistantController.MaxRequestBytes, endpoint.Metadata.GetMetadata<IRequestSizeLimitMetadata>()?.MaxRequestBodySize);
+    }
+
     [Fact]
     public async Task Chat_StopsAtTheDailyLimit()
     {
@@ -247,9 +337,11 @@ public sealed class AssistantEndpointsTests : IDisposable
             ["WreckfestServer:WorkingDirectory"] = _directory,
             ["WreckfestServer:ServerArguments"] = "-s server_config=server_config.cfg",
         },
-        configureServices: services => services
-            .AddHttpClient(AssistantChat.HttpClientName)
-            .ConfigurePrimaryHttpMessageHandler(() => _model));
+        configureServices: services =>
+        {
+            services.AddSingleton<ILoggerProvider>(_logs);
+            services.AddHttpClient(AssistantChat.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => _model);
+        });
 
     private static async Task ConfigureAsync(
         ApiTestHost host,
@@ -311,6 +403,42 @@ public sealed class AssistantEndpointsTests : IDisposable
             },
         }),
     }.ToJsonString();
+
+    /// <summary>Keeps every message the API host logs, exceptions included.</summary>
+    private sealed class LogCapture : ILoggerProvider, ILogger
+    {
+        private readonly List<string> _lines = [];
+
+        public string Text
+        {
+            get
+            {
+                lock (_lines)
+                {
+                    return string.Join('\n', _lines);
+                }
+            }
+        }
+
+        public ILogger CreateLogger(string categoryName) => this;
+
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            lock (_lines)
+            {
+                _lines.Add(formatter(state, exception) + " " + exception);
+            }
+        }
+
+        public void Dispose()
+        {
+        }
+    }
 
     /// <summary>Stands in for the model's API: records each request and answers from a queue.</summary>
     private sealed class FakeModel : HttpMessageHandler

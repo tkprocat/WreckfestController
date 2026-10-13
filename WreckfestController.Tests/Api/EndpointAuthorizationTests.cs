@@ -33,6 +33,8 @@ public class EndpointAuthorizationTests
         "GET /api/public/overview",
         "GET /api/public/races",
         "GET /api/public/feed",
+        // All-time player standings: names and counts only, no Steam ids. Rate-limited.
+        "GET /api/public/players",
         // The public track pages (#261): visible rows only, through public DTOs. Rate-limited.
         "GET /api/public/tracks",
         "GET /api/public/tracks/{key}",

@@ -38,7 +38,7 @@ A missing or rejected credential returns **401** with no body, never a redirect.
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
 (`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`,
-`GET public/overview`, `GET public/races`, `GET public/feed`, the public track pages (`GET public/tracks`, `public/tracks/{key}`, `public/variants/{variantId}`), the [AI assistant](#ai-assistant) (`GET public/assistant`, `POST public/assistant/chat`), the [catalogue images](#images--apiimages)
+`GET public/overview`, `GET public/races`, `GET public/players`, `GET public/feed`, the public track pages (`GET public/tracks`, `public/tracks/{key}`, `public/variants/{variantId}`), the [AI assistant](#ai-assistant) (`GET public/assistant`, `POST public/assistant/chat`), the [catalogue images](#images--apiimages)
 under `GET images/...`, and the [live-update hub](#live-updates--hubsserver)), so one
 cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
@@ -168,6 +168,7 @@ why. Numbers must be JSON numbers: `"5"` for an integer is a 400.
 | --- | --- | --- |
 | GET | `overview` | Anonymous. The public home page's data, below. |
 | GET | `races` | Anonymous. The latest 10 finished races, newest first, below. |
+| GET | `players` | Anonymous. All-time standings: the top 25 players by wins, below. |
 | GET | `feed` | Anonymous. The front page's results, below. |
 | GET | `tracks` | Anonymous. Every track for the public track pages, below. |
 | GET | `tracks/{key}` | Anonymous. One track and its layouts. **404** for a hidden or unknown track. |
@@ -200,6 +201,12 @@ position, name, isBot, vehicleName, outcome, timeMs, bestLapMs }] }]`, the lates
   a cup. `warmup` is true for a race that ended in its cup's warmup. Track names work as
   in `overview`. No Steam ids.
 - It shares `overview`'s rate limit. `RaceRecorded` on the hub says when to reload.
+
+`players` is `[{ name, wins, podiums, races, lastRaced }]`, over every race logged: the top 25
+by wins, then podiums (top-3 finishes, wins included), then races.
+- Bots are left out. A player is counted as for a layout's `mostWins` (by Steam id when the
+  log has one, else by name) and shown by the name they last raced under. No Steam ids.
+- It shares `overview`'s rate limit. Reload on `RaceRecorded`.
 
 `feed` is the front page's results, newest first: `[{ kind, race, cup }]`. A `Race` item
 (`race` set, `cup` null) is one race outside any cup, shaped as in `races`. A `Cup` item
@@ -253,7 +260,7 @@ sends the question to an OpenAI-compatible Chat Completions API (the `assistant`
 section: OpenAI by default, or OpenRouter, a local Ollama and the like) with its own key,
 which never reaches a browser. The model looks answers up with read-only tools that call
 the public endpoints above - `overview` (status, players, rotation; cups), `feed`, `races`,
-`tracks`, `tracks/{key}` and `variants/{variantId}` - so it sees exactly what the public
+`players`, `tracks`, `tracks/{key}` and `variants/{variantId}` - so it sees exactly what the public
 pages show and nothing else.
 
 `assistant` is `{ enabled }`: true when the section has `enabled` on and a key set. The web
@@ -264,13 +271,18 @@ browser keeps it; the controller stores none), and answers `{ reply }` as plain 
 - `role` is `user` or `assistant`, and the last message is the visitor's question. At most
   20 messages of 1-2000 characters; anything else is **400** with a `messages` error.
 - **404** while the assistant is off. **503** when the model cannot be reached, times out
-  (90 seconds) or answers with nothing; the detail goes to the log only.
+  (90 seconds) or answers with nothing. The log gets the status and the error's `code` and
+  `type`, never the API's message, which can quote the key back.
 - 10 questions a minute per client IP (**429** with `Retry-After`), and the section's
   `dailyRequestLimit` across all visitors per UTC day (**429** once used up). The day's
   count is kept in memory, so a restart starts it again.
 - Like any POST it needs the [antiforgery token](#csrf), anonymous or not.
 - The model may call tools for up to 6 rounds per question; the last round offers none, so
-  it answers with what it has.
+  it answers with what it has. One question gets at most 12 lookups and 64,000 characters
+  of their output; one lookup's output is cut at 24,000. Each model call asks for at most
+  4,000 tokens (`max_completion_tokens`, which Ollama ignores).
+- A reply longer than 2000 characters is cut at a word, so the browser can send it back.
+- The request body may be at most 256 KiB, checked before it is read.
 
 ### Users — `api/users`
 

@@ -27,7 +27,10 @@ public sealed class AssistantTools
             "Recent results, newest first: races outside a cup one by one, and each cup run with its standings and races.",
             NoParameters()),
         new("get_recent_races",
-            "The latest finished races, newest first, with every car's position, name, vehicle, best lap and race time.",
+            $"Only the latest {PublicController.RaceLimit} finished races, newest first, with every car's position, name, vehicle, best lap and race time. Not for all-time totals: use get_player_standings.",
+            NoParameters()),
+        new("get_player_standings",
+            $"All-time standings over every race on the server: the top {PublicController.StandingLimit} players by wins, with their podiums (top-3 finishes, wins included), races and when they last raced. Bots are left out.",
             NoParameters()),
         new("list_tracks",
             "Every track on the server: its key, name, mod and how many layouts it has. get_track gives a track's layouts.",
@@ -73,6 +76,8 @@ public sealed class AssistantTools
                 return Answer(await _public.Feed(cancellationToken));
             case "get_recent_races":
                 return Answer(await _public.Races(cancellationToken));
+            case "get_player_standings":
+                return Answer(await _public.Players(cancellationToken));
             case "list_tracks":
                 // Without the layouts, which get_track gives: the base game alone has hundreds,
                 // more than one tool result may hold.

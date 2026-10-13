@@ -2908,6 +2908,61 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/public/players": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description OK */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/plain": components["schemas"]["PublicPlayerStanding"][];
+                        "application/json": components["schemas"]["PublicPlayerStanding"][];
+                        "text/json": components["schemas"]["PublicPlayerStanding"][];
+                    };
+                };
+                /** @description Too Many Requests */
+                429: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+                /** @description Service Unavailable */
+                503: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["ProblemDetails"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/public/feed": {
         parameters: {
             query?: never;
@@ -5029,6 +5084,17 @@ export interface components {
             /** Format: int32 */
             bots: number;
             list: components["schemas"]["PublicPlayer"][];
+        };
+        PublicPlayerStanding: {
+            name: string;
+            /** Format: int32 */
+            wins: number;
+            /** Format: int32 */
+            podiums: number;
+            /** Format: int32 */
+            races: number;
+            /** Format: date-time */
+            lastRaced: string;
         };
         PublicRace: {
             /** Format: int32 */

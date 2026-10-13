@@ -3385,6 +3385,64 @@
         }
       }
     },
+    "/api/public/players": {
+      "get": {
+        "tags": [
+          "Public"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicPlayerStanding"
+                  }
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicPlayerStanding"
+                  }
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PublicPlayerStanding"
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too Many Requests",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/problem\u002Bjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/public/feed": {
       "get": {
         "tags": [
@@ -6944,6 +7002,37 @@
             "items": {
               "$ref": "#/components/schemas/PublicPlayer"
             }
+          }
+        }
+      },
+      "PublicPlayerStanding": {
+        "required": [
+          "name",
+          "wins",
+          "podiums",
+          "races",
+          "lastRaced"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "wins": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "podiums": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "races": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "lastRaced": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
