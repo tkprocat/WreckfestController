@@ -32,6 +32,11 @@ lockfile changes, `npm run build` when a source changes, then `web/dist` is copi
 `-p:SkipWebBuild=true` skips it for C#-only work. `web/` uses Naive UI, not PrimeVue
 (PrimeVue 5 left MIT): check a package's license before adding it.
 
+`npm run build` lints first with Oxlint (`web/.oxlintrc.json`: correctness rules as errors,
+plus the Vue and Vitest plugins), so a lint error fails `dotnet build` like a type error.
+`npm run lint` runs it alone. In Git Bash Oxlint prints nothing (the exit code is still
+right); run it from PowerShell to see the findings.
+
 The web app is typed against `web/src/api/openapi.json`. `OpenApiContractTests` fails when
 it drifts from the API; `WFC_UPDATE_OPENAPI=1 dotnet test --filter-class
 WreckfestController.Tests.Api.OpenApiContractTests` rewrites it, then `npm run gen:api` in
