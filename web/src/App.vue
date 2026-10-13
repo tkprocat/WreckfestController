@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NButton, NConfigProvider, NDialogProvider, NMessageProvider } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useAppearance } from '@/composables/useAppearance'
+import { useAssistantStatus } from '@/composables/useAssistantStatus'
 
 const { preference, theme, overrides, setPreference } = useAppearance()
 
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
+const assistant = useAssistantStatus()
+onMounted(() => void assistant.load())
 const isAdmin = computed(() => route.matched.some(record => record.meta.requiresAuth))
 
 /** Shown when the server did not confirm the sign-out: the session may still be valid. */
@@ -32,6 +35,7 @@ async function signOut() {
           <RouterLink to="/" class="app-title" aria-label="Wreckfest Controller"><span class="brand-mark" aria-hidden="true">W</span><span>Wreckfest<span class="brand-subtitle">Controller</span></span></RouterLink>
           <nav class="app-user">
             <RouterLink :to="{ name: 'tracks' }">Tracks</RouterLink>
+            <RouterLink v-if="assistant.enabled.value" :to="{ name: 'assistant' }">AI</RouterLink>
             <label class="appearance-control">
               <span>Theme</span>
               <select :value="preference" @change="setPreference(($event.target as HTMLSelectElement).value)">

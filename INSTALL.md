@@ -217,6 +217,23 @@ On the web site, as an admin:
 - **Tracks**: which tracks players can pick with `!track` and `!vote`.
 - **Server Config**, **Rotation**, **Collections** and **Cups**: as you need them.
 
+### The AI assistant (optional)
+
+The public site can have an **AI** page where visitors ask about the server in plain
+language: who is on, what is next in the rotation, who won, when the next cup is. It is off
+until you turn it on under **Settings** > **AI assistant**:
+
+1. Get an API key from [OpenAI](https://platform.openai.com/api-keys), or from any
+   OpenAI-compatible service. For OpenRouter set **API address** to
+   `https://openrouter.ai/api/v1`; for a local Ollama, `http://localhost:11434/v1` with any
+   key.
+2. Paste the key, pick a **Model** (default `gpt-5-mini`) and turn on **Show the AI page**.
+3. Set **Questions per day** to cap the bill. Each visitor can also ask at most 10 questions
+   a minute.
+
+The controller makes the calls, so the key never reaches a browser, and it is never shown
+again once saved. The model can only look up what the public pages already show.
+
 ## Scripts and the API
 
 Scripts call the same API as the web site and authenticate with the `Key` from step 3:

@@ -19,6 +19,7 @@ public static class SettingsSections
     public const string SteamCmd = "SteamCmd";
     public const string Vote = "Vote";
     public const string PublicSite = "PublicSite";
+    public const string Assistant = "Assistant";
 
     public const string DefaultServerArguments = "-s server_config=server_config.cfg";
     public const string DefaultWreckfestAppId = "361580";
@@ -29,6 +30,7 @@ public static class SettingsSections
         [typeof(SteamCmdSettings)] = new(SteamCmd, DefaultSteamCmd, s => Normalize((SteamCmdSettings)s)),
         [typeof(VoteSettings)] = new(Vote, DefaultVote, s => Normalize((VoteSettings)s)),
         [typeof(PublicSiteSettings)] = new(PublicSite, DefaultPublicSite, s => Normalize((PublicSiteSettings)s)),
+        [typeof(AssistantSettings)] = new(Assistant, DefaultAssistant, s => Normalize((AssistantSettings)s)),
     };
 
     /// <summary>Every section type the store keeps.</summary>
@@ -81,6 +83,17 @@ public static class SettingsSections
         return site;
     }
 
+    // No key from the shipped file: a key is entered by an admin, never shipped.
+    private static AssistantSettings DefaultAssistant(IConfiguration shipped)
+    {
+        var assistant = new AssistantSettings();
+        var section = shipped.GetSection(Assistant);
+        assistant.BaseUrl = section[nameof(AssistantSettings.BaseUrl)] ?? assistant.BaseUrl;
+        assistant.Model = section[nameof(AssistantSettings.Model)] ?? assistant.Model;
+        assistant.DailyRequestLimit = section.GetValue(nameof(AssistantSettings.DailyRequestLimit), assistant.DailyRequestLimit);
+        return assistant;
+    }
+
     private static WreckfestServerSettings Normalize(WreckfestServerSettings server)
     {
         server.ServerPath = server.ServerPath?.Trim() ?? string.Empty;
@@ -116,6 +129,17 @@ public static class SettingsSections
     {
         site.FeedItemCount = Math.Clamp(site.FeedItemCount, 1, PublicSiteSettings.MaxFeedItemCount);
         return site;
+    }
+
+    private static AssistantSettings Normalize(AssistantSettings assistant)
+    {
+        assistant.BaseUrl = string.IsNullOrWhiteSpace(assistant.BaseUrl)
+            ? AssistantSettings.DefaultBaseUrl
+            : assistant.BaseUrl.Trim().TrimEnd('/');
+        assistant.Model = string.IsNullOrWhiteSpace(assistant.Model) ? AssistantSettings.DefaultModel : assistant.Model.Trim();
+        assistant.ApiKey = assistant.ApiKey?.Trim() ?? string.Empty;
+        assistant.DailyRequestLimit = Math.Clamp(assistant.DailyRequestLimit, 1, AssistantSettings.MaxDailyRequestLimit);
+        return assistant;
     }
 
     private sealed record Definition(string Name, Func<IConfiguration, object> Default, Func<object, object> Normalize);

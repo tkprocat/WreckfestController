@@ -20,6 +20,7 @@ export const router = createRouter({
     { path: '/tracks', name: 'tracks', component: () => import('@/views/tracks/TrackListView.vue'), meta: { spectator: true } },
     // A layout's own address is what other pages link to; without one, the first is shown.
     { path: '/tracks/:track/:variant?', name: 'track', component: () => import('@/views/tracks/TrackView.vue'), meta: { spectator: true } },
+    { path: '/ai', name: 'assistant', component: () => import('@/views/AssistantView.vue'), meta: { spectator: true } },
     { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue') },
     {
       path: '/admin',

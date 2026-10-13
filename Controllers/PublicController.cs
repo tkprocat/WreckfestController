@@ -38,6 +38,9 @@ public class PublicController : ControllerBase
     /// <summary>How many finished races the race list returns.</summary>
     public const int RaceLimit = 10;
 
+    /// <summary>How many players the standings list.</summary>
+    public const int StandingLimit = 25;
+
     private readonly ServerManager _serverManager;
     private readonly ConfigService _config;
     private readonly CupStore _cups;
@@ -155,6 +158,49 @@ public class PublicController : ControllerBase
             // Anonymous callers get no detail, as for the overview.
             _logger.LogError(ex, "The public race list could not read the database");
             return Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Recent races are unavailable right now.");
+        }
+    }
+
+    /// <summary>
+    /// The players with the most wins over every race logged, at most <see cref="StandingLimit"/>:
+    /// then by podiums and races. Players only, joined across names as a layout's records are
+    /// (<see cref="PlayerRecords"/>), and shown by the name they last raced under.
+    /// </summary>
+    [HttpGet("players")]
+    public async Task<ActionResult<List<PublicPlayerStanding>>> Players(CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Summed in the database: one row per name a player raced under.
+            var rows = await _db.RaceEntries
+                .AsNoTracking()
+                .Where(e => !e.IsBot)
+                .Select(e => new { e.SteamId, e.Name, e.Position, e.Race.EndedAt })
+                .GroupBy(e => new { e.SteamId, e.Name })
+                .Select(g => new PlayerRecords.Row(
+                    g.Key.SteamId,
+                    g.Key.Name,
+                    null,
+                    g.Count(e => e.Position == 1),
+                    g.Count(),
+                    g.Max(e => e.EndedAt),
+                    g.Count(e => e.Position >= 1 && e.Position <= 3)))
+                .ToListAsync(cancellationToken);
+
+            return PlayerRecords.Join(rows)
+                .OrderByDescending(p => p.Wins)
+                .ThenByDescending(p => p.Podiums)
+                .ThenByDescending(p => p.Races)
+                .ThenBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                .Take(StandingLimit)
+                .Select(p => new PublicPlayerStanding(p.Name, p.Wins, p.Podiums, p.Races, p.LastRaced))
+                .ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Anonymous callers get no detail, as for the overview.
+            _logger.LogError(ex, "The public player standings could not read the database");
+            return Problem(statusCode: StatusCodes.Status503ServiceUnavailable, title: "Player standings are unavailable right now.");
         }
     }
 

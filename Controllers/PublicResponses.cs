@@ -80,6 +80,12 @@ public sealed record PublicRace(
     IReadOnlyList<PublicRaceEntry> Entries);
 
 /// <summary>
+/// GET /api/public/players: one player's totals over every race logged. No Steam id: the
+/// player is shown by the name they last raced under. <see cref="Podiums"/> counts the wins too.
+/// </summary>
+public sealed record PublicPlayerStanding(string Name, int Wins, int Podiums, int Races, DateTime LastRaced);
+
+/// <summary>
 /// GET /api/public/feed: one item, newest first. <see cref="Race"/> is set for a
 /// <c>Race</c> (one outside any cup), <see cref="Cup"/> for a <c>Cup</c> run.
 /// </summary>
