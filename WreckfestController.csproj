@@ -212,6 +212,8 @@
   <ItemGroup>
     <WebAppSource Include="$(WebAppDir)\src\**\*" />
     <WebAppSource Include="$(WebAppDir)\public\**\*" />
+    <!-- Linted by npm run build (Oxlint), though not bundled. -->
+    <WebAppSource Include="$(WebAppDir)\scripts\**\*" />
     <WebAppSource Include="$(WebAppDir)\index.html;$(WebAppDir)\package.json;$(WebAppLock);$(WebAppDir)\vite.config.ts;$(WebAppDir)\tsconfig*.json;$(WebAppDir)\.oxlintrc.json" />
   </ItemGroup>
 
