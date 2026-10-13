@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
+using WreckfestController.Controllers;
 using WreckfestController.Models;
 using WreckfestController.Services.Assistant;
 using WreckfestController.Services.Config;

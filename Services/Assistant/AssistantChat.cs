@@ -168,7 +168,10 @@ public sealed class AssistantChat
             result = """{"error":"That lookup failed."}""";
         }
 
-        return result.Length <= MaxToolResultLength ? result : result[..MaxToolResultLength] + " ...(cut short)";
+        // Still JSON when cut, so the model knows it has only part of the answer.
+        return result.Length <= MaxToolResultLength
+            ? result
+            : new JsonObject { ["cutShort"] = true, ["partial"] = result[..MaxToolResultLength] }.ToJsonString();
     }
 
     /// <summary>One Chat Completions call; the first choice's message.</summary>

@@ -30,14 +30,14 @@ public sealed class AssistantTools
             "The latest finished races, newest first, with every car's position, name, vehicle, best lap and race time.",
             NoParameters()),
         new("list_tracks",
-            "Every track on the server with its key, and its layouts with their variantId, game mode and lap length in metres.",
+            "Every track on the server: its key, name, mod and how many layouts it has. get_track gives a track's layouts.",
             NoParameters()),
         new("get_track",
             "One track by its key (from list_tracks): its layouts and how many races each has had.",
             StringParameter("key", "The track's key, as list_tracks gives it.")),
         new("get_track_layout",
             "One layout by its variantId: its recent races, fastest laps, players with the most wins, typical lap time and the cups that use it.",
-            StringParameter("variantId", "The layout's variantId, as list_tracks or get_track gives it.")),
+            StringParameter("variantId", "The layout's variantId, as get_track gives it.")),
     ];
 
     private readonly PublicController _public;
@@ -74,13 +74,14 @@ public sealed class AssistantTools
             case "get_recent_races":
                 return Answer(await _public.Races(cancellationToken));
             case "list_tracks":
-                // Without the image links, which only cost tokens.
+                // Without the layouts, which get_track gives: the base game alone has hundreds,
+                // more than one tool result may hold.
                 return Answer(await _tracks.Tracks(cancellationToken), tracks => tracks.Select(t => new
                 {
                     t.Key,
                     t.Name,
                     t.ModName,
-                    Layouts = t.Variants.Select(v => new { v.VariantId, v.Name, v.GameMode, v.TrackLengthM }).ToList(),
+                    LayoutCount = t.Variants.Count,
                 }).ToList());
             case "get_track":
                 return Argument(arguments, "key") is { } key
