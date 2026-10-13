@@ -88,7 +88,7 @@ describe('AssistantView', () => {
     expect(wrapper!.text()).toContain('Nobody yet.')
   })
 
-  it('shows an answer as text, never as markup', async () => {
+  it("formats an answer's Markdown, but never its HTML", async () => {
     api.POST.mockResolvedValue(answer({ reply: '<img src=x onerror=alert(1)> **bold**' }))
     await mountPage()
 
@@ -96,8 +96,23 @@ describe('AssistantView', () => {
     await wrapper!.find('form').trigger('submit')
     await flushPromises()
 
-    expect(wrapper!.find('[aria-label="Conversation"] img').exists()).toBe(false)
-    expect(wrapper!.text()).toContain('<img src=x onerror=alert(1)> **bold**')
+    const log = wrapper!.find('[aria-label="Conversation"]')
+    expect(log.find('img').exists()).toBe(false)
+    expect(log.find('strong').text()).toBe('bold')
+    expect(log.text()).toContain('<img src=x onerror=alert(1)>')
+  })
+
+  it("keeps the visitor's own question as typed", async () => {
+    api.POST.mockResolvedValue(answer({ reply: 'Yes.' }))
+    await mountPage()
+
+    await type('Is **this** bold?')
+    await wrapper!.find('form').trigger('submit')
+    await flushPromises()
+
+    const question = wrapper!.find('[aria-label="Conversation"] .message.user')
+    expect(question.find('strong').exists()).toBe(false)
+    expect(question.text()).toContain('Is **this** bold?')
   })
 
   it('puts an unanswered question back in the box with the reason', async () => {

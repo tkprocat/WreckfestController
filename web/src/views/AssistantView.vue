@@ -5,6 +5,7 @@ import { api } from '@/api/client'
 import { problemMessage } from '@/api/problems'
 import type { components } from '@/api/schema'
 import { useAssistantStatus } from '@/composables/useAssistantStatus'
+import ChatMarkdown from '@/components/ChatMarkdown.vue'
 
 /**
  * The public AI assistant: a visitor asks about the server in plain language. The
@@ -100,7 +101,8 @@ onMounted(async () => {
       <ol v-if="messages.length" ref="log" class="log" aria-label="Conversation" aria-live="polite">
         <li v-for="(message, index) in messages" :key="index" :class="['message', message.role]">
           <span class="who">{{ message.role === 'user' ? 'You' : 'Assistant' }}</span>
-          <p class="text">{{ message.content }}</p>
+          <ChatMarkdown v-if="message.role === 'assistant'" class="text reply" :text="message.content" />
+          <p v-else class="text">{{ message.content }}</p>
         </li>
         <li v-if="sending" class="message assistant pending" role="status">
           <span class="who">Assistant</span>
@@ -147,6 +149,7 @@ h1 { margin: 8px 0 0; font-size: var(--font-title); line-height: 1.25; }
 .message.pending .text { color: var(--text-muted); }
 .who { display: block; margin-bottom: 4px; font-size: var(--font-label); font-weight: 650; color: var(--text-secondary); }
 .text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.text.reply { white-space: normal; }
 .suggestions { list-style: none; display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 24px; padding: 0; }
 .notice { margin-bottom: 16px; }
 .composer { display: flex; flex-direction: column; gap: 12px; }
