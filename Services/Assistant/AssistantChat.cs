@@ -44,6 +44,9 @@ public sealed class AssistantChat
     /// <summary>Tool output one question may gather; it is resent with every later round.</summary>
     public const int MaxToolOutputLength = 64_000;
 
+    /// <summary>Below this much room left, a lookup is refused rather than cut to nothing.</summary>
+    private const int MinToolResultRoom = 500;
+
     /// <summary>
     /// The most tokens one model call may produce, its reasoning included. Sent as
     /// <c>max_completion_tokens</c>, which OpenAI honours and Ollama ignores.
@@ -115,9 +118,11 @@ public sealed class AssistantChat
                     var name = Text(call?["function"]?["name"]) ?? string.Empty;
                     var arguments = Text(call?["function"]?["arguments"]) ?? "{}";
                     // Every call still gets a result: the API rejects a tool_call_id left unanswered.
-                    var result = ++toolCalls > MaxToolCalls || toolOutput >= MaxToolOutputLength
+                    // A result gets what is left of the question's output, so the total holds.
+                    var room = Math.Min(MaxToolResultLength, MaxToolOutputLength - toolOutput);
+                    var result = ++toolCalls > MaxToolCalls || room < MinToolResultRoom
                         ? """{"error":"No more lookups for this question. Answer with what you have."}"""
-                        : await RunToolAsync(runTool, name, arguments, cancellationToken);
+                        : await RunToolAsync(runTool, name, arguments, room, cancellationToken);
                     toolOutput += result.Length;
                     messages.Add(new JsonObject
                     {
@@ -156,6 +161,8 @@ public sealed class AssistantChat
         the track rotation, cups (scheduled events), race results, player standings, records
         and the tracks it runs.
         Look the answer up before you reply; never guess a result, a name, a time or a track.
+        For a question about a player by name, look them up in the player standings and the
+        recent races first; only if they are in neither, say you have no results for them.
         Never mention tools, functions, lookups, data fields or ids, or how you find things out:
         answer as someone who knows what the server's pages show.
         If you cannot find the answer, say briefly that you do not have that information, and
@@ -186,6 +193,7 @@ public sealed class AssistantChat
         Func<string, string, CancellationToken, Task<string>> runTool,
         string name,
         string arguments,
+        int maxLength,
         CancellationToken cancellationToken)
     {
         string result;
@@ -199,10 +207,30 @@ public sealed class AssistantChat
             result = """{"error":"That lookup failed."}""";
         }
 
-        // Still JSON when cut, so the model knows it has only part of the answer.
-        return result.Length <= MaxToolResultLength
-            ? result
-            : new JsonObject { ["cutShort"] = true, ["partial"] = result[..MaxToolResultLength] }.ToJsonString();
+        return Cut(result, maxLength);
+    }
+
+    /// <summary>
+    /// <paramref name="result"/> in at most <paramref name="maxLength"/> characters. Still JSON
+    /// when cut, so the model knows it has only part of the answer; the cut is measured after
+    /// escaping, which can make the partial text longer than what was taken.
+    /// </summary>
+    internal static string Cut(string result, int maxLength)
+    {
+        var take = Math.Min(result.Length, maxLength);
+        while (result.Length > maxLength && take > 0)
+        {
+            var cut = new JsonObject { ["cutShort"] = true, ["partial"] = result[..take] }.ToJsonString();
+            if (cut.Length <= maxLength)
+            {
+                return cut;
+            }
+
+            // In proportion: escaping can make each character several.
+            take = Math.Min(take - 1, (int)((long)take * maxLength / cut.Length));
+        }
+
+        return result.Length <= maxLength ? result : """{"error":"That answer was too long."}""";
     }
 
     /// <summary>One Chat Completions call; the first choice's message.</summary>

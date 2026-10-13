@@ -30,7 +30,7 @@ public sealed class AssistantTools
             $"Only the latest {PublicController.RaceLimit} finished races, newest first, with every car's position, name, vehicle, best lap and race time. Not for all-time totals: use get_player_standings.",
             NoParameters()),
         new("get_player_standings",
-            $"All-time standings over every race on the server: the top {PublicController.StandingLimit} players by wins, with their podiums (top-3 finishes, wins included), races and when they last raced. Bots are left out.",
+            $"All-time standings over every race on the server: the top {PublicController.StandingLimit} players by wins, with their podiums (top-3 finishes, wins included), races and when they last raced. Bots are left out. Use it for who has won the most, and for how a named player has done overall.",
             NoParameters()),
         new("list_tracks",
             "Every track on the server: its key, name, mod and how many layouts it has. get_track gives a track's layouts.",

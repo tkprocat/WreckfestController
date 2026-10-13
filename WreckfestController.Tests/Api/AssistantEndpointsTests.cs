@@ -229,6 +229,23 @@ public sealed class AssistantEndpointsTests : IDisposable
         Assert.All(results.Skip(AssistantChat.MaxToolCalls), r => Assert.Contains("No more lookups", r, StringComparison.Ordinal));
     }
 
+    // Escaping makes a quote-heavy result longer than the text taken from it; the cut must
+    // still fit, or the per-question total would not hold.
+    [Theory]
+    [InlineData(100)]
+    [InlineData(1000)]
+    [InlineData(AssistantChat.MaxToolResultLength)]
+    public void Cut_KeepsAResultJson_AndWithinItsLength(int maxLength)
+    {
+        var result = new JsonArray(Enumerable.Range(0, 5000).Select(i => (JsonNode)new JsonObject { ["name"] = $"\"Quoted\" {i}" }).ToArray()).ToJsonString();
+
+        var cut = AssistantChat.Cut(result, maxLength);
+
+        Assert.True(cut.Length <= maxLength, $"{cut.Length} > {maxLength}");
+        Assert.True(JsonNode.Parse(cut)!["cutShort"]!.GetValue<bool>());
+        Assert.Equal("[1]", AssistantChat.Cut("[1]", maxLength));
+    }
+
     // The browser sends each reply back with the next question, so a reply over the message
     // limit would get every follow-up refused.
     [Fact]
