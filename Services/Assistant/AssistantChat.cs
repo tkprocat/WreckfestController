@@ -74,16 +74,19 @@ public sealed class AssistantChat
     /// The model's answer to the last message in <paramref name="conversation"/>.
     /// <paramref name="runTool"/> gets a tool's name and its arguments as JSON text, and
     /// returns its result as JSON text. Throws <see cref="AssistantUnavailableException"/>
-    /// when the API fails, times out or answers with nothing.
+    /// when the API fails, times out or answers with nothing. <paramref name="systemPrompt"/>
+    /// gives the instructions for the current time; the public site's by default.
     /// </summary>
     public async Task<string> AskAsync(
         AssistantSettings settings,
         IReadOnlyList<AssistantMessage> conversation,
         IReadOnlyList<AssistantToolDefinition> tools,
         Func<string, string, CancellationToken, Task<string>> runTool,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<DateTimeOffset, string>? systemPrompt = null)
     {
-        var messages = new JsonArray { new JsonObject { ["role"] = "system", ["content"] = SystemPrompt(_time.GetUtcNow()) } };
+        var prompt = (systemPrompt ?? PublicPrompt)(_time.GetUtcNow());
+        var messages = new JsonArray { new JsonObject { ["role"] = "system", ["content"] = prompt } };
         foreach (var message in conversation)
         {
             messages.Add(new JsonObject { ["role"] = message.Role, ["content"] = message.Content });
@@ -160,7 +163,7 @@ public sealed class AssistantChat
         : node is JsonValue value && value.TryGetValue<string>(out var text) ? text
         : node.ToJsonString();
 
-    private static string SystemPrompt(DateTimeOffset now) =>
+    internal static string PublicPrompt(DateTimeOffset now) =>
         $"""
         You are the assistant on the public web page of a Wreckfest dedicated game server.
         You answer visitors' questions about this server: whether it is online, who is playing,

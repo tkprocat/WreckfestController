@@ -134,7 +134,7 @@ public class AssistantController : ControllerBase
 
     private static bool IsAvailable(AssistantSettings settings) => settings.Enabled && !string.IsNullOrEmpty(settings.ApiKey);
 
-    private static string? Validate(IReadOnlyList<AssistantChatMessage?>? messages)
+    internal static string? Validate(IReadOnlyList<AssistantChatMessage?>? messages)
     {
         if (messages is null || messages.Count is 0 or > MaxMessages)
         {
