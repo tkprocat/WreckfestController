@@ -265,6 +265,8 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
         { "propose_cup", Json(new { cup = new { name = "Race night", startTime = InOneDay, serverConfig = new { Password = "letmein" } } }) },
         { "propose_cup", Json(new { cup = new { name = "Race night", startTime = InOneDay, ServerConfig = new { PASSWORD = "letmein" } } }) },
         { "propose_rotation", """{"collectionName":"Ovals","tracks":[{"track":"speedway2_figure_8"}]}""" },
+        { "propose_rotation", """{"collectionName":"Ovals","tracks":[{"track":"speedway2_figure_8"}],"version":"\"\""}""" },
+        { "propose_rotation", """{"collectionName":"Ovals","tracks":[{"track":"speedway2_figure_8"}],"version":"latest"}""" },
         { "propose_collection", """{"id":999,"name":"Ovals","tracks":[{"track":"speedway2_figure_8"}]}""" },
         { "propose_deploy_collection", """{"id":999}""" },
     };

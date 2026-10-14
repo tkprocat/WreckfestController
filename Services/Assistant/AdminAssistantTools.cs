@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using WreckfestController.Controllers;
 using WreckfestController.Models;
@@ -31,7 +32,7 @@ public sealed record AssistantProposal(string Kind, string Summary, int? TargetI
 /// admin and moderator Steam ids, and a cup's password. A proposal may not set any of them,
 /// and a cup update keeps the cup's password as it is.
 /// </remarks>
-public sealed class AdminAssistantTools
+public sealed partial class AdminAssistantTools
 {
     /// <summary>Proposals one question may make.</summary>
     public const int MaxProposals = 5;
@@ -242,7 +243,9 @@ public sealed class AdminAssistantTools
 
         // The version comes from the model, as If-Match from a client: what it read is what
         // the proposal is built on, so a change since then makes Apply fail, not get overwritten.
-        if (Str(args, "version") is not { } version)
+        // Only the form get_rotation gives: anything else, quotes in particular, could become
+        // an empty If-Match on Apply, which writes without checking.
+        if (Str(args, "version") is not { } version || !RotationVersionPattern().IsMatch(version))
         {
             return Error(VersionRequired("get_rotation"));
         }
@@ -484,6 +487,10 @@ public sealed class AdminAssistantTools
         args.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number)
             ? number
             : null;
+
+    /// <summary>What <see cref="ConfigService.EventLoopVersion"/> gives.</summary>
+    [GeneratedRegex("^[0-9a-f]{16}$")]
+    private static partial Regex RotationVersionPattern();
 
     private static string VersionRequired(string lookup) =>
         $"version is required: the version {lookup} showed for what this proposal is based on.";
