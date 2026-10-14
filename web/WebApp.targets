@@ -3,9 +3,10 @@
   <!--
     What the controller (WreckfestController.csproj) and the portal
     (Portal/WreckfestPortal) share about web/: where it is, its sources, and one npm ci
-    for both. The solution builds the controller first (a ProjectDependencies entry in
-    the .sln), so the two never install at once; the portal built on its own installs
-    the packages itself, against the same stamp.
+    for both. A solution build runs the two side by side (the portal's test project
+    builds it through its own reference, whatever order the .sln asks for), so every npm
+    step goes through scripts/web-lock.mjs, which runs them one at a time and installs
+    only when the packages are not already current.
   -->
   <PropertyGroup>
     <WebAppDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)'))</WebAppDir>
@@ -32,10 +33,8 @@
 
   <Target Name="InstallWebAppPackages" DependsOnTargets="CheckNodeForWebApp" Condition="'$(SkipWebBuild)' != 'true'"
           Inputs="$(WebAppDir)\package.json;$(WebAppLock)" Outputs="$(WebAppInstalled)">
-    <Message Importance="high" Text="Installing web app packages (npm ci)..." />
-    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(WebAppDir)" />
-    <!-- npm's own marker files keep old timestamps, so this target keeps its own. -->
-    <Touch Files="$(WebAppInstalled)" AlwaysCreate="true" />
+    <!-- The script writes $(WebAppInstalled): npm's own marker files keep old timestamps. -->
+    <Exec Command="node scripts/web-lock.mjs install" WorkingDirectory="$(WebAppDir)" />
   </Target>
 
 </Project>
