@@ -60,7 +60,7 @@
           DependsOnTargets="InstallWebAppPackages;RecordPortalWebInputs;CheckPortalWebOutputs" Condition="'$(SkipWebBuild)' != 'true'"
           Inputs="@(WebAppSource);$(PortalWebInputList);$(WebAppInstalled)" Outputs="$(PortalWebDist)\portal.html">
     <Message Importance="high" Text="Building the portal page (npm run build:portal)..." />
-    <Exec Command="npm run build:portal" WorkingDirectory="$(WebAppDir)" />
+    <Exec Command="node scripts/web-lock.mjs run build:portal" WorkingDirectory="$(WebAppDir)" />
   </Target>
 
   <Target Name="RecordPortalWebOutputs" AfterTargets="BuildPortalWeb" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(PortalWebDist)\portal.html')">

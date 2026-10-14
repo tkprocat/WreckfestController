@@ -234,7 +234,7 @@
           DependsOnTargets="InstallWebAppPackages;RecordWebAppInputs;CheckWebAppOutputs" Condition="'$(SkipWebBuild)' != 'true'"
           Inputs="@(WebAppSource);$(WebAppInputList);$(WebAppInstalled)" Outputs="$(WebAppDist)\index.html">
     <Message Importance="high" Text="Building web app (npm run build)..." />
-    <Exec Command="npm run build" WorkingDirectory="$(WebAppDir)" />
+    <Exec Command="node scripts/web-lock.mjs run build" WorkingDirectory="$(WebAppDir)" />
   </Target>
 
   <Target Name="RecordWebAppOutputs" AfterTargets="BuildWebApp" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(WebAppDist)\index.html')">
