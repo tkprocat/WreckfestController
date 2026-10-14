@@ -107,7 +107,7 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
         _model.Answer(ToolCalls(
             ("propose_rotation", """{"collectionName":"Ovals","tracks":[{"track":"speedway2_figure_8","laps":3}],"summary":"Ovals only"}"""),
             ("propose_server_config", """{"changes":{"maxPlayers":20,"laps":4}}"""),
-            ("propose_cup", $$"""{"id":{{cup.Id}},"cup":{"name":"Race night","startTime":"{{InOneDay}}","serverConfig":{"serverName":"Cup Night","laps":6}}}"""),
+            ("propose_cup", Json(new { id = cup.Id, cup = new { name = "Race night", startTime = InOneDay, serverConfig = new { serverName = "Cup Night", laps = 6 } } })),
             ("propose_collection", """{"name":"Ovals","tracks":[{"track":"speedway2_figure_8"}]}""")));
         _model.Answer(Text("Here are the changes. Apply the ones you want."));
 
@@ -156,6 +156,7 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
         await using var host = await StartAsync();
         await ConfigureAsync(host, Key);
         using var client = host.CreateAuthenticatedClient();
+        _model.Answer(ToolCalls(("get_rotation", "{}")));
         _model.Answer(ToolCalls(
             ("propose_rotation", """{"collectionName":"Ovals","tracks":[{"track":"speedway2_figure_8","laps":3}]}""")));
         _model.Answer(Text("Apply it when you are ready."));
@@ -176,14 +177,90 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
         Assert.Equal("speedway2_figure_8", rotation.GetProperty("tracks")[0].GetProperty("track").GetString());
     }
 
+    [Fact]
+    public async Task AProposal_CarriesTheVersionTheModelRead_SoALaterEditIsNotOverwritten()
+    {
+        await using var host = await StartAsync();
+        await ConfigureAsync(host, Key);
+        using var client = host.CreateAuthenticatedClient();
+        var read = (await client.GetFromJsonAsync<JsonElement>("/api/config/tracks", Ct)).GetProperty("version").GetString();
+        _model.Answer(ToolCalls(("get_rotation", "{}")));
+        _model.Answer(ToolCalls(
+            ("propose_rotation", """{"collectionName":"Ovals","tracks":[{"track":"speedway2_figure_8"}]}""")));
+        _model.Answer(Text("Apply it when you are ready."));
+
+        // Someone edits the rotation after the model read it, before it proposes.
+        _model.BeforeAnswer = previous =>
+        {
+            if (previous == 1)
+            {
+                File.AppendAllLines(_config, ["el_add=speedway2_figure_8"]);
+            }
+        };
+
+        using var response = await AskAsync(client, "Ovals only, please.");
+        var proposal = (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("proposals")[0];
+        Assert.Equal(read, proposal.GetProperty("version").GetString());
+
+        using var put = new HttpRequestMessage(HttpMethod.Put, "/api/config/tracks")
+        {
+            Content = JsonContent.Create(proposal.GetProperty("body")),
+        };
+        put.Headers.TryAddWithoutValidation("If-Match", $"\"{proposal.GetProperty("version").GetString()}\"");
+        using var applied = await client.SendAsync(put, Ct);
+
+        Assert.Equal(HttpStatusCode.Conflict, applied.StatusCode);
+    }
+
+    [Fact]
+    public async Task ACupUpdate_KeepsAnEmptyPassword()
+    {
+        await using var host = await StartAsync();
+        await ConfigureAsync(host, Key);
+        using var client = host.CreateAuthenticatedClient();
+        var cup = await CreateCupAsync(client, password: "");
+        _model.Answer(ToolCalls(("list_cups", "{}")));
+        _model.Answer(ToolCalls(
+            ("propose_cup", Json(new { id = cup.Id, cup = new { name = "Renamed night", startTime = InOneDay } }))));
+        _model.Answer(Text("Apply it when you are ready."));
+
+        using var response = await AskAsync(client, "Rename the cup.");
+
+        var proposal = (await response.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("proposals")[0];
+        Assert.Equal("updateCup", proposal.GetProperty("kind").GetString());
+        Assert.Equal("", proposal.GetProperty("body").GetProperty("serverConfig").GetProperty("password").GetString());
+    }
+
+    [Fact]
+    public async Task AnUpdate_NeedsALookupFirst()
+    {
+        await using var host = await StartAsync();
+        await ConfigureAsync(host, Key);
+        using var client = host.CreateAuthenticatedClient();
+        var cup = await CreateCupAsync(client);
+        _model.Answer(ToolCalls(
+            ("propose_cup", Json(new { id = cup.Id, cup = new { name = "Renamed night", startTime = InOneDay } }))));
+        _model.Answer(Text("I could not propose that."));
+
+        using var response = await AskAsync(client, "Rename the cup.");
+
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Empty(body.GetProperty("proposals").EnumerateArray());
+        var result = _model.Requests[1].Body.GetProperty("messages").EnumerateArray().Last();
+        Assert.Contains("list_cups", result.GetProperty("content").GetString(), StringComparison.Ordinal);
+    }
+
     public static TheoryData<string, string> RefusedProposals => new()
     {
         { "propose_server_config", """{"changes":{"password":"letmein"}}""" },
-        { "propose_server_config", $$"""{"changes":{"adminSteamIds":"{{AdminSteamId}}"}}""" },
+        { "propose_server_config", Json(new { changes = new { adminSteamIds = AdminSteamId } }) },
         { "propose_server_config", """{"changes":{"maxPlayers":"lots"}}""" },
         { "propose_rotation", """{"collectionName":"Ovals","tracks":[{"laps":3}]}""" },
         { "propose_rotation", """{"collectionName":"Ovals\nel_add=x","tracks":[{"track":"speedway2_figure_8"}]}""" },
-        { "propose_cup", $$"""{"cup":{"name":"Race night","startTime":"{{InOneDay}}","serverConfig":{"password":"letmein"}}}""" },
+        { "propose_cup", Json(new { cup = new { name = "Race night", startTime = InOneDay, serverConfig = new { password = "letmein" } } }) },
+        { "propose_cup", Json(new { cup = new { name = "Race night", startTime = InOneDay, serverConfig = new { Password = "letmein" } } }) },
+        { "propose_cup", Json(new { cup = new { name = "Race night", startTime = InOneDay, ServerConfig = new { PASSWORD = "letmein" } } }) },
+        { "propose_rotation", """{"collectionName":"Ovals","tracks":[{"track":"speedway2_figure_8"}]}""" },
         { "propose_collection", """{"id":999,"name":"Ovals","tracks":[{"track":"speedway2_figure_8"}]}""" },
         { "propose_deploy_collection", """{"id":999}""" },
     };
@@ -215,7 +292,7 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
         await ConfigureAsync(host, Key);
         using var client = host.CreateAuthenticatedClient();
         _model.Answer(ToolCalls(Enumerable.Range(1, AdminAssistantTools.MaxProposals + 1)
-            .Select(i => ("propose_server_config", $$"""{"changes":{"maxPlayers":{{i}}}}"""))
+            .Select(i => ("propose_server_config", Json(new { changes = new { maxPlayers = i } })))
             .ToArray()));
         _model.Answer(Text("Done."));
 
@@ -244,11 +321,13 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
         Assert.Contains("admin panel", request.GetProperty("messages")[0].GetProperty("content").GetString(), StringComparison.Ordinal);
     }
 
-    private async Task<(int Id, string Version)> CreateCupAsync(HttpClient client)
+    private static string Json<T>(T value) => JsonSerializer.Serialize(value);
+
+    private static async Task<(int Id, string Version)> CreateCupAsync(HttpClient client, string password = CupPassword)
     {
         using var created = await client.PostAsJsonAsync(
             "/api/cups",
-            new { name = "Race night", startTime = InOneDay, serverConfig = new { serverName = "Race Night", password = CupPassword } },
+            new { name = "Race night", startTime = InOneDay, serverConfig = new { serverName = "Race Night", password } },
             Ct);
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var body = await created.Content.ReadFromJsonAsync<JsonElement>(Ct);

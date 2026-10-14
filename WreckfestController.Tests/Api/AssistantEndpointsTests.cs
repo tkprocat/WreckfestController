@@ -483,6 +483,9 @@ public sealed class AssistantEndpointsTests : IDisposable
 
         public void Answer(string json) => _answers.Enqueue(json);
 
+        /// <summary>Runs before each answer, given how many requests came before it.</summary>
+        public Action<int>? BeforeAnswer { get; set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var text = await request.Content!.ReadAsStringAsync(cancellationToken);
@@ -491,6 +494,7 @@ public sealed class AssistantEndpointsTests : IDisposable
                 Requests.Add((request.Headers.Authorization?.ToString(), request.RequestUri!.ToString(), JsonDocument.Parse(text).RootElement.Clone()));
             }
 
+            BeforeAnswer?.Invoke(Requests.Count - 1);
             var answer = _answers.Count > 0 ? _answers.Dequeue() : Text("(no answer queued)");
             return new HttpResponseMessage(Status) { Content = new StringContent(answer, Encoding.UTF8, "application/json") };
         }

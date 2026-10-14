@@ -60,6 +60,7 @@ public class AdminAssistantController : ControllerBase
     /// </summary>
     [HttpPost("chat")]
     [RequestSizeLimit(AssistantController.MaxRequestBytes)]
+    [ProducesResponseType<AdminAssistantReply>(StatusCodes.Status200OK)]
     [ProducesResponseType<ValidationProblemDetails>(StatusCodes.Status400BadRequest, "application/problem+json")]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status404NotFound, "application/problem+json")]
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, "application/problem+json")]

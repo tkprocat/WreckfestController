@@ -153,6 +153,13 @@ public sealed class AdminAssistantTools
     private readonly JsonSerializerOptions _json;
     private readonly List<AssistantProposal> _proposals = [];
 
+    // The versions the model was shown. An update is proposed against what the model read,
+    // not what is there when it proposes: an edit in between must make Apply fail, not be
+    // overwritten with contents built from the older data.
+    private string? _rotationVersion;
+    private readonly Dictionary<int, int> _collectionVersions = [];
+    private readonly Dictionary<int, int> _cupVersions = [];
+
     public AdminAssistantTools(
         AssistantTools publicTools,
         ConfigService config,
@@ -201,10 +208,10 @@ public sealed class AdminAssistantTools
 
         return name switch
         {
-            "get_rotation" => Serialize(Rotation()),
-            "list_collections" => Serialize(await _collections.List()),
-            "get_collection" => Int(args, "id") is { } id ? Answer(await _collections.Get(id)) : Error("id is required."),
-            "list_cups" => Serialize((await _cups.ListAsync(cancellationToken)).Select(c => Masked(CupResponse.From(c))).ToList()),
+            "get_rotation" => Serialize(ReadRotation()),
+            "list_collections" => Serialize(await ListCollectionsAsync()),
+            "get_collection" => Int(args, "id") is { } id ? Answer(await GetCollectionAsync(id)) : Error("id is required."),
+            "list_cups" => Serialize(await ListCupsAsync(cancellationToken)),
             "get_server_config" => Serialize(ServerConfigView(_config.ReadBasicConfig())),
             "propose_rotation" => ProposeRotation(args),
             "propose_collection" => await ProposeCollectionAsync(args),
@@ -215,11 +222,46 @@ public sealed class AdminAssistantTools
         };
     }
 
-    private EventLoopResponse Rotation()
+    private EventLoopResponse ReadRotation()
     {
         var name = _config.GetCurrentCollectionName();
         var tracks = _config.ReadEventLoopTracks();
-        return new EventLoopResponse(tracks.Count, tracks, name, ConfigService.EventLoopVersion(name, tracks));
+        var rotation = new EventLoopResponse(tracks.Count, tracks, name, ConfigService.EventLoopVersion(name, tracks));
+        _rotationVersion = rotation.Version;
+        return rotation;
+    }
+
+    private async Task<IEnumerable<CollectionSummaryResponse>> ListCollectionsAsync()
+    {
+        var collections = (await _collections.List()).ToList();
+        foreach (var collection in collections)
+        {
+            _collectionVersions[collection.Id] = collection.Version;
+        }
+
+        return collections;
+    }
+
+    private async Task<ActionResult<CollectionResponse>> GetCollectionAsync(int id)
+    {
+        var result = await _collections.Get(id);
+        if (result.Value is { } collection)
+        {
+            _collectionVersions[collection.Id] = collection.Version;
+        }
+
+        return result;
+    }
+
+    private async Task<List<CupResponse>> ListCupsAsync(CancellationToken cancellationToken)
+    {
+        var cups = (await _cups.ListAsync(cancellationToken)).Select(c => Masked(CupResponse.From(c))).ToList();
+        foreach (var cup in cups)
+        {
+            _cupVersions[cup.Id] = cup.Version;
+        }
+
+        return cups;
     }
 
     private string ProposeRotation(JsonElement args)
@@ -235,12 +277,16 @@ public sealed class AdminAssistantTools
             return Error(error.Message);
         }
 
-        var current = Rotation();
+        if (_rotationVersion is null)
+        {
+            return Error("Look up the rotation with get_rotation first.");
+        }
+
         return Propose(new AssistantProposal(
             Kinds.SetRotation,
             Summary(args, $"Set the rotation to {collectionName!.Trim()} ({tracks.Count} tracks)"),
             TargetId: null,
-            current.Version,
+            _rotationVersion,
             Body(new UpdateEventLoopTracksRequest(collectionName!.Trim(), tracks.Select(t => t!).ToList()))));
     }
 
@@ -270,11 +316,16 @@ public sealed class AdminAssistantTools
             return Error($"There is no collection {id}.");
         }
 
+        if (!_collectionVersions.TryGetValue(id, out var version))
+        {
+            return Error($"Look up collection {id} with get_collection first.");
+        }
+
         return Propose(new AssistantProposal(
             Kinds.UpdateCollection,
             Summary(args, $"Replace the collection {existing.Name} with {name.Trim()} ({tracks.Count} tracks)"),
             id,
-            existing.Version.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            version.ToString(System.Globalization.CultureInfo.InvariantCulture),
             body));
     }
 
@@ -299,42 +350,10 @@ public sealed class AdminAssistantTools
             return Error("cup is required: the whole cup as an object.");
         }
 
-        if (cupJson.TryGetProperty("serverConfig", out var serverConfig)
-            && serverConfig.ValueKind == JsonValueKind.Object
-            && serverConfig.TryGetProperty("password", out _))
-        {
-            return Error("A cup's password is set by the admin, not here. Leave password out.");
-        }
-
-        int? id = Int(args, "id");
-        string? version = null;
-        var cup = JsonNode.Parse(cupJson.GetRawText())!.AsObject();
-        if (id is { } cupId)
-        {
-            var existing = await _cups.GetAsync(cupId, cancellationToken);
-            if (existing is null)
-            {
-                return Error($"There is no cup {cupId}.");
-            }
-
-            // A PUT replaces the whole cup: keep the password the model was never shown.
-            if (existing.ServerConfig?.Password is { Length: > 0 } password)
-            {
-                if (cup["serverConfig"] is not JsonObject config)
-                {
-                    cup["serverConfig"] = config = new JsonObject();
-                }
-
-                config["password"] = password;
-            }
-
-            version = existing.Version.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }
-
         CupRequest? request;
         try
         {
-            request = cup.Deserialize<CupRequest>(_json);
+            request = cupJson.Deserialize<CupRequest>(_json);
         }
         catch (JsonException)
         {
@@ -346,9 +365,46 @@ public sealed class AdminAssistantTools
             return Error("cup is required.");
         }
 
+        // Checked on what was read, so no spelling of the field gets past it.
+        if (request.ServerConfig?.Password is not null)
+        {
+            return Error("A cup's password is set by the admin, not here. Leave password out.");
+        }
+
         if (CupRules.Validate(request, out _) is { } error)
         {
             return Error(error.Message);
+        }
+
+        int? id = Int(args, "id");
+        string? version = null;
+        var body = JsonSerializer.SerializeToNode(request, _json)!.AsObject();
+        if (id is { } cupId)
+        {
+            var existing = await _cups.GetAsync(cupId, cancellationToken);
+            if (existing is null)
+            {
+                return Error($"There is no cup {cupId}.");
+            }
+
+            if (!_cupVersions.TryGetValue(cupId, out var seen))
+            {
+                return Error($"Look up cup {cupId} with list_cups first.");
+            }
+
+            // A PUT replaces the whole cup: keep the password the model was never shown,
+            // an empty one too, which means no password rather than the server's.
+            if (existing.ServerConfig?.Password is { } password)
+            {
+                if (body["serverConfig"] is not JsonObject config)
+                {
+                    body["serverConfig"] = config = new JsonObject();
+                }
+
+                config["password"] = password;
+            }
+
+            version = seen.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         return Propose(new AssistantProposal(
@@ -356,7 +412,7 @@ public sealed class AdminAssistantTools
             Summary(args, id is null ? $"Create the cup {request.Name!.Trim()}" : $"Change the cup {request.Name!.Trim()}"),
             id,
             version,
-            Body(request)));
+            JsonSerializer.SerializeToElement(body, _json)));
     }
 
     private string ProposeServerConfig(JsonElement args)
@@ -366,7 +422,7 @@ public sealed class AdminAssistantTools
             return Error("changes is required: an object of the fields to change.");
         }
 
-        if (changes.EnumerateObject().FirstOrDefault(f => !AllowedServerConfigFields.Contains(f.Name)) is { Name: { } field } && field.Length > 0)
+        if (changes.EnumerateObject().Select(f => f.Name).FirstOrDefault(f => !AllowedServerConfigFields.Contains(f)) is { } field)
         {
             return Error($"{field} cannot be changed here. Only the fields get_server_config shows can.");
         }

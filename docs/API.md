@@ -316,7 +316,9 @@ web app's **Apply** button sends it with the admin's own session:
 | `updateServerConfig` | `PUT /api/config/basic`, only the fields to change |
 
 - A proposal is checked by the endpoint's own rules when it is made, and again when it is
-  applied; a change made in between is a **409**, as for any stale edit.
+  applied. An update carries the version the model read, so a change made after that
+  lookup is a **409** on Apply, as for any stale edit; an update the model did not look
+  up first is refused.
 - The model never sees the server password, the admin and moderator Steam ids, or a cup's
   password. Server settings it may read and propose are the race and lobby ones: name,
   welcome message, max players, lobby countdown, ready players, session mode, grid order,
