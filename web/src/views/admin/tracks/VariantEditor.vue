@@ -2,6 +2,7 @@
 import { computed, ref, shallowRef } from 'vue'
 import { NButton, NCheckbox, NForm, NInput, NModal, NSelect, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
+import { sitePath } from '@/base'
 import type { components } from '@/api/schema'
 import ConflictDialog from '@/crud/ConflictDialog.vue'
 import FormField from '@/crud/FormField.vue'
@@ -175,7 +176,7 @@ defineExpose({ start })
       <NCheckbox v-if="editor.isNew.value" v-model:checked="draft.allowedForVoting" class="gap">Players can vote for it</NCheckbox>
       <p v-if="editor.editing.value && track && !editor.editing.value.isHidden && !track.isHidden" class="public-link">
         <a
-          :href="`/tracks/${encodeURIComponent(track.key)}/${encodeURIComponent(editor.editing.value.variantId)}`"
+          :href="sitePath(`/tracks/${encodeURIComponent(track.key)}/${encodeURIComponent(editor.editing.value.variantId)}`)"
           target="_blank"
           rel="noopener"
         >Open its public page</a>

@@ -255,4 +255,24 @@ public sealed class HttpsEnforcementTests
 
         Assert.False(response.Headers.Contains("Strict-Transport-Security"));
     }
+
+    // Under a Web:PathBase, the base without its slash goes to HTTPS first, not to the
+    // slash over plain HTTP.
+    [Fact]
+    public async Task UnderAPathBase_RemotePlainHttp_IsSentToHttps_BeforeTheSlash()
+    {
+        var settings = HttpsOn();
+        settings[WreckfestController.Services.Hosting.WebApp.PathBaseKey] = "/tvtp2";
+        await using var host = await ApiTestHost.StartAsync(settings);
+
+        using var bare = await SendAsync(host, HttpMethod.Get, "/tvtp2");
+        using var page = await SendAsync(host, HttpMethod.Get, "/tvtp2/tracks?x=1");
+        using var post = await SendAsync(host, HttpMethod.Post, "/tvtp2/api/auth/login");
+
+        Assert.Equal(HttpStatusCode.TemporaryRedirect, bare.StatusCode);
+        Assert.Equal("https://wf.example.com/tvtp2", bare.Headers.Location!.ToString());
+        Assert.Equal("https://wf.example.com/tvtp2/tracks?x=1", page.Headers.Location!.ToString());
+        Assert.NotEqual(HttpStatusCode.OK, post.StatusCode);
+        Assert.Null(post.Headers.Location);
+    }
 }

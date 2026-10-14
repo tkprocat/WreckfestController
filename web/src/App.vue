@@ -15,6 +15,10 @@ const assistant = useAssistantStatus()
 onMounted(() => void assistant.load())
 const isAdmin = computed(() => route.matched.some(record => record.meta.requiresAuth))
 
+function skipToContent() {
+  document.getElementById('main-content')?.focus()
+}
+
 /** Shown when the server did not confirm the sign-out: the session may still be valid. */
 const signOutFailed = ref(false)
 
@@ -30,7 +34,8 @@ async function signOut() {
   <NConfigProvider :theme="theme" :theme-overrides="overrides">
     <NMessageProvider to="#messages">
       <NDialogProvider>
-        <a href="#main-content" class="skip-link">Skip to content</a>
+        <!-- Focused by hand: with index.html's <base>, "#main-content" would load the site root. -->
+        <a href="#main-content" class="skip-link" @click.prevent="skipToContent">Skip to content</a>
         <header class="app-header">
           <RouterLink to="/" class="app-title" aria-label="Wreckfest Controller"><span class="brand-mark" aria-hidden="true">W</span><span>Wreckfest<span class="brand-subtitle">Controller</span></span></RouterLink>
           <nav class="app-user">

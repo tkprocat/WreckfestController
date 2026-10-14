@@ -261,6 +261,7 @@ public class ApiServer : IApiServer, IDisposable
         // With HTTPS on: remote plain HTTP is redirected (page loads) or refused (the rest)
         // before any file, recovery page, sign-in or API call is served over it.
         app.UseMiddleware<HttpsEnforcementMiddleware>();
+        web.UseBaseSlashRedirect(app);
 
         // The web app's files, which need neither the database nor a signed-in user.
         web.UseFiles(app);

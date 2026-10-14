@@ -70,7 +70,8 @@ public sealed partial class WebApp
             return PathString.Empty;
         }
 
-        if (!PathBasePattern().IsMatch(value))
+        // "." and ".." would be resolved away by the browser, which then asks outside the base.
+        if (!PathBasePattern().IsMatch(value) || value.Split('/').Any(segment => segment is "." or ".."))
         {
             throw new PathBaseException(
                 $"{PathBaseKey} \"{configuration[PathBaseKey]}\" is not a path such as /tvtp2: use / and then letters, digits, -, _ or .");
@@ -84,8 +85,7 @@ public sealed partial class WebApp
 
     /// <summary>
     /// Takes the path base off every request under it, before anything else looks at the
-    /// path. A request outside it is not this site's: 404. The base itself without the
-    /// slash is sent to the slash, where the app's relative links resolve.
+    /// path. A request outside it is not this site's: 404.
     /// </summary>
     public void UsePathBase(IApplicationBuilder app)
     {
@@ -103,7 +103,30 @@ public sealed partial class WebApp
                 return;
             }
 
-            if (!context.Request.Path.HasValue)
+            await next(context);
+        });
+
+        // WebApplication otherwise matches endpoints at the very start of the pipeline,
+        // against the path with the base still on it.
+        app.UseRouting();
+    }
+
+    /// <summary>
+    /// Sends a page load of the base itself without its slash (<c>/tvtp2</c>) to the slash,
+    /// where the app's relative links resolve. After HTTPS enforcement, so plain HTTP from
+    /// another computer is sent to HTTPS first.
+    /// </summary>
+    public void UseBaseSlashRedirect(IApplicationBuilder app)
+    {
+        if (!PathBase.HasValue)
+        {
+            return;
+        }
+
+        app.Use(async (context, next) =>
+        {
+            if (!context.Request.Path.HasValue
+                && (HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)))
             {
                 context.Response.Redirect(context.Request.PathBase + "/" + context.Request.QueryString);
                 return;
@@ -111,10 +134,6 @@ public sealed partial class WebApp
 
             await next(context);
         });
-
-        // WebApplication otherwise matches endpoints at the very start of the pipeline,
-        // against the path with the base still on it.
-        app.UseRouting();
     }
 
     /// <summary>

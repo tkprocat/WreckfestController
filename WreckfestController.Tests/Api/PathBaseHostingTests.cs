@@ -130,6 +130,9 @@ public sealed class PathBaseHostingTests : IDisposable
     [InlineData("/tv tp2")]
     [InlineData("/tvtp2?x")]
     [InlineData("/a//b")]
+    [InlineData("/a/../tvtp2")]
+    [InlineData("/./tvtp2")]
+    [InlineData("/..")]
     public void AnUnusableBase_SaysWhy(string value)
     {
         var error = Assert.Throws<PathBaseException>(() => WebApp.ResolvePathBase(Configuration(value)));
@@ -143,6 +146,7 @@ public sealed class PathBaseHostingTests : IDisposable
     [InlineData("/tvtp2", "/tvtp2")]
     [InlineData(" /tvtp2/ ", "/tvtp2")]
     [InlineData("/mnw/tvtp2", "/mnw/tvtp2")]
+    [InlineData("/v2.0", "/v2.0")]
     public void AUsableBase_IsTidied(string? value, string expected) =>
         Assert.Equal(expected, WebApp.ResolvePathBase(Configuration(value)).Value ?? string.Empty);
 
