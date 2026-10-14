@@ -2,6 +2,7 @@
 import { computed, shallowRef } from 'vue'
 import { NButton, NForm, NInput, NModal, NSelect, useMessage } from 'naive-ui'
 import { api } from '@/api/client'
+import { sitePath } from '@/base'
 import type { components } from '@/api/schema'
 import ConflictDialog from '@/crud/ConflictDialog.vue'
 import FormField from '@/crud/FormField.vue'
@@ -184,7 +185,7 @@ defineExpose({ start })
         <NSelect v-model:value="draft.weather" :options="weatherOptions" multiple filterable v-select-focus="inputProps" :input-props="inputProps" />
       </FormField>
       <p v-if="editor.editing.value && !editor.editing.value.isHidden" class="public-link">
-        <a :href="`/tracks/${encodeURIComponent(editor.editing.value.key)}`" target="_blank" rel="noopener">Open its public page</a>
+        <a :href="sitePath(`/tracks/${encodeURIComponent(editor.editing.value.key)}`)" target="_blank" rel="noopener">Open its public page</a>
       </p>
       <ImageSlots
         v-if="editor.editing.value"

@@ -73,7 +73,9 @@ public class AuthController : ControllerBase
             HttpOnly = false,
             SameSite = SameSiteMode.Strict,
             Secure = Request.IsHttps,
-            Path = "/",
+            // Like the sign-in and antiforgery cookies: only this site's, when several
+            // controllers share one domain under their own Web:PathBase.
+            Path = Request.PathBase.HasValue ? Request.PathBase.Value : "/",
         });
         return NoContent();
     }

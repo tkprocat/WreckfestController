@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { redirectTarget } from './redirect'
+import { BASE } from '@/base'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -14,7 +15,7 @@ declare module 'vue-router' {
 // The controller answers every path outside /api and /hubs with index.html, so these
 // routes work as deep links and on reload.
 export const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(BASE),
   routes: [
     { path: '/', name: 'home', component: () => import('@/views/HomeView.vue'), meta: { spectator: true } },
     { path: '/tracks', name: 'tracks', component: () => import('@/views/tracks/TrackListView.vue'), meta: { spectator: true } },

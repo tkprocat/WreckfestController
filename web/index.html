@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" href="/favicon.ico" />
+    <!-- The controller rewrites this to its Web:PathBase (WebApp.BasePlaceholder): every
+         relative link below, and src/base.ts, resolve against it. -->
+    <base href="/" />
+    <link rel="icon" href="favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Wreckfest Controller</title>
     <!-- Mirrors useAppearance before the first paint, so a dark page never flashes white. -->

@@ -1,5 +1,6 @@
 import createClient, { type Middleware } from 'openapi-fetch'
 import type { paths } from './schema'
+import { BASE, sitePath, withoutBase } from '@/base'
 
 // The typed client for the controller's API. Types come from src/api/schema.d.ts,
 // generated from src/api/openapi.json, which a C# test keeps in step with the API.
@@ -33,7 +34,7 @@ let tokenRequest: Promise<void> | null = null
  * server does not answer with one.
  */
 export function refreshAntiforgery(): Promise<void> {
-  const request = fetch('/api/auth/antiforgery', { credentials: 'same-origin' }).then((response) => {
+  const request = fetch(sitePath('/api/auth/antiforgery'), { credentials: 'same-origin' }).then((response) => {
     if (!response.ok) {
       throw new Error(`Could not get an antiforgery token (HTTP ${response.status}).`)
     }
@@ -128,7 +129,7 @@ export function onUnauthorized(handler: () => void): void {
  */
 export const unauthorized: Middleware = {
   onResponse({ request, response }) {
-    if (response.status === 401 && !new URL(request.url, 'http://localhost').pathname.startsWith('/api/auth/')) {
+    if (response.status === 401 && !withoutBase(new URL(request.url, 'http://localhost').pathname).startsWith('/api/auth/')) {
       unauthorizedHandler?.()
     }
 
@@ -136,7 +137,7 @@ export const unauthorized: Middleware = {
   },
 }
 
-export const api = createClient<paths>({ baseUrl: window.location.origin, credentials: 'same-origin' })
+export const api = createClient<paths>({ baseUrl: window.location.origin + BASE.replace(/\/$/, ''), credentials: 'same-origin' })
 // openapi-fetch runs onResponse hooks last-registered first. antiforgery goes last so its
 // retry runs first, and unauthorized then sees the final response - a retry that ends in
 // 401 must still end the session.

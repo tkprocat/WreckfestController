@@ -99,6 +99,7 @@ public class ApiServer : IApiServer, IDisposable
 
             StartError = null;
             var endpoints = ApiEndpoints.Resolve(configuration, AppContext.BaseDirectory);
+            var pathBase = WebApp.ResolvePathBase(configuration);
 
             // HTTPS configured but unusable stops here, with the reason: the API never
             // falls back to HTTP for a remote browser that expected HTTPS.
@@ -129,7 +130,7 @@ public class ApiServer : IApiServer, IDisposable
             builder.WebHost.ConfigureKestrel(options => HttpsEndpoint.Configure(options, endpoints, _certificates));
             builder.Services.AddSingleton(new HttpsStatusSource(_certificates));
             var host = endpoints.Address.Equals(System.Net.IPAddress.Any) ? "0.0.0.0" : "127.0.0.1";
-            BaseUrl = $"http://{host}:{endpoints.HttpPort}";
+            BaseUrl = $"http://{host}:{endpoints.HttpPort}{pathBase}";
 
             _logger.LogInformation(
                 "API server will listen on {BaseUrl}{Https}",
@@ -151,7 +152,7 @@ public class ApiServer : IApiServer, IDisposable
         {
             // A half-built host still holds ports and services: let it go, so a corrected
             // configuration can start cleanly.
-            StartError = ex is HttpsConfigurationException ? ex.Message : "The API did not start. The log has the details.";
+            StartError = ex is HttpsConfigurationException or PathBaseException ? ex.Message : "The API did not start. The log has the details.";
             if (_app is not null)
             {
                 await _app.DisposeAsync();
@@ -246,6 +247,10 @@ public class ApiServer : IApiServer, IDisposable
     /// </summary>
     public static void ConfigurePipeline(WebApplication app)
     {
+        // First: everything after it sees the path inside the site, as at the root.
+        var web = app.Services.GetRequiredService<WebApp>();
+        web.UsePathBase(app);
+
         // What arrived, before the forwarded headers rewrite it: HTTPS enforcement decides
         // "this PC or not" from that.
         app.Use(HttpsEnforcementMiddleware.CaptureOriginal);
@@ -256,9 +261,9 @@ public class ApiServer : IApiServer, IDisposable
         // With HTTPS on: remote plain HTTP is redirected (page loads) or refused (the rest)
         // before any file, recovery page, sign-in or API call is served over it.
         app.UseMiddleware<HttpsEnforcementMiddleware>();
+        web.UseBaseSlashRedirect(app);
 
         // The web app's files, which need neither the database nor a signed-in user.
-        var web = app.Services.GetRequiredService<WebApp>();
         web.UseFiles(app);
 
         // Next, so recovery mode answers before anything touches the user store.

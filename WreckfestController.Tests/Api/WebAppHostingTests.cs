@@ -18,7 +18,7 @@ public sealed class WebAppHostingTests : IDisposable
     public WebAppHostingTests()
     {
         Directory.CreateDirectory(Path.Combine(_root, "assets"));
-        File.WriteAllText(Path.Combine(_root, "index.html"), $"<!doctype html><html>{IndexMarker}</html>");
+        File.WriteAllText(Path.Combine(_root, "index.html"), $"<!doctype html><html><head>{WebApp.BasePlaceholder}</head>{IndexMarker}</html>");
         File.WriteAllText(Path.Combine(_root, "assets", "app-123.js"), "console.log('app')");
     }
 
@@ -30,6 +30,7 @@ public sealed class WebAppHostingTests : IDisposable
 
     [Theory]
     [InlineData("/")]
+    [InlineData("/index.html")]
     [InlineData("/login")]
     [InlineData("/settings/voting")]
     public async Task AppRoutes_AreTheIndexPage_ForAnyone(string path)
@@ -40,7 +41,10 @@ public sealed class WebAppHostingTests : IDisposable
         using var response = await client.GetAsync(path, Ct);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Contains(IndexMarker, await response.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
+        var html = await response.Content.ReadAsStringAsync(Ct);
+        Assert.Contains(IndexMarker, html, StringComparison.Ordinal);
+        // Without Web:PathBase, the site is at the root.
+        Assert.Contains(WebApp.BasePlaceholder, html, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -184,10 +184,11 @@ public sealed class ApiTestHost : IAsyncDisposable
     public HttpClient CreateClient() => _app.GetTestClient();
 
     /// <summary>A cookie-keeping client that sends the antiforgery header like the SPA.</summary>
-    public BrowserClient CreateBrowser()
+    /// <param name="pathBase">The host's Web:PathBase, if it has one.</param>
+    public BrowserClient CreateBrowser(string pathBase = "")
     {
         var server = _app.GetTestServer();
-        return new BrowserClient(server.CreateHandler(), server.BaseAddress);
+        return new BrowserClient(server.CreateHandler(), server.BaseAddress, pathBase);
     }
 
     /// <summary>A client that sends the configured API key.</summary>

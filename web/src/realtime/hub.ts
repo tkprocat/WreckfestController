@@ -1,5 +1,6 @@
 import { HubConnectionBuilder, HubConnectionState, LogLevel, type HubConnection } from '@microsoft/signalr'
 import { readonly, ref } from 'vue'
+import { sitePath } from '@/base'
 
 // Live updates from /hubs/server. Everyone gets the public group; a signed-in admin also
 // gets the admin group (the console log, cup outcomes). The server decides the groups when
@@ -77,7 +78,7 @@ const reconnectedHandlers = new Set<() => void>()
 function hub(): HubConnection {
   if (!connection) {
     connection = new HubConnectionBuilder()
-      .withUrl(HUB_ROUTE)
+      .withUrl(sitePath(HUB_ROUTE))
       .withAutomaticReconnect({ nextRetryDelayInMilliseconds: ({ previousRetryCount }) => retryDelay(previousRetryCount) })
       .configureLogging(LogLevel.Warning)
       .build()
