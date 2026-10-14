@@ -105,9 +105,9 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
             ("get_server_config", "{}"),
             ("list_cups", "{}")));
         _model.Answer(ToolCalls(
-            ("propose_rotation", """{"collectionName":"Ovals","tracks":[{"track":"speedway2_figure_8","laps":3}],"summary":"Ovals only"}"""),
+            ("propose_rotation", Json(new { collectionName = "Ovals", tracks = new[] { new { track = "speedway2_figure_8", laps = 3 } }, version = rotation.GetProperty("version").GetString(), summary = "Ovals only" })),
             ("propose_server_config", """{"changes":{"maxPlayers":20,"laps":4}}"""),
-            ("propose_cup", Json(new { id = cup.Id, cup = new { name = "Race night", startTime = InOneDay, serverConfig = new { serverName = "Cup Night", laps = 6 } } })),
+            ("propose_cup", Json(new { id = cup.Id, version = int.Parse(cup.Version, CultureInfo.InvariantCulture), cup = new { name = "Race night", startTime = InOneDay, serverConfig = new { serverName = "Cup Night", laps = 6 } } })),
             ("propose_collection", """{"name":"Ovals","tracks":[{"track":"speedway2_figure_8"}]}""")));
         _model.Answer(Text("Here are the changes. Apply the ones you want."));
 
@@ -156,9 +156,10 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
         await using var host = await StartAsync();
         await ConfigureAsync(host, Key);
         using var client = host.CreateAuthenticatedClient();
+        var version = (await client.GetFromJsonAsync<JsonElement>("/api/config/tracks", Ct)).GetProperty("version").GetString();
         _model.Answer(ToolCalls(("get_rotation", "{}")));
         _model.Answer(ToolCalls(
-            ("propose_rotation", """{"collectionName":"Ovals","tracks":[{"track":"speedway2_figure_8","laps":3}]}""")));
+            ("propose_rotation", Json(new { collectionName = "Ovals", tracks = new[] { new { track = "speedway2_figure_8", laps = 3 } }, version }))));
         _model.Answer(Text("Apply it when you are ready."));
 
         using var response = await AskAsync(client, "Ovals only, please.");
@@ -185,8 +186,11 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
         using var client = host.CreateAuthenticatedClient();
         var read = (await client.GetFromJsonAsync<JsonElement>("/api/config/tracks", Ct)).GetProperty("version").GetString();
         _model.Answer(ToolCalls(("get_rotation", "{}")));
+        // The model looks again in the same round as it proposes, with what it read before:
+        // the second lookup must not lend the proposal the newer version.
         _model.Answer(ToolCalls(
-            ("propose_rotation", """{"collectionName":"Ovals","tracks":[{"track":"speedway2_figure_8"}]}""")));
+            ("get_rotation", "{}"),
+            ("propose_rotation", Json(new { collectionName = "Ovals", tracks = new[] { new { track = "speedway2_figure_8" } }, version = read }))));
         _model.Answer(Text("Apply it when you are ready."));
 
         // Someone edits the rotation after the model read it, before it proposes.
@@ -221,7 +225,7 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
         var cup = await CreateCupAsync(client, password: "");
         _model.Answer(ToolCalls(("list_cups", "{}")));
         _model.Answer(ToolCalls(
-            ("propose_cup", Json(new { id = cup.Id, cup = new { name = "Renamed night", startTime = InOneDay } }))));
+            ("propose_cup", Json(new { id = cup.Id, version = cup.Version, cup = new { name = "Renamed night", startTime = InOneDay } }))));
         _model.Answer(Text("Apply it when you are ready."));
 
         using var response = await AskAsync(client, "Rename the cup.");
@@ -232,7 +236,7 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
     }
 
     [Fact]
-    public async Task AnUpdate_NeedsALookupFirst()
+    public async Task AnUpdate_NeedsTheVersionItIsBasedOn()
     {
         await using var host = await StartAsync();
         await ConfigureAsync(host, Key);
@@ -247,7 +251,7 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
         var body = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
         Assert.Empty(body.GetProperty("proposals").EnumerateArray());
         var result = _model.Requests[1].Body.GetProperty("messages").EnumerateArray().Last();
-        Assert.Contains("list_cups", result.GetProperty("content").GetString(), StringComparison.Ordinal);
+        Assert.Contains("version is required", result.GetProperty("content").GetString(), StringComparison.Ordinal);
     }
 
     public static TheoryData<string, string> RefusedProposals => new()

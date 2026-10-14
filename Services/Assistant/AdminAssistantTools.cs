@@ -89,11 +89,13 @@ public sealed class AdminAssistantTools
             ObjectSchema(
                 ("collectionName", new JsonObject { ["type"] = "string", ["description"] = "The name the rotation is shown under." }),
                 ("tracks", TrackList()),
+                ("version", VersionSchema("string", "get_rotation's version, of the rotation this is based on.")),
                 ("summary", Summary()))),
         new("propose_collection",
             "Propose creating a saved collection, or replacing one (give its id). Nothing changes until the admin applies it.",
             ObjectSchema(
                 ("id", new JsonObject { ["type"] = "integer", ["description"] = "The collection to replace; omit to create a new one." }),
+                ("version", VersionSchema("integer", "With id: get_collection's version, of the collection this is based on.")),
                 ("name", new JsonObject { ["type"] = "string" }),
                 ("tracks", TrackList()),
                 ("summary", Summary()))),
@@ -106,6 +108,7 @@ public sealed class AdminAssistantTools
             "Propose creating a cup, or replacing one (give its id): the whole cup, as list_cups shows it. Nothing changes until the admin applies it.",
             ObjectSchema(
                 ("id", new JsonObject { ["type"] = "integer", ["description"] = "The cup to replace; omit to create a new one." }),
+                ("version", VersionSchema("integer", "With id: the cup's version in list_cups, of the cup this is based on.")),
                 ("cup", CupSchema()),
                 ("summary", Summary()))),
         new("propose_server_config",
@@ -129,6 +132,8 @@ public sealed class AdminAssistantTools
         it. Say plainly what each proposal would change, and never say a change has been made.
         Propose only what the admin asked for. For a rotation or a collection, give every track,
         in order, the ones that stay included. For a cup, give the whole cup.
+        To replace the rotation, a collection or a cup, give the version from the lookup the
+        proposal is based on.
         If a proposal is refused, fix it if you can, or tell the admin why it was refused.
         You cannot manage users, start, stop or update the server, change launch settings,
         passwords or the admin and moderator lists: say so if asked.
@@ -152,13 +157,6 @@ public sealed class AdminAssistantTools
     private readonly CupStore _cups;
     private readonly JsonSerializerOptions _json;
     private readonly List<AssistantProposal> _proposals = [];
-
-    // The versions the model was shown. An update is proposed against what the model read,
-    // not what is there when it proposes: an edit in between must make Apply fail, not be
-    // overwritten with contents built from the older data.
-    private string? _rotationVersion;
-    private readonly Dictionary<int, int> _collectionVersions = [];
-    private readonly Dictionary<int, int> _cupVersions = [];
 
     public AdminAssistantTools(
         AssistantTools publicTools,
@@ -208,10 +206,10 @@ public sealed class AdminAssistantTools
 
         return name switch
         {
-            "get_rotation" => Serialize(ReadRotation()),
-            "list_collections" => Serialize(await ListCollectionsAsync()),
-            "get_collection" => Int(args, "id") is { } id ? Answer(await GetCollectionAsync(id)) : Error("id is required."),
-            "list_cups" => Serialize(await ListCupsAsync(cancellationToken)),
+            "get_rotation" => Serialize(Rotation()),
+            "list_collections" => Serialize(await _collections.List()),
+            "get_collection" => Int(args, "id") is { } id ? Answer(await _collections.Get(id)) : Error("id is required."),
+            "list_cups" => Serialize((await _cups.ListAsync(cancellationToken)).Select(c => Masked(CupResponse.From(c))).ToList()),
             "get_server_config" => Serialize(ServerConfigView(_config.ReadBasicConfig())),
             "propose_rotation" => ProposeRotation(args),
             "propose_collection" => await ProposeCollectionAsync(args),
@@ -222,46 +220,11 @@ public sealed class AdminAssistantTools
         };
     }
 
-    private EventLoopResponse ReadRotation()
+    private EventLoopResponse Rotation()
     {
         var name = _config.GetCurrentCollectionName();
         var tracks = _config.ReadEventLoopTracks();
-        var rotation = new EventLoopResponse(tracks.Count, tracks, name, ConfigService.EventLoopVersion(name, tracks));
-        _rotationVersion = rotation.Version;
-        return rotation;
-    }
-
-    private async Task<IEnumerable<CollectionSummaryResponse>> ListCollectionsAsync()
-    {
-        var collections = (await _collections.List()).ToList();
-        foreach (var collection in collections)
-        {
-            _collectionVersions[collection.Id] = collection.Version;
-        }
-
-        return collections;
-    }
-
-    private async Task<ActionResult<CollectionResponse>> GetCollectionAsync(int id)
-    {
-        var result = await _collections.Get(id);
-        if (result.Value is { } collection)
-        {
-            _collectionVersions[collection.Id] = collection.Version;
-        }
-
-        return result;
-    }
-
-    private async Task<List<CupResponse>> ListCupsAsync(CancellationToken cancellationToken)
-    {
-        var cups = (await _cups.ListAsync(cancellationToken)).Select(c => Masked(CupResponse.From(c))).ToList();
-        foreach (var cup in cups)
-        {
-            _cupVersions[cup.Id] = cup.Version;
-        }
-
-        return cups;
+        return new EventLoopResponse(tracks.Count, tracks, name, ConfigService.EventLoopVersion(name, tracks));
     }
 
     private string ProposeRotation(JsonElement args)
@@ -277,16 +240,18 @@ public sealed class AdminAssistantTools
             return Error(error.Message);
         }
 
-        if (_rotationVersion is null)
+        // The version comes from the model, as If-Match from a client: what it read is what
+        // the proposal is built on, so a change since then makes Apply fail, not get overwritten.
+        if (Str(args, "version") is not { } version)
         {
-            return Error("Look up the rotation with get_rotation first.");
+            return Error(VersionRequired("get_rotation"));
         }
 
         return Propose(new AssistantProposal(
             Kinds.SetRotation,
             Summary(args, $"Set the rotation to {collectionName!.Trim()} ({tracks.Count} tracks)"),
             TargetId: null,
-            _rotationVersion,
+            version,
             Body(new UpdateEventLoopTracksRequest(collectionName!.Trim(), tracks.Select(t => t!).ToList()))));
     }
 
@@ -316,9 +281,9 @@ public sealed class AdminAssistantTools
             return Error($"There is no collection {id}.");
         }
 
-        if (!_collectionVersions.TryGetValue(id, out var version))
+        if (VersionNumber(args) is not { } version)
         {
-            return Error($"Look up collection {id} with get_collection first.");
+            return Error(VersionRequired("get_collection"));
         }
 
         return Propose(new AssistantProposal(
@@ -387,9 +352,9 @@ public sealed class AdminAssistantTools
                 return Error($"There is no cup {cupId}.");
             }
 
-            if (!_cupVersions.TryGetValue(cupId, out var seen))
+            if (VersionNumber(args) is not { } seen)
             {
-                return Error($"Look up cup {cupId} with list_cups first.");
+                return Error(VersionRequired("list_cups"));
             }
 
             // A PUT replaces the whole cup: keep the password the model was never shown,
@@ -520,6 +485,15 @@ public sealed class AdminAssistantTools
             ? number
             : null;
 
+    private static string VersionRequired(string lookup) =>
+        $"version is required: the version {lookup} showed for what this proposal is based on.";
+
+    /// <summary>A collection's or cup's version, as a number or a numeric string.</summary>
+    private static int? VersionNumber(JsonElement args) =>
+        Int(args, "version") is { } number ? number
+        : Str(args, "version") is { } text && int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed
+        : null;
+
     private static string Error(string message) => new JsonObject { ["error"] = message }.ToJsonString();
 
     private static JsonObject NoParameters() => new()
@@ -548,6 +522,12 @@ public sealed class AdminAssistantTools
 
         return new JsonObject { ["type"] = "object", ["properties"] = props };
     }
+
+    private static JsonObject VersionSchema(string type, string description) => new()
+    {
+        ["type"] = type,
+        ["description"] = description,
+    };
 
     private static JsonObject Summary() => new()
     {
