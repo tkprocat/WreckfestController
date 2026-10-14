@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "oxlint && vue-tsc -b && vite build",
+    "build:portal": "oxlint && vue-tsc -b && vite build -c vite.portal.config.ts",
+    "dev:portal": "vite -c vite.portal.config.ts",
     "lint": "oxlint",
     "preview": "vite preview",
     "typecheck": "vue-tsc -b",

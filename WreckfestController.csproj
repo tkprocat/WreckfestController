@@ -75,6 +75,11 @@
     <Content Remove="WreckfestController.Tests\**" />
     <EmbeddedResource Remove="WreckfestController.Tests\**" />
     <None Remove="WreckfestController.Tests\**" />
+    <!-- The portal and its tests are projects of their own. -->
+    <Compile Remove="Portal\**" />
+    <Content Remove="Portal\**" />
+    <EmbeddedResource Remove="Portal\**" />
+    <None Remove="Portal\**" />
   </ItemGroup>
 
   <!-- Exclude old MAUI files and directories -->

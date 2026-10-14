@@ -1,0 +1,76 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    The front page for several controllers on one domain: lists the servers in its
+    appsettings.json, with whether each is up and who is on it. It reads each controller's
+    public overview and nothing else, so it needs no account, key or database.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>14.0</LangVersion>
+    <Version>2.0.0</Version>
+    <RootNamespace>WreckfestPortal</RootNamespace>
+    <!-- `dotnet publish` of the whole solution puts every project in one folder, where this
+         wwwroot would replace the controller's web app. Publish the portal by its project. -->
+    <IsPublishable Condition="'$(SolutionPath)' != '' And '$(SolutionPath)' != '*Undefined*'">false</IsPublishable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WreckfestPortal.Tests" />
+  </ItemGroup>
+
+  <!--
+    The page is a second entry of the controller's web app (web/portal.html), so it shares
+    its theme and components: `npm run build:portal` writes web/dist-portal, copied to
+    wwwroot here. The controller's build installs the packages; this one does too if it
+    runs first. -p:SkipWebBuild=true skips it, as for the controller.
+  -->
+  <PropertyGroup>
+    <PortalWebDir>$(MSBuildProjectDirectory)\..\..\web</PortalWebDir>
+    <PortalWebDist>$(PortalWebDir)\dist-portal</PortalWebDist>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PortalWebSource Include="$(PortalWebDir)\src\**\*" />
+    <PortalWebSource Include="$(PortalWebDir)\public\**\*" />
+    <PortalWebSource Include="$(PortalWebDir)\portal.html;$(PortalWebDir)\package.json;$(PortalWebDir)\package-lock.json;$(PortalWebDir)\vite.portal.config.ts;$(PortalWebDir)\vite.config.ts" />
+  </ItemGroup>
+
+  <Target Name="BuildPortalWeb" BeforeTargets="BeforeBuild" Condition="'$(SkipWebBuild)' != 'true'"
+          Inputs="@(PortalWebSource)" Outputs="$(PortalWebDist)\portal.html">
+    <Exec Command="node --version" ContinueOnError="true" IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="NodeExitCode" />
+    </Exec>
+    <Error Condition="'$(NodeExitCode)' != '0'"
+           Text="Cannot build the portal page: Node.js was not found on PATH. Install Node.js LTS, or build with -p:SkipWebBuild=true for C#-only work." />
+    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(PortalWebDir)" Condition="!Exists('$(PortalWebDir)\node_modules')" />
+    <Message Importance="high" Text="Building the portal page (npm run build:portal)..." />
+    <Exec Command="npm run build:portal" WorkingDirectory="$(PortalWebDir)" />
+  </Target>
+
+  <!-- Replaces wwwroot whole, so assets from an earlier build do not linger. -->
+  <Target Name="CopyPortalWeb" AfterTargets="Build" Condition="Exists('$(PortalWebDist)\portal.html')">
+    <ItemGroup>
+      <PortalWebFile Include="$(PortalWebDist)\**\*" />
+    </ItemGroup>
+    <RemoveDir Directories="$(OutDir)wwwroot" Condition="Exists('$(OutDir)wwwroot')" />
+    <Copy SourceFiles="@(PortalWebFile)" DestinationFiles="@(PortalWebFile->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
+  <Target Name="CopyPortalWebToPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != ''">
+    <Error Condition="'$(SkipWebBuild)' != 'true' And !Exists('$(PortalWebDist)\portal.html')"
+           Text="The portal page was not built at $(PortalWebDist). Refusing to publish the portal without it." />
+    <ItemGroup>
+      <PortalWebPublishFile Include="$(PortalWebDist)\**\*" />
+    </ItemGroup>
+    <RemoveDir Directories="$(PublishDir)wwwroot" Condition="Exists('$(PublishDir)wwwroot')" />
+    <Copy SourceFiles="@(PortalWebPublishFile)" DestinationFiles="@(PortalWebPublishFile->'$(PublishDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" Condition="'@(PortalWebPublishFile)' != ''" />
+  </Target>
+
+</Project>

@@ -239,6 +239,59 @@ page is on. There you can ask for changes to the rotation, collections, cups and
 settings in plain language: the assistant proposes each one, and nothing changes until you
 click **Apply**. It cannot manage users, start or stop the server, or see passwords.
 
+## 7. A front page for several servers (optional)
+
+With several controllers on one domain, each under its own `Web:PathBase` (see
+[Several controllers on one domain](#several-controllers-on-one-domain)), **WreckfestPortal**
+can answer the domain's root: a page listing every server with whether it is up, its
+players and its track, each linking to that controller's site.
+
+The portal is a separate small program, built from `Portal/WreckfestPortal`
+(`dotnet publish Portal/WreckfestPortal -c Release -o <folder>`). It needs no account, key
+or database: every 15 seconds it reads each controller's public overview, the same data
+anyone sees on its home page, and the page reads what it last found. Visitors never cause
+a request to a controller.
+
+List the servers in the portal's `appsettings.json`:
+
+```json
+{
+  "Urls": "http://127.0.0.1:5000",
+  "Portal": {
+    "Title": "Monday Night Wrecking",
+    "Intro": "Pick a server.",
+    "Servers": [
+      { "Id": "vanilla", "Name": "Vanilla", "Description": "The base game's tracks and cars.",
+        "Link": "/vanilla/", "ApiUrl": "http://127.0.0.1:5100/vanilla" },
+      { "Id": "tvtp2", "Name": "TVTP2", "Description": "Tracks from the TVTP2 mod.",
+        "Link": "/tvtp2/", "ApiUrl": "http://127.0.0.1:5102/tvtp2" }
+    ]
+  }
+}
+```
+
+| Setting | Meaning |
+| --- | --- |
+| `Urls` | Where the portal listens. Use `http://0.0.0.0:5000` if the proxy runs on another PC. |
+| `Title`, `Intro` | The page's heading and the line under it. `Intro` is optional. |
+| `Servers` | The cards, in this order. `Id` must be unique; `Description` is optional. |
+| `Link` | Where the card goes: a path on this domain such as `/tvtp2/`, or a full `https://` address. |
+| `ApiUrl` | Where the portal reaches the controller, with its `PathBase`. It is never shown on the page, so a LAN address is fine. |
+| `PollSeconds`, `TimeoutSeconds` | How often each server is checked (default 15, at least 5) and how long one has to answer (default 3). |
+
+A server shows **UP** when its game server runs, **DOWN** when the controller answers but
+the game server is stopped, and **NO CONNECTION** when the controller does not answer;
+its last known details stay on the card, marked as such. Settings the portal cannot use
+stop it at startup, with each problem in the log.
+
+Point the proxy's default route, everything no controller's path matches, at the portal.
+To run it as a Windows service:
+
+```
+sc.exe create WreckfestPortal binPath= "C:\WreckfestPortal\WreckfestPortal.exe" start= auto
+sc.exe start WreckfestPortal
+```
+
 ## Scripts and the API
 
 Scripts call the same API as the web site and authenticate with the `Key` from step 3:
