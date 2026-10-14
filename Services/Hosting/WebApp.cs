@@ -1,3 +1,5 @@
+using System.Net;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -9,14 +11,27 @@ namespace WreckfestController.Services.Hosting;
 /// The Vue web app the API host serves: the files the build put in <c>wwwroot</c> next
 /// to the exe (or <c>Web:Root</c>). Without them, the host serves only the API.
 /// </summary>
-public sealed class WebApp
+public sealed partial class WebApp
 {
     public const string RootKey = "Web:Root";
 
-    private WebApp(string root, IFileProvider? files)
+    /// <summary>
+    /// The path the whole site lives under, such as <c>/tvtp2</c>, so several controllers can
+    /// share one domain behind a reverse proxy that forwards the full path. Empty: the root.
+    /// </summary>
+    public const string PathBaseKey = "Web:PathBase";
+
+    /// <summary>
+    /// What the built index.html carries (web/index.html), rewritten to the path base, so
+    /// one build of the app works under any of them.
+    /// </summary>
+    public const string BasePlaceholder = "<base href=\"/\" />";
+
+    private WebApp(string root, IFileProvider? files, PathString pathBase)
     {
         Root = root;
         Files = files;
+        PathBase = pathBase;
     }
 
     /// <summary>Where the files are looked for.</summary>
@@ -25,6 +40,9 @@ public sealed class WebApp
     /// <summary>The files, or null when there is no built web app there.</summary>
     public IFileProvider? Files { get; }
 
+    /// <summary>The configured <see cref="PathBaseKey"/>; empty for the root.</summary>
+    public PathString PathBase { get; }
+
     public static WebApp Resolve(IConfiguration configuration)
     {
         var configured = configuration[RootKey];
@@ -32,12 +50,77 @@ public sealed class WebApp
             ? Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory, "wwwroot")
             : Environment.ExpandEnvironmentVariables(configured);
 
-        return new WebApp(root, File.Exists(Path.Combine(root, "index.html")) ? new PhysicalFileProvider(root) : null);
+        return new WebApp(
+            root,
+            File.Exists(Path.Combine(root, "index.html")) ? new PhysicalFileProvider(root) : null,
+            ResolvePathBase(configuration));
+    }
+
+    /// <summary>
+    /// <see cref="PathBaseKey"/>, checked: one or more <c>/segment</c>s of letters, digits,
+    /// <c>-</c>, <c>_</c> and <c>.</c>, without a trailing slash. A trailing slash is
+    /// forgiven; anything else stops the API with the reason.
+    /// </summary>
+    /// <exception cref="PathBaseException">The value is not a usable path.</exception>
+    public static PathString ResolvePathBase(IConfiguration configuration)
+    {
+        var value = configuration[PathBaseKey]?.Trim().TrimEnd('/');
+        if (string.IsNullOrEmpty(value))
+        {
+            return PathString.Empty;
+        }
+
+        if (!PathBasePattern().IsMatch(value))
+        {
+            throw new PathBaseException(
+                $"{PathBaseKey} \"{configuration[PathBaseKey]}\" is not a path such as /tvtp2: use / and then letters, digits, -, _ or .");
+        }
+
+        return new PathString(value);
+    }
+
+    [GeneratedRegex(@"^(/[A-Za-z0-9_.\-]+)+$")]
+    private static partial Regex PathBasePattern();
+
+    /// <summary>
+    /// Takes the path base off every request under it, before anything else looks at the
+    /// path. A request outside it is not this site's: 404. The base itself without the
+    /// slash is sent to the slash, where the app's relative links resolve.
+    /// </summary>
+    public void UsePathBase(IApplicationBuilder app)
+    {
+        if (!PathBase.HasValue)
+        {
+            return;
+        }
+
+        app.UsePathBase(PathBase);
+        app.Use(async (context, next) =>
+        {
+            if (!context.Request.PathBase.HasValue)
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+
+            if (!context.Request.Path.HasValue)
+            {
+                context.Response.Redirect(context.Request.PathBase + "/" + context.Request.QueryString);
+                return;
+            }
+
+            await next(context);
+        });
+
+        // WebApplication otherwise matches endpoints at the very start of the pipeline,
+        // against the path with the base still on it.
+        app.UseRouting();
     }
 
     /// <summary>
     /// Serves the files, before anything else can refuse the request: the page must load in
-    /// recovery mode too, to say why sign-in is unavailable.
+    /// recovery mode too, to say why sign-in is unavailable. index.html is never served as
+    /// it is on disk, because it needs the path base written into it.
     /// </summary>
     public void UseFiles(IApplicationBuilder app)
     {
@@ -46,7 +129,17 @@ public sealed class WebApp
             return;
         }
 
-        app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = Files });
+        app.Use(async (context, next) =>
+        {
+            var path = context.Request.Path;
+            if ((path == "/" || path.Equals("/index.html", StringComparison.OrdinalIgnoreCase))
+                && await TryServeIndexAsync(context))
+            {
+                return;
+            }
+
+            await next(context);
+        });
         app.UseStaticFiles(new StaticFileOptions { FileProvider = Files });
     }
 
@@ -63,22 +156,28 @@ public sealed class WebApp
         }
 
         endpoints
-            .MapFallbackToFile(
+            .MapFallback(
                 "{*path:nonfile:regex(^(?!(api|hubs)(/|$)))}",
-                "index.html",
-                new StaticFileOptions { FileProvider = Files })
+                async context =>
+                {
+                    if (!await TryServeIndexAsync(context))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status404NotFound;
+                    }
+                })
             .AllowAnonymous();
     }
 
     /// <summary>
-    /// Writes index.html, for a page route in recovery mode. False, writing nothing, when
-    /// there is no web app or the request is not a page load.
+    /// Writes index.html with the path base in its <c>&lt;base&gt;</c>. False, writing
+    /// nothing, when there is no web app or the request is not a page load.
     /// </summary>
     public async Task<bool> TryServeIndexAsync(HttpContext context)
     {
         if (Files is null
             || !(HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method))
-            || Path.HasExtension(context.Request.Path.Value))
+            || (Path.HasExtension(context.Request.Path.Value)
+                && !context.Request.Path.Equals("/index.html", StringComparison.OrdinalIgnoreCase)))
         {
             return false;
         }
@@ -89,8 +188,27 @@ public sealed class WebApp
             return false;
         }
 
+        string html;
+        await using (var stream = index.CreateReadStream())
+        using (var reader = new StreamReader(stream))
+        {
+            html = await reader.ReadToEndAsync(context.RequestAborted);
+        }
+
+        html = html.Replace(
+            BasePlaceholder,
+            $"<base href=\"{WebUtility.HtmlEncode(PathBase.Value)}/\" />",
+            StringComparison.Ordinal);
+
         context.Response.ContentType = "text/html; charset=utf-8";
-        await context.Response.SendFileAsync(index);
+        // A new build changes the asset names it links to, so the page is always checked.
+        context.Response.Headers.CacheControl = "no-cache";
+        if (HttpMethods.IsHead(context.Request.Method))
+        {
+            return true;
+        }
+
+        await context.Response.WriteAsync(html, context.RequestAborted);
         return true;
     }
 
@@ -99,3 +217,6 @@ public sealed class WebApp
         !path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
         && !path.StartsWithSegments("/hubs", StringComparison.OrdinalIgnoreCase);
 }
+
+/// <summary>A <see cref="WebApp.PathBaseKey"/> the API cannot start with; the message says why.</summary>
+public sealed class PathBaseException(string message) : Exception(message);

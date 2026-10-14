@@ -11,10 +11,13 @@ namespace WreckfestController.Tests.Api;
 public sealed class BrowserClient : IDisposable
 {
     private readonly Handler _handler;
+    private readonly string _pathBase;
 
-    public BrowserClient(HttpMessageHandler server, Uri baseAddress)
+    /// <param name="pathBase">The host's Web:PathBase, which the sign-in requests go under.</param>
+    public BrowserClient(HttpMessageHandler server, Uri baseAddress, string pathBase = "")
     {
         _handler = new Handler { InnerHandler = server };
+        _pathBase = pathBase;
         Http = new HttpClient(_handler) { BaseAddress = baseAddress };
     }
 
@@ -31,7 +34,7 @@ public sealed class BrowserClient : IDisposable
 
     public async Task FetchAntiforgeryAsync()
     {
-        using var response = await Http.GetAsync("/api/auth/antiforgery", TestContext.Current.CancellationToken);
+        using var response = await Http.GetAsync(_pathBase + "/api/auth/antiforgery", TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
     }
 
@@ -40,7 +43,7 @@ public sealed class BrowserClient : IDisposable
     {
         await FetchAntiforgeryAsync();
         var response = await Http.PostAsJsonAsync(
-            "/api/auth/login",
+            _pathBase + "/api/auth/login",
             new { login, password, remember },
             TestContext.Current.CancellationToken);
         if (response.IsSuccessStatusCode)

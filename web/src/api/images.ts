@@ -1,4 +1,5 @@
 import type { components } from '@/api/schema'
+import { sitePath } from '@/base'
 
 /**
  * Catalogue menu images (#260): their URLs, and how a WreckfestTrackDump folder's images
@@ -16,11 +17,11 @@ function withVersion(url: string, version?: string): string {
 }
 
 export function trackImageUrl(key: string, size: ImageSize, version?: string): string {
-  return withVersion(`/api/images/tracks/${encodeURIComponent(key)}/${size.toLowerCase()}`, version)
+  return withVersion(sitePath(`/api/images/tracks/${encodeURIComponent(key)}/${size.toLowerCase()}`), version)
 }
 
 export function variantImageUrl(variantId: string, size: ImageSize, version?: string): string {
-  return withVersion(`/api/images/variants/${encodeURIComponent(variantId)}/${size.toLowerCase()}`, version)
+  return withVersion(sitePath(`/api/images/variants/${encodeURIComponent(variantId)}/${size.toLowerCase()}`), version)
 }
 
 /**
@@ -28,7 +29,7 @@ export function variantImageUrl(variantId: string, size: ImageSize, version?: st
  * does. The base game's variant images are all outlines; a picture never is one.
  */
 export function variantLayoutUrl(variantId: string, version?: string): string {
-  return withVersion(`/api/images/variants/${encodeURIComponent(variantId)}/layout`, version)
+  return withVersion(sitePath(`/api/images/variants/${encodeURIComponent(variantId)}/layout`), version)
 }
 
 /**

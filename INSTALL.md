@@ -106,7 +106,7 @@ Startup settings are read from `appsettings.json` next to the exe, then
 wins. Keep yours in `user-settings.json`, because installing a new release replaces
 `appsettings.json`. Restart the controller after any change to the file.
 
-Only the startup settings come from these files: `Api`, `Database`, `Logging` and
+Only the startup settings come from these files: `Api`, `Database`, `Web`, `Logging` and
 `WreckfestServer:SupportedBuild`. The server paths, SteamCMD and voting settings are in
 the database, and the `WreckfestServer`, `SteamCmd` and `Vote` sections of
 `user-settings.json` are ignored. On the very first start the database takes its voting
@@ -145,6 +145,9 @@ which would give them the same server paths, accounts and cups.
    tab. The folder must exist. Without it, the second server to start stops with "Save
    directory is already in use". Give each server its own `server_config.cfg` with its
    own `steam_port`, `game_port` and `query_port` as well.
+
+To put several controllers on one domain, such as `example.com/vanilla/` and
+`example.com/tvtp2/`, see [Several controllers on one domain](#several-controllers-on-one-domain).
 
 Each controller adds its own id to the command line of every server it starts, such as
 `-wfc_controller=3f9a1c07`. The id is shown on the Configuration tab under **WEB API**,
@@ -201,6 +204,37 @@ requests to the controller over HTTP.
    ```
    netsh advfirewall firewall add rule name="WreckfestController" dir=in action=allow protocol=TCP localport=5100 remoteip=192.168.1.1
    ```
+
+### Several controllers on one domain
+
+Each controller can live under a path of its own, so one domain and one certificate serve
+them all: `https://example.com/vanilla/` and `https://example.com/tvtp2/`. Set the path in
+each controller's `user-settings.json`, next to `Api`:
+
+```json
+"Web": { "PathBase": "/tvtp2" }
+```
+
+The whole site then lives under that path: the pages, the API (`/tvtp2/api/...`) and the
+live updates (`/tvtp2/hubs/server`). Anything outside it answers 404, and `/tvtp2` without
+the slash is sent to `/tvtp2/`. Sign-in cookies belong to the path, so signing in to one
+controller does not sign you in to another, and two can be open in one browser at once.
+The path also works without a proxy, as `http://<controller PC>:5100/tvtp2/`.
+
+A `PathBase` must start with `/` and contain only letters, digits, `-`, `_`, `.` and
+further `/` segments. Anything else stops the API, with the reason on the Configuration tab.
+
+Have the proxy route by path and pass the path on **unchanged**: do not strip the prefix.
+In HAProxy:
+
+```
+acl wfc_vanilla path_beg /vanilla/ || path /vanilla
+acl wfc_tvtp2   path_beg /tvtp2/   || path /tvtp2
+use_backend wfc_vanilla if wfc_vanilla
+use_backend wfc_tvtp2   if wfc_tvtp2
+```
+
+Everything else, such as `/` itself, can go to a front page of your own.
 
 ### HTTPS directly
 

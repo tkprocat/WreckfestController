@@ -103,6 +103,7 @@ is bound at all. `Key` no longer affects whether it starts.
 | `TrustedProxies` | reverse proxies whose `X-Forwarded-For` / `X-Forwarded-Proto` are honoured; default none |
 | `HttpPort` / `HttpsPort` | defaults 5100 / 5101; HTTPS listens only with `Https` |
 | `Https` | HTTPS from the certificate store or a file, and what plain HTTP from other computers gets: see [https.md](https.md) |
+| `Web:PathBase` | a path such as `/tvtp2` that the whole site, API and hub live under; default none. Every path in this document is then under it (`/tvtp2/api/auth/state`), and anything outside it answers 404. See INSTALL.md, "Several controllers on one domain" |
 
 ### Behind a reverse proxy
 

@@ -8,6 +8,9 @@ import vue from '@vitejs/plugin-vue'
 const controller = 'http://127.0.0.1:5100'
 
 export default defineConfig({
+  // Relative asset links, so one build works under any Web:PathBase: index.html's <base>
+  // says where they resolve.
+  base: './',
   plugins: [vue()],
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
