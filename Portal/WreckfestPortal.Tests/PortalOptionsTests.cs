@@ -32,6 +32,8 @@ public sealed class PortalOptionsTests
         Assert.Contains(new PortalOptions().Problems(), p => p.Contains("lists no servers", StringComparison.Ordinal));
         Assert.Contains(new PortalOptions { Servers = [Server(), Server("TVTP2")] }.Problems(), p => p.Contains("used twice", StringComparison.Ordinal));
         Assert.Contains(new PortalOptions { PollSeconds = 1, Servers = [Server()] }.Problems(), p => p.Contains("PollSeconds", StringComparison.Ordinal));
+        // PeriodicTimer refuses an interval this long: a settings error, not a crash.
+        Assert.Contains(new PortalOptions { PollSeconds = 4_294_968, Servers = [Server()] }.Problems(), p => p.Contains("PollSeconds", StringComparison.Ordinal));
         Assert.Contains(new PortalOptions { TimeoutSeconds = 0, Servers = [Server()] }.Problems(), p => p.Contains("TimeoutSeconds", StringComparison.Ordinal));
         Assert.Contains(new PortalOptions { Title = " ", Servers = [Server()] }.Problems(), p => p.Contains("Title", StringComparison.Ordinal));
     }

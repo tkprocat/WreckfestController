@@ -277,7 +277,7 @@ List the servers in the portal's `appsettings.json`:
 | `Servers` | The cards, in this order. `Id` must be unique; `Description` is optional. |
 | `Link` | Where the card goes: a path on this domain such as `/tvtp2/`, or a full `https://` address. |
 | `ApiUrl` | Where the portal reaches the controller, with its `PathBase`. It is never shown on the page, so a LAN address is fine. |
-| `PollSeconds`, `TimeoutSeconds` | How often each server is checked (default 15, at least 5) and how long one has to answer (default 3). |
+| `PollSeconds`, `TimeoutSeconds` | How often each server is checked (default 15, 5 to 3600) and how long one has to answer (default 3). |
 
 A server shows **UP** when its game server runs, **DOWN** when the controller answers but
 the game server is stopped, and **NO CONNECTION** when the controller does not answer;

@@ -28,30 +28,46 @@
   <!--
     The page is a second entry of the controller's web app (web/portal.html), so it shares
     its theme and components: `npm run build:portal` writes web/dist-portal, copied to
-    wwwroot here. The controller's build installs the packages; this one does too if it
-    runs first. -p:SkipWebBuild=true skips it, as for the controller.
+    wwwroot here. web/WebApp.targets installs the packages, once for this and the
+    controller. As for the controller, two stamp files cover what timestamps miss: the list
+    of sources (one added or deleted) and the files the last build produced (one gone from
+    dist-portal forces a rebuild). -p:SkipWebBuild=true skips it.
   -->
+  <Import Project="..\..\web\WebApp.targets" />
+
   <PropertyGroup>
-    <PortalWebDir>$(MSBuildProjectDirectory)\..\..\web</PortalWebDir>
-    <PortalWebDist>$(PortalWebDir)\dist-portal</PortalWebDist>
+    <PortalWebDist>$(WebAppDir)\dist-portal</PortalWebDist>
+    <PortalWebInputList>$(MSBuildProjectDirectory)\obj\portalweb.inputs</PortalWebInputList>
+    <PortalWebOutputList>$(MSBuildProjectDirectory)\obj\portalweb.outputs</PortalWebOutputList>
   </PropertyGroup>
 
-  <ItemGroup>
-    <PortalWebSource Include="$(PortalWebDir)\src\**\*" />
-    <PortalWebSource Include="$(PortalWebDir)\public\**\*" />
-    <PortalWebSource Include="$(PortalWebDir)\portal.html;$(PortalWebDir)\package.json;$(PortalWebDir)\package-lock.json;$(PortalWebDir)\vite.portal.config.ts;$(PortalWebDir)\vite.config.ts" />
-  </ItemGroup>
+  <Target Name="RecordPortalWebInputs" Condition="'$(SkipWebBuild)' != 'true'">
+    <WriteLinesToFile File="$(PortalWebInputList)" Lines="@(WebAppSource->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
 
-  <Target Name="BuildPortalWeb" BeforeTargets="BeforeBuild" Condition="'$(SkipWebBuild)' != 'true'"
-          Inputs="@(PortalWebSource)" Outputs="$(PortalWebDist)\portal.html">
-    <Exec Command="node --version" ContinueOnError="true" IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low">
-      <Output TaskParameter="ExitCode" PropertyName="NodeExitCode" />
-    </Exec>
-    <Error Condition="'$(NodeExitCode)' != '0'"
-           Text="Cannot build the portal page: Node.js was not found on PATH. Install Node.js LTS, or build with -p:SkipWebBuild=true for C#-only work." />
-    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(PortalWebDir)" Condition="!Exists('$(PortalWebDir)\node_modules')" />
+  <Target Name="CheckPortalWebOutputs" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(PortalWebOutputList)')">
+    <ReadLinesFromFile File="$(PortalWebOutputList)">
+      <Output TaskParameter="Lines" ItemName="RecordedPortalWebOutput" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <MissingPortalWebOutput Include="@(RecordedPortalWebOutput)" Condition="!Exists('%(Identity)')" />
+    </ItemGroup>
+    <Message Importance="high" Text="Portal page output is incomplete; rebuilding." Condition="'@(MissingPortalWebOutput)' != ''" />
+    <Delete Files="$(PortalWebDist)\portal.html" Condition="'@(MissingPortalWebOutput)' != ''" />
+  </Target>
+
+  <Target Name="BuildPortalWeb" BeforeTargets="BeforeBuild"
+          DependsOnTargets="InstallWebAppPackages;RecordPortalWebInputs;CheckPortalWebOutputs" Condition="'$(SkipWebBuild)' != 'true'"
+          Inputs="@(WebAppSource);$(PortalWebInputList);$(WebAppInstalled)" Outputs="$(PortalWebDist)\portal.html">
     <Message Importance="high" Text="Building the portal page (npm run build:portal)..." />
-    <Exec Command="npm run build:portal" WorkingDirectory="$(PortalWebDir)" />
+    <Exec Command="npm run build:portal" WorkingDirectory="$(WebAppDir)" />
+  </Target>
+
+  <Target Name="RecordPortalWebOutputs" AfterTargets="BuildPortalWeb" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(PortalWebDist)\portal.html')">
+    <ItemGroup>
+      <ProducedPortalWebOutput Include="$(PortalWebDist)\**\*" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(PortalWebOutputList)" Lines="@(ProducedPortalWebOutput->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
   <!-- Replaces wwwroot whole, so assets from an earlier build do not linger. -->
@@ -63,7 +79,8 @@
     <Copy SourceFiles="@(PortalWebFile)" DestinationFiles="@(PortalWebFile->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" />
   </Target>
 
-  <Target Name="CopyPortalWebToPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != ''">
+  <!-- AfterTargets runs even when Publish itself is skipped, hence IsPublishable here too. -->
+  <Target Name="CopyPortalWebToPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != '' And '$(IsPublishable)' != 'false'">
     <Error Condition="'$(SkipWebBuild)' != 'true' And !Exists('$(PortalWebDist)\portal.html')"
            Text="The portal page was not built at $(PortalWebDist). Refusing to publish the portal without it." />
     <ItemGroup>

@@ -75,7 +75,7 @@ public sealed class ServerPollerTests
             _controllers.Requests.Select(u => u.ToString()).Order());
     }
 
-    public static TheoryData<string> Failures => ["refused", "hang", "500", "not json", "no status"];
+    public static TheoryData<string> Failures => ["refused", "hang", "500", "not json", "no status", "cut short", "bad charset"];
 
     [Theory]
     [MemberData(nameof(Failures))]
@@ -95,6 +95,8 @@ public sealed class ServerPollerTests
             case "500": _controllers.Answer(Vanilla, "{}", HttpStatusCode.InternalServerError); break;
             case "not json": _controllers.Answer(Vanilla, "<html>proxy error</html>"); break;
             case "no status": _controllers.Answer(Vanilla, """{ "serverName": "x" }"""); break;
+            case "cut short": _controllers.Throw(Vanilla, new HttpIOException(HttpRequestError.ResponseEnded, "The response ended prematurely.")); break;
+            case "bad charset": _controllers.Throw(Vanilla, new InvalidOperationException("The character set provided in ContentType is invalid.")); break;
         }
 
         await poller.PollOnceAsync(Ct);

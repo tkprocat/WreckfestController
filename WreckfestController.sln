@@ -10,6 +10,9 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Portal", "Portal", "{B1292CBF-CB5E-31CF-04F4-73CB58F131DA}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WreckfestPortal", "Portal\WreckfestPortal\WreckfestPortal.csproj", "{57A5F4A2-6E2F-4404-A2EC-A4A922E09370}"
+	ProjectSection(ProjectDependencies) = postProject
+		{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942} = {8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}
+	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WreckfestPortal.Tests", "Portal\WreckfestPortal.Tests\WreckfestPortal.Tests.csproj", "{DA5FEDDB-F9E0-4890-81E1-5DD7D0201ACC}"
 EndProject

@@ -44,6 +44,8 @@ controller's `GET /api/public/overview`, through its own copy of the fields it s
 (`ServerStatus.cs`), so a change there needs no portal change unless a shown field is renamed.
 Its page is a second entry of `web/` (`portal.html`, `src/portal/`), built by
 `npm run build:portal` into `web/dist-portal` and copied to the portal's `wwwroot`.
+Both csproj files import `web/WebApp.targets` (the sources list and the one shared `npm ci`);
+the .sln makes the portal build after the controller, so the two never install at once.
 
 The web app is typed against `web/src/api/openapi.json`. `OpenApiContractTests` fails when
 it drifts from the API; `WFC_UPDATE_OPENAPI=1 dotnet test --filter-class

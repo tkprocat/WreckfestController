@@ -86,7 +86,10 @@ public sealed class ServerPoller : BackgroundService
                 LastSeenAt = now,
             };
         }
-        catch (Exception ex) when (!cancellationToken.IsCancellationRequested && ex is HttpRequestException or JsonException or OperationCanceledException or NotSupportedException)
+        // Anything a controller or the network can do wrong: a body cut short, a bad charset,
+        // a timeout. Only the portal stopping is not this server's state; nothing else may
+        // escape, or it would stop the portal.
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {
             // Logged once when it goes away, not every poll while it stays away.
             if (previous.State is not ServerState.Unreachable)

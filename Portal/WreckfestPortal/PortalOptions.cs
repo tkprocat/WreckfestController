@@ -11,7 +11,7 @@ public sealed class PortalOptions
     /// <summary>A line under the heading. Optional.</summary>
     public string? Intro { get; set; }
 
-    /// <summary>Seconds between checks of every server. At least 5.</summary>
+    /// <summary>Seconds between checks of every server. 5 to 3600.</summary>
     public int PollSeconds { get; set; } = 15;
 
     /// <summary>Seconds a controller has to answer before it counts as unreachable. 1 to 30.</summary>
@@ -29,9 +29,9 @@ public sealed class PortalOptions
             problems.Add($"{Section}:Title is empty.");
         }
 
-        if (PollSeconds < 5)
+        if (PollSeconds is < 5 or > 3600)
         {
-            problems.Add($"{Section}:PollSeconds must be at least 5.");
+            problems.Add($"{Section}:PollSeconds must be 5 to 3600.");
         }
 
         if (TimeoutSeconds is < 1 or > 30)

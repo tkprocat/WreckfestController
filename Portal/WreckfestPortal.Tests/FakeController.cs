@@ -24,6 +24,10 @@ internal sealed class FakeController : HttpMessageHandler
             throw new InvalidOperationException("unreachable");
         };
 
+    /// <summary>Fails with this, as reading a broken response would.</summary>
+    public void Throw(string apiUrl, Exception error) =>
+        _answers[Key(new Uri(apiUrl))] = _ => Task.FromException<HttpResponseMessage>(error);
+
     public void Refuse(string apiUrl) =>
         _answers[Key(new Uri(apiUrl))] = _ => throw new HttpRequestException("Connection refused");
 

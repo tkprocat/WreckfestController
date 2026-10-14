@@ -1,0 +1,41 @@
+<Project>
+
+  <!--
+    What the controller (WreckfestController.csproj) and the portal
+    (Portal/WreckfestPortal) share about web/: where it is, its sources, and one npm ci
+    for both. The solution builds the controller first (a ProjectDependencies entry in
+    the .sln), so the two never install at once; the portal built on its own installs
+    the packages itself, against the same stamp.
+  -->
+  <PropertyGroup>
+    <WebAppDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)'))</WebAppDir>
+    <WebAppDir>$(WebAppDir.TrimEnd('\'))</WebAppDir>
+    <WebAppLock>$(WebAppDir)\package-lock.json</WebAppLock>
+    <WebAppInstalled>$(WebAppDir)\node_modules\.wfc-installed</WebAppInstalled>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <WebAppSource Include="$(WebAppDir)\src\**\*" />
+    <WebAppSource Include="$(WebAppDir)\public\**\*" />
+    <!-- Linted by npm run build (Oxlint), though not bundled. -->
+    <WebAppSource Include="$(WebAppDir)\scripts\**\*" />
+    <WebAppSource Include="$(WebAppDir)\index.html;$(WebAppDir)\portal.html;$(WebAppDir)\package.json;$(WebAppLock);$(WebAppDir)\vite.config.ts;$(WebAppDir)\vite.portal.config.ts;$(WebAppDir)\tsconfig*.json;$(WebAppDir)\.oxlintrc.json" />
+  </ItemGroup>
+
+  <Target Name="CheckNodeForWebApp" Condition="'$(SkipWebBuild)' != 'true'">
+    <Exec Command="node --version" ContinueOnError="true" IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ExitCode" PropertyName="NodeExitCode" />
+    </Exec>
+    <Error Condition="'$(NodeExitCode)' != '0'"
+           Text="Cannot build the web app: Node.js was not found on PATH. Install Node.js LTS, or build with -p:SkipWebBuild=true for C#-only work." />
+  </Target>
+
+  <Target Name="InstallWebAppPackages" DependsOnTargets="CheckNodeForWebApp" Condition="'$(SkipWebBuild)' != 'true'"
+          Inputs="$(WebAppDir)\package.json;$(WebAppLock)" Outputs="$(WebAppInstalled)">
+    <Message Importance="high" Text="Installing web app packages (npm ci)..." />
+    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(WebAppDir)" />
+    <!-- npm's own marker files keep old timestamps, so this target keeps its own. -->
+    <Touch Files="$(WebAppInstalled)" AlwaysCreate="true" />
+  </Target>
+
+</Project>

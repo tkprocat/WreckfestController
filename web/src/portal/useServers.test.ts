@@ -38,6 +38,24 @@ describe('useServers', () => {
     servers.stop()
   })
 
+  it('drops an answer older than one already applied', async () => {
+    let answerFirst!: (response: Response) => void
+    const first = new Promise<Response>((resolve) => (answerFirst = resolve))
+    const fetcher = vi.fn<typeof fetch>()
+      .mockReturnValueOnce(first)
+      .mockResolvedValueOnce(json({ ...page, title: 'Newer' }))
+    const servers = start(fetcher)
+
+    await servers.reload()
+    answerFirst(json({}, 502))
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(servers.page.value?.title).toBe('Newer')
+    expect(servers.stale.value).toBe(false)
+    servers.stop()
+  })
+
   it('refreshes on a timer until the scope ends', async () => {
     vi.useFakeTimers()
     const fetcher = vi.fn<typeof fetch>().mockImplementation(() => Promise.resolve(json(page)))

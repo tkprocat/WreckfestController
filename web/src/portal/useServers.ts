@@ -35,18 +35,27 @@ export function useServers(fetcher: typeof fetch = (...args) => fetch(...args)) 
   const page = ref<PortalPage | null>(null)
   const stale = ref(false)
   const loading = ref(true)
+  // A timer refresh and "Try again" can overlap: an answer to a request older than one
+  // already applied is dropped, so it never undoes newer news.
+  let started = 0
+  let applied = 0
 
   async function load() {
+    const id = ++started
+    let next: PortalPage | null = null
     try {
       const response = await fetcher('/api/servers', { signal: AbortSignal.timeout(10_000) })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      page.value = (await response.json()) as PortalPage
-      stale.value = false
+      next = (await response.json()) as PortalPage
     } catch {
-      stale.value = true
-    } finally {
-      loading.value = false
+      // Not updating: what is shown stays, marked stale below.
     }
+
+    if (id < applied) return
+    applied = id
+    if (next) page.value = next
+    stale.value = next === null
+    loading.value = false
   }
 
   void load()
