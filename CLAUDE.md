@@ -46,8 +46,9 @@ Its page is a second entry of `web/` (`portal.html`, `src/portal/`), built by
 `npm run build:portal` into `web/dist-portal` and copied to the portal's `wwwroot`.
 Both csproj files import `web/WebApp.targets` (the sources list and the one shared `npm ci`).
 A solution build runs them side by side, so every npm step goes through
-`web/scripts/web-lock.mjs`, which holds `web/.build-lock` while it runs: two `npm ci` at once
-fail with EPERM. A build that waits says "Waiting for another web build".
+`web/scripts/web-lock.mjs`, which holds a named pipe (one per web folder) while it runs: two
+`npm ci` at once fail with EPERM. Windows releases the pipe when the process ends, so a killed
+build never leaves a stale lock. A build that waits says "Waiting for another web build".
 
 The web app is typed against `web/src/api/openapi.json`. `OpenApiContractTests` fails when
 it drifts from the API; `WFC_UPDATE_OPENAPI=1 dotnet test --filter-class

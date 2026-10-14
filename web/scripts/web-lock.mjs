@@ -5,53 +5,49 @@
 //   node scripts/web-lock.mjs install      npm ci, unless the packages are already current
 //   node scripts/web-lock.mjs run <script> npm run <script>
 //
+// The lock is an address only one process can listen on: a named pipe on Windows, an
+// abstract socket on Linux. The operating system releases it when its process ends,
+// however it ends, so there is no lock file to go stale and nothing to take over. Each web
+// folder has its own, so worktrees do not wait on each other. Elsewhere (macOS), where
+// either would leave a file behind, the steps run without one.
+//
 // Uses only Node's own modules: it runs before the packages are installed.
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { statSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
-const lock = fileURLToPath(new URL('../.build-lock', import.meta.url))
-const owner = lock + '/owner.json'
 const stamp = fileURLToPath(new URL('../node_modules/.wfc-installed', import.meta.url))
 
-// A lock this old is from a build that was killed, whatever its process is now.
-const STALE_MS = 30 * 60 * 1000
+const id = createHash('sha256').update(root.toLowerCase()).digest('hex').slice(0, 16)
+const addresses = {
+  win32: String.raw`\\.\pipe\wfc-web-build-` + id,
+  linux: '\0wfc-web-build-' + id,
+}
+const address = addresses[process.platform] ?? null
 
-function alive(pid) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return error.code === 'EPERM'
-  }
+function listen() {
+  return new Promise((resolve) => {
+    const server = createServer((socket) => socket.end())
+    server.once('error', (error) => resolve({ server: null, error }))
+    server.listen(address, () => resolve({ server, error: null }))
+  })
 }
 
 async function acquire() {
+  if (address === null) return null
+
   let told = false
   for (;;) {
-    try {
-      mkdirSync(lock)
-      writeFileSync(owner, JSON.stringify({ pid: process.pid, at: Date.now() }))
-      return
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error
-    }
-
-    let holder = null
-    try {
-      holder = JSON.parse(readFileSync(owner, 'utf8'))
-    } catch {
-      // Being created or removed right now: look again shortly.
-    }
-
-    if (holder && (!alive(holder.pid) || Date.now() - holder.at > STALE_MS)) {
-      rmSync(lock, { recursive: true, force: true })
-      continue
-    }
+    const { server, error } = await listen()
+    if (server) return server
+    if (error.code !== 'EADDRINUSE') throw error
 
     if (!told) {
-      console.log(`Waiting for another web build${holder ? ` (process ${holder.pid})` : ''}...`)
+      console.log('Waiting for another web build...')
       told = true
     }
     await new Promise((resolve) => setTimeout(resolve, 500))
@@ -77,15 +73,15 @@ if (command !== 'install' && !(command === 'run' && rest.length === 1)) {
   process.exit(2)
 }
 
-await acquire()
+const lock = await acquire()
 let status
 try {
   if (command === 'install') {
     // Another build may have installed them while this one waited.
     const installed = modified(stamp)
     const current = installed !== null
-      && installed >= (modified(root + '/package.json') ?? Infinity)
-      && installed >= (modified(root + '/package-lock.json') ?? Infinity)
+      && installed >= (modified(join(root, 'package.json')) ?? Infinity)
+      && installed >= (modified(join(root, 'package-lock.json')) ?? Infinity)
     if (current) {
       console.log('Web app packages are already installed.')
       status = 0
@@ -99,7 +95,7 @@ try {
     status = npm('run', rest[0])
   }
 } finally {
-  rmSync(lock, { recursive: true, force: true })
+  lock?.close()
 }
 
 process.exit(status)
