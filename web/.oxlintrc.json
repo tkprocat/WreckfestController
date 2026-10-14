@@ -21,6 +21,7 @@
   },
   "ignorePatterns": [
     "dist/**",
+    "dist-portal/**",
     "src/api/schema.d.ts"
   ]
 }

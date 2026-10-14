@@ -75,6 +75,11 @@
     <Content Remove="WreckfestController.Tests\**" />
     <EmbeddedResource Remove="WreckfestController.Tests\**" />
     <None Remove="WreckfestController.Tests\**" />
+    <!-- The portal and its tests are projects of their own. -->
+    <Compile Remove="Portal\**" />
+    <Content Remove="Portal\**" />
+    <EmbeddedResource Remove="Portal\**" />
+    <None Remove="Portal\**" />
   </ItemGroup>
 
   <!-- Exclude old MAUI files and directories -->
@@ -200,38 +205,13 @@
     file changes it) and the list of files the last build produced (one gone from dist
     forces a rebuild).
   -->
+  <Import Project="web\WebApp.targets" />
+
   <PropertyGroup>
-    <WebAppDir>$(MSBuildProjectDirectory)\web</WebAppDir>
     <WebAppDist>$(WebAppDir)\dist</WebAppDist>
-    <WebAppLock>$(WebAppDir)\package-lock.json</WebAppLock>
-    <WebAppInstalled>$(WebAppDir)\node_modules\.wfc-installed</WebAppInstalled>
     <WebAppInputList>$(MSBuildProjectDirectory)\obj\webapp.inputs</WebAppInputList>
     <WebAppOutputList>$(MSBuildProjectDirectory)\obj\webapp.outputs</WebAppOutputList>
   </PropertyGroup>
-
-  <ItemGroup>
-    <WebAppSource Include="$(WebAppDir)\src\**\*" />
-    <WebAppSource Include="$(WebAppDir)\public\**\*" />
-    <!-- Linted by npm run build (Oxlint), though not bundled. -->
-    <WebAppSource Include="$(WebAppDir)\scripts\**\*" />
-    <WebAppSource Include="$(WebAppDir)\index.html;$(WebAppDir)\package.json;$(WebAppLock);$(WebAppDir)\vite.config.ts;$(WebAppDir)\tsconfig*.json;$(WebAppDir)\.oxlintrc.json" />
-  </ItemGroup>
-
-  <Target Name="CheckNodeForWebApp" Condition="'$(SkipWebBuild)' != 'true'">
-    <Exec Command="node --version" ContinueOnError="true" IgnoreExitCode="true" StandardOutputImportance="low" StandardErrorImportance="low">
-      <Output TaskParameter="ExitCode" PropertyName="NodeExitCode" />
-    </Exec>
-    <Error Condition="'$(NodeExitCode)' != '0'"
-           Text="Cannot build the web app: Node.js was not found on PATH. Install Node.js LTS, or build with -p:SkipWebBuild=true for C#-only work." />
-  </Target>
-
-  <Target Name="InstallWebAppPackages" DependsOnTargets="CheckNodeForWebApp" Condition="'$(SkipWebBuild)' != 'true'"
-          Inputs="$(WebAppDir)\package.json;$(WebAppLock)" Outputs="$(WebAppInstalled)">
-    <Message Importance="high" Text="Installing web app packages (npm ci)..." />
-    <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(WebAppDir)" />
-    <!-- npm's own marker files keep old timestamps, so this target keeps its own. -->
-    <Touch Files="$(WebAppInstalled)" AlwaysCreate="true" />
-  </Target>
 
   <!-- Rewritten only when the list differs, so its timestamp moves only then. -->
   <Target Name="RecordWebAppInputs" Condition="'$(SkipWebBuild)' != 'true'">

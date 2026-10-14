@@ -37,6 +37,16 @@ plus the Vue and Vitest plugins), so a lint error fails `dotnet build` like a ty
 `npm run lint` runs it alone. In Git Bash Oxlint prints nothing (the exit code is still
 right); run it from PowerShell to see the findings.
 
+`Portal/WreckfestPortal` is the optional front page for several controllers on one domain
+(INSTALL step 7): a small `net10.0` ASP.NET Core app with its own tests in
+`Portal/WreckfestPortal.Tests`, which `dotnet test` runs with the rest. It reads only each
+controller's `GET /api/public/overview`, through its own copy of the fields it shows
+(`ServerStatus.cs`), so a change there needs no portal change unless a shown field is renamed.
+Its page is a second entry of `web/` (`portal.html`, `src/portal/`), built by
+`npm run build:portal` into `web/dist-portal` and copied to the portal's `wwwroot`.
+Both csproj files import `web/WebApp.targets` (the sources list and the one shared `npm ci`);
+the .sln makes the portal build after the controller, so the two never install at once.
+
 The web app is typed against `web/src/api/openapi.json`. `OpenApiContractTests` fails when
 it drifts from the API; `WFC_UPDATE_OPENAPI=1 dotnet test --filter-class
 WreckfestController.Tests.Api.OpenApiContractTests` rewrites it, then `npm run gen:api` in

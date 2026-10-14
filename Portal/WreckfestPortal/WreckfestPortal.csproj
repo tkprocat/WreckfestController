@@ -1,0 +1,93 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    The front page for several controllers on one domain: lists the servers in its
+    appsettings.json, with whether each is up and who is on it. It reads each controller's
+    public overview and nothing else, so it needs no account, key or database.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>14.0</LangVersion>
+    <Version>2.0.0</Version>
+    <RootNamespace>WreckfestPortal</RootNamespace>
+    <!-- `dotnet publish` of the whole solution puts every project in one folder, where this
+         wwwroot would replace the controller's web app. Publish the portal by its project. -->
+    <IsPublishable Condition="'$(SolutionPath)' != '' And '$(SolutionPath)' != '*Undefined*'">false</IsPublishable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="WreckfestPortal.Tests" />
+  </ItemGroup>
+
+  <!--
+    The page is a second entry of the controller's web app (web/portal.html), so it shares
+    its theme and components: `npm run build:portal` writes web/dist-portal, copied to
+    wwwroot here. web/WebApp.targets installs the packages, once for this and the
+    controller. As for the controller, two stamp files cover what timestamps miss: the list
+    of sources (one added or deleted) and the files the last build produced (one gone from
+    dist-portal forces a rebuild). -p:SkipWebBuild=true skips it.
+  -->
+  <Import Project="..\..\web\WebApp.targets" />
+
+  <PropertyGroup>
+    <PortalWebDist>$(WebAppDir)\dist-portal</PortalWebDist>
+    <PortalWebInputList>$(MSBuildProjectDirectory)\obj\portalweb.inputs</PortalWebInputList>
+    <PortalWebOutputList>$(MSBuildProjectDirectory)\obj\portalweb.outputs</PortalWebOutputList>
+  </PropertyGroup>
+
+  <Target Name="RecordPortalWebInputs" Condition="'$(SkipWebBuild)' != 'true'">
+    <WriteLinesToFile File="$(PortalWebInputList)" Lines="@(WebAppSource->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <Target Name="CheckPortalWebOutputs" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(PortalWebOutputList)')">
+    <ReadLinesFromFile File="$(PortalWebOutputList)">
+      <Output TaskParameter="Lines" ItemName="RecordedPortalWebOutput" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <MissingPortalWebOutput Include="@(RecordedPortalWebOutput)" Condition="!Exists('%(Identity)')" />
+    </ItemGroup>
+    <Message Importance="high" Text="Portal page output is incomplete; rebuilding." Condition="'@(MissingPortalWebOutput)' != ''" />
+    <Delete Files="$(PortalWebDist)\portal.html" Condition="'@(MissingPortalWebOutput)' != ''" />
+  </Target>
+
+  <Target Name="BuildPortalWeb" BeforeTargets="BeforeBuild"
+          DependsOnTargets="InstallWebAppPackages;RecordPortalWebInputs;CheckPortalWebOutputs" Condition="'$(SkipWebBuild)' != 'true'"
+          Inputs="@(WebAppSource);$(PortalWebInputList);$(WebAppInstalled)" Outputs="$(PortalWebDist)\portal.html">
+    <Message Importance="high" Text="Building the portal page (npm run build:portal)..." />
+    <Exec Command="npm run build:portal" WorkingDirectory="$(WebAppDir)" />
+  </Target>
+
+  <Target Name="RecordPortalWebOutputs" AfterTargets="BuildPortalWeb" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(PortalWebDist)\portal.html')">
+    <ItemGroup>
+      <ProducedPortalWebOutput Include="$(PortalWebDist)\**\*" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(PortalWebOutputList)" Lines="@(ProducedPortalWebOutput->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- Replaces wwwroot whole, so assets from an earlier build do not linger. -->
+  <Target Name="CopyPortalWeb" AfterTargets="Build" Condition="Exists('$(PortalWebDist)\portal.html')">
+    <ItemGroup>
+      <PortalWebFile Include="$(PortalWebDist)\**\*" />
+    </ItemGroup>
+    <RemoveDir Directories="$(OutDir)wwwroot" Condition="Exists('$(OutDir)wwwroot')" />
+    <Copy SourceFiles="@(PortalWebFile)" DestinationFiles="@(PortalWebFile->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
+  <!-- AfterTargets runs even when Publish itself is skipped, hence IsPublishable here too. -->
+  <Target Name="CopyPortalWebToPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != '' And '$(IsPublishable)' != 'false'">
+    <Error Condition="'$(SkipWebBuild)' != 'true' And !Exists('$(PortalWebDist)\portal.html')"
+           Text="The portal page was not built at $(PortalWebDist). Refusing to publish the portal without it." />
+    <ItemGroup>
+      <PortalWebPublishFile Include="$(PortalWebDist)\**\*" />
+    </ItemGroup>
+    <RemoveDir Directories="$(PublishDir)wwwroot" Condition="Exists('$(PublishDir)wwwroot')" />
+    <Copy SourceFiles="@(PortalWebPublishFile)" DestinationFiles="@(PortalWebPublishFile->'$(PublishDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" Condition="'@(PortalWebPublishFile)' != ''" />
+  </Target>
+
+</Project>

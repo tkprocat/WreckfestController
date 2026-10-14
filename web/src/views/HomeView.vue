@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import StatusBadge from '@/components/StatusBadge.vue'
 import ContentSection from '@/components/ContentSection.vue'
+import GameText from '@/components/GameText.vue'
 import RecentRaces from '@/components/RecentRaces.vue'
 import TrackLink from '@/components/TrackLink.vue'
 import { computed } from 'vue'
@@ -10,16 +11,6 @@ import { formatFromNow, formatWhen } from '@/utils/format'
 
 const { overview, error, connectionUnavailable, loading, reload } = usePublicOverview()
 const title = computed(() => overview.value?.serverName || 'Wreckfest server')
-// Parse only game color markers. Text stays escaped by Vue interpolation.
-const titleParts = computed(() => {
-  const parts: { text: string; code: string | null }[] = []
-  let code: string | null = null
-  for (const part of title.value.split(/(\^[1-9])/g)) {
-    if (/^\^[1-9]$/.test(part)) code = part[1]!
-    else if (part) parts.push({ text: part, code })
-  }
-  return parts
-})
 const occupancy = computed(() => {
   const people = overview.value?.players
   if (!people) return ''
@@ -63,7 +54,7 @@ const statusLabel = computed(() =>
         <div class="hero-content">
           <div class="hero-topline">
             <StatusBadge live class="server-status" :tone="error || !overview.status.isRunning ? 'negative' : 'positive'">{{ statusLabel }}</StatusBadge>
-            <h1 id="server-title"><span v-for="(part, index) in titleParts" :key="index" :class="part.code ? 'game-color-' + part.code : undefined">{{ part.text }}</span></h1>
+            <h1 id="server-title"><GameText :text="title" /></h1>
           </div>
           <div class="current-race">
             <p v-if="error" class="stale-label">Last known · {{ connectionUnavailable ? 'connection unavailable' : 'updates paused' }}</p>
@@ -140,19 +131,6 @@ const statusLabel = computed(() =>
 
 <style scoped>
 .stale-label { margin: 0 0 12px; color: var(--text-secondary); font-size: var(--font-body); font-weight: 600; }
-.game-color-1 { color: #d63030; } .game-color-2 { color: #218739; }
-.game-color-3 { color: #c56a00; } .game-color-4 { color: #2355cf; }
-.game-color-5 { color: #16849b; } .game-color-6 { color: #a33cc1; }
-.game-color-7 { color: #fff; text-shadow: 0 1px 2px #222, 0 0 2px #222; }
-.game-color-8 { color: #767676; }
-.game-color-9 { color: #000; text-shadow: 0 1px 2px #fff, 0 0 2px #fff; }
-:global([data-theme='dark'] .game-color-1) { color: #ff7373; }
-:global([data-theme='dark'] .game-color-2) { color: #70d78b; }
-:global([data-theme='dark'] .game-color-3) { color: #ffaf50; }
-:global([data-theme='dark'] .game-color-4) { color: #729bff; }
-:global([data-theme='dark'] .game-color-5) { color: #69d3eb; }
-:global([data-theme='dark'] .game-color-6) { color: #dc8cf4; }
-:global([data-theme='dark'] .game-color-8) { color: #a5a5a5; }
 
 .spectator { color: var(--page-text); font-size: var(--font-body); line-height: var(--line-reading); }
 .notice { margin-bottom: 32px; }
