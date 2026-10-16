@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NConfigProvider, NDialogProvider, NMessageProvider } from 'naive-ui'
+import { NButton, NConfigProvider, NDialogProvider, NMessageProvider, enUS, type NLocale } from 'naive-ui'
 import { useAuthStore } from '@/stores/auth'
 import { useAppearance } from '@/composables/useAppearance'
 import { useAssistantStatus } from '@/composables/useAssistantStatus'
 
 const { preference, theme, overrides, setPreference } = useAppearance()
+
+// Naive UI's stock "Please Input" / "Please Select" says nothing a field's label doesn't:
+// a field without a placeholder of its own is left blank.
+const locale: NLocale = {
+  ...enUS,
+  Input: { ...enUS.Input, placeholder: '' },
+  InputNumber: { ...enUS.InputNumber, placeholder: '' },
+  Select: { ...enUS.Select, placeholder: '' },
+}
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -31,7 +40,7 @@ async function signOut() {
 </script>
 
 <template>
-  <NConfigProvider :theme="theme" :theme-overrides="overrides">
+  <NConfigProvider :theme="theme" :theme-overrides="overrides" :locale="locale">
     <NMessageProvider to="#messages">
       <NDialogProvider>
         <!-- Focused by hand: with index.html's <base>, "#main-content" would load the site root. -->
@@ -42,7 +51,7 @@ async function signOut() {
             <RouterLink :to="{ name: 'tracks' }">Tracks</RouterLink>
             <RouterLink v-if="assistant.enabled.value" :to="{ name: 'assistant' }">AI</RouterLink>
             <label class="appearance-control">
-              <span>Theme</span>
+              <span class="appearance-label">Theme</span>
               <select :value="preference" @change="setPreference(($event.target as HTMLSelectElement).value)">
                 <option value="system">System</option>
                 <option value="light">Light</option>
@@ -51,7 +60,7 @@ async function signOut() {
             </label>
             <template v-if="auth.authenticated">
               <RouterLink :to="{ name: 'admin-dashboard' }">Admin</RouterLink>
-              <RouterLink :to="{ name: 'admin-profile' }" title="Your profile">
+              <RouterLink :to="{ name: 'admin-profile' }" title="Your profile" class="app-user-name">
                 {{ auth.user?.displayName ?? auth.user?.userName }}
               </RouterLink>
               <span v-if="signOutFailed" class="app-error">Sign-out failed. Try again.</span>

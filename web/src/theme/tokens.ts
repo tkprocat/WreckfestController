@@ -69,6 +69,9 @@ export function themeOverrides(mode: ColorMode): GlobalThemeOverrides {
       fontSizeSmall: design.control, fontSizeMedium: design.control, fontSizeLarge: design.body,
       thPaddingMedium: '16px', tdPaddingMedium: '16px',
     },
+    // Room under a field's help or error, so a wrapped one never touches the next label.
+    // Naive UI pads the feedback only when there is some, so empty fields stay compact.
+    Form: { feedbackPadding: '4px 0 12px 2px' },
   }
 }
 

@@ -10,7 +10,6 @@ import {
   NInput,
   NInputNumber,
   NSelect,
-  NSpace,
   NSwitch,
   NTabPane,
   NTabs,
@@ -229,15 +228,15 @@ onMounted(() => void load())
                   v-select-focus="{ 'aria-label': def.label }"
                   :input-props="{ 'aria-label': def.label }"
                 />
-                <NSpace v-else align="center">
+                <div v-else class="switch-row">
                   <NSwitch
                     :value="flag(def.field)"
                     :disabled="locked(def.field)"
                     :aria-label="def.label"
                     @update:value="(on: boolean) => setFlag(def.field, on)"
                   />
-                  <span>{{ flag(def.field) ? def.on : '' }}</span>
-                </NSpace>
+                  <span v-if="flag(def.field) && def.on" class="switch-state">{{ def.on }}</span>
+                </div>
               </NFormItem>
             </div>
           </NCard>
@@ -267,6 +266,19 @@ onMounted(() => void load())
 <style scoped>
 .gap {
   margin-bottom: var(--space-6);
+}
+
+/* As tall as the inputs beside it, so a switch lines up with its row's other controls. */
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-height-medium);
+}
+.switch-state {
+  color: var(--text-muted);
+  font-size: var(--font-meta);
+  line-height: 1.3;
 }
 
 .preview {

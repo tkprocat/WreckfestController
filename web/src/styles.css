@@ -93,6 +93,10 @@ a { color: var(--accent); }
   .app-header { padding: var(--space-4); gap: var(--space-3); }
   .app-user { width: 100%; gap: var(--space-3); font-size: var(--font-meta); }
   .appearance-control { margin-right: auto; }
+  /* One row on a phone: the select keeps its name from the hidden label, and the
+     signed-in name is on the Profile page, one tap away in the admin menu. */
+  .appearance-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .app-user-name { display: none; }
 }
 
 .app-error { color: var(--error-color); font-size: 0.875em; }
