@@ -125,9 +125,7 @@ const columns: DataTableColumns<PlayerSummary> = [
 
 <template>
   <section>
-    <PageHeader title="Dashboard" description="Your server at a glance.">
-      <template #actions><RouterLink class="control-link" to="/admin/server">Open server control →</RouterLink></template>
-    </PageHeader>
+    <PageHeader title="Dashboard" description="Your server at a glance." />
     <NAlert v-if="statusError" type="warning" :title="statusError" class="gap">Server status is unknown until the controller answers.</NAlert>
     <NAlert v-if="playersError" type="warning" :title="playersError" class="gap">
       {{ playersLoaded ? 'Showing the last confirmed roster; it may be out of date.' : 'The player count is unknown.' }}
@@ -188,8 +186,6 @@ const columns: DataTableColumns<PlayerSummary> = [
 .roster-heading h2 { margin: 3px 0 0; font-size: var(--font-section); }
 .roster-count { color: var(--text-muted); font-size: var(--font-meta); }
 .table-hint { display: none; margin: 0 0 8px; color: var(--text-muted); font-size: var(--font-meta); }
-.control-link { align-self: center; color: var(--accent); font-weight: 600; text-decoration: none; }
-.control-link:hover { text-decoration: underline; }
 :deep(.player-identity) { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 :deep(.vehicle-name) { overflow-wrap: anywhere; }
 @media (max-width: 600px) { .table-hint { display: block; } .metrics { grid-template-columns: 1fr 1fr; } .metric-card:first-child { grid-column: 1 / -1; } }
