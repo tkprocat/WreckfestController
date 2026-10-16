@@ -192,5 +192,5 @@ const columns: DataTableColumns<PlayerSummary> = [
 .control-link:hover { text-decoration: underline; }
 :deep(.player-identity) { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 :deep(.vehicle-name) { overflow-wrap: anywhere; }
-@media (max-width: 600px) { .table-hint { display: block; } .metrics { grid-template-columns: 1fr 1fr; } .metric-card:last-child { grid-column: 1 / -1; } }
+@media (max-width: 600px) { .table-hint { display: block; } .metrics { grid-template-columns: 1fr 1fr; } .metric-card:first-child { grid-column: 1 / -1; } }
 </style>

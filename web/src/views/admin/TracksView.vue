@@ -45,6 +45,8 @@ const { items: tracks, loading, loaded, error } = list
  * the editors. Loaded beside the tracks; without it the page works, just without pictures.
  */
 const images = ref<CatalogueImage[]>([])
+/** Keeps the names lined up under the thumbnails, but only once some track has one. */
+const anyPicture = computed(() => images.value.length > 0)
 async function loadImages() {
   try {
     const { data } = await api.GET('/api/catalogue/images')
@@ -305,7 +307,7 @@ const variantColumns = (track: Track): DataTableColumns<Variant> => [
   {
     title: 'Actions',
     key: 'actions',
-    width: 200,
+    width: 250,
     render: (v) =>
       h(NSpace, { size: 'small', wrap: false }, () => [
         h(NButton, { size: 'small', disabled: disabled(), 'aria-label': 'Edit ' + v.name, onClick: () => void variantEditor.value?.start(track, v) }, () => 'Edit'),
@@ -340,7 +342,7 @@ const columns: DataTableColumns<Row> = [
         // Only when there is a picture to show: no request, and no broken image, for the rest.
         hasPicture(own)
           ? h('img', { class: 'thumb', src: trackImageUrl(t.key, 'Small', imagesVersion(own)), alt: '', loading: 'lazy' })
-          : h('span', { class: 'thumb' }),
+          : anyPicture.value ? h('span', { class: 'thumb' }) : null,
         h('div', { class: 'row-identity' }, [
           h('span', { class: 'row-name' }, [t.name, t.isHidden ? h(NTag, { size: 'small', class: 'flag' }, () => 'Hidden') : null]),
           h('code', { class: 'row-id' }, t.key),
@@ -354,7 +356,7 @@ const columns: DataTableColumns<Row> = [
   {
     title: 'Actions',
     key: 'actions',
-    width: 215,
+    width: 280,
     render: (t) =>
       h(NSpace, { size: 'small', wrap: false }, () => [
         h(NButton, { size: 'small', disabled: disabled(), 'aria-label': 'Edit ' + t.name, onClick: () => void trackEditor.value?.start(t) }, () => 'Edit'),
@@ -397,7 +399,7 @@ onMounted(reloadAll)
     </PageHeader>
     <NCard>
       <ResourceTable
-        :min-table-width="1080"
+        :min-table-width="960"
         :rows="rows"
         :total-rows="visibleTracks.length"
         :empty-text="emptyText"

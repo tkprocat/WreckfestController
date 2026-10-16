@@ -68,6 +68,8 @@ function resetFilters() {
       </div>
       <div v-if="$slots.filters" class="toolbar-filters"><slot name="filters" /></div>
     </div>
+    <!-- A phone shows the first columns only: say the rest, and the row actions, are a scroll away. -->
+    <p v-if="minTableWidth" class="table-hint">Scroll the table sideways for more columns and actions.</p>
     <NDataTable
       :columns="columns"
       :data="shown"
@@ -109,8 +111,10 @@ function resetFilters() {
   overflow-wrap: anywhere;
 }
 .toolbar-filters { flex-basis: 100%; }
+.table-hint { display: none; margin: 0 0 8px; color: var(--text-muted); font-size: var(--font-meta); }
 @media (max-width: 600px) {
   .search { flex-basis: 100%; max-width: none; }
   .toolbar-status { justify-content: space-between; }
+  .table-hint { display: block; }
 }
 </style>

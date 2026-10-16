@@ -190,7 +190,7 @@ async function remove(row: Summary) {
 
 const columns: DataTableColumns<Summary> = [
   { title: 'Name', key: 'name', sorter: (a, b) => a.name.localeCompare(b.name) },
-  { title: 'Tracks', key: 'trackCount', width: 90, sorter: (a, b) => a.trackCount - b.trackCount },
+  { title: 'Tracks', key: 'trackCount', width: 110, sorter: (a, b) => a.trackCount - b.trackCount },
   { title: 'Updated', key: 'updatedAt', render: (c) => formatWhen(c.updatedAt) },
   {
     title: 'Actions',
