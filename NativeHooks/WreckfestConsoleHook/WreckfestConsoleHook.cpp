@@ -63,10 +63,11 @@ constexpr size_t MaxConsoleLineLength = 1024;
 
 #define NLSTR "\n"
 
-// Set to the target build's SizeOfImage to hard-pin this hook to one Wreckfest
-// build. 0 means "log the value but do not enforce" - run once, read the
-// reported size from the hook log, then pin it here.
-constexpr DWORD ExpectedImageSize = 0;
+// The SizeOfImage of the Wreckfest build every RVA here was confirmed against
+// (1.308438, see docs/finding-rvas.md). Another build refuses to install rather
+// than calling into the wrong code. It is a coarse check - a patch could keep the
+// size - but it catches an ordinary game update. 0 logs the size without enforcing.
+constexpr DWORD ExpectedImageSize = 0x0B43A000;
 
 enum class LayoutStatus : DWORD
 {

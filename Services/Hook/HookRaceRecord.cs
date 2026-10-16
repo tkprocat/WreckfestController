@@ -11,7 +11,7 @@ namespace WreckfestController.Services.Hook;
 /// <code>
 /// \x12RACE  version eventCounter trackId laps gameMode startedUnixMs endedUnixMs carCount
 ///           { slot playerStatus playerFlags steamId name position lap carFlags
-///             timeMs bestLapMs finishMs classIndex rating cupPoints vehicleKey vehicleName }
+///             timeMs bestLapMs bestLapSetAtMs classIndex rating cupPoints vehicleKey vehicleName }
 /// \x13
 /// </code>
 /// The hook sends raw values only, and the interpretation lives here, where it is unit
@@ -144,7 +144,7 @@ public sealed record HookRaceCar(
     uint CarFlags,
     int? TimeMs,
     int? BestLapMs,
-    int? FinishMs,
+    int? BestLapSetAtMs,
     int ClassIndex,
     int Rating,
     int CupPoints,
@@ -188,7 +188,7 @@ public sealed record HookRaceCar(
             !uint.TryParse(f[7], NumberStyles.None, CultureInfo.InvariantCulture, out var carFlags) ||
             !HookRaceRecord.TryInt(f[8], out var timeMs) ||
             !HookRaceRecord.TryInt(f[9], out var bestLapMs) ||
-            !HookRaceRecord.TryInt(f[10], out var finishMs) ||
+            !HookRaceRecord.TryInt(f[10], out var bestLapSetAtMs) ||
             !HookRaceRecord.TryInt(f[11], out var classIndex) ||
             !HookRaceRecord.TryInt(f[12], out var rating) ||
             !HookRaceRecord.TryInt(f[13], out var cupPoints))
@@ -217,7 +217,7 @@ public sealed record HookRaceCar(
             carFlags,
             Positive(timeMs),
             Positive(bestLapMs),
-            Positive(finishMs),
+            Positive(bestLapSetAtMs),
             classIndex,
             rating,
             cupPoints,

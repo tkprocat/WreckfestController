@@ -117,7 +117,7 @@ public sealed class RaceResultStore
 
         static IEnumerable<(int, string, int?, int?, int?, int?)> Results(IEnumerable<RaceEntry> entries) =>
             entries
-                .Select(e => (e.Slot, e.Name, e.Position, e.TimeMs, e.BestLapMs, e.FinishMs))
+                .Select(e => (e.Slot, e.Name, e.Position, e.TimeMs, e.BestLapMs, e.BestLapSetAtMs))
                 .OrderBy(e => e.Slot)
                 .ThenBy(e => e.Name, StringComparer.Ordinal);
 
@@ -194,7 +194,7 @@ public sealed class RaceResultStore
         Slot = car.Slot,
         Lap = car.Lap,
         CarFlags = car.CarFlags,
-        FinishMs = car.FinishMs,
+        BestLapSetAtMs = car.BestLapSetAtMs,
         PlayerStatus = car.PlayerStatus,
         PlayerFlags = car.PlayerFlags,
     };

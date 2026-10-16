@@ -45,6 +45,7 @@ public sealed record ServerEvent(int Id, string Name, IReadOnlyList<int> Args)
 /// <remarks>
 /// Wire format, from the emitter at RVA 0x00391760:
 ///   0x12, (0x20 + eventId), [argCount bytes of (arg + 0x20)], name..., 0x13, '\n'
+/// or, for an event without a name, the same with no name and no 0x13.
 /// The per-event argument count comes from a table the emitter indexes at
 /// (eventId * 6); it is read once and cached, because arguments sit between the
 /// type byte and the name.
@@ -62,6 +63,7 @@ public class ServerEventReader
     private const int ArgTableStride = 6;
     private const byte EntryMarker = 0x12;
     private const byte EntryTerminator = 0x13;
+    private const byte EntryLineEnd = 0x0A;
     private const int EventIdBias = 0x20;
 
     // The hook caps a single read; larger spans are fetched in chunks.
@@ -269,8 +271,7 @@ public class ServerEventReader
 
             var argCount = argCounts is not null && id < argCounts.Length ? argCounts[id] : 0;
             var nameStart = i + 2 + argCount;
-            var end = nameStart > span.Length ? -1 : Array.IndexOf(span, EntryTerminator, nameStart);
-            if (end < 0)
+            if (nameStart >= span.Length)
             {
                 // Truncated tail: the rest arrives on the next poll, which reads it again.
                 unfinishedAt = i;
@@ -281,6 +282,25 @@ public class ServerEventReader
             for (var a = 0; a < argCount; a++)
             {
                 args[a] = span[i + 2 + a] - 0x20;
+            }
+
+            // The emitter writes a name and its terminator only when it was given a name,
+            // so a nameless entry (rotation on/off) ends in a line feed right after its
+            // arguments. Searching for a terminator there would run into the next entry
+            // and swallow it. A named entry always has the terminator before its line
+            // feed, even when the name is empty.
+            if (span[nameStart] == EntryLineEnd)
+            {
+                events.Add(new ServerEvent(id, "", args));
+                i = nameStart;
+                continue;
+            }
+
+            var end = Array.IndexOf(span, EntryTerminator, nameStart);
+            if (end < 0)
+            {
+                unfinishedAt = i;
+                break;
             }
 
             // UTF-8, like the same names from the player snapshot, chat and race records:

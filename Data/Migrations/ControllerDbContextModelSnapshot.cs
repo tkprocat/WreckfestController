@@ -801,6 +801,9 @@ namespace WreckfestController.Data.Migrations
                     b.Property<int?>("BestLapMs")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int?>("BestLapSetAtMs")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("CarFlags")
                         .HasColumnType("INTEGER");
 
@@ -808,9 +811,6 @@ namespace WreckfestController.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<int>("CupPointsTotal")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("FinishMs")
                         .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsBot")

@@ -14,10 +14,10 @@ public class HookRaceRecordTests
 
     private static string Car(
         int slot, int playerFlags, ulong steamId, string name, int position, uint carFlags,
-        int timeMs, int bestLapMs, int finishMs, int classIndex, int rating, int cupPoints,
+        int timeMs, int bestLapMs, int bestLapSetAtMs, int classIndex, int rating, int cupPoints,
         string vehicleKey, string vehicleName, int playerStatus = 4, int lap = 2) =>
         string.Join(S, slot, playerStatus, playerFlags, steamId, name, position, lap, carFlags,
-            timeMs, bestLapMs, finishMs, classIndex, rating, cupPoints, vehicleKey, vehicleName);
+            timeMs, bestLapMs, bestLapSetAtMs, classIndex, rating, cupPoints, vehicleKey, vehicleName);
 
     private static readonly string Human = Car(10, 0x32, HumanSteamId, "Driver", 0, 0x41,
         26418, 26418, 26418, 0, 346, 60, "VEHICLE_NAME_2244970999_13", "Sunrise Super", playerStatus: 2);
@@ -125,7 +125,7 @@ public class HookRaceRecordTests
         Assert.Equal(RaceOutcome.Projected, car.Outcome);
         Assert.Equal(2, car.Position);
         Assert.Equal(26972, car.TimeMs);
-        Assert.Null(car.FinishMs);
+        Assert.Null(car.BestLapSetAtMs);
     }
 
     [Fact]

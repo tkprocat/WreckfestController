@@ -68,6 +68,72 @@ public class ServerEventReaderTests
     }
 
     [Fact]
+    public void Parse_ANamelessEntryDoesNotSwallowTheNextOne()
+    {
+        // Rotation on (0x38) has no name: the emitter writes neither name nor 0x13.
+        var span = Hex("12380a" + "1227" + Convert.ToHexString("Alice"u8.ToArray()) + "130a");
+
+        var events = ServerEventReader.Parse(span, null, out var unfinishedAt);
+
+        Assert.Equal(2, events.Count);
+        Assert.Equal(ServerEvent.RotationOn, events[0].Id);
+        Assert.Equal("", events[0].Name);
+        Assert.Equal(ServerEvent.PlayerHasJoined, events[1].Id);
+        Assert.Equal("Alice", events[1].Name);
+        Assert.Equal(span.Length, unfinishedAt);
+    }
+
+    [Fact]
+    public void Parse_ReadsANamelessEntryWithAnArgument()
+    {
+        var counts = new short[0x21];
+        counts[0x1A] = 1;
+        var span = Hex("123A250a" + "1227" + Convert.ToHexString("Bob"u8.ToArray()) + "130a");
+
+        var events = ServerEventReader.Parse(span, counts);
+
+        Assert.Equal(2, events.Count);
+        Assert.Equal(5, Assert.Single(events[0].Args));
+        Assert.Equal("Bob", events[1].Name);
+    }
+
+    [Fact]
+    public void Parse_ANamelessEntryAtTheEndIsComplete()
+    {
+        var span = Hex("12390a");
+
+        var e = Assert.Single(ServerEventReader.Parse(span, null, out var unfinishedAt));
+
+        Assert.Equal(ServerEvent.RotationOff, e.Id);
+        Assert.Equal(span.Length, unfinishedAt);
+    }
+
+    [Fact]
+    public void Parse_AnEmptyNameIsStillANamedEntry()
+    {
+        var span = Hex("1227130a" + "1227" + Convert.ToHexString("Bob"u8.ToArray()) + "130a");
+
+        var events = ServerEventReader.Parse(span, null);
+
+        Assert.Equal(2, events.Count);
+        Assert.Equal("", events[0].Name);
+        Assert.Equal("Bob", events[1].Name);
+    }
+
+    [Fact]
+    public void Parse_AnEntryCutOffAfterItsArgumentsIsUnfinished()
+    {
+        var counts = new short[0x21];
+        counts[0x1A] = 1;
+        var span = Hex("1227" + Convert.ToHexString("Bob"u8.ToArray()) + "130a" + "123A25");
+
+        var e = Assert.Single(ServerEventReader.Parse(span, counts, out var unfinishedAt));
+
+        Assert.Equal("Bob", e.Name);
+        Assert.Equal(span.Length - 3, unfinishedAt);
+    }
+
+    [Fact]
     public void Parse_IgnoresGarbageRatherThanInventingEvents()
     {
         // No marker, and a marker with an out-of-range id.
