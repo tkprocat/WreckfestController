@@ -17,6 +17,10 @@
   --page-background: #f4f5f7;
   --page-text: #202631;
   color-scheme: light;
+  /* Always a scrollbar, so a page that fits the window is as wide as one that scrolls and
+     nothing shifts between them. Not scrollbar-gutter: stable - a Naive UI dialog hides the
+     scrollbar and pads its width back, which on a reserved gutter would narrow the page. */
+  overflow-y: scroll;
 }
 
 /* index.html sets data-theme before the first paint; without it, follow the OS. */
