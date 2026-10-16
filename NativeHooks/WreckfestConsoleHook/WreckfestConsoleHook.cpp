@@ -1792,7 +1792,7 @@ DWORD WINAPI InputPipeThread(void*)
 // Header, in order: version, eventCounter, trackId, laps, gameMode, startedUnixMs
 // (0 when the start was not seen), endedUnixMs, carCount.
 // Each car, in order: slot, playerStatus, playerFlags, steamId, name, position,
-// lap, carFlags, timeMs, bestLapMs, finishMs, classIndex, rating, cupPoints,
+// lap, carFlags, timeMs, bestLapMs, bestLapSetAtMs, classIndex, rating, cupPoints,
 // vehicleKey, vehicleName.
 //
 // Like CHAT, every field is something observed in memory. What counts as a bot, a
