@@ -229,7 +229,7 @@ a live `__hook_players` listed the same 11 names in the same order, bots include
 | `+0x24` | position, 0-based byte; `0xFF` unplaced | live, 4 races |
 | `+0x25` | current lap (2 after one completed lap) | live |
 | `+0x40` | best lap, ms | live |
-| `+0x44` | finish time, ms; 0 for a projected bot | live |
+| `+0x44` | race time when the best lap was set, ms; 0 for a projected bot | stored races: equals `+0x90` only when the best lap was the last (a 3-lap 260,279 ms race read 80,660, its lap-1 best); first read as finish time from 1-lap races |
 | `+0x50` | class index: 0 A, 1 B, 2 C | live, all rows |
 | `+0x54` | performance rating | live, all rows |
 | `+0x68` | vehicle object pointer | live |
@@ -384,7 +384,8 @@ through otherwise, rather than trying to enumerate every case.
    - Event loop globals: find the getter, read its bytes, decode the
      displacements as in step 3.
 4. Confirm each one by experiment before trusting it.
-5. Update `ExpectedImageSize` in the hook if you pin builds.
+5. Update `ExpectedImageSize` in the hook. It is pinned, so until then the hook logs
+   `aborted: offsets do not match this Wreckfest build` and installs nothing.
 
 ## Known traps
 

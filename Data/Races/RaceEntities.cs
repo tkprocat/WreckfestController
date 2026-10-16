@@ -101,7 +101,11 @@ public class RaceEntry
 
     public long CarFlags { get; set; }
 
-    public int? FinishMs { get; set; }
+    /// <summary>
+    /// Race time when the car set its best lap (car <c>+0x44</c>). Stored as FinishMs
+    /// until it turned out to equal the race time only when the best lap was the last.
+    /// </summary>
+    public int? BestLapSetAtMs { get; set; }
 
     public int PlayerStatus { get; set; }
 

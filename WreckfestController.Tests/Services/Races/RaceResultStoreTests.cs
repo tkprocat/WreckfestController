@@ -79,7 +79,7 @@ public sealed class RaceResultStoreTests : IDisposable
         Assert.Equal(30, winner.CupPointsTotal);
         Assert.Equal(10, winner.Slot);
         Assert.Equal(0x41, winner.CarFlags);
-        Assert.Equal(21292, winner.FinishMs);
+        Assert.Equal(21292, winner.BestLapSetAtMs);
     }
 
     [Fact]
