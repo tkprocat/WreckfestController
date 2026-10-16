@@ -59,7 +59,7 @@ async function submit() {
       </NAlert>
       <NForm v-else label-placement="top" :disabled="busy" @submit.prevent="submit">
         <NFormItem label="Username or email">
-          <NInput v-model:value="login" autocomplete="username" :input-props="{ name: 'login' }" />
+          <NInput v-model:value="login" autocomplete="username" :input-props="{ name: 'login', 'aria-label': 'Username or email' }" />
         </NFormItem>
         <NFormItem label="Password">
           <NInput
@@ -67,7 +67,7 @@ async function submit() {
             type="password"
             show-password-on="click"
             autocomplete="current-password"
-            :input-props="{ name: 'password' }"
+            :input-props="{ name: 'password', 'aria-label': 'Password' }"
           />
         </NFormItem>
         <NCheckbox v-model:checked="remember">Keep me signed in</NCheckbox>
