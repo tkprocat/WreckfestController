@@ -7,16 +7,19 @@ namespace WreckfestController.Tests.Api;
 /// <summary>
 /// Behaves like the SPA's fetch wrapper: keeps cookies between requests and copies the
 /// <c>XSRF-TOKEN</c> cookie into the <c>X-XSRF-TOKEN</c> header on unsafe methods.
+/// With a portal prefix it also stands in for the portal: the browser asks for
+/// <c>/tvtp2/api/...</c>, and the controller gets <c>/api/...</c> with
+/// <c>X-Forwarded-Prefix: /tvtp2</c>.
 /// </summary>
 public sealed class BrowserClient : IDisposable
 {
     private readonly Handler _handler;
     private readonly string _pathBase;
 
-    /// <param name="pathBase">The host's Web:PathBase, which the sign-in requests go under.</param>
+    /// <param name="pathBase">The prefix the site has on the portal, which the sign-in requests go under.</param>
     public BrowserClient(HttpMessageHandler server, Uri baseAddress, string pathBase = "")
     {
-        _handler = new Handler { InnerHandler = server };
+        _handler = new Handler { InnerHandler = pathBase.Length == 0 ? server : new Portal(pathBase) { InnerHandler = server } };
         _pathBase = pathBase;
         Http = new HttpClient(_handler) { BaseAddress = baseAddress };
     }
@@ -61,6 +64,24 @@ public sealed class BrowserClient : IDisposable
     }
 
     public void Dispose() => Http.Dispose();
+
+    /// <summary>What the portal does to a request on its way to the controller.</summary>
+    private sealed class Portal(string prefix) : DelegatingHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri!;
+            if (uri.AbsolutePath.StartsWith(prefix + "/", StringComparison.Ordinal))
+            {
+                request.RequestUri = new UriBuilder(uri) { Path = uri.AbsolutePath[prefix.Length..] }.Uri;
+                request.Headers.Add("X-Forwarded-Prefix", prefix);
+            }
+
+            return base.SendAsync(request, cancellationToken);
+        }
+    }
 
     private sealed class Handler : DelegatingHandler
     {

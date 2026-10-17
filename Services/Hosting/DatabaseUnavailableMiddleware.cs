@@ -7,9 +7,7 @@ namespace WreckfestController.Services.Hosting;
 /// Recovery mode for the API. While the database is unavailable, the only API answer is
 /// the anonymous <c>/api/auth/state</c>, reporting <c>degraded: true</c> so the web UI
 /// can say why sign-in is unavailable. Every other API and hub request fails closed with
-/// 503. The web app's own pages still load: the files are served before this runs,
-/// and a page route gets index.html from here, before authentication, which checks a
-/// signed-in browser's cookie against the database.
+/// 503. The web app itself comes from the portal, so its pages still load and can say so.
 /// </summary>
 public sealed class DatabaseUnavailableMiddleware
 {
@@ -17,13 +15,11 @@ public sealed class DatabaseUnavailableMiddleware
 
     private readonly RequestDelegate _next;
     private readonly DatabaseState _state;
-    private readonly WebApp _web;
 
-    public DatabaseUnavailableMiddleware(RequestDelegate next, DatabaseState state, WebApp web)
+    public DatabaseUnavailableMiddleware(RequestDelegate next, DatabaseState state)
     {
         _next = next;
         _state = state;
-        _web = web;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -31,11 +27,6 @@ public sealed class DatabaseUnavailableMiddleware
         if (_state.IsReady)
         {
             await _next(context);
-            return;
-        }
-
-        if (WebApp.IsAppPath(context.Request.Path) && await _web.TryServeIndexAsync(context))
-        {
             return;
         }
 

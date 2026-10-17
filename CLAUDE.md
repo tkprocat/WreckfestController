@@ -1,6 +1,7 @@
 # WreckfestController
 
-.NET 10 WPF desktop app + hosted ASP.NET Core API for controlling a Wreckfest dedicated server.
+.NET 10 WPF desktop app + hosted ASP.NET Core API for controlling a Wreckfest dedicated server,
+and `Portal/WreckfestPortal`, the web site in front of one or more controllers.
 
 See `docs/finding-rvas.md` before touching any hardcoded game offset.
 
@@ -26,26 +27,34 @@ requires Visual Studio with the Desktop development with C++ workload.
 MinHook is vendored under `NativeHooks/WreckfestConsoleHook/third_party/minhook`
 so the build needs no network.
 
-`dotnet build` also builds the Vue web app in `web/` (`BuildWebApp`): `npm ci` when the
-lockfile changes, `npm run build` when a source changes, then `web/dist` is copied to
-`wwwroot` next to the exe, where `ApiServer` serves it. It needs Node.js on PATH;
-`-p:SkipWebBuild=true` skips it for C#-only work. `web/` uses Naive UI, not PrimeVue
-(PrimeVue 5 left MIT): check a package's license before adding it.
+The controller serves only the API (and the hub); it has no web files. Building the portal
+builds the Vue web app in `web/` (`BuildWebApp` in `Portal/WreckfestPortal/WreckfestPortal.csproj`):
+`npm ci` when the lockfile changes, `npm run build` when a source changes, then `web/dist`
+is copied to `app` next to the portal's exe. It needs Node.js on PATH; `-p:SkipWebBuild=true`
+skips it for C#-only work. `web/` uses Naive UI, not PrimeVue (PrimeVue 5 left MIT): check
+a package's license before adding it.
 
 `npm run build` lints first with Oxlint (`web/.oxlintrc.json`: correctness rules as errors,
-plus the Vue and Vitest plugins), so a lint error fails `dotnet build` like a type error.
+plus the Vue and Vitest plugins), so a lint error fails the portal's `dotnet build` like a
+type error.
 `npm run lint` runs it alone. In Git Bash Oxlint prints nothing (the exit code is still
 right); run it from PowerShell to see the findings.
 
-`Portal/WreckfestPortal` is the optional front page for several controllers on one domain
-(INSTALL step 7): a small `net10.0` ASP.NET Core app with its own tests in
-`Portal/WreckfestPortal.Tests`, which `dotnet test` runs with the rest. It reads only each
-controller's `GET /api/public/overview`, through its own copy of the fields it shows
-(`ServerStatus.cs`), so a change there needs no portal change unless a shown field is renamed.
-Its page is a second entry of `web/` (`portal.html`, `src/portal/`), built by
-`npm run build:portal` into `web/dist-portal` and copied to the portal's `wwwroot`.
-Both csproj files import `web/WebApp.targets` (the sources list and the one shared `npm ci`).
-A solution build runs them side by side, so every npm step goes through
+`Portal/WreckfestPortal` is the web site (INSTALL step 7): a small `net10.0` ASP.NET Core
+app with its own tests in `Portal/WreckfestPortal.Tests`, which `dotnet test` runs with the
+rest. Each server in its settings gets a site under `/{Id}/`: the portal serves the web app
+there, writing `<base href="/{Id}/">` into index.html, and forwards `/{Id}/api`, `/hubs` and
+`/openapi` to that controller with YARP (`ControllerSite.cs`), the prefix stripped and sent as
+`X-Forwarded-Prefix`. The controller turns that into its path base, from `Api:TrustedProxies`
+only, so its cookies are scoped per server. Signing in stays between the browser and each
+controller: the portal holds no account or key. Its front page polls each controller's
+`GET /api/public/overview`, through its own copy of the fields it shows (`ServerStatus.cs`),
+so a change there needs no portal change unless a shown field is renamed. That page is a
+second entry of `web/` (`portal.html`, `src/portal/`), built by `npm run build:portal` into
+`web/dist-portal` and copied to the portal's `wwwroot`. The portal csproj imports
+`web/WebApp.targets` (the sources list and the shared `npm ci`). A solution build can
+build the portal twice at once (directly, and through its test project's own reference),
+so every npm step goes through
 `web/scripts/web-lock.mjs`, which holds a named pipe (one per web folder) while it runs: two
 `npm ci` at once fail with EPERM. Windows releases the pipe when the process ends, so a killed
 build never leaves a stale lock. A build that waits says "Waiting for another web build".

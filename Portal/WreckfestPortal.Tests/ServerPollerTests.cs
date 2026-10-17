@@ -21,8 +21,8 @@ public sealed class ServerPollerTests
             TimeoutSeconds = 1,
             Servers =
             [
-                new PortalServer { Id = "vanilla", Name = "Vanilla", Link = "/vanilla/", ApiUrl = Vanilla },
-                new PortalServer { Id = "tvtp2", Name = "TVTP2", Description = "Mod tracks", Link = "/tvtp2/", ApiUrl = Tvtp2 },
+                new PortalServer { Id = "vanilla", Name = "Vanilla", ApiUrl = Vanilla },
+                new PortalServer { Id = "tvtp2", Name = "TVTP2", Description = "Mod tracks", ApiUrl = Tvtp2 },
             ],
         }),
         new FakeHttpClientFactory(_controllers),
@@ -63,7 +63,7 @@ public sealed class ServerPollerTests
     }
 
     [Fact]
-    public async Task ThePathBase_IsKept_AndATrailingSlashIsNotDoubled()
+    public async Task APathInTheAddress_IsKept_AndATrailingSlashIsNotDoubled()
     {
         _controllers.Answer(Vanilla, FakeController.Overview());
         _controllers.Answer(Tvtp2, FakeController.Overview());

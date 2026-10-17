@@ -89,22 +89,23 @@ Requirements:
 - .NET 10 SDK
 - Visual Studio 2022 or later with the **Desktop development with C++** workload, for
   the hook (`NativeHooks/WreckfestConsoleHook`)
-- Node.js LTS, for the web app in `web/`
+- Node.js LTS, for the web app in `web/` (built with the portal)
 
 ```bash
 dotnet build WreckfestController.csproj -c Release
 dotnet test
 ```
 
-One `dotnet build` builds everything:
+`dotnet build WreckfestController.csproj` builds the controller and **the C++ hook**. The
+build finds Visual Studio's MSBuild itself and fails if the hook cannot be built. It skips
+the hook when the DLL is newer than its sources. MinHook is vendored, so no download is
+needed.
 
-- **The C++ hook.** The build finds Visual Studio's MSBuild itself and fails if the hook
-  cannot be built. It skips the hook when the DLL is newer than its sources. MinHook is
-  vendored, so no download is needed.
-- **The web app.** It runs `npm ci` when the lockfile changes and `npm run build` when a
-  source changes, then copies the result to `wwwroot` next to the exe.
-  `-p:SkipWebBuild=true` skips this for C#-only work; the controller then serves the web
-  app from the last build, or only the API if there is none.
+The controller serves only the API. The web site is **WreckfestPortal**
+(`Portal/WreckfestPortal`), and building it builds the web app: `npm ci` when the lockfile
+changes and `npm run build` / `npm run build:portal` when a source changes, copied to `app`
+and `wwwroot` next to the portal's exe. `-p:SkipWebBuild=true` skips this for C#-only
+work.
 
 To publish a single-file build:
 
@@ -112,8 +113,8 @@ To publish a single-file build:
 dotnet publish WreckfestController.csproj -c Release
 ```
 
-Copy everything in the publish folder: the exe, `appsettings.json`, the hook DLL and
-`wwwroot`.
+Copy everything in the publish folder: the exe, `appsettings.json` and the hook DLL. The
+portal is published on its own: see [INSTALL.md](INSTALL.md#4-set-up-the-web-site).
 
 ### Web app
 

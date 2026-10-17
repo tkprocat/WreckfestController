@@ -1,4 +1,4 @@
-using Microsoft.Extensions.FileProviders;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using WreckfestPortal;
 
@@ -22,6 +22,9 @@ public static class PortalApp
     /// <summary>The page, as the web app's portal build names it.</summary>
     public const string PageFile = "portal.html";
 
+    /// <summary>The folder next to the exe the build puts the controllers' web app in.</summary>
+    public const string AppFolder = "app";
+
     public static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<PortalOptions>()
@@ -32,6 +35,44 @@ public static class PortalApp
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<ServerPoller>();
         services.AddHostedService(sp => sp.GetRequiredService<ServerPoller>());
+
+        services.AddHttpForwarder();
+        services.AddSingleton(_ => ControllerSites.CreateClient());
+        services.AddSingleton(sp =>
+        {
+            var configured = sp.GetRequiredService<IOptions<PortalOptions>>().Value.AppRoot;
+            var root = string.IsNullOrWhiteSpace(configured)
+                ? Path.Combine(sp.GetRequiredService<IWebHostEnvironment>().ContentRootPath, AppFolder)
+                : Environment.ExpandEnvironmentVariables(configured);
+            return new ControllerSites(
+                sp.GetRequiredService<Yarp.ReverseProxy.Forwarder.IHttpForwarder>(),
+                sp.GetRequiredService<HttpMessageInvoker>(),
+                root);
+        });
+
+        services.AddOptions<ForwardedHeadersOptions>().Configure<IOptions<PortalOptions>>((forwarded, portal) =>
+        {
+            // Only the listed proxies, not the loopback ASP.NET trusts by default.
+            forwarded.KnownProxies.Clear();
+            forwarded.KnownIPNetworks.Clear();
+            forwarded.ForwardLimit = null;
+            forwarded.ForwardedHeaders = ForwardedHeaders.None;
+            foreach (var entry in portal.Value.TrustedProxies)
+            {
+                if (PortalOptions.TryParseProxy(entry, out var address, out var network))
+                {
+                    forwarded.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+                    if (address is not null)
+                    {
+                        forwarded.KnownProxies.Add(address);
+                    }
+                    else
+                    {
+                        forwarded.KnownIPNetworks.Add(network!.Value);
+                    }
+                }
+            }
+        });
     }
 
     public static void ConfigurePipeline(WebApplication app)
@@ -41,6 +82,12 @@ public static class PortalApp
         {
             app.Logger.LogWarning("No {Page} in {WebRoot}: serving /api/servers only", PageFile, app.Environment.WebRootPath);
         }
+
+        // Before anything reads the visitor's address or scheme, which the controllers are told.
+        app.UseForwardedHeaders();
+
+        // /{id}/...: each server's site, and its API forwarded to its controller.
+        app.MapControllerSites(app.Services.GetRequiredService<IOptions<PortalOptions>>().Value);
 
         app.UseStaticFiles();
 

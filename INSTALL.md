@@ -20,7 +20,7 @@ Building from source needs more: see [README.md](README.md#building-from-source)
 
 Extract the release ZIP to a folder of its own, such as `C:\WreckfestController\`, and
 run `WreckfestController.exe`. Keep the files together: the controller needs the hook DLL
-and the `wwwroot` folder next to the exe.
+next to the exe. The web site is a separate program, WreckfestPortal (step 4).
 
 On first start it creates its data folder, `%LocalAppData%\WreckfestController\`, with:
 
@@ -83,9 +83,9 @@ supported build is `WreckfestServer:SupportedBuild` in `appsettings.json`, and t
 controller refuses to inject into any other. After a Wreckfest update, wait for a
 controller release that supports the new build.
 
-## 3. Enable the web site
+## 3. Enable the API
 
-The web site and API are off by default. To turn them on, create
+The API is off by default. The web site (step 4) and scripts use it. To turn it on, create
 `%LocalAppData%\WreckfestController\user-settings.json`:
 
 ```json
@@ -94,7 +94,7 @@ The web site and API are off by default. To turn them on, create
     "Enabled": true,
     "Key": "",
     "AllowRemote": false,
-    "TrustedProxies": [],
+    "TrustedProxies": ["127.0.0.1"],
     "HttpPort": 5100,
     "HttpsPort": 5101
   }
@@ -106,7 +106,7 @@ Startup settings are read from `appsettings.json` next to the exe, then
 wins. Keep yours in `user-settings.json`, because installing a new release replaces
 `appsettings.json`. Restart the controller after any change to the file.
 
-Only the startup settings come from these files: `Api`, `Database`, `Web`, `Logging` and
+Only the startup settings come from these files: `Api`, `Database`, `Logging` and
 `WreckfestServer:SupportedBuild`. The server paths, SteamCMD and voting settings are in
 the database, and the `WreckfestServer`, `SteamCmd` and `Vote` sections of
 `user-settings.json` are ignored. On the very first start the database takes its voting
@@ -114,10 +114,10 @@ defaults from the shipped `appsettings.json` and `appsettings.{Environment}.json
 
 | Setting | Meaning |
 | --- | --- |
-| `Enabled` | `true` starts the web site and API. Anything else, including `"yes"` or a typo, leaves it off and opens no port. |
+| `Enabled` | `true` starts the API. Anything else, including `"yes"` or a typo, leaves it off and opens no port. |
 | `Key` | An API key for scripts, sent as the `X-Api-Key` header. Leave it empty if nothing but browsers will use the API. |
-| `AllowRemote` | `false` listens on `127.0.0.1` only, so only this PC can connect. `true` listens on every network interface. |
-| `TrustedProxies` | The address of a reverse proxy in front of the controller (see step 5). An entry that is not an address or range is logged and skipped. |
+| `AllowRemote` | `false` listens on `127.0.0.1` only, so only this PC can connect, such as a portal on the same PC. `true` listens on every network interface. |
+| `TrustedProxies` | The address of the portal (step 4): `127.0.0.1` when it runs on the same PC. An entry that is not an address or range is logged and skipped. |
 | `HttpPort`, `HttpsPort` | Default 5100 and 5101, also when left empty. |
 | `Https` | A certificate, to serve HTTPS directly: see [docs/https.md](docs/https.md). |
 
@@ -146,8 +146,8 @@ which would give them the same server paths, accounts and cups.
    directory is already in use". Give each server its own `server_config.cfg` with its
    own `steam_port`, `game_port` and `query_port` as well.
 
-To put several controllers on one domain, such as `example.com/vanilla/` and
-`example.com/tvtp2/`, see [Several controllers on one domain](#several-controllers-on-one-domain).
+The portal (step 4) then puts them all on one site, such as `example.com/vanilla/` and
+`example.com/tvtp2/`.
 
 Each controller adds its own id to the command line of every server it starts, such as
 `-wfc_controller=3f9a1c07`. The id is shown on the Configuration tab under **WEB API**,
@@ -156,94 +156,142 @@ server belongs to which controller in Task Manager's Command line column. A cont
 reattaches only to a server carrying its own id, and will not attach to or inject into
 another controller's server; the desktop app's Process Manager asks first.
 
-## 4. Create the first admin account
+## 4. Set up the web site
 
-There is no sign-up page. When the web site is enabled and no account exists, the
+The web site is **WreckfestPortal**, a separate small program in front of one or more
+controllers. It serves a front page at `/` listing every server, with whether it is up, its
+players and its track, and each controller's own site under a path of its own:
+`/vanilla/`, `/tvtp2/`. The browser only ever talks to the portal, which passes each
+site's API calls and live updates on to its controller. One domain, one certificate and
+one proxy route serve them all, and adding a controller means adding it to the portal's
+settings. You need the portal for a single controller too: the controller serves only the
+API.
+
+Build it from `Portal/WreckfestPortal`:
+
+```
+dotnet publish Portal/WreckfestPortal -c Release -o C:\WreckfestPortal
+```
+
+It needs the ASP.NET Core 10 Runtime. Keep the `wwwroot` and `app` folders next to the
+exe: `wwwroot` is the front page and `app` the controllers' web app. The portal holds no
+account, key or database: signing in is between the browser and each controller.
+
+List the servers in the portal's `appsettings.json`:
+
+```json
+{
+  "Urls": "http://127.0.0.1:5000",
+  "Portal": {
+    "Title": "Monday Night Wrecking",
+    "Intro": "Pick a server.",
+    "Servers": [
+      { "Id": "vanilla", "Name": "Vanilla", "Description": "The base game's tracks and cars.",
+        "ApiUrl": "http://127.0.0.1:5100" },
+      { "Id": "tvtp2", "Name": "TVTP2", "Description": "Tracks from the TVTP2 mod.",
+        "ApiUrl": "http://127.0.0.1:5102" }
+    ],
+    "TrustedProxies": []
+  }
+}
+```
+
+| Setting | Meaning |
+| --- | --- |
+| `Urls` | Where the portal listens. Use `http://0.0.0.0:5000` if visitors or a proxy reach it from another PC. |
+| `Title`, `Intro` | The front page's heading and the line under it. `Intro` is optional. |
+| `Servers` | The servers, in the order the front page lists them. `Description` is optional. |
+| `Id` | The server's path: `tvtp2` puts its site at `/tvtp2/`. Letters, digits, `-` and `_`, unique, and not `api` or `assets`, which the portal uses itself. |
+| `ApiUrl` | Where the portal reaches the controller's API: its address and port, with no path. It is never shown to visitors, so a LAN address is fine. |
+| `TrustedProxies` | A reverse proxy in front of the portal, such as HAProxy (see step 6), as addresses or CIDR ranges. Empty when visitors reach the portal directly. |
+| `PollSeconds`, `TimeoutSeconds` | How often the front page's details are refreshed from each server (default 15, 5 to 3600) and how long one has to answer (default 3). |
+
+On every controller, list the portal in `Api:TrustedProxies` (step 3): `127.0.0.1` when it
+runs on the same PC, otherwise its address, with `AllowRemote` set to `true` and the port
+open in Windows Firewall to the portal only. The controller then believes what the portal
+says about each visitor (their address, for the sign-in limit; whether they used HTTPS,
+for the `Secure` cookie) and about the path its site lives under. Its sign-in cookies
+belong to that path, so signing in to `/vanilla/` does not sign you in to `/tvtp2/`, and
+both can be open in one browser at once. **Without it, the controllers' cookies overwrite
+each other** and every visitor shares one sign-in limit.
+
+On the front page a server shows **UP** when its game server runs, **DOWN** when the
+controller answers but the game server is stopped, and **NO CONNECTION** when the
+controller does not answer; its last known details stay on the card, marked as such.
+Settings the portal cannot use stop it at startup, with each problem in the log.
+
+To run the portal as a Windows service:
+
+```
+sc.exe create WreckfestPortal binPath= "C:\WreckfestPortal\WreckfestPortal.exe" start= auto
+sc.exe start WreckfestPortal
+```
+
+## 5. Create the first admin account
+
+There is no sign-up page. When the API is enabled and no account exists, the
 desktop app offers a **Create admin account** dialog at startup. The Configuration tab
 has the same button under **WEB ACCOUNTS**, which also works for recovery if every
 admin is locked out or has lost their password.
 
-Then open `http://127.0.0.1:5100/` and sign in. Admins add further accounts on the web
-site's Users page. Every account is an admin.
+Then open the server's site on the portal, such as `http://127.0.0.1:5000/vanilla/`, and
+sign in. Admins add further accounts on the site's Users page. Every account is an admin,
+and each controller has its own accounts.
 
 - Passwords need at least 10 characters.
 - Five failed sign-ins lock an account for 15 minutes. An admin can unlock it sooner.
 - Sign-in also allows 10 attempts per minute from each IP address.
 
-## 5. Open the web site to others
+## 6. Open the web site to others
 
 Players see the public home page; admins sign in to manage the server. Either way,
 anyone connecting from another computer should use **HTTPS**, since sign-in sends a
-password and a session cookie. There are two ways to provide it.
+password and a session cookie. Put a reverse proxy that handles HTTPS in front of the
+portal.
 
 ### Behind a reverse proxy
 
 A reverse proxy (such as HAProxy on OPNsense, nginx or Caddy) handles HTTPS and passes
-requests to the controller over HTTP.
+requests to the portal over HTTP. It needs a single route: the whole domain to the portal.
 
-1. Set `AllowRemote` to `true`, unless the proxy runs on the same PC.
-2. Point the proxy at `http://<controller PC>:5100`. It must pass WebSocket upgrades on
-   `/hubs/server`, which the live updates use.
+1. Set the portal's `Urls` to `http://0.0.0.0:5000`, unless the proxy runs on the same PC.
+2. Point the proxy at `http://<portal PC>:5000`, passing the path on unchanged. It must
+   pass WebSocket upgrades, which the live updates use (`/<id>/hubs/server`).
 3. Have the proxy send `X-Forwarded-For` and `X-Forwarded-Proto`, and list its address in
-   `TrustedProxies`:
+   the portal's `Portal:TrustedProxies`:
 
    ```json
    "TrustedProxies": ["192.168.1.1"]
    ```
 
-   CIDR ranges work too (`"10.0.0.0/24"`). The controller then sees each visitor's real
-   IP address, for the sign-in limit and the logs, and knows the visitor used HTTPS, so
-   the sign-in cookie is marked `Secure`. It ignores these headers from every other
-   address.
+   CIDR ranges work too (`"10.0.0.0/24"`). The portal then passes each visitor's real IP
+   address and scheme on to the controllers, for the sign-in limit, the logs and the
+   `Secure` cookie. It ignores these headers from every other address.
 
-   Without this, every visitor shares the proxy's sign-in limit of 10 attempts a
-   minute.
-
-4. Open port 5100 in Windows Firewall only to the proxy:
+4. Open port 5000 in Windows Firewall only to the proxy:
 
    ```
-   netsh advfirewall firewall add rule name="WreckfestController" dir=in action=allow protocol=TCP localport=5100 remoteip=192.168.1.1
+   netsh advfirewall firewall add rule name="WreckfestPortal" dir=in action=allow protocol=TCP localport=5000 remoteip=192.168.1.1
    ```
 
-### Several controllers on one domain
-
-Each controller can live under a path of its own, so one domain and one certificate serve
-them all: `https://example.com/vanilla/` and `https://example.com/tvtp2/`. Set the path in
-each controller's `user-settings.json`, next to `Api`:
-
-```json
-"Web": { "PathBase": "/tvtp2" }
-```
-
-The whole site then lives under that path: the pages, the API (`/tvtp2/api/...`) and the
-live updates (`/tvtp2/hubs/server`). Anything outside it answers 404, and `/tvtp2` without
-the slash is sent to `/tvtp2/`. Sign-in cookies belong to the path, so signing in to one
-controller does not sign you in to another, and two can be open in one browser at once.
-The path also works without a proxy, as `http://<controller PC>:5100/tvtp2/`.
-
-A `PathBase` must start with `/` and contain only letters, digits, `-`, `_`, `.` and
-further `/` segments. Anything else stops the API, with the reason on the Configuration tab.
-
-Have the proxy route by path and pass the path on **unchanged**: do not strip the prefix.
 In HAProxy:
 
 ```
-acl wfc_vanilla path_beg /vanilla/ || path /vanilla
-acl wfc_tvtp2   path_beg /tvtp2/   || path /tvtp2
-use_backend wfc_vanilla if wfc_vanilla
-use_backend wfc_tvtp2   if wfc_tvtp2
+default_backend wreckfest_portal
+
+backend wreckfest_portal
+    option forwardfor
+    http-request set-header X-Forwarded-Proto https if { ssl_fc }
+    server portal 192.168.1.10:5000
 ```
 
-Everything else, such as `/` itself, can go to a front page of your own.
+### HTTPS on the controller
 
-### HTTPS directly
+The controller can also serve HTTPS itself, for scripts that call its API from another
+computer: see [docs/https.md](docs/https.md). Visitors to the web site never connect to a
+controller directly.
 
-The controller can serve HTTPS itself with a certificate from the Windows certificate
-store or a file, and reload it when it is renewed. See [docs/https.md](docs/https.md), and
-[docs/LetsEncrypt.md](docs/LetsEncrypt.md) for a free Let's Encrypt certificate. Set
-`AllowRemote` to `true` and open `HttpsPort` in Windows Firewall.
-
-## 6. Check your settings
+## 7. Check your settings
 
 On the web site, as an admin:
 
@@ -272,59 +320,6 @@ With a key set, the admin panel has an **AI assistant** page too, whether or not
 page is on. There you can ask for changes to the rotation, collections, cups and server
 settings in plain language: the assistant proposes each one, and nothing changes until you
 click **Apply**. It cannot manage users, start or stop the server, or see passwords.
-
-## 7. A front page for several servers (optional)
-
-With several controllers on one domain, each under its own `Web:PathBase` (see
-[Several controllers on one domain](#several-controllers-on-one-domain)), **WreckfestPortal**
-can answer the domain's root: a page listing every server with whether it is up, its
-players and its track, each linking to that controller's site.
-
-The portal is a separate small program, built from `Portal/WreckfestPortal`
-(`dotnet publish Portal/WreckfestPortal -c Release -o <folder>`). It needs no account, key
-or database: every 15 seconds it reads each controller's public overview, the same data
-anyone sees on its home page, and the page reads what it last found. Visitors never cause
-a request to a controller.
-
-List the servers in the portal's `appsettings.json`:
-
-```json
-{
-  "Urls": "http://127.0.0.1:5000",
-  "Portal": {
-    "Title": "Monday Night Wrecking",
-    "Intro": "Pick a server.",
-    "Servers": [
-      { "Id": "vanilla", "Name": "Vanilla", "Description": "The base game's tracks and cars.",
-        "Link": "/vanilla/", "ApiUrl": "http://127.0.0.1:5100/vanilla" },
-      { "Id": "tvtp2", "Name": "TVTP2", "Description": "Tracks from the TVTP2 mod.",
-        "Link": "/tvtp2/", "ApiUrl": "http://127.0.0.1:5102/tvtp2" }
-    ]
-  }
-}
-```
-
-| Setting | Meaning |
-| --- | --- |
-| `Urls` | Where the portal listens. Use `http://0.0.0.0:5000` if the proxy runs on another PC. |
-| `Title`, `Intro` | The page's heading and the line under it. `Intro` is optional. |
-| `Servers` | The cards, in this order. `Id` must be unique; `Description` is optional. |
-| `Link` | Where the card goes: a path on this domain such as `/tvtp2/`, or a full `https://` address. |
-| `ApiUrl` | Where the portal reaches the controller, with its `PathBase`. It is never shown on the page, so a LAN address is fine. |
-| `PollSeconds`, `TimeoutSeconds` | How often each server is checked (default 15, 5 to 3600) and how long one has to answer (default 3). |
-
-A server shows **UP** when its game server runs, **DOWN** when the controller answers but
-the game server is stopped, and **NO CONNECTION** when the controller does not answer;
-its last known details stay on the card, marked as such. Settings the portal cannot use
-stop it at startup, with each problem in the log.
-
-Point the proxy's default route, everything no controller's path matches, at the portal.
-To run it as a Windows service:
-
-```
-sc.exe create WreckfestPortal binPath= "C:\WreckfestPortal\WreckfestPortal.exe" start= auto
-sc.exe start WreckfestPortal
-```
 
 ## Scripts and the API
 
@@ -364,9 +359,14 @@ the server's build may not match the supported build.
 `key=value` line for it to `server_config.cfg`, or remove a later duplicate below
 `# Event Loop`, which would override it.
 
-**The web site does not load.** Check the **WEB API** line on the Configuration tab. A
-wrong `Api` setting or a port already in use stops the API, and the reason is shown
-there.
+**The web site does not load.** Check that the portal is running; settings it cannot use
+stop it at startup, with each problem in its log. A server's page loads but its data does
+not (the portal answers 502): check the **WEB API** line on that controller's
+Configuration tab. A wrong `Api` setting or a port already in use stops the API, and the
+reason is shown there. Check also that the portal's `ApiUrl` for it is right.
+
+**Signing in to one server signs you out of another.** The controllers do not trust the
+portal: list its address in each controller's `Api:TrustedProxies` (step 4).
 
 **Signed out after every restart.** The controller cannot keep its `keys` folder.
 Check that `%LocalAppData%\WreckfestController\keys` is writable.

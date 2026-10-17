@@ -11,7 +11,7 @@ namespace WreckfestPortal.Tests;
 /// <summary>The portal as it runs: settings, <c>/api/servers</c> and the page.</summary>
 public sealed class PortalHostTests : IDisposable
 {
-    private const string ApiUrl = "http://10.9.8.7:5102/tvtp2";
+    private const string ApiUrl = "http://10.9.8.7:5102";
     private const string PageMarker = "<!-- the portal -->";
 
     private readonly string _webRoot = Path.Combine(Path.GetTempPath(), "wfc-portal-tests", Guid.NewGuid().ToString("N"));
@@ -28,13 +28,14 @@ public sealed class PortalHostTests : IDisposable
 
     public void Dispose() => Directory.Delete(_webRoot, recursive: true);
 
-    private static Dictionary<string, string?> Settings(string link = "/tvtp2/") => new()
+    private static Dictionary<string, string?> Settings(string id = "tvtp2") => new()
     {
         ["Portal:Title"] = "Monday Night Wrecking",
-        ["Portal:Servers:0:Id"] = "tvtp2",
+        ["Portal:Servers:0:Id"] = id,
         ["Portal:Servers:0:Name"] = "TVTP2",
-        ["Portal:Servers:0:Link"] = link,
         ["Portal:Servers:0:ApiUrl"] = ApiUrl,
+        // Nothing there: these tests are about the portal's own page.
+        ["Portal:AppRoot"] = Path.Combine(Path.GetTempPath(), "wfc-portal-tests", "no-app-here"),
     };
 
     private async Task<WebApplication> StartAsync(Dictionary<string, string?>? settings = null)
@@ -94,21 +95,21 @@ public sealed class PortalHostTests : IDisposable
 
         using var page = await client.GetAsync("/", Ct);
         using var asset = await client.GetAsync("/assets/portal-1.js", Ct);
-        using var other = await client.GetAsync("/tvtp2/", Ct);
+        using var other = await client.GetAsync("/vanilla/", Ct);
 
         Assert.Equal(HttpStatusCode.OK, page.StatusCode);
         Assert.Contains(PageMarker, await page.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
         Assert.Equal("no-cache", page.Headers.CacheControl?.ToString());
         Assert.Equal("console.log('portal')", await asset.Content.ReadAsStringAsync(Ct));
-        // A controller's path that reached the portal is not a page of the portal's.
+        // A server the portal does not list.
         Assert.Equal(HttpStatusCode.NotFound, other.StatusCode);
     }
 
     [Fact]
     public async Task UnusableSettings_StopTheStart_SayingWhy()
     {
-        var error = await Assert.ThrowsAsync<OptionsValidationException>(() => StartAsync(Settings(link: "tvtp2")));
+        var error = await Assert.ThrowsAsync<OptionsValidationException>(() => StartAsync(Settings(id: "tv/tp2")));
 
-        Assert.Contains("Portal:Servers:0:Link", error.Message, StringComparison.Ordinal);
+        Assert.Contains("Portal:Servers:0:Id", error.Message, StringComparison.Ordinal);
     }
 }

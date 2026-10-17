@@ -1,9 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <!--
-    The front page for several controllers on one domain: lists the servers in its
-    appsettings.json, with whether each is up and who is on it. It reads each controller's
-    public overview and nothing else, so it needs no account, key or database.
+    The web site for one or more controllers: a front page listing the servers in its
+    appsettings.json, with whether each is up and who is on it, and each controller's web
+    app under /{id}/, whose API calls and live updates it forwards to that controller. It
+    holds no account, key or database: signing in is between the browser and the controller.
   -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -12,13 +13,14 @@
     <LangVersion>14.0</LangVersion>
     <Version>2.0.0</Version>
     <RootNamespace>WreckfestPortal</RootNamespace>
-    <!-- `dotnet publish` of the whole solution puts every project in one folder, where this
-         wwwroot would replace the controller's web app. Publish the portal by its project. -->
+    <!-- `dotnet publish` of the whole solution puts every project in one folder, with the
+         controller's files. Publish the portal by its project. -->
     <IsPublishable Condition="'$(SolutionPath)' != '' And '$(SolutionPath)' != '*Undefined*'">false</IsPublishable>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.11" />
+    <PackageReference Include="Yarp.ReverseProxy" Version="2.3.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -26,12 +28,15 @@
   </ItemGroup>
 
   <!--
-    The page is a second entry of the controller's web app (web/portal.html), so it shares
-    its theme and components: `npm run build:portal` writes web/dist-portal, copied to
-    wwwroot here. web/WebApp.targets installs the packages, once for this and the
-    controller. As for the controller, two stamp files cover what timestamps miss: the list
-    of sources (one added or deleted) and the files the last build produced (one gone from
-    dist-portal forces a rebuild). -p:SkipWebBuild=true skips it.
+    Two builds of web/: the portal's page (`npm run build:portal`, web/dist-portal, copied
+    to wwwroot) and the controllers' web app (`npm run build`, web/dist, copied to app/,
+    which ControllerSite serves under each server's path). They share the theme and
+    components. web/WebApp.targets installs the packages and runs every npm step under one
+    lock. Inputs/Outputs make each build a no-op when nothing changed; MSBuild compares
+    timestamps only, so two stamp files per build cover what that misses: the list of
+    sources (one added or deleted) and the files the last build produced (one gone from
+    its dist forces a rebuild). -p:SkipWebBuild=true skips both, and still copies whatever
+    an earlier build left.
   -->
   <Import Project="..\..\web\WebApp.targets" />
 
@@ -39,7 +44,12 @@
     <PortalWebDist>$(WebAppDir)\dist-portal</PortalWebDist>
     <PortalWebInputList>$(MSBuildProjectDirectory)\obj\portalweb.inputs</PortalWebInputList>
     <PortalWebOutputList>$(MSBuildProjectDirectory)\obj\portalweb.outputs</PortalWebOutputList>
+    <WebAppDist>$(WebAppDir)\dist</WebAppDist>
+    <WebAppInputList>$(MSBuildProjectDirectory)\obj\webapp.inputs</WebAppInputList>
+    <WebAppOutputList>$(MSBuildProjectDirectory)\obj\webapp.outputs</WebAppOutputList>
   </PropertyGroup>
+
+  <!-- The portal's page. -->
 
   <Target Name="RecordPortalWebInputs" Condition="'$(SkipWebBuild)' != 'true'">
     <WriteLinesToFile File="$(PortalWebInputList)" Lines="@(WebAppSource->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
@@ -70,7 +80,38 @@
     <WriteLinesToFile File="$(PortalWebOutputList)" Lines="@(ProducedPortalWebOutput->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
-  <!-- Replaces wwwroot whole, so assets from an earlier build do not linger. -->
+  <!-- The controllers' web app. -->
+
+  <Target Name="RecordWebAppInputs" Condition="'$(SkipWebBuild)' != 'true'">
+    <WriteLinesToFile File="$(WebAppInputList)" Lines="@(WebAppSource->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <Target Name="CheckWebAppOutputs" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(WebAppOutputList)')">
+    <ReadLinesFromFile File="$(WebAppOutputList)">
+      <Output TaskParameter="Lines" ItemName="RecordedWebAppOutput" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <MissingWebAppOutput Include="@(RecordedWebAppOutput)" Condition="!Exists('%(Identity)')" />
+    </ItemGroup>
+    <Message Importance="high" Text="Web app output is incomplete; rebuilding." Condition="'@(MissingWebAppOutput)' != ''" />
+    <Delete Files="$(WebAppDist)\index.html" Condition="'@(MissingWebAppOutput)' != ''" />
+  </Target>
+
+  <Target Name="BuildWebApp" BeforeTargets="BeforeBuild"
+          DependsOnTargets="InstallWebAppPackages;RecordWebAppInputs;CheckWebAppOutputs" Condition="'$(SkipWebBuild)' != 'true'"
+          Inputs="@(WebAppSource);$(WebAppInputList);$(WebAppInstalled)" Outputs="$(WebAppDist)\index.html">
+    <Message Importance="high" Text="Building the web app (npm run build)..." />
+    <Exec Command="node scripts/web-lock.mjs run build" WorkingDirectory="$(WebAppDir)" />
+  </Target>
+
+  <Target Name="RecordWebAppOutputs" AfterTargets="BuildWebApp" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(WebAppDist)\index.html')">
+    <ItemGroup>
+      <ProducedWebAppOutput Include="$(WebAppDist)\**\*" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(WebAppOutputList)" Lines="@(ProducedWebAppOutput->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- Each replaces its folder whole, so assets from an earlier build do not linger. -->
   <Target Name="CopyPortalWeb" AfterTargets="Build" Condition="Exists('$(PortalWebDist)\portal.html')">
     <ItemGroup>
       <PortalWebFile Include="$(PortalWebDist)\**\*" />
@@ -79,15 +120,28 @@
     <Copy SourceFiles="@(PortalWebFile)" DestinationFiles="@(PortalWebFile->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" />
   </Target>
 
+  <Target Name="CopyWebApp" AfterTargets="Build" Condition="Exists('$(WebAppDist)\index.html')">
+    <ItemGroup>
+      <WebAppFile Include="$(WebAppDist)\**\*" />
+    </ItemGroup>
+    <RemoveDir Directories="$(OutDir)app" Condition="Exists('$(OutDir)app')" />
+    <Copy SourceFiles="@(WebAppFile)" DestinationFiles="@(WebAppFile->'$(OutDir)app\%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+
   <!-- AfterTargets runs even when Publish itself is skipped, hence IsPublishable here too. -->
   <Target Name="CopyPortalWebToPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != '' And '$(IsPublishable)' != 'false'">
     <Error Condition="'$(SkipWebBuild)' != 'true' And !Exists('$(PortalWebDist)\portal.html')"
            Text="The portal page was not built at $(PortalWebDist). Refusing to publish the portal without it." />
+    <Error Condition="'$(SkipWebBuild)' != 'true' And !Exists('$(WebAppDist)\index.html')"
+           Text="The web app was not built at $(WebAppDist). Refusing to publish the portal without it." />
     <ItemGroup>
       <PortalWebPublishFile Include="$(PortalWebDist)\**\*" />
+      <WebAppPublishFile Include="$(WebAppDist)\**\*" />
     </ItemGroup>
     <RemoveDir Directories="$(PublishDir)wwwroot" Condition="Exists('$(PublishDir)wwwroot')" />
     <Copy SourceFiles="@(PortalWebPublishFile)" DestinationFiles="@(PortalWebPublishFile->'$(PublishDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" Condition="'@(PortalWebPublishFile)' != ''" />
+    <RemoveDir Directories="$(PublishDir)app" Condition="Exists('$(PublishDir)app')" />
+    <Copy SourceFiles="@(WebAppPublishFile)" DestinationFiles="@(WebAppPublishFile->'$(PublishDir)app\%(RecursiveDir)%(Filename)%(Extension)')" Condition="'@(WebAppPublishFile)' != ''" />
   </Target>
 
 </Project>

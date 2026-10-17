@@ -28,7 +28,7 @@ public sealed class ServerPoller : BackgroundService
         _time = time;
         _logger = logger;
         _cards = _options.Servers
-            .Select(s => new ServerCard(s.Id, s.Name, s.Description, s.Link, ServerState.Checking, null, null, null, null, null, null, null))
+            .Select(s => new ServerCard(s.Id, s.Name, s.Description, s.Path, ServerState.Checking, null, null, null, null, null, null, null))
             .ToList();
     }
 

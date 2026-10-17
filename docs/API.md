@@ -100,18 +100,22 @@ is bound at all. `Key` no longer affects whether it starts.
 | `Enabled: true`, `Key` blank | the API starts; only cookie sign-in is accepted |
 | `AllowRemote: false` (default) | binds `127.0.0.1` only |
 | `AllowRemote: true` | binds `0.0.0.0` |
-| `TrustedProxies` | reverse proxies whose `X-Forwarded-For` / `X-Forwarded-Proto` are honoured; default none |
+| `TrustedProxies` | reverse proxies, such as the portal, whose `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Prefix` are honoured; default none |
 | `HttpPort` / `HttpsPort` | defaults 5100 / 5101; HTTPS listens only with `Https` |
 | `Https` | HTTPS from the certificate store or a file, and what plain HTTP from other computers gets: see [https.md](https.md) |
-| `Web:PathBase` | a path such as `/tvtp2` that the whole site, API and hub live under; default none. Every path in this document is then under it (`/tvtp2/api/auth/state`), and anything outside it answers 404. See INSTALL.md, "Several controllers on one domain" |
 
 ### Behind a reverse proxy
 
-List the proxy in `TrustedProxies`, as addresses or CIDR ranges:
+The web site reaches the controller through WreckfestPortal (INSTALL.md step 4), which is
+a reverse proxy. List it, or any other proxy, in `TrustedProxies`, as addresses or CIDR ranges:
 `["192.168.1.1"]` or `["10.0.0.0/24"]`. A comma-separated string also works. The
 controller then takes the client IP from `X-Forwarded-For`, for the login rate limit and
 logs, and the scheme from `X-Forwarded-Proto`, so the sign-in cookie is marked `Secure`
-when the browser used HTTPS. `X-Forwarded-Host` is not used.
+when the browser used HTTPS. From the portal it also takes `X-Forwarded-Prefix`, the path
+the site lives under there (`/tvtp2`), as the path base: the sign-in and antiforgery cookies
+are scoped to it, so controllers behind one portal keep their cookies apart. The paths in
+this document are the controller's own; through the portal they are under the prefix
+(`/tvtp2/api/auth/state`). `X-Forwarded-Host` is not used.
 
 The headers are ignored from every other address, loopback included, so a client cannot
 pick its own IP by sending them. An entry that is not an address or range is logged and

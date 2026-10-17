@@ -35,8 +35,8 @@
     <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
 
-  <!-- The web app has its own build (see BuildWebApp); its thousands of node_modules
-       files must not become project items. -->
+  <!-- The web app is the portal's (Portal/WreckfestPortal builds it); its thousands of
+       node_modules files must not become project items. -->
   <PropertyGroup>
     <DefaultItemExcludes>$(DefaultItemExcludes);web/**</DefaultItemExcludes>
   </PropertyGroup>
@@ -190,77 +190,6 @@
     <Error Condition="!Exists('$(NativeHookDll)')"
            Text="The native console hook DLL was not produced at $(NativeHookDll). Refusing to publish an application that cannot inject." />
     <Copy SourceFiles="$(NativeHookDll)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(PublishDir)' != ''" />
-  </Target>
-
-  <!--
-    The web app (web/, Vue + Vite). Built with npm into web/dist, then copied to
-    wwwroot next to the exe, where ApiServer serves it. Node.js LTS is a build
-    requirement like the C++ workload; -p:SkipWebBuild=true builds the C# alone, and
-    still copies whatever web/dist an earlier build left (none: the API alone).
-
-    Inputs/Outputs make both steps no-ops when nothing changed: npm ci only when
-    package.json or the lockfile is newer than the installed packages, the build only
-    when a source is newer than dist/index.html. MSBuild compares timestamps only, so
-    two stamp files cover what that misses: the list of sources (a deleted or added
-    file changes it) and the list of files the last build produced (one gone from dist
-    forces a rebuild).
-  -->
-  <Import Project="web\WebApp.targets" />
-
-  <PropertyGroup>
-    <WebAppDist>$(WebAppDir)\dist</WebAppDist>
-    <WebAppInputList>$(MSBuildProjectDirectory)\obj\webapp.inputs</WebAppInputList>
-    <WebAppOutputList>$(MSBuildProjectDirectory)\obj\webapp.outputs</WebAppOutputList>
-  </PropertyGroup>
-
-  <!-- Rewritten only when the list differs, so its timestamp moves only then. -->
-  <Target Name="RecordWebAppInputs" Condition="'$(SkipWebBuild)' != 'true'">
-    <WriteLinesToFile File="$(WebAppInputList)" Lines="@(WebAppSource->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
-  </Target>
-
-  <!-- A file the last build produced is missing from dist: build again. -->
-  <Target Name="CheckWebAppOutputs" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(WebAppOutputList)')">
-    <ReadLinesFromFile File="$(WebAppOutputList)">
-      <Output TaskParameter="Lines" ItemName="RecordedWebAppOutput" />
-    </ReadLinesFromFile>
-    <ItemGroup>
-      <MissingWebAppOutput Include="@(RecordedWebAppOutput)" Condition="!Exists('%(Identity)')" />
-    </ItemGroup>
-    <Message Importance="high" Text="Web app output is incomplete; rebuilding." Condition="'@(MissingWebAppOutput)' != ''" />
-    <Delete Files="$(WebAppDist)\index.html" Condition="'@(MissingWebAppOutput)' != ''" />
-  </Target>
-
-  <Target Name="BuildWebApp" BeforeTargets="BeforeBuild"
-          DependsOnTargets="InstallWebAppPackages;RecordWebAppInputs;CheckWebAppOutputs" Condition="'$(SkipWebBuild)' != 'true'"
-          Inputs="@(WebAppSource);$(WebAppInputList);$(WebAppInstalled)" Outputs="$(WebAppDist)\index.html">
-    <Message Importance="high" Text="Building web app (npm run build)..." />
-    <Exec Command="node scripts/web-lock.mjs run build" WorkingDirectory="$(WebAppDir)" />
-  </Target>
-
-  <Target Name="RecordWebAppOutputs" AfterTargets="BuildWebApp" Condition="'$(SkipWebBuild)' != 'true' And Exists('$(WebAppDist)\index.html')">
-    <ItemGroup>
-      <ProducedWebAppOutput Include="$(WebAppDist)\**\*" />
-    </ItemGroup>
-    <WriteLinesToFile File="$(WebAppOutputList)" Lines="@(ProducedWebAppOutput->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
-  </Target>
-
-  <!-- Replaces wwwroot whole, so assets from an earlier build do not linger. -->
-  <Target Name="CopyWebApp" AfterTargets="Build" Condition="Exists('$(WebAppDist)\index.html')">
-    <ItemGroup>
-      <WebAppFile Include="$(WebAppDist)\**\*" />
-    </ItemGroup>
-    <RemoveDir Directories="$(OutDir)wwwroot" Condition="Exists('$(OutDir)wwwroot')" />
-    <Copy SourceFiles="@(WebAppFile)" DestinationFiles="@(WebAppFile->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" />
-  </Target>
-
-  <Target Name="CopyWebAppToPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != ''">
-    <Error Condition="'$(SkipWebBuild)' != 'true' And !Exists('$(WebAppDist)\index.html')"
-           Text="The web app was not built at $(WebAppDist). Refusing to publish a controller without its web page." />
-    <ItemGroup>
-      <WebAppPublishFile Include="$(WebAppDist)\**\*" />
-    </ItemGroup>
-    <RemoveDir Directories="$(PublishDir)wwwroot" Condition="Exists('$(PublishDir)wwwroot')" />
-    <Copy SourceFiles="@(WebAppPublishFile)" DestinationFiles="@(WebAppPublishFile->'$(PublishDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" Condition="'@(WebAppPublishFile)' != ''" />
   </Target>
 
   <Target Name="CopyAppSettingsToPublish" AfterTargets="Publish">

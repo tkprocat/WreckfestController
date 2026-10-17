@@ -2,28 +2,60 @@ namespace WreckfestPortal.Tests;
 
 public sealed class PortalOptionsTests
 {
-    private static PortalServer Server(string id = "tvtp2", string link = "/tvtp2/", string apiUrl = "http://127.0.0.1:5102/tvtp2") =>
-        new() { Id = id, Name = "TVTP2", Link = link, ApiUrl = apiUrl };
+    private static PortalServer Server(string id = "tvtp2", string apiUrl = "http://127.0.0.1:5102") =>
+        new() { Id = id, Name = "TVTP2", ApiUrl = apiUrl };
 
     [Fact]
     public void UsableSettings_HaveNoProblems()
     {
-        var options = new PortalOptions { Servers = [Server(), Server("vanilla", "https://vanilla.example.com/", "http://10.0.0.5:5100")] };
+        var options = new PortalOptions
+        {
+            Servers = [Server(), Server("vanilla_2-b", "https://10.0.0.5:5100/")],
+            TrustedProxies = ["192.168.1.1", "10.0.0.0/24", " fd00::1 "],
+        };
 
         Assert.Empty(options.Problems());
     }
 
-    [Theory]
-    [InlineData("tvtp2/", "http://127.0.0.1:5102", "Link")]
-    [InlineData("//evil.example.com/", "http://127.0.0.1:5102", "Link")]
-    [InlineData("javascript:alert(1)", "http://127.0.0.1:5102", "Link")]
-    [InlineData("/tvtp2/", "127.0.0.1:5102", "ApiUrl")]
-    [InlineData("/tvtp2/", "ftp://127.0.0.1/", "ApiUrl")]
-    public void ABadAddress_IsAProblem(string link, string apiUrl, string key)
+    [Fact]
+    public void TheIdIsTheSitesPath()
     {
-        var options = new PortalOptions { Servers = [Server(link: link, apiUrl: apiUrl)] };
+        Assert.Equal("/tvtp2/", Server().Path);
+    }
 
-        Assert.Contains(options.Problems(), p => p.Contains($"Portal:Servers:0:{key}", StringComparison.Ordinal));
+    [Theory]
+    [InlineData("tv tp2", "not usable as a path")]
+    [InlineData("tvtp2/admin", "not usable as a path")]
+    [InlineData("..", "not usable as a path")]
+    [InlineData("v2.0", "not usable as a path")]
+    [InlineData("api", "the portal uses itself")]
+    [InlineData("Assets", "the portal uses itself")]
+    public void AnIdThatCannotBeAPath_IsAProblem(string id, string problem)
+    {
+        var options = new PortalOptions { Servers = [Server(id)] };
+
+        Assert.Contains(options.Problems(), p => p.Contains("Portal:Servers:0:Id", StringComparison.Ordinal) && p.Contains(problem, StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1:5102")]
+    [InlineData("ftp://127.0.0.1/")]
+    public void ABadAddress_IsAProblem(string apiUrl)
+    {
+        var options = new PortalOptions { Servers = [Server(apiUrl: apiUrl)] };
+
+        Assert.Contains(options.Problems(), p => p.Contains("Portal:Servers:0:ApiUrl", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("proxy.lan")]
+    [InlineData("10.0.0.0/33")]
+    [InlineData("")]
+    public void AnUnusableProxy_IsAProblem(string proxy)
+    {
+        var options = new PortalOptions { Servers = [Server()], TrustedProxies = [proxy] };
+
+        Assert.Contains(options.Problems(), p => p.Contains("Portal:TrustedProxies:0", StringComparison.Ordinal));
     }
 
     [Fact]

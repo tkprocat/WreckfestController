@@ -2,13 +2,13 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// The controller serves the built app from wwwroot next to its exe; MSBuild copies
-// dist/ there. In development, Vite serves the app and forwards the API and the hub to
-// a controller running on this machine, so no CORS setup is needed.
+// The portal (Portal/WreckfestPortal) serves the built app under each server's path;
+// MSBuild copies dist/ to its app folder. In development, Vite serves the app and forwards
+// the API and the hub to a controller running on this machine, so no CORS setup is needed.
 const controller = 'http://127.0.0.1:5100'
 
 export default defineConfig({
-  // Relative asset links, so one build works under any Web:PathBase: index.html's <base>
+  // Relative asset links, so one build works under any server's path: index.html's <base>
   // says where they resolve.
   base: './',
   plugins: [vue()],
