@@ -139,7 +139,8 @@ public sealed class ControllerSiteTests : IDisposable
     {
         await using var app = await StartAsync();
         using var client = Client(app);
-        client.DefaultRequestHeaders.Add("Cookie", ".WreckfestPortal.Auth=secret; sid=1; .WreckfestPortal.AuthC1=more; .WreckfestPortal.Antiforgery=x; other=2");
+        // In any case: ASP.NET reads cookie names without it, so .wreckfestportal.Auth signs in too.
+        client.DefaultRequestHeaders.Add("Cookie", ".WreckfestPortal.Auth=secret; sid=1; .wreckfestportal.AuthC1=more; .WRECKFESTPORTAL.Antiforgery=x; other=2");
 
         using var response = await client.GetAsync("/tvtp2/api/auth/state", Ct);
 

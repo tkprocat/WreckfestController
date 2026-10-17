@@ -29,6 +29,8 @@ public sealed class PortalOptionsTests
     [InlineData(null, @"C:\Portal\data\portal.db")]
     [InlineData(@"accounts\portal.db", @"C:\Portal\accounts\portal.db")]
     [InlineData(@"D:\Data\portal.db", @"D:\Data\portal.db")]
+    // Root-relative: the exe's drive, not the working folder's (these tests run from F:).
+    [InlineData(@"\Data\portal.db", @"C:\Data\portal.db")]
     public void TheDatabasePath_IsResolvedAgainstTheExesFolder(string? configured, string expected)
     {
         var database = Accounts.PortalDatabase.Resolve(new PortalOptions { DatabasePath = configured }, @"C:\Portal");

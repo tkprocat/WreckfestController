@@ -15,6 +15,7 @@ internal sealed class TransactionRendezvous : DbTransactionInterceptor
 
     private int _armed;
     private int _arrived;
+    private int _timedOut;
 
     public void Arm() => Volatile.Write(ref _armed, 1);
 
@@ -31,11 +32,17 @@ internal sealed class TransactionRendezvous : DbTransactionInterceptor
             {
                 await Task.Delay(20, cancellationToken);
             }
+
+            // One that gave up went on alone: the second arriving later is no race.
+            if (Volatile.Read(ref _arrived) < 2)
+            {
+                Volatile.Write(ref _timedOut, 1);
+            }
         }
 
         return result;
     }
 
-    /// <summary>Whether two requests met, so the test really raced them.</summary>
-    public bool Met => Volatile.Read(ref _arrived) >= 2;
+    /// <summary>Whether two requests met before either went on, so the test really raced them.</summary>
+    public bool Met => Volatile.Read(ref _arrived) >= 2 && Volatile.Read(ref _timedOut) == 0;
 }

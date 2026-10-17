@@ -25,7 +25,9 @@ public sealed class PortalDatabase(string path)
     public static PortalDatabase Resolve(PortalOptions options, string baseDirectory) =>
         new(string.IsNullOrWhiteSpace(options.DatabasePath)
             ? System.IO.Path.Combine(baseDirectory, DefaultFolder, DefaultFile)
-            : System.IO.Path.Combine(baseDirectory, Environment.ExpandEnvironmentVariables(options.DatabasePath)));
+            // GetFullPath with a base, not Combine: \data\portal.db would otherwise take the
+            // working folder's drive.
+            : System.IO.Path.GetFullPath(Environment.ExpandEnvironmentVariables(options.DatabasePath), baseDirectory));
 
     /// <summary>Creates the database, or brings it up to date, before anything uses it.</summary>
     public static async Task MigrateAsync(IServiceProvider services, CancellationToken cancellationToken = default)

@@ -149,13 +149,14 @@ public static class ControllerSite
             // The portal's own sign-in and antiforgery cookies belong to the whole site, so
             // the browser sends them here too. They are the portal's credentials, never a
             // controller's business: a controller that kept one could act as that user on
-            // the portal. The controller's own cookies go through.
+            // the portal. The controller's own cookies go through. Without case, like ASP.NET
+            // reads cookie names: .wreckfestportal.Auth would sign in as well.
             if (proxyRequest.Headers.TryGetValues("Cookie", out var cookies))
             {
                 var kept = cookies
                     .SelectMany(header => header.Split(';'))
                     .Select(cookie => cookie.Trim())
-                    .Where(cookie => cookie.Length > 0 && !cookie.StartsWith(PortalCookiePrefix, StringComparison.Ordinal))
+                    .Where(cookie => cookie.Length > 0 && !cookie.StartsWith(PortalCookiePrefix, StringComparison.OrdinalIgnoreCase))
                     .ToList();
                 proxyRequest.Headers.Remove("Cookie");
                 if (kept.Count > 0)
