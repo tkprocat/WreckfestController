@@ -14,17 +14,10 @@ public class EndpointAuthorizationTests
 {
     /// <summary>
     /// Every endpoint a signed-out caller may reach. Add to this deliberately, with the
-    /// reason, when an endpoint must be public (auth state, login, setup, /api/public/*).
+    /// reason, when an endpoint must be public (/api/public/*). Signing in is the portal's.
     /// </summary>
     private static readonly HashSet<string> AnonymousAllowList = new(StringComparer.OrdinalIgnoreCase)
     {
-        // The SPA asks who it is before anyone has signed in.
-        "GET /api/auth/state",
-        // The login form needs a token before it can post.
-        "GET /api/auth/antiforgery",
-        "POST /api/auth/login",
-        // An expired session must still be able to clear its cookie.
-        "POST /api/auth/logout",
         // The live-update hub. Signed-out clients get only the public group; ServerHub
         // adds the admin group (console log) only for a caller that passes Admin.
         "* /hubs/server/negotiate",
@@ -63,39 +56,15 @@ public class EndpointAuthorizationTests
         Assert.Empty(unexpected);
     }
 
-    // Server and account management need Admin. The caller's own profile needs only a
-    // signed-in user, so it stays open to every role once roles exist.
-    private static readonly HashSet<string> SignedInOnly = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "GET /api/auth/me",
-        "PUT /api/auth/me",
-        "POST /api/auth/me/password",
-    };
-
     [Fact]
     public async Task TheAllowList_MatchesRealEndpoints()
     {
         await using var host = await ApiTestHost.StartAsync();
         var all = Endpoints(host).Select(Describe).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        var stale = AnonymousAllowList.Concat(SignedInOnly).Where(e => !all.Contains(e)).ToList();
+        var stale = AnonymousAllowList.Where(e => !all.Contains(e)).ToList();
 
         Assert.Empty(stale);
-    }
-
-    [Fact]
-    public async Task SignedInOnlyEndpoints_StillCarryAnAuthorizeAttribute()
-    {
-        await using var host = await ApiTestHost.StartAsync();
-
-        var bare = Endpoints(host)
-            .Where(e => SignedInOnly.Contains(Describe(e)))
-            .Where(e => e.Metadata.GetMetadata<IAllowAnonymous>() is not null
-                        || !e.Metadata.GetOrderedMetadata<IAuthorizeData>().Any())
-            .Select(Describe)
-            .ToList();
-
-        Assert.Empty(bare);
     }
 
     // The fallback would catch these anyway; the explicit policy is what lets roles be
@@ -107,7 +76,6 @@ public class EndpointAuthorizationTests
 
         var endpoints = Endpoints(host)
             .Where(e => e.Metadata.GetMetadata<IAllowAnonymous>() is null)
-            .Where(e => !SignedInOnly.Contains(Describe(e)))
             .ToList();
         Assert.NotEmpty(endpoints);
 

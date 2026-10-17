@@ -23,7 +23,7 @@ public class ServerPidTests
 
         using var response = await client.PostAsync($"/api/server/{action}/{pid}", content: null, Ct);
 
-        await AuthEndpointsTests.AssertFieldErrorAsync(response, "pid");
+        await ProblemAssert.AssertFieldErrorAsync(response, "pid");
     }
 
     // A real process that is not the configured server - here, this test run itself -

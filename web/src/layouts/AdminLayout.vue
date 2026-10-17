@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { NButton, NDrawer, NDrawerContent, NMenu, type MenuOption } from 'naive-ui'
+import { NButton, NDrawer, NDrawerContent, NMenu, NSelect, type MenuOption } from 'naive-ui'
 import StatusBadge from '@/components/StatusBadge.vue'
+import { useManagedServers } from '@/composables/useManagedServers'
 import { hubStatus } from '@/realtime/hub'
+import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -12,8 +14,25 @@ const menuOpen = ref(false)
 const menuButton = ref<InstanceType<typeof NButton> | null>(null)
 const sidebar = ref<HTMLElement | null>(null)
 const content = ref<HTMLElement | null>(null)
+const auth = useAuthStore()
 
-const groups = [
+// One sign-in covers every server the user may manage: each has its own control room, on
+// its own page, so changing server is a page load.
+const { servers, load: loadServers } = useManagedServers()
+onMounted(loadServers)
+const serverOptions = computed(() => servers.value.map(s => ({ label: s.name, value: s.id })))
+const currentServer = computed(() => servers.value.find(s => s.current)?.id ?? null)
+function switchServer(id: string) {
+  const target = servers.value.find(s => s.id === id)
+  if (target && !target.current) {
+    window.location.assign(target.link + 'admin')
+  }
+}
+
+/** A page in the menu: Users is a global admin's, and Profile anyone's, whatever server. */
+interface Page { name: string, label: string, icon: string, adminOnly?: boolean, anyServer?: boolean }
+
+const groups: { label: string, pages: Page[] }[] = [
   { label: 'Server', pages: [
     { name: 'admin-dashboard', label: 'Dashboard', icon: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z' },
     { name: 'admin-server', label: 'Server control', icon: 'M12 3v9 M6 6a8 8 0 1 0 12 0' },
@@ -29,15 +48,18 @@ const groups = [
     { name: 'admin-tags', label: 'Tags', icon: 'M3 3h8l10 10-8 8L3 11Z M7 7h.01' },
   ]},
   { label: 'Administration', pages: [
-    { name: 'admin-users', label: 'Users', icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 7 M22 21v-2a4 4 0 0 0-3-4' },
-    { name: 'admin-profile', label: 'Profile', icon: 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2' },
+    { name: 'admin-users', label: 'Users', adminOnly: true, icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 7 M22 21v-2a4 4 0 0 0-3-4' },
+    { name: 'admin-profile', label: 'Profile', anyServer: true, icon: 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2' },
   ]},
 ]
 
-// The drawer's links close it; the sidebar's are plain links.
+// The drawer's links close it; the sidebar's are plain links. Users is a global admin's, and
+// someone who does not manage this server has only their own profile here.
+const shown = (page: Page) =>
+  (!page.adminOnly || auth.isAdmin) && (page.anyServer || auth.managesThisServer)
 const menuOptions = (inDrawer: boolean): MenuOption[] => groups.map(group => ({
   type: 'group', key: group.label, label: group.label,
-  children: group.pages.map(page => ({
+  children: group.pages.filter(shown).map(page => ({
     key: page.name,
     label: () => h(RouterLink, {
       to: { name: page.name },
@@ -45,9 +67,9 @@ const menuOptions = (inDrawer: boolean): MenuOption[] => groups.map(group => ({
     }, { default: () => page.label }),
     icon: () => h('svg', { viewBox: '0 0 24 24', width: 18, height: 18, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': true }, [h('path', { d: page.icon })]),
   })),
-}))
-const sidebarMenu = menuOptions(false)
-const drawerMenu = menuOptions(true)
+})).filter(group => group.children.length > 0)
+const sidebarMenu = computed(() => menuOptions(false))
+const drawerMenu = computed(() => menuOptions(true))
 
 // Closing on a desktop resize prevents a hidden mobile drawer locking body scroll.
 let desktop: MediaQueryList | undefined
@@ -105,6 +127,14 @@ async function afterDrawerClosed() {
   <div class="admin">
     <aside ref="sidebar" class="admin-sidebar">
       <div class="sidebar-heading">CONTROL ROOM</div>
+      <NSelect
+        v-if="serverOptions.length > 1"
+        class="server-picker"
+        :value="currentServer"
+        :options="serverOptions"
+        :input-props="{ 'aria-label': 'Server' }"
+        @update:value="switchServer"
+      />
       <nav aria-label="Administration"><NMenu :options="sidebarMenu" :value="active" :indent="20" /></nav>
       <RouterLink to="/" class="public-link">View public server page <span aria-hidden="true">↗</span></RouterLink>
     </aside>
@@ -132,6 +162,14 @@ async function afterDrawerClosed() {
 
     <NDrawer v-model:show="menuOpen" placement="left" width="min(300px, calc(100vw - 24px))" @after-leave="afterDrawerClosed">
       <NDrawerContent title="Control room" closable :body-content-style="{ padding: '8px 0' }">
+        <NSelect
+          v-if="serverOptions.length > 1"
+          class="server-picker"
+          :value="currentServer"
+          :options="serverOptions"
+          :input-props="{ 'aria-label': 'Server' }"
+          @update:value="switchServer"
+        />
         <nav id="admin-mobile-navigation" aria-label="Administration"><NMenu :options="drawerMenu" :value="active" :indent="20" /></nav>
         <RouterLink to="/" class="public-link" @click="menuOpen = false">View public server page</RouterLink>
       </NDrawerContent>
@@ -143,6 +181,7 @@ async function afterDrawerClosed() {
 .admin { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: var(--space-12); min-height: calc(100vh - 140px); align-items: start; }
 .admin-sidebar { position: sticky; top: 24px; max-height: calc(100vh - 48px); overflow-y: auto; background: var(--surface); border: 1px solid var(--header-border); border-radius: var(--radius-panel); padding: 20px 0 12px; }
 .sidebar-heading { color: var(--text-muted); font-size: var(--font-meta); font-weight: 700; letter-spacing: 0.14em; padding: 0 24px 8px; }
+.server-picker { width: auto; margin: 0 20px 12px; }
 .admin-workspace, .admin-content { min-width: 0; }
 .public-link { display: block; margin: 12px 20px 0; padding: 16px 4px 4px; border-top: 1px solid var(--header-border); color: var(--text-muted); text-decoration: none; font-size: var(--font-meta); }
 .public-link:hover { color: var(--accent); }

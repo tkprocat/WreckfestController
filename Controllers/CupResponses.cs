@@ -79,7 +79,7 @@ public sealed record CupResponse(
             cup.IsActive ? CupStore.Shown(cup.Phase) : null,
             cup.IsActive ? cup.CurrentOccurrence : null,
             cup.IsActive ? cup.CurrentEnd : null,
-            cup.CreatedBy is { } user ? user.DisplayName ?? user.UserName : null,
+            cup.CreatedBy,
             cup.CreatedAt,
             cup.UpdatedAt,
             cup.Version);

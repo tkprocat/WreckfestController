@@ -1,8 +1,14 @@
 using System.Diagnostics;
 using System.Net;
+using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
+using WreckfestPortal.Accounts;
 using Yarp.ReverseProxy.Forwarder;
 
 namespace WreckfestPortal;
@@ -12,6 +18,9 @@ namespace WreckfestPortal;
 /// <see cref="ControllerSites.Files"/>, and its API and live updates forwarded to the
 /// controller. The browser only ever talks to the portal, so the reverse proxy in front
 /// needs a single route, and a controller is added by listing it in the portal's settings.
+/// Someone signed in to the portal who may manage the server is vouched for with a
+/// <see cref="ControllerTokens"/> token; everyone else reaches only what the controller
+/// shows anonymously.
 /// </summary>
 public static class ControllerSite
 {
@@ -61,6 +70,11 @@ public static class ControllerSite
                     limit.MaxRequestBodySize = null;
                 }
 
+                if (!await VouchAsync(context, server))
+                {
+                    return;
+                }
+
                 await sites.Forwarder.SendAsync(context, server.ApiUrl, sites.Client, RequestConfig, transformer);
                 return;
             }
@@ -104,6 +118,65 @@ public static class ControllerSite
         });
     }
 
+    /// <summary>The key under which <see cref="VouchAsync"/> leaves the token for the transformer.</summary>
+    private static readonly object TokenKey = new();
+
+    /// <summary>
+    /// Mints the controller's token when the visitor is signed in to the portal and may manage
+    /// <paramref name="server"/>. A change to the API sent in their name must carry the
+    /// portal's antiforgery token, as the portal's own API does: the controller trusts the
+    /// token alone. Not the hub's: SignalR's negotiate and long-polling POSTs carry no such
+    /// header, and the hub has nothing for a client to change - it only sends.
+    /// False when the request was refused and answered here.
+    /// </summary>
+    private static async Task<bool> VouchAsync(HttpContext context, PortalServer server)
+    {
+        // The portal's cookie, checked against the account as on every portal request: a lock
+        // or a lost server applies at once.
+        var signIn = await context.AuthenticateAsync(IdentityConstants.ApplicationScheme);
+        if (!signIn.Succeeded)
+        {
+            return true;
+        }
+
+        var users = context.RequestServices.GetRequiredService<UserManager<PortalUser>>();
+        var id = users.GetUserId(signIn.Principal);
+        var user = id is null ? null : await users.Users.Include(u => u.Servers).SingleOrDefaultAsync(u => u.Id == id, context.RequestAborted);
+        if (user is null || !user.CanManage(server.Id))
+        {
+            return true;
+        }
+
+        var method = context.Request.Method;
+        if (context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
+            && !(HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method) || HttpMethods.IsTrace(method)))
+        {
+            try
+            {
+                context.User = signIn.Principal;
+                await context.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(context);
+            }
+            catch (AntiforgeryValidationException)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                await context.Response.WriteAsJsonAsync(
+                    new ProblemDetails
+                    {
+                        Status = StatusCodes.Status400BadRequest,
+                        Title = AntiforgeryFilter.FailureTitle,
+                        Detail = $"Fetch GET /api/auth/antiforgery and send its {PortalAccounts.XsrfCookieName} cookie back in the {PortalAccounts.XsrfHeaderName} header.",
+                    },
+                    options: null,
+                    contentType: "application/problem+json",
+                    context.RequestAborted);
+                return false;
+            }
+        }
+
+        context.Items[TokenKey] = context.RequestServices.GetRequiredService<ControllerTokens>().Mint(user, server);
+        return true;
+    }
+
     /// <summary>
     /// What the controller is told about the request: the visitor's address and scheme, and
     /// the path the site lives under here. Never what the visitor sent in those headers: the
@@ -145,6 +218,11 @@ public static class ControllerSite
 
             proxyRequest.Headers.TryAddWithoutValidation("X-Forwarded-Proto", httpContext.Request.Scheme);
             proxyRequest.Headers.TryAddWithoutValidation("X-Forwarded-Prefix", prefix.ToUriComponent());
+
+            // Who is calling is the portal's to say: never a token the visitor brought.
+            proxyRequest.Headers.Authorization = httpContext.Items[TokenKey] is string token
+                ? new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token)
+                : null;
 
             // The portal's own sign-in and antiforgery cookies belong to the whole site, so
             // the browser sends them here too. They are the portal's credentials, never a

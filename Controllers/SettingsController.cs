@@ -28,7 +28,6 @@ public class SettingsController : ControllerBase
 {
     private const string Vote = "vote";
     private const string PublicSite = "publicSite";
-    private const string Assistant = "assistant";
 
     private readonly ISettingsStore _store;
     private readonly ILogger<SettingsController> _logger;
@@ -43,8 +42,7 @@ public class SettingsController : ControllerBase
     [HttpGet]
     public SettingsResponse List() => new(
         VoteSettingsResponse.From(_store.GetEntry<VoteSettings>()),
-        PublicSiteSettingsResponse.From(_store.GetEntry<PublicSiteSettings>()),
-        AssistantSettingsResponse.From(_store.GetEntry<AssistantSettings>()));
+        PublicSiteSettingsResponse.From(_store.GetEntry<PublicSiteSettings>()));
 
     /// <summary>The voting settings, with their version as the ETag.</summary>
     [HttpGet(Vote)]
@@ -109,42 +107,10 @@ public class SettingsController : ControllerBase
         return result;
     }
 
-    /// <summary>The AI assistant's settings, with their version as the ETag. Never the API key itself.</summary>
-    [HttpGet(Assistant)]
-    public ActionResult<AssistantSettingsResponse> GetAssistant()
-    {
-        var entry = _store.GetEntry<AssistantSettings>();
-        this.SetETag(entry.Version);
-        return AssistantSettingsResponse.From(entry);
-    }
-
-    /// <summary>
-    /// Changes the AI assistant fields in the body, as for <see cref="PutVote"/>. An
-    /// <c>apiKey</c> of "" removes the key; the answer says only whether one is set.
-    /// </summary>
-    [HttpPut(Assistant)]
-    [ProducesResponseType<AssistantSettingsResponse>(StatusCodes.Status200OK)]
-    [ProducesResponseType<AssistantSettingsResponse>(StatusCodes.Status409Conflict)]
-    [ProducesResponseType<ProblemDetails>(StatusCodes.Status428PreconditionRequired, "application/problem+json")]
-    public async Task<IActionResult> PutAssistant([FromBody] JsonElement body)
-    {
-        if (this.ReadIfMatch(out var expected) is { } badPrecondition)
-        {
-            return badPrecondition;
-        }
-
-        var result = await SettingsApi.Find(Assistant)!.PutAsync(this, _store, body, expected);
-        if (result is OkObjectResult)
-        {
-            _logger.LogInformation("{Caller} saved the AI assistant settings", this.Caller());
-        }
-
-        return result;
-    }
 }
 
 /// <summary>Every settings section the web may edit.</summary>
-public sealed record SettingsResponse(VoteSettingsResponse Vote, PublicSiteSettingsResponse PublicSite, AssistantSettingsResponse Assistant);
+public sealed record SettingsResponse(VoteSettingsResponse Vote, PublicSiteSettingsResponse PublicSite);
 
 /// <summary>
 /// The voting settings as the API shows them: <see cref="VoteSettings"/> without the legacy
@@ -175,25 +141,4 @@ public sealed record PublicSiteSettingsResponse(int FeedItemCount, int Version)
 {
     public static PublicSiteSettingsResponse From(SettingsEntry<PublicSiteSettings> entry) =>
         new(entry.Value.FeedItemCount, entry.Version);
-}
-
-/// <summary>
-/// The AI assistant's settings as the API shows them: <see cref="AssistantSettings"/> with
-/// <see cref="ApiKeySet"/> in place of the key, which is never sent back.
-/// </summary>
-public sealed record AssistantSettingsResponse(
-    bool Enabled,
-    string BaseUrl,
-    string Model,
-    bool ApiKeySet,
-    int DailyRequestLimit,
-    int Version)
-{
-    public static AssistantSettingsResponse From(SettingsEntry<AssistantSettings> entry) => new(
-        entry.Value.Enabled,
-        entry.Value.BaseUrl,
-        entry.Value.Model,
-        !string.IsNullOrEmpty(entry.Value.ApiKey),
-        entry.Value.DailyRequestLimit,
-        entry.Version);
 }

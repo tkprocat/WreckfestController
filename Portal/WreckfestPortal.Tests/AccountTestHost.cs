@@ -15,6 +15,8 @@ internal sealed class AccountTestHost : IAsyncDisposable
 {
     public const string Password = "correct horse battery";
     public const string PeerHeader = "X-Test-Peer-Address";
+    public const string VanillaSecret = "vanilla-secret-of-at-least-32-characters";
+    public const string Tvtp2Secret = "tvtp2-secret-of-at-least-32-characters!";
 
     private readonly string _root;
 
@@ -38,9 +40,11 @@ internal sealed class AccountTestHost : IAsyncDisposable
             ["Portal:Servers:0:Id"] = "vanilla",
             ["Portal:Servers:0:Name"] = "Vanilla",
             ["Portal:Servers:0:ApiUrl"] = "http://10.9.8.7:5100",
+            ["Portal:Servers:0:Secret"] = VanillaSecret,
             ["Portal:Servers:1:Id"] = "tvtp2",
             ["Portal:Servers:1:Name"] = "TVTP2",
             ["Portal:Servers:1:ApiUrl"] = "http://10.9.8.7:5102",
+            ["Portal:Servers:1:Secret"] = Tvtp2Secret,
             ["Portal:AppRoot"] = Path.Combine(root, "app"),
             ["Portal:DatabasePath"] = Path.Combine(root, "data", "portal.db"),
         });

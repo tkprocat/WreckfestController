@@ -26,24 +26,22 @@ On first start it creates its data folder, `%LocalAppData%\WreckfestController\`
 
 | File | Contents |
 | --- | --- |
-| `controller.db` | Settings, web accounts, the track catalogue, collections, cups and race results |
-| `keys\` | The keys that protect sign-in cookies, encrypted for this Windows user. Deleting the folder signs everyone out. |
+| `controller.db` | Settings, the track catalogue, collections, cups and race results |
 | `user-settings.json` | Startup settings that you write by hand (see step 3). The controller never writes this file. |
 | `crashes\` | One file per crash, with the full error. Created on the first crash; the newest 20 are kept. |
 
 If the database cannot be opened, the controller starts in **recovery mode**: the
-desktop app shows why in a banner. Sign-in is unavailable and the API answers 503
-(apart from `GET /api/auth/state`, which reports the state). Once the cause is fixed,
-click **RETRY** in the banner, or restart the controller.
+desktop app shows why in a banner, and the API answers 503 to everything, saying so. Once
+the cause is fixed, click **RETRY** in the banner, or restart the controller.
 
 To keep the database somewhere else, set `Database:Path` in `user-settings.json` (step
-3). The `keys` folder follows it; the `crashes` folder does not, so a crash is recorded
-even when the database's folder cannot be written.
+3). The `crashes` folder does not follow it, so a crash is recorded even when the
+database's folder cannot be written.
 
 To back up the database, click **BACK UP NOW** on the **Configuration** tab. It writes a
 consistent copy to the `backups` folder beside the database while the controller runs;
-the controller also backs up there before each database upgrade. A backup holds every
-account's password hash, so keep it private. There is no backup endpoint in the web API.
+the controller also backs up there before each database upgrade. There is no backup
+endpoint in the web API. The web accounts are the portal's (step 4), not in this database.
 
 ## 2. Connect the dedicated server
 
@@ -96,7 +94,11 @@ The API is off by default. The web site (step 4) and scripts use it. To turn it 
     "AllowRemote": false,
     "TrustedProxies": ["127.0.0.1"],
     "HttpPort": 5100,
-    "HttpsPort": 5101
+    "HttpsPort": 5101,
+    "Portal": {
+      "ServerId": "vanilla",
+      "Secret": "<the same secret as this server has in the portal's settings>"
+    }
   }
 }
 ```
@@ -106,8 +108,8 @@ Startup settings are read from `appsettings.json` next to the exe, then
 wins. Keep yours in `user-settings.json`, because installing a new release replaces
 `appsettings.json`. Restart the controller after any change to the file.
 
-Only the startup settings come from these files: `Api`, `Database`, `Logging` and
-`WreckfestServer:SupportedBuild`. The server paths, SteamCMD and voting settings are in
+Only the startup settings come from these files: `Api`, `Database`, `Assistant`, `Logging`
+and `WreckfestServer:SupportedBuild`. The server paths, SteamCMD and voting settings are in
 the database, and the `WreckfestServer`, `SteamCmd` and `Vote` sections of
 `user-settings.json` are ignored. On the very first start the database takes its voting
 defaults from the shipped `appsettings.json` and `appsettings.{Environment}.json`.
@@ -115,10 +117,11 @@ defaults from the shipped `appsettings.json` and `appsettings.{Environment}.json
 | Setting | Meaning |
 | --- | --- |
 | `Enabled` | `true` starts the API. Anything else, including `"yes"` or a typo, leaves it off and opens no port. |
-| `Key` | An API key for scripts, sent as the `X-Api-Key` header. Leave it empty if nothing but browsers will use the API. |
+| `Key` | An API key for scripts, sent as the `X-Api-Key` header. Leave it empty if nothing but the web site will use the API. |
 | `AllowRemote` | `false` listens on `127.0.0.1` only, so only this PC can connect, such as a portal on the same PC. `true` listens on every network interface. |
 | `TrustedProxies` | The address of the portal (step 4): `127.0.0.1` when it runs on the same PC. An entry that is not an address or range is logged and skipped. |
 | `HttpPort`, `HttpsPort` | Default 5100 and 5101, also when left empty. |
+| `Portal:ServerId`, `Portal:Secret` | This server's `Id` and `Secret` in the portal's settings (step 4). The portal signs in the people who manage this server and vouches for them with a token signed with the secret; without these, only the `Key` signs in. Set both or neither; the secret needs at least 32 characters. |
 | `Https` | A certificate, to serve HTTPS directly: see [docs/https.md](docs/https.md). |
 
 The Configuration tab shows under **WEB API** whether the API is running and where, or
@@ -132,7 +135,7 @@ a default or to plain HTTP.
 Each controller manages one dedicated server. To run several, install each controller
 in its own folder, and give each its own settings, database and ports. By default, every
 controller run by the same Windows user shares `%LocalAppData%\WreckfestController`,
-which would give them the same server paths, accounts and cups.
+which would give them the same server paths and cups.
 
 1. In each install's `appsettings.json`, point `UserSettingsPath` at a file of its own,
    such as `%LocalAppData%\WreckfestController\server2\user-settings.json`. Check this
@@ -174,8 +177,12 @@ dotnet publish Portal/WreckfestPortal -c Release -o C:\WreckfestPortal
 ```
 
 It needs the ASP.NET Core 10 Runtime. Keep the `wwwroot` and `app` folders next to the
-exe: `wwwroot` is the front page and `app` the controllers' web app. The portal holds no
-account, key or database: signing in is between the browser and each controller.
+exe: `wwwroot` is the front page and `app` the controllers' web app.
+
+The portal also holds the web site's accounts, in `data\portal.db` next to the exe (with a
+`keys` folder beside it that protects the sign-in cookies; deleting it signs everyone out).
+One sign-in covers every server. There are two kinds of account: an **admin** manages every
+server and the accounts, and anyone else manages only the servers an admin ticks for them.
 
 List the servers in the portal's `appsettings.json`:
 
@@ -187,9 +194,9 @@ List the servers in the portal's `appsettings.json`:
     "Intro": "Pick a server.",
     "Servers": [
       { "Id": "vanilla", "Name": "Vanilla", "Description": "The base game's tracks and cars.",
-        "ApiUrl": "http://127.0.0.1:5100" },
+        "ApiUrl": "http://127.0.0.1:5100", "Secret": "<a long random string>" },
       { "Id": "tvtp2", "Name": "TVTP2", "Description": "Tracks from the TVTP2 mod.",
-        "ApiUrl": "http://127.0.0.1:5102" }
+        "ApiUrl": "http://127.0.0.1:5102", "Secret": "<another long random string>" }
     ],
     "TrustedProxies": []
   }
@@ -203,17 +210,18 @@ List the servers in the portal's `appsettings.json`:
 | `Servers` | The servers, in the order the front page lists them. `Description` is optional. |
 | `Id` | The server's path: `tvtp2` puts its site at `/tvtp2/`. Letters, digits, `-` and `_`, unique, and not `api` or `assets`, which the portal uses itself. |
 | `ApiUrl` | Where the portal reaches the controller's API: its address and port, with no path. It is never shown to visitors, so a LAN address is fine. |
+| `Secret` | Shared with that controller (its `Api:Portal:Secret`, with `Api:Portal:ServerId` set to the `Id`). At least 32 characters, and a different one for every server. In PowerShell, `[Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))` makes one. |
+| `DatabasePath` | Where the accounts are kept, if not `data\portal.db` next to the exe. Optional. |
 | `TrustedProxies` | A reverse proxy in front of the portal, such as HAProxy (see step 6), as addresses or CIDR ranges. Empty when visitors reach the portal directly. |
 | `PollSeconds`, `TimeoutSeconds` | How often the front page's details are refreshed from each server (default 15, 5 to 3600) and how long one has to answer (default 3). |
 
-On every controller, list the portal in `Api:TrustedProxies` (step 3): `127.0.0.1` when it
-runs on the same PC, otherwise its address, with `AllowRemote` set to `true` and the port
-open in Windows Firewall to the portal only. The controller then believes what the portal
-says about each visitor (their address, for the sign-in limit; whether they used HTTPS,
-for the `Secure` cookie) and about the path its site lives under. Its sign-in cookies
-belong to that path, so signing in to `/vanilla/` does not sign you in to `/tvtp2/`, and
-both can be open in one browser at once. **Without it, the controllers' cookies overwrite
-each other** and every visitor shares one sign-in limit.
+On every controller (step 3), set `Api:Portal:ServerId` and `Api:Portal:Secret` to match its
+entry here, and list the portal in `Api:TrustedProxies`: `127.0.0.1` when it runs on the same
+PC, otherwise its address, with `AllowRemote` set to `true` and the port open in Windows
+Firewall to the portal only. When someone who may manage a server uses its pages, the portal
+sends that controller a short-lived token, signed with the server's secret, that says who
+they are; the controller believes nothing else. It also believes what the portal says about
+each visitor's address, for its rate limits and logs.
 
 On the front page a server shows **UP** when its game server runs, **DOWN** when the
 controller answers but the game server is stopped, and **NO CONNECTION** when the
@@ -229,18 +237,25 @@ sc.exe start WreckfestPortal
 
 ## 5. Create the first admin account
 
-There is no sign-up page. When the API is enabled and no account exists, the
-desktop app offers a **Create admin account** dialog at startup. The Configuration tab
-has the same button under **WEB ACCOUNTS**, which also works for recovery if every
-admin is locked out or has lost their password.
+There is no sign-up page. Create the first admin on the portal's PC:
 
-Then open the server's site on the portal, such as `http://127.0.0.1:5000/vanilla/`, and
-sign in. Admins add further accounts on the site's Users page. Every account is an admin,
-and each controller has its own accounts.
+```
+C:\WreckfestPortal\WreckfestPortal.exe create-admin <username> <email>
+```
+
+It asks for the password (or reads it from the first line of input). Run it again whenever
+you need another admin, for example when every admin is locked out or has lost their
+password.
+
+Then open a server's site on the portal, such as `http://127.0.0.1:5000/vanilla/`, and sign
+in. Admins add further accounts on the Users page, choosing for each whether it is an admin
+or which servers it manages. Someone who signs in to a server they do not manage is told so;
+the menu's server list takes them to the ones they do.
 
 - Passwords need at least 10 characters.
 - Five failed sign-ins lock an account for 15 minutes. An admin can unlock it sooner.
 - Sign-in also allows 10 attempts per minute from each IP address.
+- Nobody can delete, lock or demote their own account, and the last admin stays an admin.
 
 ## 6. Open the web site to others
 
@@ -264,9 +279,10 @@ requests to the portal over HTTP. It needs a single route: the whole domain to t
    "TrustedProxies": ["192.168.1.1"]
    ```
 
-   CIDR ranges work too (`"10.0.0.0/24"`). The portal then passes each visitor's real IP
-   address and scheme on to the controllers, for the sign-in limit, the logs and the
-   `Secure` cookie. It ignores these headers from every other address.
+   CIDR ranges work too (`"10.0.0.0/24"`). The portal then knows each visitor's real IP
+   address, for the sign-in limit and the logs, and that they used HTTPS, so the sign-in
+   cookie is marked `Secure`; it passes both on to the controllers. It ignores these headers
+   from every other address.
 
 4. Open port 5000 in Windows Firewall only to the proxy:
 
@@ -305,24 +321,36 @@ On the web site, as an admin:
 ### The AI assistant (optional)
 
 The public site can have an **AI** page where visitors ask about the server in plain
-language: who is on, what is next in the rotation, who won, when the next cup is. It is off
-until you turn it on under **Settings** > **AI assistant**:
+language: who is on, what is next in the rotation, who won, when the next cup is. It is set
+up in the controller's `user-settings.json` (step 3), not on the web site, so the key stays
+with whoever runs the PC:
+
+```json
+"Assistant": {
+  "Enabled": true,
+  "ApiKey": "<your key>",
+  "Model": "gpt-5-mini",
+  "BaseUrl": "https://api.openai.com/v1",
+  "DailyRequestLimit": 200
+}
+```
 
 1. Get an API key from [OpenAI](https://platform.openai.com/api-keys), or from any
-   OpenAI-compatible service. For OpenRouter set **API address** to
+   OpenAI-compatible service. For OpenRouter set `BaseUrl` to
    `https://openrouter.ai/api/v1`; for a local Ollama, `http://localhost:11434/v1` with any
    key.
-2. Paste the key, pick a **Model** (default `gpt-5-mini`) and turn on **Show the AI page**.
-3. Set **Questions per day** to cap the bill. Each visitor can also ask at most 10 questions
-   a minute.
+2. `Enabled` shows the public AI page. `Model` defaults to `gpt-5-mini`.
+3. `DailyRequestLimit` caps the bill (default 200 questions a day). Each visitor can also ask
+   at most 10 questions a minute.
 
-The controller makes the calls, so the key never reaches a browser, and it is never shown
-again once saved. The model can only look up what the public pages already show.
+Restart the controller after changing them. The controller makes the calls, so the key never
+reaches a browser. The model can only look up what the public pages already show.
 
 With a key set, the admin panel has an **AI assistant** page too, whether or not the public
-page is on. There you can ask for changes to the rotation, collections, cups and server
-settings in plain language: the assistant proposes each one, and nothing changes until you
-click **Apply**. It cannot manage users, start or stop the server, or see passwords.
+page is on, for everyone who manages the server. There you can ask for changes to the
+rotation, collections, cups and server settings in plain language: the assistant proposes
+each one, and nothing changes until you click **Apply**. It cannot manage users, start or
+stop the server, or see passwords.
 
 ## Scripts and the API
 
@@ -368,11 +396,14 @@ not (the portal answers 502): check the **WEB API** line on that controller's
 Configuration tab. A wrong `Api` setting or a port already in use stops the API, and the
 reason is shown there. Check also that the portal's `ApiUrl` for it is right.
 
-**Signing in to one server signs you out of another.** The controllers do not trust the
-portal: list its address in each controller's `Api:TrustedProxies` (step 4).
+**Signed in, but a server's admin pages say you are not signed in, or answer 401.** That
+controller does not accept the portal's token: check that its `Api:Portal:ServerId` is the
+server's `Id` and its `Api:Portal:Secret` is the same as the portal's `Secret` for it, then
+restart it. The Configuration tab's **WEB API** line says when the two settings do not go
+together.
 
-**Signed out after every restart.** The controller cannot keep its `keys` folder.
-Check that `%LocalAppData%\WreckfestController\keys` is writable.
+**Signed out after every restart.** The portal cannot keep its `keys` folder. Check that the
+folder beside its `portal.db` is writable by the account the portal runs as.
 
 **The controller closed unexpectedly.** Look in `%LocalAppData%\WreckfestController\crashes`
 for the newest `crash-<date>_<time>-pid<id>.txt`; it names the database, so with several

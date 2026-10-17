@@ -1,134 +1,104 @@
-using Microsoft.AspNetCore.Authentication;
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.DataProtection;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Identity;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using WreckfestController.Data;
+using Microsoft.IdentityModel.Tokens;
 
 namespace WreckfestController.Services.Auth;
 
 /// <summary>
-/// Who may call the API: browsers signed in with an Identity cookie, and scripts that
-/// send <c>X-Api-Key</c>. Every endpoint requires one or the other unless it opts out
-/// with <c>[AllowAnonymous]</c>.
+/// Who may call the API: people the portal vouches for, with a short-lived token signed with
+/// this server's <c>Api:Portal:Secret</c> and addressed to its <c>Api:Portal:ServerId</c>, and
+/// scripts that send <c>X-Api-Key</c>. The accounts are the portal's; the controller has none.
+/// Every endpoint requires one or the other unless it opts out with <c>[AllowAnonymous]</c>.
 /// </summary>
 public static class ApiAuthentication
 {
-    /// <summary>Forwards to the API key handler when the header is present, otherwise to the cookie.</summary>
-    public const string SelectorScheme = "CookieOrApiKey";
+    /// <summary>Forwards to the API key handler when the header is present, otherwise to the portal's token.</summary>
+    public const string SelectorScheme = "PortalOrApiKey";
 
-    /// <summary>Everything an operator can do. Any signed-in user in v1; roles come later.</summary>
+    /// <summary>The portal's token, as a bearer token.</summary>
+    public const string PortalScheme = JwtBearerDefaults.AuthenticationScheme;
+
+    /// <summary>Managing this server. Anyone the portal vouches for may: it checked their access.</summary>
     public const string AdminPolicy = "Admin";
 
-    /// <summary>Day-to-day server control. Any signed-in user in v1; roles come later.</summary>
+    /// <summary>Day-to-day server control. The same people as <see cref="AdminPolicy"/>.</summary>
     public const string OperatorPolicy = "Operator";
 
-    /// <summary>The JS-readable cookie the SPA copies into <see cref="XsrfHeaderName"/>.</summary>
-    public const string XsrfCookieName = "XSRF-TOKEN";
-    public const string XsrfHeaderName = "X-XSRF-TOKEN";
+    public const string PortalSecretKey = "Api:Portal:Secret";
+    public const string PortalServerIdKey = "Api:Portal:ServerId";
 
-    public const int PasswordMinLength = 10;
-    public const int MaxFailedSignIns = 5;
-    public static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
-    public static readonly TimeSpan CookieLifetime = TimeSpan.FromDays(14);
+    /// <summary>What the portal signs its tokens as (WreckfestPortal's ControllerTokens.Issuer).</summary>
+    public const string PortalIssuer = "WreckfestPortal";
 
-    /// <summary>Where the cookie-encryption keys live: a <c>keys</c> folder beside the database.</summary>
-    public static string KeysFolder(string databasePath) =>
-        Path.Combine(Path.GetDirectoryName(Path.GetFullPath(databasePath)) ?? ".", "keys");
+    /// <summary>The claim with the user's display name (WreckfestPortal's ControllerTokens.DisplayNameClaim).</summary>
+    public const string DisplayNameClaim = "display_name";
+
+    /// <summary>The shortest secret accepted: the portal refuses shorter ones too.</summary>
+    public const int MinimumSecretLength = 32;
 
     /// <summary>
-    /// The account rules. Shared by the API host and the desktop app's
-    /// <see cref="AccountService"/>, so both accept and reject the same passwords.
+    /// The portal's settings, checked: both or neither. Without them only the API key signs
+    /// in, which leaves the web site's admin pages unusable but scripts working.
     /// </summary>
-    public static void ConfigureIdentity(IdentityOptions options)
+    /// <exception cref="PortalTrustException">One is set without the other, or the secret is too short.</exception>
+    public static (string Secret, string ServerId)? ResolvePortal(IConfiguration configuration)
     {
-        options.Password.RequiredLength = PasswordMinLength;
-        options.Password.RequireDigit = false;
-        options.Password.RequireLowercase = false;
-        options.Password.RequireUppercase = false;
-        options.Password.RequireNonAlphanumeric = false;
+        var secret = configuration[PortalSecretKey];
+        var serverId = configuration[PortalServerIdKey]?.Trim();
+        if (string.IsNullOrEmpty(secret) && string.IsNullOrEmpty(serverId))
+        {
+            return null;
+        }
 
-        options.Lockout.AllowedForNewUsers = true;
-        options.Lockout.MaxFailedAccessAttempts = MaxFailedSignIns;
-        options.Lockout.DefaultLockoutTimeSpan = LockoutDuration;
+        if (string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(serverId))
+        {
+            throw new PortalTrustException($"Set both {PortalSecretKey} and {PortalServerIdKey}, as in the portal's settings for this server, or neither.");
+        }
 
-        options.User.RequireUniqueEmail = true;
+        if (secret.Length < MinimumSecretLength)
+        {
+            throw new PortalTrustException($"{PortalSecretKey} must be at least {MinimumSecretLength} characters.");
+        }
+
+        return (secret, serverId);
     }
 
-    public static void AddApiAuthentication(
-        this IServiceCollection services,
-        IServiceProvider main,
-        IConfiguration configuration)
+    public static void AddApiAuthentication(this IServiceCollection services, IConfiguration configuration)
     {
-        // Identity's EF stores want a scoped context. The factory is the WPF app's, so
-        // both hosts open the same database the same way.
-        services.AddSingleton(main.GetRequiredService<IDbContextFactory<ControllerDbContext>>());
-        services.AddScoped(sp =>
-            sp.GetRequiredService<IDbContextFactory<ControllerDbContext>>().CreateDbContext());
-
         services.TryAddSingleton(TimeProvider.System);
-
-        services.AddIdentityCore<AppUser>(ConfigureIdentity)
-            .AddRoles<IdentityRole>()
-            .AddEntityFrameworkStores<ControllerDbContext>()
-            .AddSignInManager();
-
-        // AddSignInManager registers the security stamp validator, and the application
-        // cookie runs it; it is what makes a password change or an admin lock end the
-        // user's other sessions.
-        services.Configure<SecurityStampValidatorOptions>(options =>
-            // Check on every request: a handful of admins costs one indexed lookup each,
-            // and a revoked session should end now rather than in half an hour.
-            options.ValidationInterval = TimeSpan.Zero);
-
-        // Without persisted keys every restart would invalidate every cookie.
-        var databasePath = main.GetRequiredService<DatabaseState>().DatabasePath;
-        services.AddDataProtection()
-            .SetApplicationName("WreckfestController")
-            .PersistKeysToFileSystem(new DirectoryInfo(KeysFolder(databasePath)))
-            .ProtectKeysWithDpapi();
+        var portal = ResolvePortal(configuration);
 
         services.AddAuthentication(SelectorScheme)
             .AddPolicyScheme(SelectorScheme, SelectorScheme, options =>
                 options.ForwardDefaultSelector = context =>
                     context.Request.Headers.ContainsKey(ApiKeyAuthenticationHandler.HeaderName)
                         ? ApiKeyAuthenticationHandler.SchemeName
-                        : IdentityConstants.ApplicationScheme)
+                        : PortalScheme)
             .AddScheme<ApiKeyAuthenticationOptions, ApiKeyAuthenticationHandler>(
                 ApiKeyAuthenticationHandler.SchemeName,
                 options => options.Key = configuration["Api:Key"])
-            // All four Identity cookies, not just the application one: when the security
-            // stamp check fails, SignInManager signs out of every one of them.
-            .AddIdentityCookies(cookies => cookies.ApplicationCookie!.Configure(options =>
+            .AddJwtBearer(PortalScheme, options =>
             {
-                options.Cookie.HttpOnly = true;
-                options.Cookie.SameSite = SameSiteMode.Strict;
-                // HTTPS arrives through the user's reverse proxy; loopback is plain HTTP.
-                options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
-                options.ExpireTimeSpan = CookieLifetime;
-                options.SlidingExpiration = true;
-
-                // This is an API: answer with a status code, never a redirect to a login page.
-                options.Events.OnRedirectToLogin = context =>
+                // The claims as the portal wrote them: "sub" and "name", not long URIs.
+                options.MapInboundClaims = false;
+                options.TokenValidationParameters = new TokenValidationParameters
                 {
-                    context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    return Task.CompletedTask;
+                    ValidIssuer = PortalIssuer,
+                    // Only tokens addressed to this server: another server's are not for here.
+                    ValidAudience = portal?.ServerId,
+                    // Without the portal's settings no token can be valid: a random key nobody has.
+                    IssuerSigningKey = new SymmetricSecurityKey(portal is { } trusted
+                        ? Encoding.UTF8.GetBytes(trusted.Secret)
+                        : System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)),
+                    ValidAlgorithms = [SecurityAlgorithms.HmacSha256],
+                    RequireExpirationTime = true,
+                    RequireSignedTokens = true,
+                    ClockSkew = TimeSpan.FromSeconds(30),
+                    NameClaimType = "name",
                 };
-                options.Events.OnRedirectToAccessDenied = context =>
-                {
-                    context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                    return Task.CompletedTask;
-                };
-            }));
-
-        services.AddAntiforgery(options =>
-        {
-            options.HeaderName = XsrfHeaderName;
-            options.Cookie.SameSite = SameSiteMode.Strict;
-            options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
-        });
+            });
 
         services.AddAuthorizationBuilder()
             // Applies to every endpoint without its own authorization metadata, so a new
@@ -138,3 +108,6 @@ public static class ApiAuthentication
             .AddPolicy(OperatorPolicy, policy => policy.RequireAuthenticatedUser());
     }
 }
+
+/// <summary>Portal settings the API cannot start with; the message says why.</summary>
+public sealed class PortalTrustException(string message) : Exception(message);

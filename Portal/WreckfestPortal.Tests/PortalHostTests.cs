@@ -40,6 +40,7 @@ public sealed class PortalHostTests : IDisposable
         ["Portal:Servers:0:Id"] = id,
         ["Portal:Servers:0:Name"] = "TVTP2",
         ["Portal:Servers:0:ApiUrl"] = ApiUrl,
+        ["Portal:Servers:0:Secret"] = "tvtp2-secret-of-at-least-32-characters!",
         // Nothing there: these tests are about the portal's own page.
         ["Portal:AppRoot"] = Path.Combine(Path.GetTempPath(), "wfc-portal-tests", "no-app-here"),
         ["Portal:DatabasePath"] = DatabasePath,

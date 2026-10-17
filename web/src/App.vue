@@ -59,7 +59,8 @@ async function signOut() {
               </select>
             </label>
             <template v-if="auth.authenticated">
-              <RouterLink :to="{ name: 'admin-dashboard' }">Admin</RouterLink>
+              <!-- Signed in to the site, but this server's control room may be someone else's. -->
+              <RouterLink v-if="auth.managesThisServer" :to="{ name: 'admin-dashboard' }">Admin</RouterLink>
               <RouterLink :to="{ name: 'admin-profile' }" title="Your profile" class="app-user-name">
                 {{ auth.user?.displayName ?? auth.user?.userName }}
               </RouterLink>

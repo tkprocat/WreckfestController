@@ -55,11 +55,10 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
     {
         await using var host = await StartAsync();
         await ConfigureAsync(host, Key);
-        using var browser = host.CreateBrowser();
-        await browser.FetchAntiforgeryAsync();
+        using var browser = host.CreateClient();
 
-        using var status = await browser.Http.GetAsync("/api/assistant", Ct);
-        using var chat = await AskAsync(browser.Http, "Change the rotation.");
+        using var status = await browser.GetAsync("/api/assistant", Ct);
+        using var chat = await AskAsync(browser, "Change the rotation.");
 
         Assert.Equal(HttpStatusCode.Unauthorized, status.StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, chat.StatusCode);
@@ -351,12 +350,11 @@ public sealed class AdminAssistantEndpointsTests : IDisposable
 
     private static async Task ConfigureAsync(ApiTestHost host, string apiKey, bool enabled = false)
     {
-        var store = host.MainServices.GetRequiredService<ISettingsStore>();
-        var entry = store.GetEntry<AssistantSettings>();
-        entry.Value.Enabled = enabled;
-        entry.Value.ApiKey = apiKey;
-        var saved = await store.SaveAsync(entry.Value, entry.Version, Ct);
-        Assert.Equal(SettingsSaveStatus.Saved, saved.Status);
+        // The instance the API read from user-settings.json at start, changed in place.
+        var settings = host.Services.GetRequiredService<AssistantSettings>();
+        settings.Enabled = enabled;
+        settings.ApiKey = apiKey;
+        await Task.CompletedTask;
     }
 
     private static async Task<bool> AvailableAsync(HttpClient client) =>

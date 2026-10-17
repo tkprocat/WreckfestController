@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using WreckfestController.Data;
@@ -43,28 +44,56 @@ public sealed class ControllerDbContextTests : IDisposable
         Assert.True(File.Exists(DatabaseFile));
     }
 
+    // The accounts moved to the portal; each cup keeps its creator's name, as they had it.
     [Fact]
-    public async Task User_RoundTripsProfileFields()
+    public async Task MovingTheAccountsToThePortal_KeepsEachCupsCreatorsName()
     {
         var ct = TestContext.Current.CancellationToken;
         await using (var context = CreateContext())
         {
-            await context.Database.MigrateAsync(ct);
-            context.Users.Add(new AppUser
+            var migrator = context.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
+            await migrator.MigrateAsync("20261016002809_RaceEntryBestLapSetAt", ct);
+            await context.Database.ExecuteSqlRawAsync(
+                """
+                INSERT INTO "AspNetUsers" ("Id", "UserName", "DisplayName", "EmailConfirmed", "PhoneNumberConfirmed", "TwoFactorEnabled", "LockoutEnabled", "AccessFailedCount")
+                VALUES ('u1', 'allan', 'Race Control', 0, 0, 0, 0, 0), ('u2', 'bob', NULL, 0, 0, 0, 0, 0), ('u3', 'carol', '  ', 0, 0, 0, 0, 0);
+                """,
+                ct);
+            // The cups as that migration's table had them: every required column filled with a
+            // value of its type, so the test does not depend on the columns cups had then.
+            var connection = context.Database.GetDbConnection();
+            await connection.OpenAsync(ct);
+            var required = new List<(string Name, string Type)>();
+            await using (var columns = connection.CreateCommand())
             {
-                UserName = "admin",
-                Email = "admin@example.com",
-                DisplayName = "Race Control",
-                TimeZone = "Europe/Copenhagen",
-            });
-            await context.SaveChangesAsync(ct);
+                columns.CommandText = "SELECT name, type FROM pragma_table_info('Cups') WHERE \"notnull\" = 1 AND dflt_value IS NULL AND pk = 0";
+                await using var reader = await columns.ExecuteReaderAsync(ct);
+                while (await reader.ReadAsync(ct))
+                {
+                    required.Add((reader.GetString(0), reader.GetString(1)));
+                }
+            }
+
+            foreach (var (name, creator) in new[] { ("One", "u1"), ("Two", "u2"), ("Three", "u3"), ("Four", null) })
+            {
+                await using var insert = connection.CreateCommand();
+                var filled = required.Where(c => c.Name is not "Name" and not "CreatedById").ToList();
+                insert.CommandText =
+                    $"INSERT INTO \"Cups\" (\"Name\", \"CreatedById\"{string.Concat(filled.Select(c => $", \"{c.Name}\""))}) " +
+                    $"VALUES ($name, $creator{string.Concat(filled.Select(c => c.Type == "INTEGER" ? ", 0" : c.Type == "REAL" ? ", 0" : c.Name.EndsWith("Tracks", StringComparison.Ordinal) ? ", '[]'" : ", ''"))})";
+                insert.Parameters.Add(new SqliteParameter("$name", name));
+                insert.Parameters.Add(new SqliteParameter("$creator", (object?)creator ?? DBNull.Value));
+                await insert.ExecuteNonQueryAsync(ct);
+            }
+
+            await connection.CloseAsync();
+            await context.Database.MigrateAsync(ct);
         }
 
         await using (var context = CreateContext())
         {
-            var user = await context.Users.SingleAsync(ct);
-            Assert.Equal("Race Control", user.DisplayName);
-            Assert.Equal("Europe/Copenhagen", user.TimeZone);
+            var creators = await context.Cups.OrderBy(c => c.Id).Select(c => c.CreatedBy).ToListAsync(ct);
+            Assert.Equal(["Race Control", "bob", "carol", null], creators);
         }
     }
 

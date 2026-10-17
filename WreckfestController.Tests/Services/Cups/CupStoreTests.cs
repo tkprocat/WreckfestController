@@ -351,7 +351,7 @@ public sealed class CupStoreTests : IDisposable
     public async Task LinkingAMissingCollection_IsRefused()
     {
         var (status, cup) = await _db.Store.CreateAsync(
-            CupTestDatabase.Definition("Race night", InOneHour, collectionId: 999), createdById: null, Ct);
+            CupTestDatabase.Definition("Race night", InOneHour, collectionId: 999), createdBy: null, Ct);
 
         Assert.Equal(CupWriteStatus.UnknownCollection, status);
         Assert.Null(cup);

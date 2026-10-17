@@ -40,19 +40,26 @@ type error.
 `npm run lint` runs it alone. In Git Bash Oxlint prints nothing (the exit code is still
 right); run it from PowerShell to see the findings.
 
-`Portal/WreckfestPortal` is the web site (INSTALL step 7): a small `net10.0` ASP.NET Core
+`Portal/WreckfestPortal` is the web site (INSTALL step 4): a small `net10.0` ASP.NET Core
 app with its own tests in `Portal/WreckfestPortal.Tests`, which `dotnet test` runs with the
 rest. Each server in its settings gets a site under `/{Id}/`: the portal serves the web app
 there, writing `<base href="/{Id}/">` into index.html, and forwards `/{Id}/api`, `/hubs` and
-`/openapi` to that controller with YARP (`ControllerSite.cs`), the prefix stripped and sent as
-`X-Forwarded-Prefix`. The controller turns that into its path base, from `Api:TrustedProxies`
-only, so its cookies are scoped per server. Signing in stays between the browser and each
-controller: the portal holds no account or key. **Moving to the portal (in progress):** the portal
-now has its own accounts (`Portal/WreckfestPortal/Accounts/`: SQLite `data\portal.db`, Identity,
-global admins and users granted servers, `/api/auth/*` and `/api/users/*`, first admin from
-`WreckfestPortal.exe create-admin <user> <email>`). Next, the portal sends the controllers a
-signed token instead of passing the browser's cookies, the controllers drop their accounts and
-move the AI settings to `user-settings.json`, and the web app signs in to the portal. Its front page polls each controller's
+`/openapi` to that controller with YARP (`ControllerSite.cs`), the prefix stripped.
+
+**One sign-in, at the portal.** The accounts are the portal's (`Portal/WreckfestPortal/Accounts/`:
+SQLite `data\portal.db`, Identity, `/api/auth/*` and `/api/users/*`, first admin from
+`WreckfestPortal.exe create-admin <user> <email>`): a global admin manages every server and the
+accounts, anyone else only the servers granted them. The controller has **no accounts, no
+cookies and no antiforgery**. When someone signed in may manage the server being called, the
+forwarder attaches a 5-minute HS256 token (`ControllerTokens.cs`) signed with that server's
+`Portal:Servers[].Secret`, addressed to its id; the controller accepts only that
+(`Api:Portal:Secret` + `Api:Portal:ServerId`, `Services/Auth/ApiAuthentication.cs`) or
+`X-Api-Key`. The forwarder strips the portal's own cookies and any `Authorization` the visitor
+sent, and checks the portal's antiforgery token on changes to `/api` (not the hub: SignalR's
+POSTs carry no header). The AI assistant's settings are the `Assistant` section of the
+controller's user-settings.json (`AssistantConfiguration.cs`), not an endpoint. The web app
+reads its server id from its path (`SERVER_ID` in `web/src/base.ts`) and sends a signed-in user
+without access to `/no-access`. Its front page polls each controller's
 `GET /api/public/overview`, through its own copy of the fields it shows (`ServerStatus.cs`),
 so a change there needs no portal change unless a shown field is renamed. That page is a
 second entry of `web/` (`portal.html`, `src/portal/`), built by `npm run build:portal` into

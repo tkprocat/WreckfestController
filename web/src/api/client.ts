@@ -1,11 +1,19 @@
 import createClient, { type Middleware } from 'openapi-fetch'
 import type { paths } from './schema'
-import { BASE, sitePath, withoutBase } from '@/base'
+import type { paths as portalPaths } from './portal-schema'
+import { BASE } from '@/base'
 
-// The typed client for the controller's API. Types come from src/api/schema.d.ts,
-// generated from src/api/openapi.json, which a C# test keeps in step with the API.
+// Two typed clients. `api` is this server's controller, under the site's path
+// (/tvtp2/api/...), which the portal forwards; `portal` is the portal's own API at the
+// root (/api/auth/..., /api/users), where signing in and the accounts live. Types come from
+// src/api/schema.d.ts and portal-schema.d.ts, generated from the OpenAPI documents that
+// C# tests keep in step with each API.
 
-/** The antiforgery cookie the server sets, and the header it expects the token back in. */
+/**
+ * The antiforgery cookie the portal sets for the whole site, and the header it expects the
+ * token back in. One token for both clients: the portal checks it on its own API and on
+ * every change it forwards to a controller in the user's name.
+ */
 export const XSRF_COOKIE = 'XSRF-TOKEN'
 export const XSRF_HEADER = 'X-XSRF-TOKEN'
 
@@ -22,7 +30,7 @@ export function readCookie(name: string, cookies: string = document.cookie): str
   return null
 }
 
-/** The title of the server's 400 for a bad token (Services/Auth/CookieAntiforgeryFilter.cs). */
+/** The title of the portal's 400 for a bad token (Portal/WreckfestPortal/Accounts/AntiforgeryFilter.cs). */
 export const ANTIFORGERY_FAILURE = 'Missing or invalid antiforgery token.'
 
 /** The token fetch in flight, if any: cleared when it settles, so a failure is not kept. */
@@ -34,7 +42,7 @@ let tokenRequest: Promise<void> | null = null
  * server does not answer with one.
  */
 export function refreshAntiforgery(): Promise<void> {
-  const request = fetch(sitePath('/api/auth/antiforgery'), { credentials: 'same-origin' }).then((response) => {
+  const request = fetch('/api/auth/antiforgery', { credentials: 'same-origin' }).then((response) => {
     if (!response.ok) {
       throw new Error(`Could not get an antiforgery token (HTTP ${response.status}).`)
     }
@@ -123,13 +131,14 @@ export function onUnauthorized(handler: () => void): void {
 }
 
 /**
- * A 401 means the session ended (expired, or ended from another device). Sign-in itself
- * answers 401 for a wrong password, and the auth endpoints are the sign-in page's own
- * business, so those are left to the caller.
+ * A 401 means the portal no longer vouches for the user here: the session ended (expired,
+ * or ended elsewhere), or their access to this server was taken away. The app asks the
+ * portal which. Sign-in itself answers 401 for a wrong password, and the portal's auth
+ * endpoints are the sign-in page's own business, so those are left to the caller.
  */
 export const unauthorized: Middleware = {
   onResponse({ request, response }) {
-    if (response.status === 401 && !withoutBase(new URL(request.url, 'http://localhost').pathname).startsWith('/api/auth/')) {
+    if (response.status === 401 && !isPortalAuthPath(new URL(request.url, 'http://localhost').pathname)) {
       unauthorizedHandler?.()
     }
 
@@ -137,8 +146,15 @@ export const unauthorized: Middleware = {
   },
 }
 
+/** The portal's own sign-in endpoints, at the root; a controller's paths are under the base. */
+export function isPortalAuthPath(path: string): boolean {
+  return path.startsWith('/api/auth/')
+}
+
 export const api = createClient<paths>({ baseUrl: window.location.origin + BASE.replace(/\/$/, ''), credentials: 'same-origin' })
+export const portal = createClient<portalPaths>({ baseUrl: window.location.origin, credentials: 'same-origin' })
 // openapi-fetch runs onResponse hooks last-registered first. antiforgery goes last so its
 // retry runs first, and unauthorized then sees the final response - a retry that ends in
 // 401 must still end the session.
 api.use(unauthorized, antiforgery)
+portal.use(unauthorized, antiforgery)

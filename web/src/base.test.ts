@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { basePath, sitePath, withoutBase } from './base'
+import { basePath, serverId, sitePath, withoutBase } from './base'
 
 describe('basePath', () => {
   it('is / at the root', () => {
@@ -34,5 +34,15 @@ describe('withoutBase', () => {
   it('leaves a path outside the base alone', () => {
     expect(withoutBase('/other/api', '/tvtp2/')).toBe('/other/api')
     expect(withoutBase('/api/auth/login', '/')).toBe('/api/auth/login')
+  })
+})
+
+describe('serverId', () => {
+  it('is the site path without its slashes: the id the portal grants servers by', () => {
+    expect(serverId('/tvtp2/')).toBe('tvtp2')
+  })
+
+  it('is empty at the root', () => {
+    expect(serverId('/')).toBe('')
   })
 })

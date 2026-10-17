@@ -10,6 +10,16 @@ export function basePath(baseURI: string = document.baseURI): string {
 
 export const BASE = basePath()
 
+/**
+ * The portal's id for this server: its path without slashes (`tvtp2` for `/tvtp2/`), which
+ * the portal's accounts grant servers by. Empty at the root, as from the Vite dev server.
+ */
+export function serverId(base: string = BASE): string {
+  return base.split('/').find((segment) => segment.length > 0) ?? ''
+}
+
+export const SERVER_ID = serverId()
+
 /** A site path such as `/api/auth/state`, under the base: `/tvtp2/api/auth/state`. */
 export function sitePath(path: string, base: string = BASE): string {
   return base + path.replace(/^\/+/, '')

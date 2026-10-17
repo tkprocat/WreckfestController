@@ -45,6 +45,7 @@ public static class PortalApp
         services.AddHostedService(sp => sp.GetRequiredService<ServerPoller>());
 
         services.AddPortalAccounts();
+        services.AddSingleton<ControllerTokens>();
         services.AddPortalRateLimits();
         services.AddControllers(options => options.Filters.Add<AntiforgeryFilter>())
             // AddControllers looks in the entry assembly, which is the test runner in tests.

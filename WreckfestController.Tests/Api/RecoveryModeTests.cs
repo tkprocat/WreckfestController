@@ -99,7 +99,7 @@ public sealed class RecoveryModeTests : IDisposable
     }
 
     [Fact]
-    public async Task Api_InRecoveryMode_AnswersOnlyAuthState()
+    public async Task Api_InRecoveryMode_AnswersNothing_ButSaysWhy()
     {
         var state = new DatabaseState(DatabaseFile);
         state.MarkFailed("file is not a database", backupPath: null);
@@ -113,13 +113,12 @@ public sealed class RecoveryModeTests : IDisposable
         using var write = await client.PostAsync("/api/server/start", content: null, ct);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, write.StatusCode);
 
-        // Anonymous, so the web UI can explain why sign-in is unavailable.
+        // Anonymous pages too, saying why, so the web UI can tell visitors.
         using var anonymous = host.CreateClient();
-        using var authState = await anonymous.GetAsync("/api/auth/state", ct);
-        Assert.Equal(HttpStatusCode.OK, authState.StatusCode);
-        var body = await authState.Content.ReadFromJsonAsync<JsonElement>(ct);
+        using var overview = await anonymous.GetAsync("/api/public/overview", ct);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, overview.StatusCode);
+        var body = await overview.Content.ReadFromJsonAsync<JsonElement>(ct);
         Assert.True(body.GetProperty("degraded").GetBoolean());
-        Assert.False(body.GetProperty("authenticated").GetBoolean());
     }
 
     [Fact]

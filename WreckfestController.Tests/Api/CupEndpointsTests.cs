@@ -80,19 +80,33 @@ public class CupEndpointsTests
         Assert.Equal(1, list.GetProperty("count").GetInt32());
     }
 
-    [Fact]
-    public async Task Create_BySignedInUser_RecordsWhoCreatedIt()
+    // By the name the portal gave, as it was then: the controller keeps no accounts.
+    [Theory]
+    [InlineData("Allan", "Allan")]
+    [InlineData(null, "admin")]
+    public async Task Create_BySomeoneThePortalVouchesFor_RecordsWhoCreatedIt(string? displayName, string expected)
     {
         await using var host = await ApiTestHost.StartAsync();
-        await host.CreateUserAsync();
-        using var browser = host.CreateBrowser();
-        await browser.SignInAsync("admin");
+        using var client = host.CreatePortalClient("admin", displayName);
 
-        using var created = await browser.Http.PostAsJsonAsync("/api/cups", CupBody(), Ct);
+        using var created = await client.PostAsJsonAsync("/api/cups", CupBody(), Ct);
 
         Assert.Equal(HttpStatusCode.Created, created.StatusCode);
         var body = await created.Content.ReadFromJsonAsync<JsonElement>(Ct);
-        Assert.Equal("admin", body.GetProperty("createdBy").GetString());
+        Assert.Equal(expected, body.GetProperty("createdBy").GetString());
+    }
+
+    [Fact]
+    public async Task Create_ByAScript_RecordsNobody()
+    {
+        await using var host = await ApiTestHost.StartAsync();
+        using var client = host.CreateAuthenticatedClient();
+
+        using var created = await client.PostAsJsonAsync("/api/cups", CupBody(), Ct);
+
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var body = await created.Content.ReadFromJsonAsync<JsonElement>(Ct);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("createdBy").ValueKind);
     }
 
     public static TheoryData<object, string> InvalidCups => new()
@@ -177,7 +191,7 @@ public class CupEndpointsTests
 
         using var response = await client.PostAsJsonAsync("/api/cups", body, Ct);
 
-        await AuthEndpointsTests.AssertFieldErrorAsync(response, field);
+        await ProblemAssert.AssertFieldErrorAsync(response, field);
     }
 
     [Fact]

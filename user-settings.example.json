@@ -2,10 +2,22 @@
   "_comment": "WreckfestController 2.0 startup settings, edited by hand; the app never writes this file. Server paths, SteamCMD and voting are set in the app (the Configuration tab, or the web Settings page) and kept in the database.",
   "Api": {
     "Enabled": true,
-    "Key": "<a long random key, for scripts; browsers sign in instead>",
+    "Key": "<a long random key, for scripts; people sign in at the portal instead>",
     "AllowRemote": false,
-    "TrustedProxies": [],
-    "HttpPort": 5100
+    "TrustedProxies": ["127.0.0.1"],
+    "HttpPort": 5100,
+    "Portal": {
+      "_comment": "This server's Id and Secret in the portal's settings (32 characters or more). Empty: only Key signs in.",
+      "ServerId": "",
+      "Secret": ""
+    }
+  },
+  "Assistant": {
+    "Enabled": false,
+    "ApiKey": "",
+    "Model": "gpt-5-mini",
+    "BaseUrl": "https://api.openai.com/v1",
+    "DailyRequestLimit": 200
   },
   "Database": {
     "Path": "%LocalAppData%\\WreckfestController\\controller.db"

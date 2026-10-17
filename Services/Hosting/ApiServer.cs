@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -151,7 +152,7 @@ public class ApiServer : IApiServer, IDisposable
         {
             // A half-built host still holds ports and services: let it go, so a corrected
             // configuration can start cleanly.
-            StartError = ex is HttpsConfigurationException ? ex.Message : "The API did not start. The log has the details.";
+            StartError = ex is HttpsConfigurationException or PortalTrustException ? ex.Message : "The API did not start. The log has the details.";
             if (_app is not null)
             {
                 await _app.DisposeAsync();
@@ -178,7 +179,6 @@ public class ApiServer : IApiServer, IDisposable
     {
         builder.Services.AddControllers(options =>
             {
-                options.Filters.Add<CookieAntiforgeryFilter>();
                 // Name validation errors after the JSON property ("email"), not the C#
                 // one ("Email"), to match the Identity errors and the request body.
                 options.ModelMetadataDetailsProviders.Add(new SystemTextJsonValidationMetadataProvider());
@@ -226,13 +226,19 @@ public class ApiServer : IApiServer, IDisposable
         // in the WPF app asks the model anything.
         builder.Services.AddHttpClient(AssistantChat.HttpClientName);
         builder.Services.AddSingleton<AssistantChat>();
+        builder.Services.AddSingleton(AssistantConfiguration.Read(configuration));
         builder.Services.AddSingleton<AssistantUsage>();
 
-        builder.Services.AddApiAuthentication(main, configuration);
+        // The WPF app's factory, so both hosts open the same database the same way, and a
+        // context per request for the endpoints that take one.
+        builder.Services.AddSingleton(main.GetRequiredService<IDbContextFactory<ControllerDbContext>>());
+        builder.Services.AddScoped(sp =>
+            sp.GetRequiredService<IDbContextFactory<ControllerDbContext>>().CreateDbContext());
+
+        builder.Services.AddApiAuthentication(configuration);
         builder.Services.AddTrustedProxies(configuration);
         builder.Services.AddRateLimits();
         builder.Services.AddSignalR();
-        builder.Services.AddSingleton<AdminHubConnections>();
         // HTTPS status: StartAsync registers the real one first; a test host has none.
         builder.Services.TryAddSingleton(HttpsStatusSource.None);
         var https = ApiEndpoints.Resolve(configuration, AppContext.BaseDirectory).Https;
@@ -249,9 +255,7 @@ public class ApiServer : IApiServer, IDisposable
         // "this PC or not" from that.
         app.Use(HttpsEnforcementMiddleware.CaptureOriginal);
 
-        // Before anything reads the client IP, the scheme or the path base: behind the
-        // portal, the site's prefix (/tvtp2) arrives as X-Forwarded-Prefix and becomes the
-        // path base, which the sign-in and antiforgery cookies are scoped to.
+        // Before anything reads the client IP or the scheme.
         app.UseForwardedHeaders();
 
         // With HTTPS on: remote plain HTTP is redirected (page loads) or refused (the rest)

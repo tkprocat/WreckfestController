@@ -108,10 +108,13 @@ public class Cup : IVersioned
     /// <summary>The <c>#CollectionName</c> line for <see cref="Tracks"/>; a linked collection's own name wins.</summary>
     public string CollectionName { get; set; } = string.Empty;
 
-    /// <summary>The web user who created it; null for API-key callers or a deleted user.</summary>
-    public string? CreatedById { get; set; }
+    public const int CreatedByMaxLength = 256;
 
-    public AppUser? CreatedBy { get; set; }
+    /// <summary>
+    /// The name of whoever created it on the web site, as it was then (their display name, else
+    /// their username); null for API-key callers. The accounts are the portal's.
+    /// </summary>
+    public string? CreatedBy { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; }
 

@@ -7,11 +7,13 @@ import ProfileView from './ProfileView.vue'
 const api = vi.hoisted(() => ({ PUT: vi.fn(), POST: vi.fn() }))
 const auth = vi.hoisted(() => ({ user: null as unknown, sessionEnded: vi.fn() }))
 const router = vi.hoisted(() => ({ push: vi.fn() }))
-vi.mock('@/api/client', () => ({ api }))
+vi.mock('@/api/client', () => ({ portal: api }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ fullPath: '/admin/profile' }), useRouter: () => router }))
 vi.mock('@/stores/auth', async () => {
   const { reactive } = await import('vue')
-  const store = reactive(auth)
+  const store = reactive({ ...auth, updated: (changed: unknown) => (store.user = changed) })
+  // The test reads and sets the user through `auth`, as before.
+  Object.defineProperty(auth, 'user', { get: () => store.user, set: (value) => (store.user = value) })
   return { useAuthStore: () => store }
 })
 
@@ -21,6 +23,8 @@ const me = {
   email: 'admin@example.com',
   displayName: null,
   timeZone: 'Europe/Copenhagen',
+  isAdmin: true,
+  servers: [] as string[],
   isLockedOut: false,
   lockoutEnd: null,
 }

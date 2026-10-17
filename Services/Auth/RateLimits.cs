@@ -13,8 +13,6 @@ namespace WreckfestController.Services.Auth;
 /// </summary>
 /// <remarks>
 /// <list type="bullet">
-/// <item><see cref="LoginPolicy"/> caps sign-in attempts. Lockout protects one account;
-/// this slows a client that sprays many accounts.</item>
 /// <item><see cref="PublicPolicy"/> caps the anonymous public overview, which reads the
 /// server config and the database on every call.</item>
 /// <item><see cref="ImagesPolicy"/> caps the anonymous catalogue images. A page of tracks
@@ -25,9 +23,6 @@ namespace WreckfestController.Services.Auth;
 /// </remarks>
 public static class RateLimits
 {
-    public const string LoginPolicy = "login";
-    public const int LoginPermitsPerWindow = 10;
-
     public const string PublicPolicy = "public";
     public const int PublicPermitsPerWindow = 60;
 
@@ -54,9 +49,7 @@ public static class RateLimits
                 }
 
                 var policy = http.GetEndpoint()?.Metadata.GetMetadata<EnableRateLimitingAttribute>()?.PolicyName;
-                var title = policy == LoginPolicy
-                    ? "Too many sign-in attempts. Wait a minute and try again."
-                    : "Too many requests. Wait a minute and try again.";
+                const string title = "Too many requests. Wait a minute and try again.";
 
                 http.RequestServices.GetRequiredService<ILoggerFactory>()
                     .CreateLogger(typeof(RateLimits))
@@ -69,7 +62,6 @@ public static class RateLimits
                     cancellationToken);
             };
 
-            options.AddPolicy(LoginPolicy, context => PerClient(context, LoginPermitsPerWindow));
             options.AddPolicy(PublicPolicy, context => PerClient(context, PublicPermitsPerWindow));
             options.AddPolicy(AssistantPolicy, context => PerClient(context, AssistantPermitsPerWindow));
             options.AddPolicy(ImagesPolicy, context => PerClient(context, ImagesPermitsPerWindow));

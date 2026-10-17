@@ -100,7 +100,7 @@ public class CatalogueEndpointsTests
             $"/api/catalogue/tracks/{id}",
             new { key = "renamed", name = "Madman Stadium", origin = "BaseGame" },
             "\"1\"");
-        await AuthEndpointsTests.AssertFieldErrorAsync(rename, "key");
+        await ProblemAssert.AssertFieldErrorAsync(rename, "key");
 
         using var delete = await client.DeleteAsync($"/api/catalogue/tracks/{id}", Ct);
         Assert.Equal(HttpStatusCode.Conflict, delete.StatusCode);
@@ -137,7 +137,7 @@ public class CatalogueEndpointsTests
             "/api/catalogue/variants",
             new { trackId, variantId = "CUSTOM_OVAL", name = "Again", gameMode = "Racing" },
             Ct);
-        await AuthEndpointsTests.AssertFieldErrorAsync(duplicate, "variantId");
+        await ProblemAssert.AssertFieldErrorAsync(duplicate, "variantId");
 
         using var modInUse = await client.DeleteAsync($"/api/catalogue/mods/{modId}", Ct);
         Assert.Equal(HttpStatusCode.Conflict, modInUse.StatusCode);
@@ -158,11 +158,11 @@ public class CatalogueEndpointsTests
 
         using var dlc = await client.PostAsJsonAsync(
             "/api/catalogue/tracks", new { key = "a_track", name = "A", origin = "BaseGame", dlcName = "Pack" }, Ct);
-        await AuthEndpointsTests.AssertFieldErrorAsync(dlc, "dlcName");
+        await ProblemAssert.AssertFieldErrorAsync(dlc, "dlcName");
 
         using var mod = await client.PostAsJsonAsync(
             "/api/catalogue/tracks", new { key = "a_track", name = "A", origin = "Workshop", modId = 999 }, Ct);
-        await AuthEndpointsTests.AssertFieldErrorAsync(mod, "modId");
+        await ProblemAssert.AssertFieldErrorAsync(mod, "modId");
     }
 
     [Fact]
@@ -226,7 +226,7 @@ public class CatalogueEndpointsTests
         weather.EnsureSuccessStatusCode();
         using var badWeather = await client.PutAsJsonAsync(
             $"/api/catalogue/tracks/{id}/weather", new { weather = new[] { "snow" } }, Ct);
-        await AuthEndpointsTests.AssertFieldErrorAsync(badWeather, "weather");
+        await ProblemAssert.AssertFieldErrorAsync(badWeather, "weather");
 
         using var reset = await client.PostAsync($"/api/catalogue/tracks/{id}/reset", null, Ct);
         var track = await reset.Content.ReadFromJsonAsync<JsonElement>(Ct);
@@ -254,7 +254,7 @@ public class CatalogueEndpointsTests
         Assert.Equal("jump", Assert.Single(variant.GetProperty("tags").EnumerateArray()).GetProperty("slug").GetString());
 
         using var unknown = await client.PutAsJsonAsync($"/api/catalogue/variants/{id}/tags", new { tags = new[] { "nope" } }, Ct);
-        await AuthEndpointsTests.AssertFieldErrorAsync(unknown, "tags");
+        await ProblemAssert.AssertFieldErrorAsync(unknown, "tags");
     }
 
     // Weather and tags are the track's and variant's own data: changing them moves the
@@ -323,7 +323,7 @@ public class CatalogueEndpointsTests
         using var duplicate = await client.PostAsJsonAsync(
             "/api/catalogue/tags", new { name = "Oval again", slug = "oval" }, Ct);
 
-        await AuthEndpointsTests.AssertFieldErrorAsync(duplicate, "slug");
+        await ProblemAssert.AssertFieldErrorAsync(duplicate, "slug");
     }
 
     [Fact]

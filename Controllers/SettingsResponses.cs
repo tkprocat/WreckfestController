@@ -48,9 +48,8 @@ internal static class SettingsApi
         // set in the desktop app only; the web keeps the Update action itself.
         new SettingsApiSection<VoteSettings>("vote", hidden: [nameof(VoteSettings.Enabled)], ValidateVote),
         new SettingsApiSection<PublicSiteSettings>("publicSite", hidden: [], ValidatePublicSite),
-        // The key can be set or cleared, never read back: a web session, or anything that
-        // reads its answers, must not be able to take it away.
-        new SettingsApiSection<AssistantSettings>("assistant", hidden: [], ValidateAssistant, writeOnly: [nameof(AssistantSettings.ApiKey)]),
+        // No assistant section: its settings, the API key above all, are in user-settings.json
+        // (AssistantConfiguration), set by whoever runs the PC.
     ];
 
     public static ISettingsApiSection? Find(string name) =>
@@ -77,18 +76,6 @@ internal static class SettingsApi
 
     private static (string Field, string Message)? ValidatePublicSite(PublicSiteSettings site) =>
         Range("feedItemCount", site.FeedItemCount, 1, PublicSiteSettings.MaxFeedItemCount);
-
-    private static (string Field, string Message)? ValidateAssistant(AssistantSettings assistant)
-    {
-        if (!string.IsNullOrWhiteSpace(assistant.BaseUrl)
-            && (!Uri.TryCreate(assistant.BaseUrl.Trim(), UriKind.Absolute, out var uri)
-                || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp)))
-        {
-            return ("baseUrl", "baseUrl must be an http or https address.");
-        }
-
-        return Range("dailyRequestLimit", assistant.DailyRequestLimit, 1, AssistantSettings.MaxDailyRequestLimit);
-    }
 
     private static (string Field, string Message)? Range(string field, int value, int min, int max) =>
         value < min || value > max ? (field, $"{field} must be between {min} and {max}.") : null;

@@ -103,6 +103,17 @@ public sealed partial class PortalOptions
             {
                 problems.Add($"{where}:ApiUrl must be an http or https address, such as http://127.0.0.1:5100.");
             }
+
+            if (string.IsNullOrEmpty(server.Secret) || server.Secret.Length < Accounts.ControllerTokens.MinimumSecretLength)
+            {
+                problems.Add($"{where}:Secret must be at least {Accounts.ControllerTokens.MinimumSecretLength} characters, the same as that controller's Api:Portal:Secret.");
+            }
+        }
+
+        // One secret each: a controller that leaked its own must not be able to sign for another.
+        foreach (var shared in Servers.Where(s => !string.IsNullOrEmpty(s.Secret)).GroupBy(s => s.Secret).Where(g => g.Count() > 1))
+        {
+            problems.Add($"{Section}:Servers {string.Join(", ", shared.Select(s => s.Id))} share a Secret: give each server its own.");
         }
 
         for (var i = 0; i < TrustedProxies.Count; i++)
@@ -165,6 +176,13 @@ public sealed class PortalServer
     /// Never shown on the page: the browser asks the portal, which forwards.
     /// </summary>
     public string ApiUrl { get; set; } = "";
+
+    /// <summary>
+    /// Shared with this server's controller (its <c>Api:Portal:Secret</c>): signs the token the
+    /// portal sends it to say who is calling. At least 32 characters, and different for every
+    /// server. Never shown on the page.
+    /// </summary>
+    public string Secret { get; set; } = "";
 
     /// <summary>Where the card links, and the path the portal serves the site under.</summary>
     public string Path => "/" + Id + "/";

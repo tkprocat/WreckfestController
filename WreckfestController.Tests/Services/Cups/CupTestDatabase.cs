@@ -63,7 +63,7 @@ public sealed class CupTestDatabase : IDisposable
 
     public async Task<Cup> CreateAsync(CupDefinition definition)
     {
-        var (status, cup) = await Store.CreateAsync(definition, createdById: null);
+        var (status, cup) = await Store.CreateAsync(definition, createdBy: null);
         Assert.Equal(CupWriteStatus.Saved, status);
         return cup!;
     }

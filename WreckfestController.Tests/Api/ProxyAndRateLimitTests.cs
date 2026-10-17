@@ -7,7 +7,7 @@ using WreckfestController.Services.Auth;
 namespace WreckfestController.Tests.Api;
 
 /// <summary>
-/// Api:TrustedProxies and the per-IP login limit. Clients are told apart by the address
+/// Api:TrustedProxies and the per-IP limits. Clients are told apart by the address
 /// ForwardedHeadersMiddleware settles on, so the two are tested together.
 /// </summary>
 public class ProxyAndRateLimitTests
@@ -56,48 +56,31 @@ public class ProxyAndRateLimitTests
     }
 
     [Fact]
-    public async Task Login_EleventhAttemptInAMinute_Returns429WithRetryAfter()
+    public async Task OverTheLimit_Returns429WithRetryAfter()
     {
         await using var host = await ApiTestHost.StartAsync();
-        using var browser = Browser(host, peer: ClientA);
+        using var client = Client(host, peer: ClientA);
 
-        await ExhaustLoginLimitAsync(browser);
-        using var response = await browser.LoginAsync("nobody", ApiTestHost.Password);
+        await ExhaustLimitAsync(client);
+        using var response = await client.GetAsync(LimitedPath, Ct);
 
         Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
         Assert.NotNull(response.Headers.RetryAfter?.Delta);
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>(Ct);
-        Assert.Equal(
-            "Too many sign-in attempts. Wait a minute and try again.",
-            problem.GetProperty("title").GetString());
-    }
-
-    // The limit also stops the right password: a sprayer that finally guesses one
-    // should not get in until the window passes.
-    [Fact]
-    public async Task Login_OverTheLimit_IsRefusedEvenWithTheRightPassword()
-    {
-        await using var host = await ApiTestHost.StartAsync();
-        await host.CreateUserAsync();
-        using var browser = Browser(host, peer: ClientA);
-
-        await ExhaustLoginLimitAsync(browser);
-        using var response = await browser.LoginAsync("admin", ApiTestHost.Password);
-
-        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        Assert.Equal("Too many requests. Wait a minute and try again.", problem.GetProperty("title").GetString());
     }
 
     [Fact]
-    public async Task Login_LimitIsPerClientIp()
+    public async Task TheLimitIsPerClientIp()
     {
         await using var host = await ApiTestHost.StartAsync();
-        using var first = Browser(host, peer: ClientA);
-        using var second = Browser(host, peer: ClientB);
+        using var first = Client(host, peer: ClientA);
+        using var second = Client(host, peer: ClientB);
 
-        await ExhaustLoginLimitAsync(first);
-        using var response = await second.LoginAsync("nobody", ApiTestHost.Password);
+        await ExhaustLimitAsync(first);
+        using var response = await second.GetAsync(LimitedPath, Ct);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]
@@ -107,13 +90,13 @@ public class ProxyAndRateLimitTests
         {
             ["Api:TrustedProxies:0"] = "10.0.0.0/24",
         });
-        using var first = Browser(host, peer: Proxy, forwardedFor: ClientA);
-        using var second = Browser(host, peer: Proxy, forwardedFor: ClientB);
+        using var first = Client(host, peer: Proxy, forwardedFor: ClientA);
+        using var second = Client(host, peer: Proxy, forwardedFor: ClientB);
 
-        await ExhaustLoginLimitAsync(first);
-        using var response = await second.LoginAsync("nobody", ApiTestHost.Password);
+        await ExhaustLimitAsync(first);
+        using var response = await second.GetAsync(LimitedPath, Ct);
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     // A client that is not a trusted proxy - loopback included, which ASP.NET Core
@@ -128,24 +111,13 @@ public class ProxyAndRateLimitTests
         {
             ["Api:TrustedProxies"] = Proxy,
         });
-        using var browser = Browser(host, peer);
 
-        for (var attempt = 0; attempt < RateLimits.LoginPermitsPerWindow; attempt++)
-        {
-            SetForwardedFor(browser, $"198.51.100.{attempt}");
-            using var allowed = await browser.LoginAsync("nobody", ApiTestHost.Password);
-            Assert.Equal(HttpStatusCode.Unauthorized, allowed.StatusCode);
-        }
-
-        SetForwardedFor(browser, "198.51.100.200");
-        using var response = await browser.LoginAsync("nobody", ApiTestHost.Password);
-
-        Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
+        await AssertOneLimitForEveryForwardedForAsync(host, peer);
     }
 
     // With no usable proxy listed, nothing is trusted. ASP.NET Core reads EMPTY known-proxy
     // lists as "trust every peer", so clearing its loopback defaults and adding nothing
-    // let any client pick its own IP - and a fresh login limit - per request.
+    // let any client pick its own IP - and a fresh limit - per request.
     [Theory]
     [InlineData(null, ClientA)]
     [InlineData("", ClientA)]
@@ -157,82 +129,53 @@ public class ProxyAndRateLimitTests
         {
             ["Api:TrustedProxies"] = trusted,
         });
-        using var browser = Browser(host, peer);
 
-        for (var attempt = 0; attempt < RateLimits.LoginPermitsPerWindow; attempt++)
+        await AssertOneLimitForEveryForwardedForAsync(host, peer);
+    }
+
+    /// <summary>The anonymous public overview: limited per client, and answered in a test host.</summary>
+    private const string LimitedPath = "/api/public/overview";
+
+    private static async Task AssertOneLimitForEveryForwardedForAsync(ApiTestHost host, string peer)
+    {
+        using var client = Client(host, peer);
+        for (var attempt = 0; attempt < RateLimits.PublicPermitsPerWindow; attempt++)
         {
-            SetForwardedFor(browser, $"198.51.100.{attempt}");
-            using var allowed = await browser.LoginAsync("nobody", ApiTestHost.Password);
-            Assert.Equal(HttpStatusCode.Unauthorized, allowed.StatusCode);
+            SetForwardedFor(client, $"198.51.100.{attempt % 250}");
+            using var allowed = await client.GetAsync(LimitedPath, Ct);
+            Assert.Equal(HttpStatusCode.OK, allowed.StatusCode);
         }
 
-        SetForwardedFor(browser, "198.51.100.200");
-        using var response = await browser.LoginAsync("nobody", ApiTestHost.Password);
+        SetForwardedFor(client, "198.51.100.251");
+        using var response = await client.GetAsync(LimitedPath, Ct);
 
         Assert.Equal(HttpStatusCode.TooManyRequests, response.StatusCode);
     }
 
-    // The proxy terminates TLS, so cookies are marked Secure only when a trusted proxy
-    // says the browser used HTTPS. Cookies are passed by hand: a CookieContainer would
-    // withhold the Secure ones from the TestServer's http:// address.
-    [Theory]
-    [InlineData(Proxy, true)]
-    [InlineData(ClientA, false)]
-    public async Task ForwardedProto_FromATrustedProxy_MakesTheCookiesSecure(string peer, bool secure)
+    private static HttpClient Client(ApiTestHost host, string peer, string? forwardedFor = null)
     {
-        await using var host = await ApiTestHost.StartAsync(new Dictionary<string, string?>
-        {
-            ["Api:TrustedProxies"] = Proxy,
-        });
-        await host.CreateUserAsync();
-        using var client = host.CreateClient();
+        var client = host.CreateClient();
         client.DefaultRequestHeaders.Add(ApiTestHost.PeerAddressHeader, peer);
-        client.DefaultRequestHeaders.Add("X-Forwarded-For", ClientB);
-        client.DefaultRequestHeaders.Add("X-Forwarded-Proto", "https");
-
-        using var tokenResponse = await client.GetAsync("/api/auth/antiforgery", Ct);
-        var tokenCookies = tokenResponse.Headers.GetValues("Set-Cookie").ToList();
-        using var login = new HttpRequestMessage(HttpMethod.Post, "/api/auth/login")
-        {
-            Content = JsonContent.Create(new { login = "admin", password = ApiTestHost.Password }),
-        };
-        login.Headers.Add("Cookie", string.Join("; ", tokenCookies.Select(c => c.Split(';')[0])));
-        login.Headers.Add(ApiAuthentication.XsrfHeaderName, Uri.UnescapeDataString(
-            tokenCookies.Single(c => c.StartsWith(ApiAuthentication.XsrfCookieName + "=", StringComparison.Ordinal))
-                .Split(';')[0][(ApiAuthentication.XsrfCookieName.Length + 1)..]));
-        using var response = await client.SendAsync(login, Ct);
-
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var cookies = tokenCookies.Concat(response.Headers.GetValues("Set-Cookie")).ToList();
-        Assert.Contains(cookies, c => c.StartsWith(".AspNetCore.Identity.Application=", StringComparison.Ordinal));
-        Assert.All(cookies, c => Assert.Equal(secure, c.Contains("; secure", StringComparison.OrdinalIgnoreCase)));
-    }
-
-    private static BrowserClient Browser(ApiTestHost host, string peer, string? forwardedFor = null)
-    {
-        var browser = host.CreateBrowser();
-        browser.Http.DefaultRequestHeaders.Add(ApiTestHost.PeerAddressHeader, peer);
         if (forwardedFor is not null)
         {
-            SetForwardedFor(browser, forwardedFor);
+            SetForwardedFor(client, forwardedFor);
         }
 
-        return browser;
+        return client;
     }
 
-    private static void SetForwardedFor(BrowserClient browser, string client)
+    private static void SetForwardedFor(HttpClient client, string forwardedFor)
     {
-        browser.Http.DefaultRequestHeaders.Remove("X-Forwarded-For");
-        browser.Http.DefaultRequestHeaders.Add("X-Forwarded-For", client);
+        client.DefaultRequestHeaders.Remove("X-Forwarded-For");
+        client.DefaultRequestHeaders.Add("X-Forwarded-For", forwardedFor);
     }
 
-    /// <summary>Uses up the window with an unknown account, so no account locks.</summary>
-    private static async Task ExhaustLoginLimitAsync(BrowserClient browser)
+    private static async Task ExhaustLimitAsync(HttpClient client)
     {
-        for (var attempt = 0; attempt < RateLimits.LoginPermitsPerWindow; attempt++)
+        for (var attempt = 0; attempt < RateLimits.PublicPermitsPerWindow; attempt++)
         {
-            using var response = await browser.LoginAsync("nobody", ApiTestHost.Password);
-            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+            using var response = await client.GetAsync(LimitedPath, Ct);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
     }
 

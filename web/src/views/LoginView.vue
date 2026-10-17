@@ -47,15 +47,12 @@ async function submit() {
     <NCard class="login-card">
       <p class="eyebrow">Administration</p>
       <h2>Sign in</h2>
-      <NAlert v-if="auth.unreachable && !auth.loaded" type="error" title="The controller cannot be reached">
-        <p>Check that it is running, then try again.</p>
+      <NAlert v-if="auth.unreachable && !auth.loaded" type="error" title="The site cannot be reached">
+        <p>Check that the portal is running, then try again.</p>
         <NButton size="small" @click="auth.load()">Try again</NButton>
       </NAlert>
-      <NAlert v-else-if="auth.degraded" type="error" title="The controller's database is unavailable">
-        Sign-in is not possible until it is fixed. See the controller window for details.
-      </NAlert>
       <NAlert v-else-if="auth.setupRequired" type="info" title="No accounts yet">
-        Create the first admin account in the controller window.
+        Create the first admin on the portal's PC: <code>WreckfestPortal.exe create-admin &lt;username&gt; &lt;email&gt;</code>.
       </NAlert>
       <NForm v-else label-placement="top" :disabled="busy" @submit.prevent="submit">
         <NFormItem label="Username or email">

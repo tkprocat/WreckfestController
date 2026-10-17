@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const auth = vi.hoisted(() => ({ loaded: true, authenticated: true, load: vi.fn() }))
+const auth = vi.hoisted(() => ({ loaded: true, authenticated: true, managesThisServer: true, isAdmin: true, load: vi.fn() }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 
 // Only the guard is under test: the pages are stand-ins, so navigating does not load them.
@@ -9,6 +9,9 @@ for (const view of [
   '@/views/HomeView.vue',
   '@/views/LoginView.vue',
   '@/views/NotFoundView.vue',
+  '@/views/NoAccessView.vue',
+  '@/views/admin/UsersView.vue',
+  '@/views/admin/ProfileView.vue',
   '@/layouts/AdminLayout.vue',
   '@/views/admin/DashboardView.vue',
   '@/views/admin/ServerControlView.vue',
@@ -22,6 +25,8 @@ const { router } = await import('./index')
 beforeEach(async () => {
   auth.loaded = true
   auth.authenticated = true
+  auth.managesThisServer = true
+  auth.isAdmin = true
   auth.load.mockReset()
   await router.push('/')
 })
@@ -68,5 +73,43 @@ describe('router guard', () => {
     expect(router.currentRoute.value.name).toBe('login')
     expect(router.currentRoute.value.query.redirect).toBe('/admin/server')
     expect(auth.load).toHaveBeenCalled()
+  })
+
+  // One sign-in covers every server, but each control room is only for those who manage it.
+  it('tells someone signed in without access to this server so, rather than asking them to sign in', async () => {
+    auth.managesThisServer = false
+    auth.isAdmin = false
+
+    await router.push('/admin/server')
+
+    expect(router.currentRoute.value.name).toBe('no-access')
+    expect(router.currentRoute.value.query.from).toBe('/admin/server')
+  })
+
+  it('keeps the accounts to global admins', async () => {
+    auth.isAdmin = false
+
+    await router.push('/admin/users')
+
+    expect(router.currentRoute.value.name).toBe('no-access')
+  })
+
+  it('lets a user who manages this server into its control room', async () => {
+    auth.isAdmin = false
+
+    await router.push('/admin/server')
+
+    expect(router.currentRoute.value.fullPath).toBe('/admin/server')
+  })
+
+  // Their profile is theirs, not the server's: someone with no servers must still be able
+  // to change their temporary password.
+  it('lets someone signed in reach their profile without access to this server', async () => {
+    auth.managesThisServer = false
+    auth.isAdmin = false
+
+    await router.push('/admin/profile')
+
+    expect(router.currentRoute.value.fullPath).toBe('/admin/profile')
   })
 })

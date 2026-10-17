@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { useAuthStore } from './auth'
+import { canManage, useAuthStore, type User } from './auth'
 
 const api = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn() }))
 const refreshAntiforgery = vi.hoisted(() => vi.fn())
 const restartHub = vi.hoisted(() => vi.fn())
 
-vi.mock('@/api/client', () => ({ api, refreshAntiforgery }))
+vi.mock('@/api/client', () => ({ portal: api, refreshAntiforgery }))
 vi.mock('@/realtime/hub', () => ({ restartHub }))
 
-const admin = { userName: 'admin' }
+const admin = { id: '1', userName: 'admin', isAdmin: true, servers: [] as string[] }
 const answer = (status: number, data?: unknown) => ({ data, response: new Response(null, { status }) })
 
 beforeEach(() => {
@@ -130,5 +130,92 @@ describe('load', () => {
     expect(auth.unreachable).toBe(false)
     expect(auth.loaded).toBe(true)
     expect(auth.authenticated).toBe(true)
+  })
+})
+
+describe('canManage', () => {
+  const someone = (overrides: Partial<User>) => ({ ...admin, isAdmin: false, ...overrides }) as User
+
+  it('lets a global admin manage every server', () => {
+    expect(canManage(someone({ isAdmin: true }), 'tvtp2')).toBe(true)
+  })
+
+  it('lets a user manage the servers granted them, in any spelling, and no others', () => {
+    const racer = someone({ servers: ['TVTP2'] })
+    expect(canManage(racer, 'tvtp2')).toBe(true)
+    expect(canManage(racer, 'vanilla')).toBe(false)
+  })
+
+  it('lets nobody signed out manage anything', () => {
+    expect(canManage(null, 'tvtp2')).toBe(false)
+  })
+})
+
+describe('load after a change elsewhere', () => {
+  // The portal's answer says someone else, or nobody, is signed in now: settle as for a
+  // sign-out, so the hub stops sending this tab the old user's admin messages.
+  it('regroups the hub when the signed-in user is no longer the one it was', async () => {
+    // As in the app: the first answer comes before anything else, and regroups nothing.
+    const auth = useAuthStore()
+    api.GET.mockResolvedValueOnce(answer(200, { authenticated: true, user: admin, setupRequired: false }))
+    await auth.load()
+    expect(restartHub).not.toHaveBeenCalled()
+    api.GET.mockResolvedValueOnce(answer(200, { authenticated: false, user: null, setupRequired: false }))
+
+    expect(await auth.load()).toBe(true)
+
+    expect(auth.user).toBeNull()
+    expect(restartHub).toHaveBeenCalledOnce()
+  })
+
+  it('leaves the hub alone when the same user is still signed in', async () => {
+    const auth = useAuthStore()
+    api.GET.mockResolvedValue(answer(200, { authenticated: true, user: admin, setupRequired: false }))
+    await auth.load()
+
+    await auth.load()
+
+    expect(restartHub).not.toHaveBeenCalled()
+  })
+})
+
+describe('load while the session changes', () => {
+  it('asks once for several callers at the same time', async () => {
+    const auth = useAuthStore()
+    api.GET.mockResolvedValue(answer(200, { authenticated: false, user: null, setupRequired: false }))
+
+    await Promise.all([auth.load(), auth.load(), auth.load()])
+
+    expect(api.GET).toHaveBeenCalledOnce()
+  })
+
+  // A state request sent before a sign-in answers after it: its "nobody" is older news.
+  it('never lets an answer from before a sign-in undo it', async () => {
+    const auth = useAuthStore()
+    let answerLater: (value: unknown) => void = () => undefined
+    api.GET.mockReturnValueOnce(new Promise((resolve) => (answerLater = resolve)))
+    const stale = auth.load()
+    api.POST.mockResolvedValueOnce(answer(200, admin))
+    expect(await auth.login('admin', 'password', false)).toBeNull()
+
+    answerLater(answer(200, { authenticated: false, user: null, setupRequired: false }))
+    await stale
+
+    expect(auth.user).toEqual(admin)
+  })
+
+  // After a sign-in, a 401 must ask afresh, not wait on an answer that will be dropped.
+  it('asks again after a sign-in, rather than sharing a request from before it', async () => {
+    const auth = useAuthStore()
+    api.GET.mockReturnValueOnce(new Promise(() => undefined))
+    void auth.load()
+    api.POST.mockResolvedValueOnce(answer(200, admin))
+    await auth.login('admin', 'password', false)
+    api.GET.mockResolvedValueOnce(answer(200, { authenticated: false, user: null, setupRequired: false }))
+
+    expect(await auth.load()).toBe(true)
+
+    expect(api.GET).toHaveBeenCalledTimes(2)
+    expect(auth.user).toBeNull()
   })
 })
