@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -11,6 +11,25 @@ namespace WreckfestController.Data.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
+            // Each cup keeps who created it, by the name they had (their display name, else
+            // their username), before the accounts it pointed at go to the portal.
+            migrationBuilder.AddColumn<string>(
+                name: "CreatedBy",
+                table: "Cups",
+                type: "TEXT",
+                maxLength: 256,
+                nullable: true);
+
+            migrationBuilder.Sql(
+                """
+                UPDATE "Cups"
+                SET "CreatedBy" = (
+                    SELECT COALESCE(NULLIF(TRIM(u."DisplayName"), ''), u."UserName")
+                    FROM "AspNetUsers" AS u
+                    WHERE u."Id" = "Cups"."CreatedById")
+                WHERE "CreatedById" IS NOT NULL;
+                """);
+
             migrationBuilder.DropForeignKey(
                 name: "FK_Cups_AspNetUsers_CreatedById",
                 table: "Cups");
@@ -44,12 +63,6 @@ namespace WreckfestController.Data.Migrations
                 name: "CreatedById",
                 table: "Cups");
 
-            migrationBuilder.AddColumn<string>(
-                name: "CreatedBy",
-                table: "Cups",
-                type: "TEXT",
-                maxLength: 256,
-                nullable: true);
         }
 
         /// <inheritdoc />

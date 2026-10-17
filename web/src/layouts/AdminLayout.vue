@@ -29,7 +29,10 @@ function switchServer(id: string) {
   }
 }
 
-const groups = [
+/** A page in the menu: Users is a global admin's, and Profile anyone's, whatever server. */
+interface Page { name: string, label: string, icon: string, adminOnly?: boolean, anyServer?: boolean }
+
+const groups: { label: string, pages: Page[] }[] = [
   { label: 'Server', pages: [
     { name: 'admin-dashboard', label: 'Dashboard', icon: 'M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z' },
     { name: 'admin-server', label: 'Server control', icon: 'M12 3v9 M6 6a8 8 0 1 0 12 0' },
@@ -46,14 +49,17 @@ const groups = [
   ]},
   { label: 'Administration', pages: [
     { name: 'admin-users', label: 'Users', adminOnly: true, icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M9 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M17 4a4 4 0 0 1 0 7 M22 21v-2a4 4 0 0 0-3-4' },
-    { name: 'admin-profile', label: 'Profile', icon: 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2' },
+    { name: 'admin-profile', label: 'Profile', anyServer: true, icon: 'M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2' },
   ]},
 ]
 
-// The drawer's links close it; the sidebar's are plain links. Users is a global admin's.
+// The drawer's links close it; the sidebar's are plain links. Users is a global admin's, and
+// someone who does not manage this server has only their own profile here.
+const shown = (page: Page) =>
+  (!page.adminOnly || auth.isAdmin) && (page.anyServer || auth.managesThisServer)
 const menuOptions = (inDrawer: boolean): MenuOption[] => groups.map(group => ({
   type: 'group', key: group.label, label: group.label,
-  children: group.pages.filter(page => !('adminOnly' in page) || auth.isAdmin).map(page => ({
+  children: group.pages.filter(shown).map(page => ({
     key: page.name,
     label: () => h(RouterLink, {
       to: { name: page.name },
@@ -61,7 +67,7 @@ const menuOptions = (inDrawer: boolean): MenuOption[] => groups.map(group => ({
     }, { default: () => page.label }),
     icon: () => h('svg', { viewBox: '0 0 24 24', width: 18, height: 18, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.6, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': true }, [h('path', { d: page.icon })]),
   })),
-}))
+})).filter(group => group.children.length > 0)
 const sidebarMenu = computed(() => menuOptions(false))
 const drawerMenu = computed(() => menuOptions(true))
 

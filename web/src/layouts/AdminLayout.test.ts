@@ -8,7 +8,7 @@ vi.mock('@/realtime/hub', async () => {
   hub.status = ref('connected')
   return { hubStatus: hub.status }
 })
-const auth = vi.hoisted(() => ({ isAdmin: true }))
+const auth = vi.hoisted(() => ({ isAdmin: true, managesThisServer: true }))
 vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
 const managed = vi.hoisted(() => ({ servers: null as null | import('vue').Ref<{ id: string; name: string; link: string; current: boolean }[]> }))
 vi.mock('@/composables/useManagedServers', async () => {
@@ -36,6 +36,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   hub.status!.value = 'connected'
   auth.isAdmin = true
+  auth.managesThisServer = true
   managed.servers!.value = []
   window.matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })
   mountLayout()
@@ -95,5 +96,18 @@ describe('AdminLayout', () => {
     await nextTick()
 
     expect(wrapper!.find('.admin-sidebar .server-picker').text()).toContain('Vanilla')
+  })
+
+  it('shows someone who does not manage this server only their profile', async () => {
+    wrapper!.unmount()
+    auth.isAdmin = false
+    auth.managesThisServer = false
+    mountLayout()
+    await nextTick()
+
+    const menu = wrapper!.find('.admin-sidebar nav').text()
+    expect(menu).toContain('Profile')
+    expect(menu).not.toContain('Dashboard')
+    expect(menu).not.toContain('Users')
   })
 })

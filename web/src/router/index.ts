@@ -5,11 +5,13 @@ import { BASE } from '@/base'
 
 declare module 'vue-router' {
   interface RouteMeta {
-    /**
-     * Only for someone signed in who may manage this server: anyone else is sent to sign in
-     * first, and someone signed in without access to it is told so.
-     */
+    /** Only for someone signed in: anyone else is sent to sign in first. */
     requiresAuth?: boolean
+    /**
+     * Only for someone who may manage this server: someone signed in without access to it is
+     * told so. Their own profile is not the server's, so it turns this off.
+     */
+    requiresServer?: boolean
     /** Only for a global admin (the accounts). */
     requiresAdmin?: boolean
     /** A public page in the front page's wide layout. */
@@ -32,7 +34,7 @@ export const router = createRouter({
     {
       path: '/admin',
       component: () => import('@/layouts/AdminLayout.vue'),
-      meta: { requiresAuth: true },
+      meta: { requiresAuth: true, requiresServer: true },
       children: [
         { path: '', name: 'admin-dashboard', component: () => import('@/views/admin/DashboardView.vue') },
         { path: 'server', name: 'admin-server', component: () => import('@/views/admin/ServerControlView.vue') },
@@ -45,7 +47,7 @@ export const router = createRouter({
         { path: 'cups', name: 'admin-cups', component: () => import('@/views/admin/CupsView.vue') },
         { path: 'collections', name: 'admin-collections', component: () => import('@/views/admin/CollectionsView.vue') },
         { path: 'users', name: 'admin-users', component: () => import('@/views/admin/UsersView.vue'), meta: { requiresAdmin: true } },
-        { path: 'profile', name: 'admin-profile', component: () => import('@/views/admin/ProfileView.vue') },
+        { path: 'profile', name: 'admin-profile', component: () => import('@/views/admin/ProfileView.vue'), meta: { requiresServer: false } },
       ],
     },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@/views/NotFoundView.vue') },
@@ -65,7 +67,7 @@ router.beforeEach(async (to) => {
   }
 
   // Signed in, but not to manage this server, or not an admin: signing in again would not help.
-  if ((to.meta.requiresAuth && !auth.managesThisServer) || (to.meta.requiresAdmin && !auth.isAdmin)) {
+  if ((to.meta.requiresServer && !auth.managesThisServer) || (to.meta.requiresAdmin && !auth.isAdmin)) {
     return { name: 'no-access', query: { from: to.fullPath } }
   }
 

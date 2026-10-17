@@ -178,3 +178,29 @@ describe('load after a change elsewhere', () => {
     expect(restartHub).not.toHaveBeenCalled()
   })
 })
+
+describe('load while the session changes', () => {
+  it('asks once for several callers at the same time', async () => {
+    const auth = useAuthStore()
+    api.GET.mockResolvedValue(answer(200, { authenticated: false, user: null, setupRequired: false }))
+
+    await Promise.all([auth.load(), auth.load(), auth.load()])
+
+    expect(api.GET).toHaveBeenCalledOnce()
+  })
+
+  // A state request sent before a sign-in answers after it: its "nobody" is older news.
+  it('never lets an answer from before a sign-in undo it', async () => {
+    const auth = useAuthStore()
+    let answerLater: (value: unknown) => void = () => undefined
+    api.GET.mockReturnValueOnce(new Promise((resolve) => (answerLater = resolve)))
+    const stale = auth.load()
+    api.POST.mockResolvedValueOnce(answer(200, admin))
+    expect(await auth.login('admin', 'password', false)).toBeNull()
+
+    answerLater(answer(200, { authenticated: false, user: null, setupRequired: false }))
+    await stale
+
+    expect(auth.user).toEqual(admin)
+  })
+})

@@ -24,7 +24,7 @@ onUnauthorized(async () => {
     if (current.name !== 'login') {
       void router.push({ name: 'login', query: { redirect: current.fullPath } })
     }
-  } else if (current.meta.requiresAuth && !auth.managesThisServer) {
+  } else if (current.meta.requiresServer && !auth.managesThisServer) {
     void router.push({ name: 'no-access', query: { from: current.fullPath } })
   }
 })

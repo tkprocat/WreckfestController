@@ -11,6 +11,7 @@ for (const view of [
   '@/views/NotFoundView.vue',
   '@/views/NoAccessView.vue',
   '@/views/admin/UsersView.vue',
+  '@/views/admin/ProfileView.vue',
   '@/layouts/AdminLayout.vue',
   '@/views/admin/DashboardView.vue',
   '@/views/admin/ServerControlView.vue',
@@ -99,5 +100,16 @@ describe('router guard', () => {
     await router.push('/admin/server')
 
     expect(router.currentRoute.value.fullPath).toBe('/admin/server')
+  })
+
+  // Their profile is theirs, not the server's: someone with no servers must still be able
+  // to change their temporary password.
+  it('lets someone signed in reach their profile without access to this server', async () => {
+    auth.managesThisServer = false
+    auth.isAdmin = false
+
+    await router.push('/admin/profile')
+
+    expect(router.currentRoute.value.fullPath).toBe('/admin/profile')
   })
 })

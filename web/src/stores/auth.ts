@@ -46,13 +46,35 @@ export const useAuthStore = defineStore('auth', () => {
   const isAdmin = computed(() => user.value?.isAdmin === true)
 
   /**
+   * Counts sign-ins and sign-outs made here. An answer to a state request sent before the
+   * latest of them is older than what that sign-in or sign-out set, so it is dropped.
+   */
+  let session = 0
+
+  /** The state request in flight: callers share it, as several 401s can arrive at once. */
+  let inFlight: Promise<boolean> | null = null
+
+  /**
    * Asks who is signed in. Never throws: when the portal cannot be reached, it records
    * that, leaves loaded false so the next navigation asks again, and returns false. A
    * different answer than before (the session ended elsewhere) settles like a sign-out.
    */
-  async function load(): Promise<boolean> {
+  function load(): Promise<boolean> {
+    inFlight ??= fetchState().finally(() => {
+      inFlight = null
+    })
+    return inFlight
+  }
+
+  async function fetchState(): Promise<boolean> {
+    const asked = session
     try {
       const { data } = await portal.GET('/api/auth/state')
+      if (asked !== session) {
+        // Signed in or out meanwhile: that is who is signed in now.
+        return true
+      }
+
       if (!data) {
         unreachable.value = true
         return false
@@ -69,15 +91,20 @@ export const useAuthStore = defineStore('auth', () => {
 
       return true
     } catch {
-      unreachable.value = true
-      return false
+      if (asked === session) {
+        unreachable.value = true
+      }
+
+      return asked !== session
     }
   }
 
   async function login(login: string, password: string, remember: boolean): Promise<LoginFailure | null> {
     const { data, response } = await portal.POST('/api/auth/login', { body: { login, password, remember } })
     if (data) {
+      session++
       user.value = data
+      loaded.value = true
       await settle()
       return null
     }
@@ -104,6 +131,7 @@ export const useAuthStore = defineStore('auth', () => {
       return false
     }
 
+    session++
     user.value = null
     await settle()
     return true
@@ -123,6 +151,7 @@ export const useAuthStore = defineStore('auth', () => {
       return
     }
 
+    session++
     user.value = null
     void settle()
   }
