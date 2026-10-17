@@ -37,6 +37,12 @@ public sealed partial class PortalOptions
     public List<string> TrustedProxies { get; set; } = [];
 
     /// <summary>
+    /// The portal's database (the web accounts), if not <c>data\portal.db</c> next to the exe.
+    /// Environment variables such as <c>%ProgramData%</c> are expanded.
+    /// </summary>
+    public string? DatabasePath { get; set; }
+
+    /// <summary>
     /// Where the controllers' web app is, if not the <c>app</c> folder next to the exe,
     /// where the build puts it.
     /// </summary>

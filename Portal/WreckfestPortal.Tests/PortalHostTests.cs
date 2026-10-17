@@ -17,6 +17,8 @@ public sealed class PortalHostTests : IDisposable
     private readonly string _webRoot = Path.Combine(Path.GetTempPath(), "wfc-portal-tests", Guid.NewGuid().ToString("N"));
     private readonly FakeController _controllers = new();
 
+    private static readonly string DatabasePath = Path.Combine(Path.GetTempPath(), "wfc-portal-tests", Guid.NewGuid().ToString("N"), "portal.db");
+
     public PortalHostTests()
     {
         Directory.CreateDirectory(Path.Combine(_webRoot, "assets"));
@@ -26,7 +28,11 @@ public sealed class PortalHostTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public void Dispose() => Directory.Delete(_webRoot, recursive: true);
+    public void Dispose()
+    {
+        Directory.Delete(_webRoot, recursive: true);
+        TestDatabase.Delete(DatabasePath);
+    }
 
     private static Dictionary<string, string?> Settings(string id = "tvtp2") => new()
     {
@@ -36,6 +42,7 @@ public sealed class PortalHostTests : IDisposable
         ["Portal:Servers:0:ApiUrl"] = ApiUrl,
         // Nothing there: these tests are about the portal's own page.
         ["Portal:AppRoot"] = Path.Combine(Path.GetTempPath(), "wfc-portal-tests", "no-app-here"),
+        ["Portal:DatabasePath"] = DatabasePath,
     };
 
     private async Task<WebApplication> StartAsync(Dictionary<string, string?>? settings = null)
@@ -101,8 +108,9 @@ public sealed class PortalHostTests : IDisposable
         Assert.Contains(PageMarker, await page.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
         Assert.Equal("no-cache", page.Headers.CacheControl?.ToString());
         Assert.Equal("console.log('portal')", await asset.Content.ReadAsStringAsync(Ct));
-        // A server the portal does not list.
-        Assert.Equal(HttpStatusCode.NotFound, other.StatusCode);
+        // A server the portal does not list: like any path nothing answers, it needs a
+        // signed-in caller first, as on the controller.
+        Assert.Equal(HttpStatusCode.Unauthorized, other.StatusCode);
     }
 
     [Fact]

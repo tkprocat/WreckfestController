@@ -31,7 +31,11 @@ public sealed class ControllerSiteTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose()
+    {
+        TestDatabase.Delete(Path.Combine(_root, "data", "portal.db"));
+        Directory.Delete(_root, recursive: true);
+    }
 
     private async Task<WebApplication> StartAsync(string? trustedProxy = null)
     {
@@ -44,6 +48,7 @@ public sealed class ControllerSiteTests : IDisposable
             ["Portal:Servers:0:Name"] = "TVTP2",
             ["Portal:Servers:0:ApiUrl"] = ApiUrl,
             ["Portal:AppRoot"] = Path.Combine(_root, "app"),
+            ["Portal:DatabasePath"] = Path.Combine(_root, "data", "portal.db"),
         };
         if (trustedProxy is not null)
         {
@@ -126,6 +131,33 @@ public sealed class ControllerSiteTests : IDisposable
         Assert.Equal("http", forwarded.Header("X-Forwarded-Proto"));
         Assert.Equal("/tvtp2", forwarded.Header("X-Forwarded-Prefix"));
         Assert.Null(forwarded.Header("Forwarded"));
+    }
+
+    // The portal's sign-in is the portal's: a controller that kept it could act as that user there.
+    [Fact]
+    public async Task ThePortalsOwnCookies_AreNotPassedOn_TheControllersAre()
+    {
+        await using var app = await StartAsync();
+        using var client = Client(app);
+        // In any case: ASP.NET reads cookie names without it, so .wreckfestportal.Auth signs in too.
+        client.DefaultRequestHeaders.Add("Cookie", ".WreckfestPortal.Auth=secret; sid=1; .wreckfestportal.AuthC1=more; .WRECKFESTPORTAL.Antiforgery=x; other=2");
+
+        using var response = await client.GetAsync("/tvtp2/api/auth/state", Ct);
+
+        var forwarded = Assert.Single(_controller.Requests);
+        Assert.Equal("sid=1; other=2", forwarded.Header("Cookie"));
+    }
+
+    [Fact]
+    public async Task WithOnlyThePortalsCookies_NoCookieIsPassedOn()
+    {
+        await using var app = await StartAsync();
+        using var client = Client(app);
+        client.DefaultRequestHeaders.Add("Cookie", ".WreckfestPortal.Auth=secret");
+
+        using var response = await client.GetAsync("/tvtp2/api/auth/state", Ct);
+
+        Assert.Null(Assert.Single(_controller.Requests).Header("Cookie"));
     }
 
     [Fact]
@@ -211,7 +243,8 @@ public sealed class ControllerSiteTests : IDisposable
 
         using var response = await client.GetAsync("/tvtp2x/api/auth/state", Ct);
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        // Nothing answers it, so it needs a signed-in caller first, as on the controller.
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Empty(_controller.Requests);
     }
 

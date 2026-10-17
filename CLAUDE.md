@@ -47,7 +47,12 @@ there, writing `<base href="/{Id}/">` into index.html, and forwards `/{Id}/api`,
 `/openapi` to that controller with YARP (`ControllerSite.cs`), the prefix stripped and sent as
 `X-Forwarded-Prefix`. The controller turns that into its path base, from `Api:TrustedProxies`
 only, so its cookies are scoped per server. Signing in stays between the browser and each
-controller: the portal holds no account or key. Its front page polls each controller's
+controller: the portal holds no account or key. **Moving to the portal (in progress):** the portal
+now has its own accounts (`Portal/WreckfestPortal/Accounts/`: SQLite `data\portal.db`, Identity,
+global admins and users granted servers, `/api/auth/*` and `/api/users/*`, first admin from
+`WreckfestPortal.exe create-admin <user> <email>`). Next, the portal sends the controllers a
+signed token instead of passing the browser's cookies, the controllers drop their accounts and
+move the AI settings to `user-settings.json`, and the web app signs in to the portal. Its front page polls each controller's
 `GET /api/public/overview`, through its own copy of the fields it shows (`ServerStatus.cs`),
 so a change there needs no portal change unless a shown field is renamed. That page is a
 second entry of `web/` (`portal.html`, `src/portal/`), built by `npm run build:portal` into
@@ -59,10 +64,12 @@ so every npm step goes through
 `npm ci` at once fail with EPERM. Windows releases the pipe when the process ends, so a killed
 build never leaves a stale lock. A build that waits says "Waiting for another web build".
 
-The web app is typed against `web/src/api/openapi.json`. `OpenApiContractTests` fails when
-it drifts from the API; `WFC_UPDATE_OPENAPI=1 dotnet test --filter-class
+The web app is typed against `web/src/api/openapi.json` (the controller) and
+`web/src/api/portal-openapi.json` (the portal, kept in step by the portal's
+`OpenApiContractTests` the same way). The controller's `OpenApiContractTests` fails when
+`openapi.json` drifts from the API; `WFC_UPDATE_OPENAPI=1 dotnet test --filter-class
 WreckfestController.Tests.Api.OpenApiContractTests` rewrites it, then `npm run gen:api` in
-`web/` regenerates `schema.d.ts`. Commit both with any endpoint change.
+`web/` regenerates `schema.d.ts` and `portal-schema.d.ts`. Commit both with any endpoint change.
 
 **`npm test` (Vitest) cannot run from a path containing `#`** (such as a checkout under
 `C#\`): Vitest drops everything after the `#`. `npm test` says so and stops. The

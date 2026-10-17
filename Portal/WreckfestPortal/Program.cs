@@ -1,6 +1,13 @@
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Options;
 using WreckfestPortal;
+using WreckfestPortal.Accounts;
+
+if (CreateAdminCommand.Matches(args))
+{
+    return await CreateAdminCommand.RunAsync(args, Console.In, Console.Out);
+}
 
 // Next to the exe, not the working folder: a Windows service starts in System32.
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -14,7 +21,8 @@ PortalApp.ConfigureServices(builder.Services, builder.Configuration);
 
 var app = builder.Build();
 PortalApp.ConfigurePipeline(app);
-app.Run();
+await app.RunAsync();
+return 0;
 
 /// <summary>The portal's services and pipeline, apart from Program so tests build the same host.</summary>
 public static class PortalApp
@@ -35,6 +43,22 @@ public static class PortalApp
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<ServerPoller>();
         services.AddHostedService(sp => sp.GetRequiredService<ServerPoller>());
+
+        services.AddPortalAccounts();
+        services.AddPortalRateLimits();
+        services.AddControllers(options => options.Filters.Add<AntiforgeryFilter>())
+            // AddControllers looks in the entry assembly, which is the test runner in tests.
+            .AddApplicationPart(typeof(PortalApp).Assembly)
+            // Numbers are numbers, as in the controller's API: the web app's types say so.
+            .AddJsonOptions(options => options.JsonSerializerOptions.NumberHandling = JsonNumberHandling.Strict);
+        services.ConfigureHttpJsonOptions(options => options.SerializerOptions.NumberHandling = JsonNumberHandling.Strict);
+        // /openapi/v1.json: the contract the web app's portal types are generated from.
+        services.AddOpenApi(options => options.AddDocumentTransformer((document, _, _) =>
+        {
+            document.Info.Title = "WreckfestPortal API";
+            document.Info.Version = "2.0";
+            return Task.CompletedTask;
+        }));
 
         services.AddHttpForwarder();
         services.AddSingleton(_ => ControllerSites.CreateClient());
@@ -91,9 +115,21 @@ public static class PortalApp
 
         app.UseStaticFiles();
 
+        // The accounts' database, created or brought up to date before the first request.
+        PortalDatabase.MigrateAsync(app.Services).GetAwaiter().GetResult();
+        app.UseRateLimiter();
+        app.UseAuthentication();
+        app.UseAuthorization();
+        app.MapControllers();
+        app.MapOpenApi().RequireAuthorization(PortalAccounts.AdminPolicy);
+
         // Cached cards, never a request to a controller: nothing to limit or protect.
         app.MapGet("/api/servers", (ServerPoller poller, IOptions<PortalOptions> options) =>
-            new PortalPage(options.Value.Title, options.Value.Intro, poller.Cards));
+            new PortalPage(options.Value.Title, options.Value.Intro, poller.Cards))
+            // Named here: by default a minimal API is tagged with the entry assembly, which
+            // is the test runner when the contract test reads the document.
+            .WithTags("Servers")
+            .AllowAnonymous();
 
         app.MapGet("/", async context =>
         {
@@ -108,7 +144,7 @@ public static class PortalApp
             // A new build changes the asset names it links to, so the page is always checked.
             context.Response.Headers.CacheControl = "no-cache";
             await context.Response.SendFileAsync(file);
-        });
+        }).AllowAnonymous().ExcludeFromDescription();
     }
 }
 
