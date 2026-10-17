@@ -280,8 +280,11 @@ In HAProxy:
 default_backend wreckfest_portal
 
 backend wreckfest_portal
+    # Always set by the proxy, never passed on from the visitor: the portal believes them.
+    http-request del-header X-Forwarded-For
     option forwardfor
     http-request set-header X-Forwarded-Proto https if { ssl_fc }
+    http-request set-header X-Forwarded-Proto http if !{ ssl_fc }
     server portal 192.168.1.10:5000
 ```
 

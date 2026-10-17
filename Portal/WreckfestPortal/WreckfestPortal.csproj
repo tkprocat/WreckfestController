@@ -111,21 +111,15 @@
     <WriteLinesToFile File="$(WebAppOutputList)" Lines="@(ProducedWebAppOutput->'%(FullPath)')" Overwrite="true" WriteOnlyWhenDifferent="true" />
   </Target>
 
-  <!-- Each replaces its folder whole, so assets from an earlier build do not linger. -->
-  <Target Name="CopyPortalWeb" AfterTargets="Build" Condition="Exists('$(PortalWebDist)\portal.html')">
-    <ItemGroup>
-      <PortalWebFile Include="$(PortalWebDist)\**\*" />
-    </ItemGroup>
-    <RemoveDir Directories="$(OutDir)wwwroot" Condition="Exists('$(OutDir)wwwroot')" />
-    <Copy SourceFiles="@(PortalWebFile)" DestinationFiles="@(PortalWebFile->'$(OutDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" />
-  </Target>
-
-  <Target Name="CopyWebApp" AfterTargets="Build" Condition="Exists('$(WebAppDist)\index.html')">
-    <ItemGroup>
-      <WebAppFile Include="$(WebAppDist)\**\*" />
-    </ItemGroup>
-    <RemoveDir Directories="$(OutDir)app" Condition="Exists('$(OutDir)app')" />
-    <Copy SourceFiles="@(WebAppFile)" DestinationFiles="@(WebAppFile->'$(OutDir)app\%(RecursiveDir)%(Filename)%(Extension)')" />
+  <!-- Under the build lock, so neither copy reads a dist/ that the other build of this
+       project is rewriting; each replaces its folder whole. -->
+  <Target Name="CopyPortalWeb" AfterTargets="Build" Condition="Exists('$(PortalWebDist)') Or Exists('$(WebAppDist)')">
+    <PropertyGroup>
+      <!-- Absolute: the copies run in web/, where a relative OutDir would point elsewhere. -->
+      <PortalOutDir>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(OutDir)'))</PortalOutDir>
+    </PropertyGroup>
+    <Exec Command="node scripts/web-lock.mjs copy dist-portal &quot;$(PortalOutDir)wwwroot&quot; portal.html" WorkingDirectory="$(WebAppDir)" />
+    <Exec Command="node scripts/web-lock.mjs copy dist &quot;$(PortalOutDir)app&quot; index.html" WorkingDirectory="$(WebAppDir)" />
   </Target>
 
   <!-- AfterTargets runs even when Publish itself is skipped, hence IsPublishable here too. -->
@@ -134,14 +128,11 @@
            Text="The portal page was not built at $(PortalWebDist). Refusing to publish the portal without it." />
     <Error Condition="'$(SkipWebBuild)' != 'true' And !Exists('$(WebAppDist)\index.html')"
            Text="The web app was not built at $(WebAppDist). Refusing to publish the portal without it." />
-    <ItemGroup>
-      <PortalWebPublishFile Include="$(PortalWebDist)\**\*" />
-      <WebAppPublishFile Include="$(WebAppDist)\**\*" />
-    </ItemGroup>
-    <RemoveDir Directories="$(PublishDir)wwwroot" Condition="Exists('$(PublishDir)wwwroot')" />
-    <Copy SourceFiles="@(PortalWebPublishFile)" DestinationFiles="@(PortalWebPublishFile->'$(PublishDir)wwwroot\%(RecursiveDir)%(Filename)%(Extension)')" Condition="'@(PortalWebPublishFile)' != ''" />
-    <RemoveDir Directories="$(PublishDir)app" Condition="Exists('$(PublishDir)app')" />
-    <Copy SourceFiles="@(WebAppPublishFile)" DestinationFiles="@(WebAppPublishFile->'$(PublishDir)app\%(RecursiveDir)%(Filename)%(Extension)')" Condition="'@(WebAppPublishFile)' != ''" />
+    <PropertyGroup>
+      <PortalPublishDir>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(PublishDir)'))</PortalPublishDir>
+    </PropertyGroup>
+    <Exec Command="node scripts/web-lock.mjs copy dist-portal &quot;$(PortalPublishDir)wwwroot&quot; portal.html" WorkingDirectory="$(WebAppDir)" />
+    <Exec Command="node scripts/web-lock.mjs copy dist &quot;$(PortalPublishDir)app&quot; index.html" WorkingDirectory="$(WebAppDir)" />
   </Target>
 
 </Project>

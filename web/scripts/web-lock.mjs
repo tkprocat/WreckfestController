@@ -1,9 +1,12 @@
-// Runs the build's npm steps one at a time across processes. The controller and the portal
-// both build from this folder, and a solution build runs them side by side: two `npm ci`
-// at once fail with EPERM, and two `vue-tsc -b` write the same build info.
+// Runs the build's npm steps one at a time across processes. A solution build builds the
+// portal twice side by side (directly, and through its test project's reference): two
+// `npm ci` at once fail with EPERM, two `vue-tsc -b` write the same build info, and a copy
+// of dist/ taken while another build's Vite empties it is incomplete.
 //
-//   node scripts/web-lock.mjs install      npm ci, unless the packages are already current
-//   node scripts/web-lock.mjs run <script> npm run <script>
+//   node scripts/web-lock.mjs install                 npm ci, unless the packages are already current
+//   node scripts/web-lock.mjs run <script>            npm run <script>
+//   node scripts/web-lock.mjs copy <from> <to> <file> replaces <to> with a copy of <from> (in
+//                                                     this folder), if <from> has <file>
 //
 // The lock is an address only one process can listen on: a named pipe on Windows, an
 // abstract socket on Linux. The operating system releases it when its process ends,
@@ -14,7 +17,7 @@
 // Uses only Node's own modules: it runs before the packages are installed.
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -68,8 +71,8 @@ function npm(...args) {
 }
 
 const [command, ...rest] = process.argv.slice(2)
-if (command !== 'install' && !(command === 'run' && rest.length === 1)) {
-  console.error('Usage: node scripts/web-lock.mjs install | run <script>')
+if (command !== 'install' && !(command === 'run' && rest.length === 1) && !(command === 'copy' && rest.length === 3)) {
+  console.error('Usage: node scripts/web-lock.mjs install | run <script> | copy <from> <to> <file>')
   process.exit(2)
 }
 
@@ -91,6 +94,18 @@ try {
       // npm's own marker files keep old timestamps, so this keeps its own.
       if (status === 0) writeFileSync(stamp, '')
     }
+  } else if (command === 'copy') {
+    // Checked once the lock is held: a build that was running has finished by now.
+    const [from, to, file] = rest
+    const source = join(root, from)
+    if (existsSync(join(source, file))) {
+      // Whole, so files from an earlier build do not linger.
+      rmSync(to, { recursive: true, force: true })
+      cpSync(source, to, { recursive: true })
+    } else {
+      console.log(`No ${file} in ${from}: nothing to copy.`)
+    }
+    status = 0
   } else {
     status = npm('run', rest[0])
   }
