@@ -5,8 +5,9 @@
 //
 //   node scripts/web-lock.mjs install                 npm ci, unless the packages are already current
 //   node scripts/web-lock.mjs run <script>            npm run <script>
-//   node scripts/web-lock.mjs copy <from> <to> <file> replaces <to> with a copy of <from> (in
-//                                                     this folder), if <from> has <file>
+//   node scripts/web-lock.mjs copy <from> <to> <file> [required]
+//       replaces <to> with a copy of <from> (in this folder), if <from> has <file>; with
+//       `required`, a <from> without <file> is an error
 //
 // The lock is an address only one process can listen on: a named pipe on Windows, an
 // abstract socket on Linux. The operating system releases it when its process ends,
@@ -71,8 +72,9 @@ function npm(...args) {
 }
 
 const [command, ...rest] = process.argv.slice(2)
-if (command !== 'install' && !(command === 'run' && rest.length === 1) && !(command === 'copy' && rest.length === 3)) {
-  console.error('Usage: node scripts/web-lock.mjs install | run <script> | copy <from> <to> <file>')
+const copyArgs = command === 'copy' && (rest.length === 3 || (rest.length === 4 && rest[3] === 'required'))
+if (command !== 'install' && !(command === 'run' && rest.length === 1) && !copyArgs) {
+  console.error('Usage: node scripts/web-lock.mjs install | run <script> | copy <from> <to> <file> [required]')
   process.exit(2)
 }
 
@@ -96,16 +98,20 @@ try {
     }
   } else if (command === 'copy') {
     // Checked once the lock is held: a build that was running has finished by now.
-    const [from, to, file] = rest
+    const [from, to, file, required] = rest
     const source = join(root, from)
     if (existsSync(join(source, file))) {
       // Whole, so files from an earlier build do not linger.
       rmSync(to, { recursive: true, force: true })
       cpSync(source, to, { recursive: true })
+      status = 0
+    } else if (required) {
+      console.error(`The web build did not produce ${from}/${file}. Refusing to copy without it.`)
+      status = 1
     } else {
       console.log(`No ${file} in ${from}: nothing to copy.`)
+      status = 0
     }
-    status = 0
   } else {
     status = npm('run', rest[0])
   }
