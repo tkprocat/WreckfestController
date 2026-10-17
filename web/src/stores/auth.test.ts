@@ -203,4 +203,19 @@ describe('load while the session changes', () => {
 
     expect(auth.user).toEqual(admin)
   })
+
+  // After a sign-in, a 401 must ask afresh, not wait on an answer that will be dropped.
+  it('asks again after a sign-in, rather than sharing a request from before it', async () => {
+    const auth = useAuthStore()
+    api.GET.mockReturnValueOnce(new Promise(() => undefined))
+    void auth.load()
+    api.POST.mockResolvedValueOnce(answer(200, admin))
+    await auth.login('admin', 'password', false)
+    api.GET.mockResolvedValueOnce(answer(200, { authenticated: false, user: null, setupRequired: false }))
+
+    expect(await auth.load()).toBe(true)
+
+    expect(api.GET).toHaveBeenCalledTimes(2)
+    expect(auth.user).toBeNull()
+  })
 })

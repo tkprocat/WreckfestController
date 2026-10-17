@@ -51,8 +51,12 @@ export const useAuthStore = defineStore('auth', () => {
    */
   let session = 0
 
-  /** The state request in flight: callers share it, as several 401s can arrive at once. */
-  let inFlight: Promise<boolean> | null = null
+  /**
+   * The state request in flight, and the session it was sent in: callers in the same session
+   * share it, as several 401s can arrive at once. One from before a sign-in or sign-out is
+   * never shared after it, since its answer is dropped.
+   */
+  let inFlight: { session: number; request: Promise<boolean> } | null = null
 
   /**
    * Asks who is signed in. Never throws: when the portal cannot be reached, it records
@@ -60,10 +64,19 @@ export const useAuthStore = defineStore('auth', () => {
    * different answer than before (the session ended elsewhere) settles like a sign-out.
    */
   function load(): Promise<boolean> {
-    inFlight ??= fetchState().finally(() => {
-      inFlight = null
+    if (inFlight?.session === session) {
+      return inFlight.request
+    }
+
+    const entry = { session, request: fetchState() }
+    inFlight = entry
+    // Only this request's own entry: an older one finishing must not drop its replacement.
+    void entry.request.finally(() => {
+      if (inFlight === entry) {
+        inFlight = null
+      }
     })
-    return inFlight
+    return entry.request
   }
 
   async function fetchState(): Promise<boolean> {
