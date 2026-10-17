@@ -46,13 +46,13 @@ afterEach(() => {
 })
 
 describe('AdminAssistantView', () => {
-  it('points to Settings when there is no key', async () => {
+  it('says where the key is set when there is none', async () => {
     api.GET.mockResolvedValue(answer({ available: false }))
     await mountPage()
 
     expect(api.GET).toHaveBeenCalledWith('/api/assistant')
     expect(wrapper!.text()).toContain('The AI assistant has no API key.')
-    expect(wrapper!.findComponent(RouterLinkStub).props('to')).toEqual({ name: 'admin-settings' })
+    expect(wrapper!.text()).toContain('user-settings.json')
     expect(wrapper!.find('textarea').exists()).toBe(false)
   })
 

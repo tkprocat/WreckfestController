@@ -6,20 +6,24 @@ import {
   NAlert,
   NButton,
   NCard,
+  NCheckbox,
+  NCheckboxGroup,
   NForm,
   NFormItem,
   NInput,
   NModal,
   NSelect,
   NSpace,
+  NSwitch,
   NTag,
   useDialog,
   useMessage,
   type DataTableColumns,
 } from 'naive-ui'
-import { api } from '@/api/client'
+import { portal } from '@/api/client'
 import { fieldErrors, problemMessage } from '@/api/problems'
-import type { components } from '@/api/schema'
+import type { components } from '@/api/portal-schema'
+import { useManagedServers } from '@/composables/useManagedServers'
 import { useAuthStore } from '@/stores/auth'
 import { browserTimeZone, timeZoneOptions } from '@/utils/timeZones'
 import { vSelectFocus } from '@/crud/selectFocus'
@@ -29,12 +33,17 @@ import { modalSize } from '@/crud/modal'
 
 type User = components['schemas']['UserResponse']
 
-const NO_ANSWER = 'No answer from the controller, so it is not known whether this happened. Reload before trying again.'
+const NO_ANSWER = 'No answer from the site, so it is not known whether this happened. Reload before trying again.'
 
 const auth = useAuthStore()
 const message = useMessage()
 const dialog = useDialog()
 const zones = timeZoneOptions()
+
+// The accounts are the portal's, one for every server: a global admin manages them all, and
+// anyone else only the servers ticked for them.
+const { everyServer, load: loadServers } = useManagedServers()
+const serverName = (id: string) => everyServer.value.find((s) => s.id.toLowerCase() === id.toLowerCase())?.name ?? id
 
 const users = ref<User[]>([])
 const loadError = ref<string | null>(null)
@@ -47,7 +56,7 @@ const self = (user: User) => user.id === auth.user?.id
 
 async function load() {
   try {
-    const { data, error } = await api.GET('/api/users')
+    const { data, error } = await portal.GET('/api/users')
     if (data) {
       users.value = data
       loadError.value = null
@@ -56,7 +65,7 @@ async function load() {
       loadError.value = problemMessage(error, 'The accounts could not be loaded.')
     }
   } catch {
-    loadError.value = 'The accounts could not be loaded: no answer from the controller.'
+    loadError.value = 'The accounts could not be loaded: no answer from the site.'
   }
 }
 
@@ -69,13 +78,23 @@ function replace(user: User) {
 // Add and edit share one form. A new account gets a temporary password, which its owner
 // changes on their Profile page.
 const editing = ref<User | 'new' | null>(null)
-const form = reactive({ userName: '', email: '', displayName: '', timeZone: null as string | null, password: '' })
+const form = reactive({
+  userName: '',
+  email: '',
+  displayName: '',
+  timeZone: null as string | null,
+  password: '',
+  isAdmin: false,
+  servers: [] as string[],
+})
 const formErrors = ref<Record<string, string>>({})
 const saving = ref(false)
 const isNew = computed(() => editing.value === 'new')
+/** Nobody demotes themself: another admin must. */
+const editingSelf = computed(() => editing.value !== null && editing.value !== 'new' && self(editing.value))
 
 function openNew() {
-  Object.assign(form, { userName: '', email: '', displayName: '', timeZone: browserTimeZone(), password: '' })
+  Object.assign(form, { userName: '', email: '', displayName: '', timeZone: browserTimeZone(), password: '', isAdmin: false, servers: [] })
   formErrors.value = {}
   editing.value = 'new'
 }
@@ -87,6 +106,8 @@ function openEdit(user: User) {
     displayName: user.displayName ?? '',
     timeZone: user.timeZone,
     password: '',
+    isAdmin: user.isAdmin,
+    servers: [...user.servers],
   })
   formErrors.value = {}
   editing.value = user
@@ -104,16 +125,18 @@ async function saveForm() {
     email: form.email.trim(),
     displayName: form.displayName.trim() || null,
     timeZone: form.timeZone,
+    isAdmin: form.isAdmin,
+    servers: form.isAdmin ? [] : form.servers,
   }
   try {
     const result =
       editing.value === 'new'
-        ? await api.POST('/api/users', { body: { ...body, password: form.password } })
-        : await api.PUT('/api/users/{id}', { params: { path: { id: editing.value.id } }, body })
+        ? await portal.POST('/api/users', { body: { ...body, password: form.password } })
+        : await portal.PUT('/api/users/{id}', { params: { path: { id: editing.value.id } }, body })
     if (result.data) {
       replace(result.data)
       if (self(result.data)) {
-        auth.user = result.data
+        auth.updated(result.data)
       }
 
       message.success(isNew.value ? `Account ${result.data.userName} added.` : `Account ${result.data.userName} saved.`)
@@ -150,7 +173,7 @@ async function saveReset() {
   saving.value = true
   resetError.value = undefined
   try {
-    const { error, response } = await api.POST('/api/users/{id}/password', {
+    const { error, response } = await portal.POST('/api/users/{id}/password', {
       params: { path: { id: user.id } },
       body: { newPassword: newPassword.value },
     })
@@ -175,7 +198,7 @@ async function setLocked(user: User, locked: boolean) {
   busy.value = user.id
   try {
     const path = locked ? '/api/users/{id}/lock' : '/api/users/{id}/unlock'
-    const { data, error } = await api.POST(path, { params: { path: { id: user.id } } })
+    const { data, error } = await portal.POST(path, { params: { path: { id: user.id } } })
     if (data) {
       replace(data)
       message.success(locked ? `${user.userName} is locked and signed out.` : `${user.userName} is unlocked.`)
@@ -206,7 +229,7 @@ async function remove(user: User) {
 
   busy.value = user.id
   try {
-    const { error, response } = await api.DELETE('/api/users/{id}', { params: { path: { id: user.id } } })
+    const { error, response } = await portal.DELETE('/api/users/{id}', { params: { path: { id: user.id } } })
     if (response.ok) {
       users.value = users.value.filter((u) => u.id !== user.id)
       message.success(`${user.userName} deleted.`)
@@ -229,6 +252,16 @@ const columns: DataTableColumns<User> = [
   },
   { title: 'Display name', key: 'displayName', render: (user) => user.displayName ?? '' },
   { title: 'Email', key: 'email', width: 240, render: (user) => user.email ?? '' },
+  {
+    title: 'Access',
+    key: 'access',
+    render: (user) =>
+      user.isAdmin
+        ? h(NTag, { size: 'small', type: 'info', bordered: false }, { default: () => 'Admin: every server' })
+        : user.servers.length > 0
+          ? user.servers.map(serverName).join(', ')
+          : h('span', { class: 'muted-cell' }, 'No servers'),
+  },
   {
     title: 'Status',
     key: 'isLockedOut',
@@ -265,26 +298,32 @@ function status(field: string) {
   return formErrors.value[field] ? ('error' as const) : undefined
 }
 
-onMounted(() => void load())
+onMounted(() => {
+  void load()
+  void loadServers()
+})
 </script>
 
 <template>
   <section>
-    <PageHeader title="Users" description="Manage access to the controller.">
+    <PageHeader title="Users" description="Who can sign in to the site, and which servers they manage.">
       <template #actions>
         <NButton type="primary" :disabled="!loaded || !!loadError" @click="openNew">Add account</NButton>
       </template>
     </PageHeader>
     <NAlert v-if="loadError" type="warning" :title="loadError" />
     <NCard v-else>
-      <p class="muted">Every account is an admin. Nobody can lock or delete their own account.</p>
+      <p class="muted">
+        An admin manages every server and these accounts. Anyone else manages only the servers ticked for them.
+        Nobody can lock, delete or demote their own account.
+      </p>
       <ResourceTable
         :rows="users"
         :columns="columns"
         :search-fields="['userName', 'displayName', 'email']"
         what="accounts"
         :loading="!loaded"
-        :min-table-width="720"
+        :min-table-width="880"
       />
     </NCard>
 
@@ -316,6 +355,21 @@ onMounted(() => void load())
             v-select-focus="{ 'aria-label': 'Time zone' }"
             :input-props="{ 'aria-label': 'Time zone' }"
           />
+        </NFormItem>
+        <NFormItem label="Admin" :feedback="formErrors.isAdmin ?? 'Every server, and these accounts.'">
+          <NSwitch v-model:value="form.isAdmin" :disabled="editingSelf" aria-label="Admin" />
+        </NFormItem>
+        <NFormItem
+          v-if="!form.isAdmin"
+          label="Servers"
+          :feedback="formErrors.servers ?? 'The servers this account manages.'"
+          :validation-status="status('servers')"
+        >
+          <NCheckboxGroup v-model:value="form.servers">
+            <NSpace vertical size="small">
+              <NCheckbox v-for="server in everyServer" :key="server.id" :value="server.id" :label="server.name" />
+            </NSpace>
+          </NCheckboxGroup>
         </NFormItem>
         <NFormItem
           v-if="isNew"
@@ -373,5 +427,6 @@ onMounted(() => void load())
   color: var(--text-muted);
   margin-top: 0;
 }
+:deep(.muted-cell) { color: var(--text-muted); }
 :deep(.flag) { margin-left: 6px; }
 </style>

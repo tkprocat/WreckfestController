@@ -7,10 +7,12 @@ import UsersView from './UsersView.vue'
 
 const api = vi.hoisted(() => ({ GET: vi.fn(), POST: vi.fn(), PUT: vi.fn(), DELETE: vi.fn() }))
 const auth = vi.hoisted(() => ({ user: null as unknown }))
-vi.mock('@/api/client', () => ({ api }))
+vi.mock('@/api/client', () => ({ portal: api }))
 vi.mock('@/stores/auth', async () => {
   const { reactive } = await import('vue')
-  const store = reactive(auth)
+  const store = reactive({ ...auth, updated: (changed: unknown) => (store.user = changed) })
+  // The test reads and sets the user through `auth`, as before.
+  Object.defineProperty(auth, 'user', { get: () => store.user, set: (value) => (store.user = value) })
   return { useAuthStore: () => store }
 })
 
@@ -20,13 +22,25 @@ const user = (id: string, userName: string, overrides: Record<string, unknown> =
   email: `${userName}@example.com`,
   displayName: null,
   timeZone: 'Europe/Copenhagen',
+  isAdmin: false,
+  servers: [] as string[],
   isLockedOut: false,
   lockoutEnd: null,
   ...overrides,
 })
 
-const me = user('1', 'admin')
-const other = user('2', 'bob')
+const me = user('1', 'admin', { isAdmin: true })
+const other = user('2', 'bob', { servers: ['vanilla'] })
+
+const servers = { title: 'Wrecking', intro: null, servers: [
+  { id: 'vanilla', name: 'Vanilla', link: '/vanilla/' },
+  { id: 'tvtp2', name: 'TVTP2', link: '/tvtp2/' },
+] }
+
+/** The users list, and the portal's servers for the Access column and the form. */
+function answering(users: unknown[]) {
+  api.GET.mockImplementation((path: string) => Promise.resolve(path === '/api/servers' ? answer(servers) : answer(users)))
+}
 
 const answer = (data: unknown, status = 200) => ({ data, error: undefined, response: new Response(null, { status }) })
 const refused = (error: unknown, status: number) => ({ data: undefined, error, response: new Response(null, { status }) })
@@ -58,7 +72,7 @@ const bodyButton = (label: string) => body().findAll('button').find((b) => b.tex
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset()
   auth.user = me
-  api.GET.mockResolvedValue(answer([me, other]))
+  answering([me, other])
 })
 
 afterEach(() => {
@@ -69,7 +83,7 @@ afterEach(() => {
 
 describe('UsersView', () => {
   it('shows active and locked accounts with the correct static status tones', async () => {
-    api.GET.mockResolvedValue(answer([me, { ...other, isLockedOut: true }]))
+    answering([me, { ...other, isLockedOut: true }])
     mountPage()
     await flushPromises()
     const badges = wrapper!.findAllComponents(StatusBadge)
@@ -105,7 +119,7 @@ describe('UsersView', () => {
     await flushPromises()
 
     expect(api.POST).toHaveBeenCalledWith('/api/users', {
-      body: expect.objectContaining({ userName: 'carol', email: 'carol@example.com', password: 'temporary-1' }),
+      body: expect.objectContaining({ userName: 'carol', email: 'carol@example.com', password: 'temporary-1', isAdmin: false, servers: [] }),
     })
     expect(wrapper!.text()).toContain('carol')
   })
@@ -206,5 +220,44 @@ describe('UsersView', () => {
       body: { newPassword: 'another-temp-1' },
     })
     expect(body().text()).toContain('Password reset for bob.')
+  })
+
+  it('shows what each account may manage, by server name', async () => {
+    mountPage()
+    await flushPromises()
+
+    expect(rowOf('admin').text()).toContain('Admin: every server')
+    expect(rowOf('bob').text()).toContain('Vanilla')
+  })
+
+  it('gives a new account the servers ticked for it, and none to an admin', async () => {
+    api.POST.mockResolvedValue(answer(user('3', 'carol', { servers: ['tvtp2'] })))
+    mountPage()
+    await flushPromises()
+
+    await bodyButton('Add account').trigger('click')
+    await flushPromises()
+    await body().find('input[aria-label="User name"]').setValue('carol')
+    await body().find('input[aria-label="Email"]').setValue('carol@example.com')
+    await body().find('input[aria-label="Temporary password"]').setValue('temporary-1')
+    const tvtp2 = body().findAll('.n-checkbox').find((box) => box.text().includes('TVTP2'))!
+    await tvtp2.trigger('click')
+    await bodyButton('Add').trigger('click')
+    await flushPromises()
+
+    expect(api.POST).toHaveBeenCalledWith('/api/users', {
+      body: expect.objectContaining({ isAdmin: false, servers: ['tvtp2'] }),
+    })
+  })
+
+  // Nobody demotes themself: another admin must. The portal refuses it too.
+  it('does not let an admin switch off their own admin role', async () => {
+    mountPage()
+    await flushPromises()
+
+    await rowOf('admin').findAll('button').find((b) => b.text().trim() === 'Edit')!.trigger('click')
+    await flushPromises()
+
+    expect(body().find('[aria-label="Admin"]').classes()).toContain('n-switch--disabled')
   })
 })

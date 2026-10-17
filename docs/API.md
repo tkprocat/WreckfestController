@@ -1,8 +1,9 @@
 # HTTP API
 
-WreckfestController hosts a REST API alongside the desktop application. Browsers sign
-in with a cookie; scripts send an API key. There is no assumption about what is on the
-other end.
+WreckfestController hosts a REST API alongside the desktop application. People sign in at
+the portal (WreckfestPortal, INSTALL.md step 4), which vouches for them to the controller
+with a token; scripts send an API key. The accounts are the portal's: its own API is
+described [at the end](#the-portals-api).
 
 All routes are prefixed `api/` and return JSON. The OpenAPI description is at
 `/openapi/v1.json` (signed in or with the key); the web app's TypeScript types are
@@ -20,63 +21,49 @@ Every endpoint requires an authenticated caller, except the few
   ```
 
   The key is compared with `CryptographicOperations.FixedTimeEquals`. It is optional:
-  when `Api:Key` is blank, no key is accepted and only cookie sign-in works.
-- **Cookie** (the web UI): an ASP.NET Core Identity cookie, issued by
-  `POST /api/auth/login`. It is `HttpOnly`, `SameSite=Strict`, marked
-  `Secure` when the request came over HTTPS, and slides over 14 days. Its encryption
-  keys are kept in a `keys` folder beside the database, protected with DPAPI, so
-  restarting the controller does not sign anyone out. Changing a user's password or
-  locking them out ends their other sessions on the next request.
+  when `Api:Key` is blank, no key is accepted.
+- **The portal's token** (the web site): a bearer token the portal adds to every request it
+  forwards for someone signed in who may manage this server, a global admin or a user
+  granted it.
+
+  ```
+  Authorization: Bearer <token>
+  ```
+
+  It is a JWT signed with HS256 using `Api:Portal:Secret`, issued by `WreckfestPortal`,
+  addressed to `Api:Portal:ServerId`, and valid for 5 minutes (30 seconds of clock skew).
+  Its claims are `sub` (the portal's account id), `name` (the username) and, when set,
+  `display_name`. A token for another server, signed with another secret, expired, or
+  unsigned is no one. Without `Api:Portal`, no token is accepted and only the key signs
+  in. Set both `Secret` (32 characters or more) and `ServerId`, or neither: one alone
+  stops the API with the reason.
 
 When the `X-Api-Key` header is present it alone decides: a wrong key is rejected even
-if a valid cookie is also sent.
+if a token is also sent.
 
-A missing or rejected credential returns **401** with no body, never a redirect.
+A missing or rejected credential returns **401**, never a redirect.
 
 ### Anonymous endpoints
 
 Authorization uses a fallback policy, so an endpoint is protected unless it is
 explicitly marked `[AllowAnonymous]`. A test pins the list of anonymous endpoints
-(`GET auth/state`, `GET auth/antiforgery`, `POST auth/login`, `POST auth/logout`,
-`GET public/overview`, `GET public/races`, `GET public/players`, `GET public/feed`, the public track pages (`GET public/tracks`, `public/tracks/{key}`, `public/variants/{variantId}`), the [AI assistant](#ai-assistant) (`GET public/assistant`, `POST public/assistant/chat`), the [catalogue images](#images--apiimages)
+(`GET public/overview`, `GET public/races`, `GET public/players`, `GET public/feed`, the public track pages (`GET public/tracks`, `public/tracks/{key}`, `public/variants/{variantId}`), the [AI assistant](#ai-assistant) (`GET public/assistant`, `POST public/assistant/chat`), the [catalogue images](#images--apiimages)
 under `GET images/...`, and the [live-update hub](#live-updates--hubsserver)), so one
 cannot appear by accident. Requests to paths that match no
 endpoint also get 401 rather than 404.
 
 ### CSRF
 
-Browser requests must also prove they came from the web UI. Every unsafe request
-(anything but GET, HEAD, OPTIONS, TRACE) that does **not** carry `X-Api-Key` must send
-the antiforgery token:
-
-1. `GET /api/auth/antiforgery` sets a JS-readable `XSRF-TOKEN` cookie.
-2. Copy its value into the `X-XSRF-TOKEN` header on each unsafe request.
-3. The token is tied to the signed-in identity, so fetch a fresh one **after login
-   and logout**; a token from before login is rejected after it.
-
-A missing or stale token returns **400**. API-key requests are exempt: they carry no
-cookies, and a browser cannot add a custom header cross-site without a CORS preflight,
-which this API never grants.
-
-### Accounts
-
-Every account is an admin in v1. There is **no web setup page**: the first account is
-created in the desktop app, which offers a "Create admin account" dialog at startup
-when the API is enabled and no accounts exist. The Configuration tab has the same
-button, which also works as recovery if every account is locked out or its password
-lost. Passwords need at least 10 characters; five failed sign-ins lock an account for
-15 minutes.
-
-`POST auth/login` also allows **10 attempts per minute per client IP**, counting
-successes and failures alike. Over the limit it answers **429** with a `Retry-After`
-header, even for the right password. Lockout protects one account; this slows a client
-trying many. Behind a reverse proxy, set `TrustedProxies` (below) or every client
-shares the proxy's limit.
+The controller has no cookies, so a page elsewhere cannot make a browser act on it. The
+portal guards the browser's side: a change to `api/` it forwards in a signed-in user's name
+must carry the portal's antiforgery token (`X-XSRF-TOKEN`, from the `XSRF-TOKEN` cookie
+`GET /api/auth/antiforgery` sets at the portal's root), or the portal answers **400** and
+does not forward it.
 
 There is deliberately **no local exemption**: loopback requests need credentials too.
 
-> The key is read once when the API server starts, so changing it requires a
-> restart.
+> The key and the portal's settings are read once when the API server starts, so changing
+> them requires a restart.
 
 ## Binding
 
@@ -97,10 +84,11 @@ is bound at all. `Key` no longer affects whether it starts.
 | Setting | Effect |
 | --- | --- |
 | `Enabled: false` (default) | the API does not start; no port is bound |
-| `Enabled: true`, `Key` blank | the API starts; only cookie sign-in is accepted |
+| `Enabled: true`, `Key` blank | the API starts; only the portal's token is accepted |
 | `AllowRemote: false` (default) | binds `127.0.0.1` only |
 | `AllowRemote: true` | binds `0.0.0.0` |
-| `TrustedProxies` | reverse proxies, such as the portal, whose `X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Prefix` are honoured; default none |
+| `TrustedProxies` | reverse proxies, such as the portal, whose `X-Forwarded-For` / `X-Forwarded-Proto` are honoured; default none |
+| `Portal:Secret`, `Portal:ServerId` | the portal's settings for this server: its token's signing secret and audience; default none, when only `Key` signs in. See [Authentication](#authentication) |
 | `HttpPort` / `HttpsPort` | defaults 5100 / 5101; HTTPS listens only with `Https` |
 | `Https` | HTTPS from the certificate store or a file, and what plain HTTP from other computers gets: see [https.md](https.md) |
 
@@ -109,13 +97,10 @@ is bound at all. `Key` no longer affects whether it starts.
 The web site reaches the controller through WreckfestPortal (INSTALL.md step 4), which is
 a reverse proxy. List it, or any other proxy, in `TrustedProxies`, as addresses or CIDR ranges:
 `["192.168.1.1"]` or `["10.0.0.0/24"]`. A comma-separated string also works. The
-controller then takes the client IP from `X-Forwarded-For`, for the login rate limit and
-logs, and the scheme from `X-Forwarded-Proto`, so the sign-in cookie is marked `Secure`
-when the browser used HTTPS. From the portal it also takes `X-Forwarded-Prefix`, the path
-the site lives under there (`/tvtp2`), as the path base: the sign-in and antiforgery cookies
-are scoped to it, so controllers behind one portal keep their cookies apart. The paths in
-this document are the controller's own; through the portal they are under the prefix
-(`/tvtp2/api/auth/state`). `X-Forwarded-Host` is not used.
+controller then takes the client IP from `X-Forwarded-For`, for the rate limits and logs,
+and the scheme from `X-Forwarded-Proto`, for HTTPS enforcement. The paths in this document
+are the controller's own; through the portal they are under the server's path
+(`/tvtp2/api/server/status`). `X-Forwarded-Host` and `X-Forwarded-Prefix` are not used.
 
 The headers are ignored from every other address, loopback included, so a client cannot
 pick its own IP by sending them. An entry that is not an address or range is logged and
@@ -137,13 +122,13 @@ certificate did not change) and the last reload's error. No key, password or pat
 
 **The web API runs the game server; the desktop app runs the PC.** Over the API an admin
 starts, stops and restarts the server, sends commands, and manages its config, rotation,
-cups, catalogue, users, and the settings that change game behaviour. Anything that names
+cups, catalogue, and the settings that change game behaviour. Anything that names
 or touches programs, paths, files, or processes other than the dedicated server is set
 in the desktop app (or its config files) only:
 
 - launch settings (`serverPath`, `serverArguments`, `workingDirectory`, `logFilePath`,
   `steamCmdPath`) and `log=` in server_config.cfg: neither read nor written over the API;
-- the API's own binding and key, and the database: no route;
+- the API's own binding and key, the AI assistant's settings, and the database: no route;
 - database backups: a desktop button, not an endpoint (#74);
 - processes: `attach` and `inject` accept only the configured dedicated server (below);
 - no response carries a local path.
@@ -154,18 +139,6 @@ Validation failures are **400** `ValidationProblemDetails`:
 `{ "errors": { "<field>": ["message", ...] } }`, with fields named as in the request. A
 request the current state does not allow is **409** `ProblemDetails`, its `title` saying
 why. Numbers must be JSON numbers: `"5"` for an integer is a 400.
-
-### Auth — `api/auth`
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `state` | Anonymous. `{ authenticated, user, setupRequired, degraded }`. `setupRequired` is true while no account exists. `user` is null for anonymous and API-key callers. |
-| GET | `antiforgery` | Anonymous. Sets the `XSRF-TOKEN` cookie; 204. |
-| POST | `login` | Anonymous. `{ login, password, remember }`. `login` matches the username, then the email. 200 with the user; **401** for a wrong login or password (the same answer either way); **423** while the account is locked. `remember` makes the cookie outlive the browser session. |
-| POST | `logout` | Anonymous, so an expired session can still clear its cookie. 204. |
-| GET | `me` | The caller's profile. **403** for API-key callers, who are not a user. |
-| PUT | `me` | `{ email, displayName, timeZone }`. `timeZone` is an IANA id (`Europe/Copenhagen`) or null for the browser's zone. Changing the email ends the caller's other sessions. |
-| POST | `me/password` | `{ currentPassword, newPassword }`. 204. Keeps this session and ends the others. |
 
 ### Public — `api/public`
 
@@ -261,14 +234,15 @@ races }], cups: [{ name, isActive, nextOccurrence, repeat }] }`.
 #### AI assistant
 
 Visitors ask about the server in plain language on the web app's `/ai` page. The controller
-sends the question to an OpenAI-compatible Chat Completions API (the `assistant` settings
-section: OpenAI by default, or OpenRouter, a local Ollama and the like) with its own key,
-which never reaches a browser. The model looks answers up with read-only tools that call
+sends the question to an OpenAI-compatible Chat Completions API (OpenAI by default, or
+OpenRouter, a local Ollama and the like) with its own key, which never reaches a browser. Its
+settings are the `Assistant` section of user-settings.json (`Enabled`, `ApiKey`, `Model`,
+`BaseUrl`, `DailyRequestLimit`), read when the API starts; there is no endpoint for them. The model looks answers up with read-only tools that call
 the public endpoints above - `overview` (status, players, rotation; cups), `feed`, `races`,
 `players`, `tracks`, `tracks/{key}` and `variants/{variantId}` - so it sees exactly what the public
 pages show and nothing else.
 
-`assistant` is `{ enabled }`: true when the section has `enabled` on and a key set. The web
+`assistant` is `{ enabled }`: true when the section has `Enabled` on and a key set. The web
 app shows its AI link only then. It shares `overview`'s rate limit.
 
 `assistant/chat` takes `{ messages: [{ role, content }] }`, the conversation so far (the
@@ -279,9 +253,8 @@ browser keeps it; the controller stores none), and answers `{ reply }` as plain 
   (90 seconds) or answers with nothing. The log gets the status and the error's `code` and
   `type`, never the API's message, which can quote the key back.
 - 10 questions a minute per client IP (**429** with `Retry-After`), and the section's
-  `dailyRequestLimit` across all visitors per UTC day (**429** once used up). The day's
+  `DailyRequestLimit` across all visitors per UTC day (**429** once used up). The day's
   count is kept in memory, so a restart starts it again.
-- Like any POST it needs the [antiforgery token](#csrf), anonymous or not.
 - The model may call tools for up to 6 rounds per question; the last round offers none, so
   it answers with what it has. One question gets at most 12 lookups and 64,000 characters
   of their output; one lookup's output is cut at 24,000. Once either runs out, tools are no
@@ -292,9 +265,9 @@ browser keeps it; the controller stores none), and answers `{ reply }` as plain 
 
 ### Admin AI assistant — `api/assistant`
 
-The admin panel's **AI assistant** page. It uses the `assistant` settings section's key,
-model and address, but needs only the key: `enabled` turns on the public page alone. Admins
-are not held to `dailyRequestLimit`.
+The admin panel's **AI assistant** page, for everyone who manages the server. It uses the
+`Assistant` section's key, model and address, but needs only the key: `Enabled` turns on
+the public page alone. It is not held to `DailyRequestLimit`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -334,27 +307,6 @@ web app's **Apply** button sends it with the admin's own session:
 - At most 5 proposals per question.
 - Users, starting, stopping and updating the server, and launch settings are out of its
   reach.
-
-### Users — `api/users`
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | — | All accounts, by username. |
-| GET | `{id}` | One account. |
-| POST | — | `{ userName, email, password, displayName, timeZone }`. 201. `password` is a temporary one for the owner to change. |
-| PUT | `{id}` | `{ userName, email, displayName, timeZone }`. A new username or email ends that account's sessions (not the caller's own). |
-| DELETE | `{id}` | 204. **409** for your own account or the last one. |
-| POST | `{id}/password` | `{ newPassword }`. Admin reset: 204, ends the account's sessions. A rejected password leaves the old one in place. |
-| POST | `{id}/lock` | Locks until unlocked and ends the account's sessions. **409** for your own account, and for the last account not locked by an admin (an API-key script included): a failed-sign-in lockout ends by itself, so it does not count. |
-| POST | `{id}/unlock` | Lifts an admin lock or a failed-sign-in lockout. |
-
-Any account write answers **409** when the account was changed by another request
-at the same moment; reload it and try again. Nothing is half-applied: a lock and the
-sign-out it causes are one save, and concurrent deletes are serialized so the last
-account always survives.
-
-Account responses never include password hashes or security stamps:
-`{ id, userName, email, displayName, timeZone, isLockedOut, lockoutEnd }`.
 
 ### Server — `api/server`
 
@@ -578,21 +530,19 @@ or the cup's settings cannot be written to the server config (with a `reason`).
 
 The settings a person edits over the web, kept in the controller's database one section
 at a time. Today that is `vote` (`mode`, `directCooldownSeconds`, `voteTimeoutSeconds`,
-`maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`), `publicSite`
-(`feedItemCount`) and `assistant` (`enabled`, `baseUrl`, `model`, `apiKey`,
-`dailyRequestLimit`); later settings pages add sections for what changes game behaviour,
+`maxLapsAllowed`, `messageDelayMs`, `suppressCommandsDuringRace`) and `publicSite`
+(`feedItemCount`); later settings pages add sections for what changes game behaviour,
 never programs or paths. The WPF Configuration tab edits the same `vote` section;
-`publicSite` and `assistant` are edited on the web only.
+`publicSite` is edited on the web only. The AI assistant's settings are in
+user-settings.json, not here (see [AI assistant](#ai-assistant)).
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | | Every section: `{ vote, publicSite, assistant }` (`SettingsResponse`), each with its `version` |
+| GET | | Every section: `{ vote, publicSite }` (`SettingsResponse`), each with its `version` |
 | GET | `vote` | The voting settings (`VoteSettingsResponse`), with its `ETag` |
 | PUT | `vote` | Change the fields in the body; the rest keep their values. Needs `If-Match`. Answers `VoteSettingsResponse` |
 | GET | `publicSite` | The front page's settings (`PublicSiteSettingsResponse`), with its `ETag` |
 | PUT | `publicSite` | As for `vote`. Answers `PublicSiteSettingsResponse` |
-| GET | `assistant` | The [AI assistant](#ai-assistant)'s settings (`AssistantSettingsResponse`), with its `ETag` |
-| PUT | `assistant` | As for `vote`. Answers `AssistantSettingsResponse` |
 
 Each section has its own typed route, so the web app gets types for it; a section that
 does not exist has no route (404).
@@ -806,10 +756,11 @@ Clients only listen; the hub has no methods to call. It is outside `api/` and an
 anonymously, but what a connection receives depends on its group:
 
 - **`public`** — every connection.
-- **`admin`** — a connection whose caller passes the Admin policy: the browser's
-  sign-in cookie (sent automatically, same origin) or, for scripts, `X-Api-Key`.
-  Membership is decided once, when the connection opens; sign out or a revoked
-  session takes effect on the next connection.
+- **`admin`** — a connection whose caller passes the Admin policy: the portal's token
+  (the portal adds it to the negotiate request and the WebSocket upgrade it forwards for
+  someone who manages this server) or, for scripts, `X-Api-Key`. Membership is decided
+  once, when the connection opens: an open connection outlives the token, and losing
+  access, signing out or a lock takes effect on the next connection.
 
 | Message | Group | Payload |
 | --- | --- | --- |
@@ -839,3 +790,59 @@ await connection.start();
 ```
 
 While the database is unavailable (recovery mode) the hub answers 503, like the API.
+
+## The portal's API
+
+WreckfestPortal (`Portal/WreckfestPortal`) holds the web accounts. Its own API is at the
+site's root, beside the servers' paths; the web app's types come from
+`web/src/api/portal-openapi.json`, which `OpenApiContractTests` in the portal's tests keeps
+in step. Everything needs a signed-in user unless marked anonymous; changes need the
+antiforgery token as described under [CSRF](#csrf). Signing in sets an ASP.NET Core Identity
+cookie, `.WreckfestPortal.Auth`, for the whole site: `HttpOnly`, `SameSite=Strict`, `Secure`
+over HTTPS, sliding over 14 days, its keys in a `keys` folder beside `portal.db` protected
+with DPAPI. The account is reloaded on every request, so a lock, a password change or a lost
+admin role applies at once. The portal never forwards its own cookies to a controller.
+
+There are two kinds of account: a **global admin** (`isAdmin`) manages every server and the
+accounts; anyone else manages only the servers in `servers`, by their `Id` in the portal's
+settings. Accounts are made by admins, or by `WreckfestPortal.exe create-admin <user> <email>`
+on the portal's PC, which is also the recovery when every admin is locked out. Passwords need
+at least 10 characters; five failed sign-ins lock an account for 15 minutes.
+
+### Servers — `api/servers`
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | — | Anonymous. `{ title, intro, servers: [{ id, name, description, link, state, ... }] }`: the front page's cards, as the portal last polled them. Never a controller's address. |
+
+### Auth — `api/auth`
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `state` | Anonymous. `{ authenticated, user, setupRequired }`. `setupRequired` is true while no account exists. |
+| GET | `antiforgery` | Anonymous. Sets the `XSRF-TOKEN` cookie for the whole site; 204. |
+| POST | `login` | Anonymous. `{ login, password, remember }`. `login` matches the username, then the email. 200 with the user; **401** for a wrong login or password (the same answer either way); **423** while the account is locked. 10 attempts a minute per client IP (**429** with `Retry-After`), counting successes and failures alike. `remember` makes the cookie outlive the browser session. |
+| POST | `logout` | Anonymous, so an expired session can still clear its cookie. Signs out of every server. 204. |
+| GET | `me` | The caller's account. |
+| PUT | `me` | `{ email, displayName, timeZone }`. `timeZone` is an IANA id (`Europe/Copenhagen`) or null for the browser's zone. Changing the email ends the caller's other sessions. |
+| POST | `me/password` | `{ currentPassword, newPassword }`. 204. Keeps this session and ends the others. |
+
+### Users — `api/users` (global admins)
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | — | All accounts, by username. |
+| GET | `{id}` | One account. |
+| POST | — | `{ userName, email, password, displayName, timeZone, isAdmin, servers }`. 201. `password` is a temporary one for the owner to change. `servers` are server ids; one the portal does not list is **400**, and an admin's are ignored. |
+| PUT | `{id}` | `{ userName, email, displayName, timeZone, isAdmin, servers }`. A new username or email ends that account's sessions (not the caller's own); a new role or servers apply on its next request. **409** for demoting yourself, or the last admin who can sign in. |
+| DELETE | `{id}` | 204. **409** for your own account, or the last admin who can sign in. |
+| POST | `{id}/password` | `{ newPassword }`. Admin reset: 204, ends the account's sessions. A rejected password leaves the old one in place. |
+| POST | `{id}/lock` | Locks until unlocked and ends the account's sessions. **409** for your own account, and for the last admin not locked by an admin: a failed-sign-in lockout ends by itself, so it does not count. |
+| POST | `{id}/unlock` | Lifts an admin lock or a failed-sign-in lockout. |
+
+Any account write answers **409** when the account was changed by another request at the
+same moment; reload it and try again. The checks that keep an admin happen inside SQLite's
+write lock, so two admins removing each other at once leave one.
+
+Account responses never include password hashes or security stamps:
+`{ id, userName, email, displayName, timeZone, isAdmin, servers, isLockedOut, lockoutEnd }`.

@@ -3,21 +3,22 @@ import PageHeader from '@/components/PageHeader.vue'
 import { computed, reactive, ref, watchEffect } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NAlert, NButton, NCard, NForm, NFormItem, NInput, NSelect, useMessage } from 'naive-ui'
-import { api } from '@/api/client'
+import { portal } from '@/api/client'
 import { fieldErrors, problemMessage } from '@/api/problems'
 import { useAuthStore } from '@/stores/auth'
 import { timeZoneOptions } from '@/utils/timeZones'
 import { vSelectFocus } from '@/crud/selectFocus'
 
-const NO_ANSWER = 'No answer from the controller, so it is not known whether this was saved. Reload before trying again.'
+const NO_ANSWER = 'No answer from the site, so it is not known whether this was saved. Reload before trying again.'
 
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
 /**
- * The client's own 401 handling leaves /api/auth/* to the page (sign-in answers 401 for a
- * wrong password), so an ended session is caught here: forget the user and sign in again.
+ * The client's own 401 handling leaves the portal's /api/auth/* to the page (sign-in answers
+ * 401 for a wrong password), so an ended session is caught here: forget the user and sign in
+ * again. The profile is the portal's: one for every server.
  */
 function sessionEnded(status: number): boolean {
   if (status !== 401) {
@@ -64,7 +65,7 @@ async function saveProfile() {
   savingProfile.value = true
   profileErrors.value = {}
   try {
-    const { data, error, response } = await api.PUT('/api/auth/me', {
+    const { data, error, response } = await portal.PUT('/api/auth/me', {
       body: { email: profile.email, displayName: profile.displayName || null, timeZone: profile.timeZone },
     })
     if (sessionEnded(response.status)) {
@@ -72,7 +73,7 @@ async function saveProfile() {
     }
 
     if (data) {
-      auth.user = data
+      auth.updated(data)
       message.success('Profile saved.')
     } else {
       profileErrors.value = fieldErrors(error)
@@ -101,7 +102,7 @@ async function changePassword() {
   savingPassword.value = true
   passwordErrors.value = {}
   try {
-    const { error, response } = await api.POST('/api/auth/me/password', {
+    const { error, response } = await portal.POST('/api/auth/me/password', {
       body: { currentPassword: password.current, newPassword: password.next },
     })
     if (sessionEnded(response.status)) {
@@ -116,7 +117,7 @@ async function changePassword() {
       message.error(problemMessage(error, 'The password was not changed.'))
     }
   } catch {
-    message.error('No answer from the controller, so it is not known whether the password changed.')
+    message.error('No answer from the site, so it is not known whether the password changed.')
   } finally {
     savingPassword.value = false
   }

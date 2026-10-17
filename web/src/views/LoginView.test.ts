@@ -5,7 +5,6 @@ import LoginView from './LoginView.vue'
 const auth = vi.hoisted(() => ({
   unreachable: false,
   loaded: true,
-  degraded: false,
   setupRequired: false,
   login: vi.fn(),
   load: vi.fn(),
@@ -20,7 +19,7 @@ vi.mock('vue-router', () => ({ useRoute: () => route, useRouter: () => router })
 
 let wrapper: VueWrapper | undefined
 beforeEach(() => {
-  Object.assign(auth, { unreachable: false, loaded: true, degraded: false, setupRequired: false })
+  Object.assign(auth, { unreachable: false, loaded: true, setupRequired: false })
   auth.login.mockReset()
   auth.load.mockReset()
   router.replace.mockReset()
@@ -31,23 +30,17 @@ afterEach(() => {
 })
 
 describe('LoginView', () => {
-  it('keeps setup, database, and unreachable guidance visible', () => {
+  it('keeps setup and unreachable guidance visible', () => {
     auth.setupRequired = true
     wrapper = mount(LoginView)
-    expect(wrapper.text()).toContain('Create the first admin account')
+    expect(wrapper.text()).toContain('WreckfestPortal.exe create-admin')
     wrapper.unmount()
 
     auth.setupRequired = false
-    auth.degraded = true
-    wrapper = mount(LoginView)
-    expect(wrapper.text()).toContain('database is unavailable')
-    wrapper.unmount()
-
-    auth.degraded = false
     auth.unreachable = true
     auth.loaded = false
     wrapper = mount(LoginView)
-    expect(wrapper.text()).toContain('controller cannot be reached')
+    expect(wrapper.text()).toContain('site cannot be reached')
     expect(wrapper.text()).toContain('Try again')
   })
 

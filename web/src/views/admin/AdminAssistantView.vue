@@ -87,7 +87,7 @@ async function ask(question = draft.value) {
         { role: 'assistant', content: data.reply, proposals: data.proposals.map((p) => ({ ...p, state: 'open' as const })) },
       ]
     } else {
-      fail(text, response.status === 404 ? 'The AI assistant has no API key. Set one under Settings.' : problemMessage(problem, 'The AI assistant could not answer. Try again.'))
+      fail(text, response.status === 404 ? "The AI assistant has no API key. It is set in the controller's user-settings.json." : problemMessage(problem, 'The AI assistant could not answer. Try again.'))
       if (response.status === 404) await load()
     }
   } catch {
@@ -143,7 +143,7 @@ onMounted(async () => {
     <NCard v-else-if="!available && turns.length === 0">
       <NEmpty description="The AI assistant has no API key.">
         <template #extra>
-          <RouterLink :to="{ name: 'admin-settings' }">Set one under Settings</RouterLink>
+          It is set in the Assistant section of the controller's user-settings.json, on the server's PC.
         </template>
       </NEmpty>
     </NCard>

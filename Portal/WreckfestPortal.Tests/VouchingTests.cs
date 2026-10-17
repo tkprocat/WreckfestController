@@ -119,6 +119,25 @@ public sealed class VouchingTests
         Assert.NotNull(forwarded.Bearer);
     }
 
+    // SignalR's client opens with a POST (negotiate), and long polling sends POSTs, without the
+    // antiforgery header: a signed-in admin's live updates must still connect, as admin. The
+    // hub has nothing a client can change.
+    [Fact]
+    public async Task TheHubsPosts_NeedNoAntiforgeryToken_AndAreVouchedFor()
+    {
+        await using var host = await StartAsync();
+        await host.CreateAdminAsync();
+        using var admin = await host.SignInAsync("admin");
+        admin.SendXsrfHeader = false;
+
+        using var negotiate = await admin.Http.PostAsync("/vanilla/hubs/server/negotiate?negotiateVersion=1", content: null, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, negotiate.StatusCode);
+        var forwarded = Assert.Single(_controller.Requests);
+        Assert.Equal("/hubs/server/negotiate", forwarded.Path);
+        Assert.NotNull(forwarded.Bearer);
+    }
+
     // Anonymous changes (the public AI assistant's questions) carry no one's authority.
     [Fact]
     public async Task AnAnonymousChange_IsForwarded_WithoutAToken()

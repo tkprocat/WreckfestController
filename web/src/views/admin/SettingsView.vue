@@ -2,7 +2,6 @@
 import PageHeader from '@/components/PageHeader.vue'
 import ResourceTable from '@/crud/ResourceTable.vue'
 import PublicSiteSettings from './PublicSiteSettings.vue'
-import AssistantSettings from './AssistantSettings.vue'
 import { computed, h, onMounted, reactive, ref } from 'vue'
 import {
   NAlert,
@@ -280,7 +279,6 @@ onMounted(() => {
 
     <PublicSiteSettings class="gap" />
 
-    <AssistantSettings class="gap" />
 
     <NCard title="Votable tracks">
       <template #header-extra>

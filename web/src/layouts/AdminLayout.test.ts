@@ -8,6 +8,14 @@ vi.mock('@/realtime/hub', async () => {
   hub.status = ref('connected')
   return { hubStatus: hub.status }
 })
+const auth = vi.hoisted(() => ({ isAdmin: true }))
+vi.mock('@/stores/auth', () => ({ useAuthStore: () => auth }))
+const managed = vi.hoisted(() => ({ servers: null as null | import('vue').Ref<{ id: string; name: string; link: string; current: boolean }[]> }))
+vi.mock('@/composables/useManagedServers', async () => {
+  const { ref } = await import('vue')
+  managed.servers = ref([])
+  return { useManagedServers: () => ({ servers: managed.servers, load: () => Promise.resolve() }) }
+})
 vi.mock('vue-router', () => ({
   useRoute: () => ({ name: 'admin-dashboard' }),
   useRouter: () => ({ afterEach: () => () => undefined, resolve: () => ({ href: '/admin' }) }),
@@ -20,11 +28,17 @@ const { default: AdminLayout } = await import('./AdminLayout.vue')
 const NOTICE = 'Live updates are disconnected and reconnecting.'
 let wrapper: VueWrapper | undefined
 
+function mountLayout() {
+  wrapper = mount(AdminLayout, { attachTo: document.body })
+}
+
 beforeEach(() => {
   vi.useFakeTimers()
   hub.status!.value = 'connected'
+  auth.isAdmin = true
+  managed.servers!.value = []
   window.matchMedia = vi.fn().mockReturnValue({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })
-  wrapper = mount(AdminLayout, { attachTo: document.body })
+  mountLayout()
 })
 
 afterEach(() => {
@@ -56,5 +70,30 @@ describe('AdminLayout', () => {
     await vi.advanceTimersByTimeAsync(10_000)
 
     expect(wrapper!.text()).not.toContain(NOTICE)
+  })
+
+  // The accounts are a global admin's: anyone else does not see the page in the menu.
+  it('shows Users to a global admin only', async () => {
+    expect(wrapper!.find('.admin-sidebar').text()).toContain('Users')
+    wrapper!.unmount()
+
+    auth.isAdmin = false
+    mountLayout()
+    await nextTick()
+
+    expect(wrapper!.find('.admin-sidebar').text()).not.toContain('Users')
+    expect(wrapper!.find('.admin-sidebar').text()).toContain('Profile')
+  })
+
+  it('offers the other servers the user manages, and nothing when there is only this one', async () => {
+    expect(wrapper!.find('.server-picker').exists()).toBe(false)
+
+    managed.servers!.value = [
+      { id: 'vanilla', name: 'Vanilla', link: '/vanilla/', current: true },
+      { id: 'tvtp2', name: 'TVTP2', link: '/tvtp2/', current: false },
+    ]
+    await nextTick()
+
+    expect(wrapper!.find('.admin-sidebar .server-picker').text()).toContain('Vanilla')
   })
 })

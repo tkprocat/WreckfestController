@@ -123,8 +123,10 @@ public static class ControllerSite
 
     /// <summary>
     /// Mints the controller's token when the visitor is signed in to the portal and may manage
-    /// <paramref name="server"/>. A change sent in their name must carry the portal's
-    /// antiforgery token, as the portal's own API does: the controller trusts the token alone.
+    /// <paramref name="server"/>. A change to the API sent in their name must carry the
+    /// portal's antiforgery token, as the portal's own API does: the controller trusts the
+    /// token alone. Not the hub's: SignalR's negotiate and long-polling POSTs carry no such
+    /// header, and the hub has nothing for a client to change - it only sends.
     /// False when the request was refused and answered here.
     /// </summary>
     private static async Task<bool> VouchAsync(HttpContext context, PortalServer server)
@@ -146,7 +148,8 @@ public static class ControllerSite
         }
 
         var method = context.Request.Method;
-        if (!(HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method) || HttpMethods.IsTrace(method)))
+        if (context.Request.Path.StartsWithSegments("/api", StringComparison.OrdinalIgnoreCase)
+            && !(HttpMethods.IsGet(method) || HttpMethods.IsHead(method) || HttpMethods.IsOptions(method) || HttpMethods.IsTrace(method)))
         {
             try
             {
