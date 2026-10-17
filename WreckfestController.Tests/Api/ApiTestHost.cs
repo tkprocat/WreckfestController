@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections;
 using Microsoft.AspNetCore.Http.Connections.Client;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
@@ -19,6 +18,7 @@ using WreckfestController.Models;
 using WreckfestController.Services.Cups;
 using WreckfestController.Services.Config;
 using WreckfestController.Services.Hook;
+using WreckfestController.Services.Auth;
 using WreckfestController.Services.Hosting;
 using WreckfestController.Services.Publishing;
 using WreckfestController.Services.ServerControl;
@@ -31,12 +31,15 @@ namespace WreckfestController.Tests.Api;
 /// TestServer instead of a bound port. The singletons the API borrows from the WPF
 /// app are real instances, except that the hook's pipe I/O is mocked so nothing
 /// touches a game process. The database is a real, migrated SQLite file in a temp
-/// folder, which also holds the Data Protection keys.
+/// folder. Callers sign in as the portal would, with <see cref="PortalToken"/>.
 /// </summary>
 public sealed class ApiTestHost : IAsyncDisposable
 {
     public const string ApiKey = "test-api-key";
-    public const string Password = "correct horse battery";
+
+    /// <summary>The portal's settings for this server, as in its Api:Portal section.</summary>
+    public const string PortalSecret = "test-portal-secret-of-at-least-32-chars";
+    public const string PortalServerId = "tvtp2";
 
     /// <summary>
     /// Sets the request's TCP peer address, which a TestServer otherwise leaves unset.
@@ -55,7 +58,7 @@ public sealed class ApiTestHost : IAsyncDisposable
         _ownedDirectory = ownedDirectory;
     }
 
-    /// <summary>The API host's own services (Identity, authentication).</summary>
+    /// <summary>The API host's own services (authentication, the hub).</summary>
     public IServiceProvider Services => _app.Services;
 
     /// <summary>The WPF app's service provider, which the API copies singletons from.</summary>
@@ -65,7 +68,7 @@ public sealed class ApiTestHost : IAsyncDisposable
     /// Defaults to a ready database. Pass one that is not ready to run in recovery mode.
     /// </param>
     /// <param name="dataDirectory">
-    /// Folder for the database and keys. Pass the same folder to a second host to
+    /// Folder for the database. Pass the same folder to a second host to
     /// simulate a restart; the caller then owns deleting it. Defaults to a fresh temp
     /// folder that is deleted on dispose.
     /// </param>
@@ -88,6 +91,8 @@ public sealed class ApiTestHost : IAsyncDisposable
         {
             ["Api:Enabled"] = "true",
             ["Api:Key"] = ApiKey,
+            [ApiAuthentication.PortalSecretKey] = PortalSecret,
+            [ApiAuthentication.PortalServerIdKey] = PortalServerId,
         };
         foreach (var (key, value) in settings ?? new Dictionary<string, string?>())
         {
@@ -142,54 +147,55 @@ public sealed class ApiTestHost : IAsyncDisposable
         }
     }
 
-    public async Task<AppUser> CreateUserAsync(string userName = "admin", string password = Password)
-    {
-        using var scope = _app.Services.CreateScope();
-        var users = scope.ServiceProvider.GetRequiredService<UserManager<AppUser>>();
-        var user = new AppUser { UserName = userName, Email = $"{userName}@example.com" };
-        var result = await users.CreateAsync(user, password);
-        Assert.True(result.Succeeded, string.Join("; ", result.Errors.Select(e => e.Description)));
-        return user;
-    }
-
     /// <summary>
-    /// Signs <paramref name="user"/> in through the real SignInManager and cookie handler
-    /// and returns the Set-Cookie header they produced. Stands in for the login endpoint
-    /// until one exists.
+    /// A token as the portal mints one (WreckfestPortal's ControllerTokens): signed with this
+    /// host's portal secret and addressed to its server id, unless a test says otherwise.
     /// </summary>
-    public async Task<string> SignInAsync(AppUser user, bool persistent = true)
+    public static string PortalToken(
+        string userName = "admin",
+        string? displayName = null,
+        string audience = PortalServerId,
+        string secret = PortalSecret,
+        string issuer = ApiAuthentication.PortalIssuer,
+        TimeSpan? expiresIn = null)
     {
-        using var scope = _app.Services.CreateScope();
-        var context = new DefaultHttpContext { RequestServices = scope.ServiceProvider };
-        context.Request.Scheme = "http";
-        context.Request.Host = new HostString("localhost");
-        var signIn = scope.ServiceProvider.GetRequiredService<SignInManager<AppUser>>();
-        signIn.Context = context;
+        var now = DateTime.UtcNow;
+        var expires = now + (expiresIn ?? TimeSpan.FromMinutes(5));
+        var claims = new List<System.Security.Claims.Claim>
+        {
+            new("sub", "user-" + userName),
+            new("name", userName),
+        };
+        if (displayName is not null)
+        {
+            claims.Add(new System.Security.Claims.Claim(ApiAuthentication.DisplayNameClaim, displayName));
+        }
 
-        var fresh = await signIn.UserManager.FindByIdAsync(user.Id);
-        await signIn.SignInAsync(fresh!, persistent);
-
-        return context.Response.Headers.SetCookie.Single()!;
+        return new Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler().CreateToken(new Microsoft.IdentityModel.Tokens.SecurityTokenDescriptor
+        {
+            Issuer = issuer,
+            Audience = audience,
+            Subject = new System.Security.Claims.ClaimsIdentity(claims),
+            IssuedAt = expires < now ? expires.AddMinutes(-5) : now,
+            NotBefore = expires < now ? expires.AddMinutes(-5) : now,
+            Expires = expires,
+            SigningCredentials = new Microsoft.IdentityModel.Tokens.SigningCredentials(
+                new Microsoft.IdentityModel.Tokens.SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes(secret)),
+                Microsoft.IdentityModel.Tokens.SecurityAlgorithms.HmacSha256),
+        });
     }
 
-    /// <summary>A client that sends the cookie from <paramref name="setCookie"/>, and no API key.</summary>
-    public HttpClient CreateCookieClient(string setCookie)
+    /// <summary>A client the portal vouches for, as it does for someone who may manage this server.</summary>
+    public HttpClient CreatePortalClient(string userName = "admin", string? displayName = null)
     {
         var client = CreateClient();
-        client.DefaultRequestHeaders.Add("Cookie", setCookie.Split(';')[0]);
+        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+            "Bearer", PortalToken(userName, displayName));
         return client;
     }
 
     /// <summary>A client with no API key header.</summary>
     public HttpClient CreateClient() => _app.GetTestClient();
-
-    /// <summary>A cookie-keeping client that sends the antiforgery header like the SPA.</summary>
-    /// <param name="pathBase">A prefix to reach the host under, as through the portal.</param>
-    public BrowserClient CreateBrowser(string pathBase = "")
-    {
-        var server = _app.GetTestServer();
-        return new BrowserClient(server.CreateHandler(), server.BaseAddress, pathBase);
-    }
 
     /// <summary>A client that sends the configured API key.</summary>
     public HttpClient CreateAuthenticatedClient()

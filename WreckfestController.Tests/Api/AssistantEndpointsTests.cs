@@ -274,7 +274,7 @@ public sealed class AssistantEndpointsTests : IDisposable
 
         using var first = await AskAsync(browser, "Tell me a long story.");
         var reply = (await first.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("reply").GetString()!;
-        using var second = await browser.Http.PostAsJsonAsync(
+        using var second = await browser.PostAsJsonAsync(
             "/api/public/assistant/chat",
             new
             {
@@ -338,28 +338,12 @@ public sealed class AssistantEndpointsTests : IDisposable
         await ConfigureAsync(host, enabled: true, apiKey: Key);
         using var browser = await BrowserAsync(host);
 
-        using var response = await browser.Http.PostAsync(
+        using var response = await browser.PostAsync(
             "/api/public/assistant/chat",
             new StringContent(body, Encoding.UTF8, "application/json"),
             Ct);
 
-        await AuthEndpointsTests.AssertFieldErrorAsync(response, "messages");
-        Assert.Empty(_model.Requests);
-    }
-
-    [Fact]
-    public async Task Chat_WithoutTheAntiforgeryToken_IsRefused()
-    {
-        await using var host = await StartAsync();
-        await ConfigureAsync(host, enabled: true, apiKey: Key);
-        using var client = host.CreateClient();
-
-        using var response = await client.PostAsJsonAsync(
-            "/api/public/assistant/chat",
-            new { messages = new[] { new { role = "user", content = "Hi" } } },
-            Ct);
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        await ProblemAssert.AssertFieldErrorAsync(response, "messages");
         Assert.Empty(_model.Requests);
     }
 
@@ -383,29 +367,23 @@ public sealed class AssistantEndpointsTests : IDisposable
         string? baseUrl = null,
         int? dailyRequestLimit = null)
     {
-        var store = host.MainServices.GetRequiredService<ISettingsStore>();
-        var entry = store.GetEntry<AssistantSettings>();
-        entry.Value.Enabled = enabled;
-        entry.Value.ApiKey = apiKey;
-        entry.Value.Model = model ?? entry.Value.Model;
-        entry.Value.BaseUrl = baseUrl ?? entry.Value.BaseUrl;
-        entry.Value.DailyRequestLimit = dailyRequestLimit ?? entry.Value.DailyRequestLimit;
-        var saved = await store.SaveAsync(entry.Value, entry.Version, Ct);
-        Assert.Equal(SettingsSaveStatus.Saved, saved.Status);
+        // The instance the API read from user-settings.json at start, changed in place.
+        var settings = host.Services.GetRequiredService<AssistantSettings>();
+        settings.Enabled = enabled;
+        settings.ApiKey = apiKey;
+        settings.Model = model ?? settings.Model;
+        settings.BaseUrl = baseUrl ?? settings.BaseUrl;
+        settings.DailyRequestLimit = dailyRequestLimit ?? settings.DailyRequestLimit;
+        await Task.CompletedTask;
     }
 
     private static async Task<bool> EnabledAsync(HttpClient client) =>
         (await client.GetFromJsonAsync<JsonElement>("/api/public/assistant", Ct)).GetProperty("enabled").GetBoolean();
 
-    private static async Task<BrowserClient> BrowserAsync(ApiTestHost host)
-    {
-        var browser = host.CreateBrowser();
-        await browser.FetchAntiforgeryAsync();
-        return browser;
-    }
+    private static Task<HttpClient> BrowserAsync(ApiTestHost host) => Task.FromResult(host.CreateClient());
 
-    private static Task<HttpResponseMessage> AskAsync(BrowserClient browser, string question) =>
-        browser.Http.PostAsJsonAsync(
+    private static Task<HttpResponseMessage> AskAsync(HttpClient browser, string question) =>
+        browser.PostAsJsonAsync(
             "/api/public/assistant/chat",
             new { messages = new[] { new { role = "user", content = question } } },
             Ct);

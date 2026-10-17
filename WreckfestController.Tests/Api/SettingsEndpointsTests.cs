@@ -39,7 +39,7 @@ public class SettingsEndpointsTests
 
         var body = await client.GetFromJsonAsync<JsonElement>("/api/settings", Ct);
 
-        Assert.Equal(["vote", "publicSite", "assistant"], body.EnumerateObject().Select(p => p.Name));
+        Assert.Equal(["vote", "publicSite"], body.EnumerateObject().Select(p => p.Name));
         Assert.Equal(1, body.GetProperty("vote").GetProperty("version").GetInt32());
         Assert.Equal(1, body.GetProperty("publicSite").GetProperty("version").GetInt32());
         Assert.Equal(10, body.GetProperty("publicSite").GetProperty("feedItemCount").GetInt32());
@@ -71,7 +71,7 @@ public class SettingsEndpointsTests
             "\"1\"");
 
         Assert.DoesNotContain(field, all, StringComparison.OrdinalIgnoreCase);
-        await AuthEndpointsTests.AssertFieldErrorAsync(put, field);
+        await ProblemAssert.AssertFieldErrorAsync(put, field);
         using var after = await client.GetAsync("/api/settings/vote", Ct);
         Assert.Equal("\"1\"", after.Headers.ETag?.Tag);
     }
@@ -180,72 +180,6 @@ public class SettingsEndpointsTests
         Assert.Equal(expected, FieldsOf(await stale.Content.ReadFromJsonAsync<JsonElement>(Ct)));
     }
 
-    [Fact]
-    public async Task Assistant_GetAndPut_AnswerWithTheSameFields_AndNeverTheKey()
-    {
-        const string key = "sk-test-secret-key";
-        await using var host = await ApiTestHost.StartAsync();
-        using var client = host.CreateAuthenticatedClient();
-        var read = await client.GetFromJsonAsync<JsonElement>("/api/settings/assistant", Ct);
-        var list = await client.GetFromJsonAsync<JsonElement>("/api/settings", Ct);
-
-        using var saved = await SendAsync(client, "/api/settings/assistant", new { enabled = true, apiKey = key, model = "gpt-test" }, "\"1\"");
-        using var stale = await SendAsync(client, "/api/settings/assistant", new { apiKey = "other" }, "\"1\"");
-        var savedText = await saved.Content.ReadAsStringAsync(Ct);
-        var staleText = await stale.Content.ReadAsStringAsync(Ct);
-        var readAgain = await client.GetStringAsync("/api/settings/assistant", Ct);
-        var listAgain = await client.GetStringAsync("/api/settings", Ct);
-
-        var expected = FieldsOf(read);
-        Assert.Equal(["apiKeySet", "baseUrl", "dailyRequestLimit", "enabled", "model", "version"], expected);
-        Assert.Equal(expected, FieldsOf(list.GetProperty("assistant")));
-        Assert.False(read.GetProperty("apiKeySet").GetBoolean());
-        Assert.False(read.GetProperty("enabled").GetBoolean());
-
-        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
-        var body = JsonDocument.Parse(savedText).RootElement;
-        Assert.Equal(expected, FieldsOf(body));
-        Assert.True(body.GetProperty("apiKeySet").GetBoolean());
-        Assert.Equal("gpt-test", body.GetProperty("model").GetString());
-        Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
-        Assert.Equal(expected, FieldsOf(JsonDocument.Parse(staleText).RootElement));
-
-        foreach (var answer in new[] { savedText, staleText, readAgain, listAgain })
-        {
-            Assert.DoesNotContain(key, answer, StringComparison.Ordinal);
-        }
-
-        Assert.Equal(key, host.MainServices.GetRequiredService<ISettingsStore>().Get<AssistantSettings>().ApiKey);
-    }
-
-    [Fact]
-    public async Task Assistant_Put_AcceptsWhatGetReturned_AndKeepsTheKey()
-    {
-        await using var host = await ApiTestHost.StartAsync();
-        using var client = host.CreateAuthenticatedClient();
-        using var first = await SendAsync(client, "/api/settings/assistant", new { apiKey = "sk-keep" }, "\"1\"");
-        var read = await client.GetFromJsonAsync<JsonElement>("/api/settings/assistant", Ct);
-
-        using var saved = await SendAsync(client, "/api/settings/assistant", read, "\"2\"");
-
-        Assert.Equal(HttpStatusCode.OK, saved.StatusCode);
-        Assert.Equal("sk-keep", host.MainServices.GetRequiredService<ISettingsStore>().Get<AssistantSettings>().ApiKey);
-    }
-
-    [Fact]
-    public async Task Assistant_Put_AnEmptyKey_RemovesIt()
-    {
-        await using var host = await ApiTestHost.StartAsync();
-        using var client = host.CreateAuthenticatedClient();
-        using var first = await SendAsync(client, "/api/settings/assistant", new { apiKey = "sk-remove-me" }, "\"1\"");
-
-        using var cleared = await SendAsync(client, "/api/settings/assistant", new { apiKey = "" }, "\"2\"");
-
-        Assert.Equal(HttpStatusCode.OK, cleared.StatusCode);
-        Assert.False((await cleared.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("apiKeySet").GetBoolean());
-        Assert.Equal(string.Empty, host.MainServices.GetRequiredService<ISettingsStore>().Get<AssistantSettings>().ApiKey);
-    }
-
     private static List<string> FieldsOf(JsonElement body) => body.EnumerateObject().Select(p => p.Name).Order().ToList();
 
     public static TheoryData<string, object, string> InvalidEdits => new()
@@ -260,11 +194,6 @@ public class SettingsEndpointsTests
         { "publicSite", new { feedItemCount = 0 }, "feedItemCount" },
         { "publicSite", new { feedItemCount = 51 }, "feedItemCount" },
         { "publicSite", new { feedItemCount = "ten" }, "feedItemCount" },
-        { "assistant", new { baseUrl = "ftp://example.com" }, "baseUrl" },
-        { "assistant", new { baseUrl = "not a url" }, "baseUrl" },
-        { "assistant", new { dailyRequestLimit = 0 }, "dailyRequestLimit" },
-        { "assistant", new { enabled = "yes" }, "enabled" },
-        { "assistant", new { apiKey = 42 }, "apiKey" },
     };
 
     [Theory]
@@ -276,7 +205,7 @@ public class SettingsEndpointsTests
 
         using var response = await SendAsync(client, $"/api/settings/{section}", body, "\"1\"");
 
-        await AuthEndpointsTests.AssertFieldErrorAsync(response, field);
+        await ProblemAssert.AssertFieldErrorAsync(response, field);
         using var after = await client.GetAsync($"/api/settings/{section}", Ct);
         Assert.Equal("\"1\"", after.Headers.ETag?.Tag);
     }

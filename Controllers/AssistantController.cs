@@ -41,14 +41,14 @@ public class AssistantController : ControllerBase
     /// </summary>
     public const int MaxRequestBytes = 256 * 1024;
 
-    private readonly ISettingsStore _settings;
+    private readonly AssistantSettings _settings;
     private readonly AssistantChat _chat;
     private readonly AssistantUsage _usage;
     private readonly IOptions<JsonOptions> _json;
     private readonly ILogger<AssistantController> _logger;
 
     public AssistantController(
-        ISettingsStore settings,
+        AssistantSettings settings,
         AssistantChat chat,
         AssistantUsage usage,
         IOptions<JsonOptions> json,
@@ -63,7 +63,7 @@ public class AssistantController : ControllerBase
 
     /// <summary>Whether the assistant is turned on and has a key: the web app shows its page only then.</summary>
     [HttpGet]
-    public PublicAssistantStatus Status() => new(IsAvailable(_settings.Get<AssistantSettings>()));
+    public PublicAssistantStatus Status() => new(IsAvailable(_settings));
 
     /// <summary>
     /// The assistant's answer to the last message of <c>messages</c>, the conversation so far
@@ -79,7 +79,7 @@ public class AssistantController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, "application/problem+json")]
     public async Task<ActionResult<AssistantChatReply>> Chat([FromBody] AssistantChatRequest request, CancellationToken cancellationToken)
     {
-        var settings = _settings.Get<AssistantSettings>();
+        var settings = _settings;
         if (!IsAvailable(settings))
         {
             return Problem(statusCode: StatusCodes.Status404NotFound, title: "The AI assistant is turned off.");

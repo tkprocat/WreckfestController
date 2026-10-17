@@ -18,7 +18,6 @@ namespace WreckfestController.Views;
 public partial class ConfigurationTab : UserControl
 {
     private readonly SettingsService _settingsService;
-    private readonly AccountService _accountService;
     private readonly DatabaseState _databaseState;
     private string? _lastBackupPath;
     private string? _backupError;
@@ -33,7 +32,6 @@ public partial class ConfigurationTab : UserControl
 
     public ConfigurationTab(
         SettingsService settingsService,
-        AccountService accountService,
         DatabaseState databaseState,
         IApiServer apiServer,
         ControllerInstance controllerInstance,
@@ -47,7 +45,6 @@ public partial class ConfigurationTab : UserControl
             $"Controller id: {controllerInstance.Id}. Servers started here carry {controllerInstance.Argument} on their command line.";
 
         _settingsService = settingsService;
-        _accountService = accountService;
         _databaseState = databaseState;
         _apiServer = apiServer;
 
@@ -67,7 +64,6 @@ public partial class ConfigurationTab : UserControl
 
         // Load current settings
         LoadSettings();
-        _ = RefreshAccountsAsync();
         ShowBackupState();
 
         // Loaded in recovery mode, the form holds the shipped defaults (version 0): load the
@@ -95,50 +91,6 @@ public partial class ConfigurationTab : UserControl
         ApiStatusText.Foreground = (System.Windows.Media.Brush)FindResource(colour);
     }
 
-    /// <summary>Re-reads the account count. Also called when the database becomes ready.</summary>
-    public async Task RefreshAccountsAsync()
-    {
-        if (!_accountService.IsDatabaseReady)
-        {
-            AccountsStatusText.Text = "Unavailable until the database is ready.";
-            CreateAccountButton.IsEnabled = false;
-            return;
-        }
-
-        try
-        {
-            var count = await _accountService.CountUsersAsync();
-            const string recovery = "Create another here if every account is locked out or its password is lost.";
-            AccountsStatusText.Text = count switch
-            {
-                0 => "No accounts yet. Create one to sign in to the web UI.",
-                1 => $"1 account can sign in to the web UI. {recovery}",
-                _ => $"{count} accounts can sign in to the web UI. {recovery}",
-            };
-            CreateAccountButton.IsEnabled = true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Could not count web accounts");
-            AccountsStatusText.Text = "Could not read the accounts. See the Controller Log.";
-            CreateAccountButton.IsEnabled = false;
-        }
-    }
-
-    private async void OnCreateAccountClicked(object sender, RoutedEventArgs e)
-    {
-        var created = await CreateAccountDialogView.ShowAsync(
-            _accountService,
-            "Every account is an admin: it can control the server, change settings and manage other accounts from the web UI.");
-        if (created is not null)
-        {
-            _logger.LogInformation("Web account {UserName} created from the desktop app", created);
-            ShowStatusMessage($"Account {created} created.", isError: false);
-        }
-
-        await RefreshAccountsAsync();
-    }
-
     /// <summary>
     /// Where backups go, and whether one can be made. Also called when the database
     /// becomes ready or fails.
@@ -148,7 +100,7 @@ public partial class ConfigurationTab : UserControl
         var folder = DatabaseBackup.FolderFor(_databaseState.DatabasePath);
         BackupButton.IsEnabled = _databaseState.IsReady;
         OpenBackupFolderButton.IsEnabled = Directory.Exists(folder);
-        // Shown in the panel, not a dialog: another dialog (Reset, Create Account) may be
+        // Shown in the panel, not a dialog: another dialog (Reset) may be
         // open when a slow backup ends, and the dialog host takes one at a time.
         BackupStatusText.Text = !_databaseState.IsReady
             ? "Unavailable until the database is ready."

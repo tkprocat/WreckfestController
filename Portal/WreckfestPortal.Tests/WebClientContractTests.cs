@@ -1,12 +1,12 @@
-using WreckfestController.Services.Auth;
+using WreckfestPortal.Accounts;
 
-namespace WreckfestController.Tests.Api;
+namespace WreckfestPortal.Tests;
 
 /// <summary>
-/// What the web app matches in the API's answers, beyond the OpenAPI document. If one side
+/// What the web app matches in the portal's answers, beyond the OpenAPI document. If one side
 /// changes, the web app quietly stops recognising the answer, so the text is pinned here.
 /// </summary>
-public class WebClientContractTests
+public sealed class WebClientContractTests
 {
     // client.ts retries once with a fresh token when a 400 carries this title; a mismatch
     // would leave a stale token failing every change, including signing back in.
@@ -15,7 +15,7 @@ public class WebClientContractTests
     {
         var client = File.ReadAllText(Path.Combine(RepositoryRoot(), "web", "src", "api", "client.ts"));
 
-        Assert.Contains($"export const ANTIFORGERY_FAILURE = '{CookieAntiforgeryFilter.FailureTitle}'", client);
+        Assert.Contains($"export const ANTIFORGERY_FAILURE = '{AntiforgeryFilter.FailureTitle}'", client);
     }
 
     private static string RepositoryRoot()

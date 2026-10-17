@@ -73,7 +73,7 @@ public class CollectionEndpointsTests
         using var duplicate = await client.PostAsJsonAsync(
             "/api/collections", new { name = " OVALS ", tracks = Array.Empty<object>() }, Ct);
 
-        await AuthEndpointsTests.AssertFieldErrorAsync(duplicate, "name");
+        await ProblemAssert.AssertFieldErrorAsync(duplicate, "name");
     }
 
     public static TheoryData<object, string> InvalidTracks => new()
@@ -95,7 +95,7 @@ public class CollectionEndpointsTests
         using var response = await client.PostAsJsonAsync(
             "/api/collections", new { name = "Broken", tracks = new[] { track } }, Ct);
 
-        await AuthEndpointsTests.AssertFieldErrorAsync(response, field);
+        await ProblemAssert.AssertFieldErrorAsync(response, field);
         Assert.Empty(await GetArrayAsync(client, "/api/collections"));
     }
 
@@ -150,7 +150,7 @@ public class CollectionEndpointsTests
             "Weekend (copy 2)",
             (await second.Content.ReadFromJsonAsync<JsonElement>(Ct)).GetProperty("name").GetString());
         Assert.Equal(HttpStatusCode.Created, named.StatusCode);
-        await AuthEndpointsTests.AssertFieldErrorAsync(taken, "name");
+        await ProblemAssert.AssertFieldErrorAsync(taken, "name");
     }
 
     [Fact]

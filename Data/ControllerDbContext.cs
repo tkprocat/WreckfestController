@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -17,7 +16,7 @@ namespace WreckfestController.Data;
 /// The controller's own SQLite database: web UI users, the track catalogue, track
 /// collections and cups today, and settings as a later phase moves them in.
 /// </summary>
-public class ControllerDbContext : IdentityDbContext<AppUser>
+public class ControllerDbContext : DbContext
 {
     public ControllerDbContext(DbContextOptions<ControllerDbContext> options)
         : base(options)
@@ -86,12 +85,6 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
-
-        builder.Entity<AppUser>(user =>
-        {
-            user.Property(u => u.DisplayName).HasMaxLength(AppUser.DisplayNameMaxLength);
-            user.Property(u => u.TimeZone).HasMaxLength(AppUser.TimeZoneMaxLength);
-        });
 
         ConfigureCatalogue(builder);
         ConfigureCollections(builder);
@@ -305,10 +298,7 @@ public class ControllerDbContext : IdentityDbContext<AppUser>
                 .HasForeignKey(e => e.CollectionId)
                 .OnDelete(DeleteBehavior.SetNull);
 
-            cup.HasOne(e => e.CreatedBy)
-                .WithMany()
-                .HasForeignKey(e => e.CreatedById)
-                .OnDelete(DeleteBehavior.SetNull);
+            cup.Property(e => e.CreatedBy).HasMaxLength(Cup.CreatedByMaxLength);
         });
 
         builder.Entity<CupPointsOff>(pending =>

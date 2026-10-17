@@ -72,7 +72,7 @@ public sealed class HttpsEnforcementTests
     {
         await using var host = await ApiTestHost.StartAsync();
 
-        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state");
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/public/overview");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -101,8 +101,8 @@ public sealed class HttpsEnforcementTests
 
     // A password already sent over HTTP cannot be taken back by a redirect: refused.
     [Theory]
-    [InlineData("GET", "/api/auth/state")]
-    [InlineData("POST", "/api/auth/login")]
+    [InlineData("GET", "/api/public/overview")]
+    [InlineData("POST", "/api/public/assistant/chat")]
     [InlineData("POST", "/admin")]
     [InlineData("GET", "/hubs/server/negotiate")]
     public async Task RemotePlainHttp_ToTheApi_OrUnsafe_IsRefused(string method, string path)
@@ -124,7 +124,7 @@ public sealed class HttpsEnforcementTests
     {
         await using var host = await ApiTestHost.StartAsync(HttpsOn());
 
-        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state", peer);
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/public/overview", peer);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
@@ -144,7 +144,7 @@ public sealed class HttpsEnforcementTests
             headers["X-Forwarded-For"] = Remote;
         }
 
-        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state", "127.0.0.1", headers: headers);
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/public/overview", "127.0.0.1", headers: headers);
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
@@ -155,7 +155,7 @@ public sealed class HttpsEnforcementTests
     {
         await using var host = await ApiTestHost.StartAsync(HttpsOn(trustedProxy: "192.168.1.1"));
 
-        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state", "192.168.1.1", headers: new Dictionary<string, string>
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/public/overview", "192.168.1.1", headers: new Dictionary<string, string>
         {
             ["X-Forwarded-For"] = Remote,
             ["X-Forwarded-Proto"] = "https",
@@ -170,7 +170,7 @@ public sealed class HttpsEnforcementTests
     {
         await using var host = await ApiTestHost.StartAsync(HttpsOn(trustedProxy: "192.168.1.1"));
 
-        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state", Remote, headers: new Dictionary<string, string>
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/public/overview", Remote, headers: new Dictionary<string, string>
         {
             ["X-Forwarded-Proto"] = "https",
         });
@@ -184,10 +184,10 @@ public sealed class HttpsEnforcementTests
         await using var on = await ApiTestHost.StartAsync(HttpsOn(hsts: "true"));
         await using var off = await ApiTestHost.StartAsync(HttpsOn(hsts: "false"));
 
-        using var sent = await SendAsync(on, HttpMethod.Get, "/api/auth/state", https: true, hostHeader: "wf.example.com");
-        using var local = await SendAsync(on, HttpMethod.Get, "/api/auth/state", https: true, hostHeader: "localhost");
-        using var notOn = await SendAsync(off, HttpMethod.Get, "/api/auth/state", https: true, hostHeader: "wf.example.com");
-        using var plain = await SendAsync(on, HttpMethod.Get, "/api/auth/state", "127.0.0.1", hostHeader: "wf.example.com");
+        using var sent = await SendAsync(on, HttpMethod.Get, "/api/public/overview", https: true, hostHeader: "wf.example.com");
+        using var local = await SendAsync(on, HttpMethod.Get, "/api/public/overview", https: true, hostHeader: "localhost");
+        using var notOn = await SendAsync(off, HttpMethod.Get, "/api/public/overview", https: true, hostHeader: "wf.example.com");
+        using var plain = await SendAsync(on, HttpMethod.Get, "/api/public/overview", "127.0.0.1", hostHeader: "wf.example.com");
 
         Assert.Equal(HttpsEnforcementMiddleware.HstsValue, sent.Headers.GetValues("Strict-Transport-Security").Single());
         Assert.False(local.Headers.Contains("Strict-Transport-Security"));
@@ -204,7 +204,7 @@ public sealed class HttpsEnforcementTests
     {
         await using var host = await ApiTestHost.StartAsync(HttpsOn(trustedProxy: proxy));
 
-        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state", proxy, headers: new Dictionary<string, string>
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/public/overview", proxy, headers: new Dictionary<string, string>
         {
             ["X-Forwarded-For"] = "not an address",
             ["X-Forwarded-Proto"] = "http",
@@ -221,7 +221,7 @@ public sealed class HttpsEnforcementTests
     {
         await using var host = await ApiTestHost.StartAsync(HttpsOn(trustedProxy: "192.168.1.1"));
 
-        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state", "192.168.1.1", headers: new Dictionary<string, string>
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/public/overview", "192.168.1.1", headers: new Dictionary<string, string>
         {
             ["X-Forwarded-For"] = "127.0.0.1",
             ["X-Forwarded-Proto"] = "http",
@@ -251,7 +251,7 @@ public sealed class HttpsEnforcementTests
     {
         await using var host = await ApiTestHost.StartAsync(HttpsOn(hsts: "true"));
 
-        using var response = await SendAsync(host, HttpMethod.Get, "/api/auth/state", https: true, hostHeader: name);
+        using var response = await SendAsync(host, HttpMethod.Get, "/api/public/overview", https: true, hostHeader: name);
 
         Assert.False(response.Headers.Contains("Strict-Transport-Security"));
     }

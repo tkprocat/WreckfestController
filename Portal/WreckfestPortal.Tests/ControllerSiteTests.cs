@@ -47,6 +47,7 @@ public sealed class ControllerSiteTests : IDisposable
             ["Portal:Servers:0:Id"] = "tvtp2",
             ["Portal:Servers:0:Name"] = "TVTP2",
             ["Portal:Servers:0:ApiUrl"] = ApiUrl,
+            ["Portal:Servers:0:Secret"] = "tvtp2-secret-of-at-least-32-characters!",
             ["Portal:AppRoot"] = Path.Combine(_root, "app"),
             ["Portal:DatabasePath"] = Path.Combine(_root, "data", "portal.db"),
         };

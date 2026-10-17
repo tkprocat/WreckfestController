@@ -44,31 +44,6 @@ public sealed class ControllerDbContextTests : IDisposable
     }
 
     [Fact]
-    public async Task User_RoundTripsProfileFields()
-    {
-        var ct = TestContext.Current.CancellationToken;
-        await using (var context = CreateContext())
-        {
-            await context.Database.MigrateAsync(ct);
-            context.Users.Add(new AppUser
-            {
-                UserName = "admin",
-                Email = "admin@example.com",
-                DisplayName = "Race Control",
-                TimeZone = "Europe/Copenhagen",
-            });
-            await context.SaveChangesAsync(ct);
-        }
-
-        await using (var context = CreateContext())
-        {
-            var user = await context.Users.SingleAsync(ct);
-            Assert.Equal("Race Control", user.DisplayName);
-            Assert.Equal("Europe/Copenhagen", user.TimeZone);
-        }
-    }
-
-    [Fact]
     public async Task MainHost_RegistersFactoryForTheConfiguredPath()
     {
         using var host = Program

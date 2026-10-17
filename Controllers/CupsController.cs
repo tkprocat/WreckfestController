@@ -97,9 +97,11 @@ public class CupsController : ControllerBase
             return this.Invalid(error.Field, error.Message);
         }
 
-        // A signed-in user; API-key callers have no user id.
-        var createdById = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var (status, cup) = await _store.CreateAsync(definition!, createdById);
+        // Someone the portal vouched for, by the name they had then; API-key callers have none.
+        var createdBy = User.FindFirst("sub") is null
+            ? null
+            : User.FindFirstValue(ApiAuthentication.DisplayNameClaim) ?? User.Identity?.Name;
+        var (status, cup) = await _store.CreateAsync(definition!, createdBy);
         if (status == CupWriteStatus.UnknownCollection)
         {
             return UnknownCollection();

@@ -140,11 +140,11 @@ public sealed class DatabaseBootstrapperTests : IDisposable
 
         await using var context = CreateContext();
         Assert.Empty(await context.Database.GetPendingMigrationsAsync(TestContext.Current.CancellationToken));
-        var user = await context.Users.SingleAsync(
-            u => u.UserName == "fixture",
-            TestContext.Current.CancellationToken);
-        Assert.Equal("Fixture User", user.DisplayName);
-        Assert.Equal("Europe/Copenhagen", user.TimeZone);
+        // The web accounts moved to the portal: their tables go, the rest stays.
+        var accountTables = await context.Database
+            .SqlQueryRaw<int>("SELECT COUNT(*) AS \"Value\" FROM sqlite_master WHERE type = 'table' AND name LIKE 'AspNet%'")
+            .SingleAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(0, accountTables);
     }
 
     private (DatabaseBootstrapper Bootstrapper, DatabaseState State) Create()

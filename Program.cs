@@ -228,7 +228,6 @@ public class Program
                 // This controller's id among several on one PC, from the database path (#201).
                 services.AddSingleton(new ControllerInstance(databasePath));
                 services.AddSingleton<DatabaseBootstrapper>();
-                AccountService.AddAccounts(services);
 
                 // Register API server
                 services.AddSingleton<IApiServer, ApiServer>();

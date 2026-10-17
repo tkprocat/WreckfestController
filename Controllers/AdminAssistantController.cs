@@ -25,7 +25,7 @@ namespace WreckfestController.Controllers;
 [Route("api/assistant")]
 public class AdminAssistantController : ControllerBase
 {
-    private readonly ISettingsStore _settings;
+    private readonly AssistantSettings _settings;
     private readonly AssistantChat _chat;
     private readonly ConfigService _config;
     private readonly CupStore _cups;
@@ -33,7 +33,7 @@ public class AdminAssistantController : ControllerBase
     private readonly ILogger<AdminAssistantController> _logger;
 
     public AdminAssistantController(
-        ISettingsStore settings,
+        AssistantSettings settings,
         AssistantChat chat,
         ConfigService config,
         CupStore cups,
@@ -50,7 +50,7 @@ public class AdminAssistantController : ControllerBase
 
     /// <summary>Whether an API key is set: the admin panel shows the assistant only then.</summary>
     [HttpGet]
-    public AdminAssistantStatus Status() => new(!string.IsNullOrEmpty(_settings.Get<AssistantSettings>().ApiKey));
+    public AdminAssistantStatus Status() => new(!string.IsNullOrEmpty(_settings.ApiKey));
 
     /// <summary>
     /// The assistant's answer to the last message of <c>messages</c>, as for the public
@@ -66,7 +66,7 @@ public class AdminAssistantController : ControllerBase
     [ProducesResponseType<ProblemDetails>(StatusCodes.Status503ServiceUnavailable, "application/problem+json")]
     public async Task<ActionResult<AdminAssistantReply>> Chat([FromBody] AssistantChatRequest request, CancellationToken cancellationToken)
     {
-        var settings = _settings.Get<AssistantSettings>();
+        var settings = _settings;
         if (string.IsNullOrEmpty(settings.ApiKey))
         {
             return Problem(statusCode: StatusCodes.Status404NotFound, title: "The AI assistant has no API key. Set one under Settings.");

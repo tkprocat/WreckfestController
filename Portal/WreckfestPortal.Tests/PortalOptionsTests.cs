@@ -3,7 +3,7 @@ namespace WreckfestPortal.Tests;
 public sealed class PortalOptionsTests
 {
     private static PortalServer Server(string id = "tvtp2", string apiUrl = "http://127.0.0.1:5102") =>
-        new() { Id = id, Name = "TVTP2", ApiUrl = apiUrl };
+        new() { Id = id, Name = "TVTP2", ApiUrl = apiUrl, Secret = id + "-secret-of-at-least-32-characters-long" };
 
     [Fact]
     public void UsableSettings_HaveNoProblems()
@@ -72,6 +72,28 @@ public sealed class PortalOptionsTests
         var options = new PortalOptions { Servers = [Server()], TrustedProxies = [proxy] };
 
         Assert.Contains(options.Problems(), p => p.Contains("Portal:TrustedProxies:0", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("only-31-characters-long-secret!")]
+    public void AMissingOrShortSecret_IsAProblem(string secret)
+    {
+        var server = Server();
+        server.Secret = secret;
+
+        Assert.Contains(new PortalOptions { Servers = [server] }.Problems(), p => p.Contains("Portal:Servers:0:Secret", StringComparison.Ordinal));
+    }
+
+    // One secret per server: a controller that leaked its own must not sign for another.
+    [Fact]
+    public void TwoServersSharingASecret_IsAProblem()
+    {
+        var vanilla = Server("vanilla");
+        var tvtp2 = Server("tvtp2");
+        tvtp2.Secret = vanilla.Secret;
+
+        Assert.Contains(new PortalOptions { Servers = [vanilla, tvtp2] }.Problems(), p => p.Contains("share a Secret", StringComparison.Ordinal));
     }
 
     [Fact]

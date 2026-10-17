@@ -231,12 +231,12 @@ public sealed class CupStore
 
     public async Task<(CupWriteStatus Status, Cup? Cup)> CreateAsync(
         CupDefinition definition,
-        string? createdById,
+        string? createdBy,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contexts.CreateDbContextAsync(cancellationToken);
         var now = _time.GetUtcNow();
-        var cup = new Cup { CreatedById = createdById, CreatedAt = now };
+        var cup = new Cup { CreatedBy = createdBy, CreatedAt = now };
 
         if (!await ApplyAsync(db, cup, definition, cancellationToken))
         {
@@ -716,7 +716,6 @@ public sealed class CupStore
     private static IQueryable<Cup> WithCollection(IQueryable<Cup> query) =>
         query
             .AsSplitQuery()
-            .Include(e => e.CreatedBy)
             .Include(e => e.Collection)
             .ThenInclude(c => c!.Entries)
             .ThenInclude(e => e.TrackVariant);

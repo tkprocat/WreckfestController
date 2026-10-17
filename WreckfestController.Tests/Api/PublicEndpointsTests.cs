@@ -193,7 +193,7 @@ public sealed class PublicEndpointsTests : IDisposable
     }
 
     [Fact]
-    public async Task Overview_IsRateLimitedPerClientIp_WithoutTouchingSignIn()
+    public async Task Overview_IsRateLimitedPerClientIp()
     {
         await using var host = await ApiTestHost.StartAsync(Settings);
         using var first = Browser(host, "203.0.113.5");
@@ -201,20 +201,16 @@ public sealed class PublicEndpointsTests : IDisposable
 
         for (var i = 0; i < RateLimits.PublicPermitsPerWindow; i++)
         {
-            using var ok = await first.Http.GetAsync("/api/public/overview", Ct);
+            using var ok = await first.GetAsync("/api/public/overview", Ct);
             Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
         }
 
-        using var limited = await first.Http.GetAsync("/api/public/overview", Ct);
-        using var otherClient = await second.Http.GetAsync("/api/public/overview", Ct);
-        using var signIn = await first.LoginAsync("nobody", "wrong password");
+        using var limited = await first.GetAsync("/api/public/overview", Ct);
+        using var otherClient = await second.GetAsync("/api/public/overview", Ct);
 
         Assert.Equal(HttpStatusCode.TooManyRequests, limited.StatusCode);
         Assert.Contains("Too many requests", await limited.Content.ReadAsStringAsync(Ct), StringComparison.Ordinal);
         Assert.Equal(HttpStatusCode.OK, otherClient.StatusCode);
-
-        // Sign-in has its own bucket: a wrong password, not a rate limit.
-        Assert.Equal(HttpStatusCode.Unauthorized, signIn.StatusCode);
     }
 
     [Fact]
@@ -480,11 +476,11 @@ public sealed class PublicEndpointsTests : IDisposable
         await db.SaveChangesAsync(Ct);
     }
 
-    private static BrowserClient Browser(ApiTestHost host, string peer)
+    private static HttpClient Browser(ApiTestHost host, string peer)
     {
-        var browser = host.CreateBrowser();
-        browser.Http.DefaultRequestHeaders.Add(ApiTestHost.PeerAddressHeader, peer);
-        return browser;
+        var client = host.CreateClient();
+        client.DefaultRequestHeaders.Add(ApiTestHost.PeerAddressHeader, peer);
+        return client;
     }
 
     private static async Task CreateCupAsync(HttpClient admin, string name, DateTime start, object? repeat)
