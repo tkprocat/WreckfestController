@@ -31,7 +31,11 @@ public sealed class ControllerSiteTests : IDisposable
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    public void Dispose() => Directory.Delete(_root, recursive: true);
+    public void Dispose()
+    {
+        TestDatabase.Delete(Path.Combine(_root, "data", "portal.db"));
+        Directory.Delete(_root, recursive: true);
+    }
 
     private async Task<WebApplication> StartAsync(string? trustedProxy = null)
     {
@@ -44,6 +48,7 @@ public sealed class ControllerSiteTests : IDisposable
             ["Portal:Servers:0:Name"] = "TVTP2",
             ["Portal:Servers:0:ApiUrl"] = ApiUrl,
             ["Portal:AppRoot"] = Path.Combine(_root, "app"),
+            ["Portal:DatabasePath"] = Path.Combine(_root, "data", "portal.db"),
         };
         if (trustedProxy is not null)
         {
@@ -211,7 +216,8 @@ public sealed class ControllerSiteTests : IDisposable
 
         using var response = await client.GetAsync("/tvtp2x/api/auth/state", Ct);
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        // Nothing answers it, so it needs a signed-in caller first, as on the controller.
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         Assert.Empty(_controller.Requests);
     }
 
