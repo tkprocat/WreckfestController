@@ -1,7 +1,7 @@
 /**
- * The path the site lives under, always ending in `/`: `/` at the root, or `/tvtp2/` for a
- * controller with Web:PathBase set, so several controllers can share one domain. The
- * controller writes it into index.html's `<base>` (WebApp.cs), so one build works under any.
+ * The path the site lives under, always ending in `/`: `/tvtp2/` for the server the portal
+ * lists as `tvtp2`, or `/` from the Vite dev server. The portal writes it into index.html's
+ * `<base>` (Portal/WreckfestPortal/ControllerSite.cs), so one build works for every server.
  */
 export function basePath(baseURI: string = document.baseURI): string {
   const path = new URL(baseURI).pathname

@@ -1,10 +1,13 @@
 # HTTPS
 
-The controller's web UI and API sign you in with a cookie and take passwords. Over
-plain HTTP both cross the network unencrypted. On `127.0.0.1` that is fine; for anything
-reachable from another computer, use HTTPS: either **directly** (this page), or through
-a **reverse proxy** that ends HTTPS in front of the controller (see
-[API.md](API.md#behind-a-reverse-proxy)).
+The controller's API signs you in with a cookie and takes passwords. Over plain HTTP both
+cross the network unencrypted. On `127.0.0.1` that is fine; for anything reachable from
+another computer, use HTTPS: either **directly** (this page), or through a **reverse
+proxy** that ends HTTPS in front of it (see [API.md](API.md#behind-a-reverse-proxy)).
+
+Visitors to the web site connect to WreckfestPortal, not to a controller, so their HTTPS
+belongs in front of the portal (INSTALL.md step 6). This page is for reaching a controller's
+API directly from another computer, such as a script, or a portal on another PC.
 
 The controller does not care where a certificate comes from - Let's Encrypt, a
 commercial or company CA, `mkcert`, self-signed - only where to load it: the Windows

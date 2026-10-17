@@ -5,11 +5,13 @@ using Microsoft.AspNetCore.HttpOverrides;
 namespace WreckfestController.Services.Auth;
 
 /// <summary>
-/// Honours <c>X-Forwarded-For</c> and <c>X-Forwarded-Proto</c> only when they come from
-/// the reverse proxies listed in <c>Api:TrustedProxies</c> (for example the OPNsense
-/// HAProxy address). That gives lockout and rate limiting the real client IP, and the
-/// cookie the HTTPS scheme the browser actually used. With nothing listed, the headers
-/// are ignored - including from loopback, which ASP.NET Core would otherwise trust.
+/// Honours <c>X-Forwarded-For</c>, <c>X-Forwarded-Proto</c> and <c>X-Forwarded-Prefix</c>
+/// only when they come from the reverse proxies listed in <c>Api:TrustedProxies</c> (the
+/// portal, or the OPNsense HAProxy address). That gives lockout and rate limiting the real
+/// client IP, the cookie the HTTPS scheme the browser actually used, and the cookies the
+/// path the site lives under on the portal (<c>/tvtp2</c>), so two controllers behind one
+/// portal never share or overwrite each other's. With nothing listed, the headers are
+/// ignored - including from loopback, which ASP.NET Core would otherwise trust.
 /// </summary>
 public static class TrustedProxies
 {
@@ -85,7 +87,7 @@ public static class TrustedProxies
             }
 
             // Host is deliberately not forwarded: nothing here builds absolute URLs.
-            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+            options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedPrefix;
             foreach (var proxy in parsed.Proxies)
             {
                 options.KnownProxies.Add(proxy);
