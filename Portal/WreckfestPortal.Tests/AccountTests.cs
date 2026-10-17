@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using WreckfestPortal.Accounts;
 
@@ -209,31 +210,49 @@ public sealed class AccountTests
         Assert.Equal(HttpStatusCode.Conflict, demote.StatusCode);
     }
 
-    // Two admins removing each other at once: the write lock makes the second wait, and by
-    // then its own account is gone, so it is the last admin and is refused.
-    [Fact]
-    public async Task TwoAdminsDeletingEachOtherAtOnce_LeaveOneAdmin()
+    // Two admins, each removing the other at the same moment. Both are signed in when they
+    // start; SQLite's write lock makes one wait until the other commits, and by then it is
+    // the last admin, so it is refused. Without the lock both would go ahead and leave none.
+    [Theory]
+    [InlineData("delete")]
+    [InlineData("lock")]
+    [InlineData("demote")]
+    public async Task TwoAdminsRemovingEachOtherAtOnce_LeaveOneAdmin(string action)
     {
-        await using var host = await AccountTestHost.StartAsync();
-        await host.CreateAdminAsync();
-        using var admin = await host.SignInAsync("admin");
-        var other = await CreateUserAsync(admin, NewUser("other", true));
-        var me = await admin.Http.GetFromJsonAsync<JsonElement>("/api/auth/me", Ct);
-        using var otherBrowser = await host.SignInAsync("other");
+        var rendezvous = new TransactionRendezvous();
+        await using var host = await AccountTestHost.StartAsync(services =>
+            services.ConfigureDbContext<PortalDbContext>(options => options.AddInterceptors(rendezvous)));
+        await host.CreateAdminAsync("first");
+        await host.CreateAdminAsync("second");
+        using var first = await host.SignInAsync("first");
+        using var second = await host.SignInAsync("second");
+        var firstId = (await first.Http.GetFromJsonAsync<JsonElement>("/api/auth/me", Ct)).GetProperty("id").GetString();
+        var secondId = (await second.Http.GetFromJsonAsync<JsonElement>("/api/auth/me", Ct)).GetProperty("id").GetString();
 
-        var results = await Task.WhenAll(
-            admin.Http.DeleteAsync("/api/users/" + other.GetProperty("id").GetString(), Ct),
-            otherBrowser.Http.DeleteAsync("/api/users/" + me.GetProperty("id").GetString(), Ct));
+        rendezvous.Arm();
+        var responses = await Task.WhenAll(
+            Remove(first, secondId!, "second"),
+            Remove(second, firstId!, "first"));
 
-        Assert.Single(results, r => r.StatusCode == HttpStatusCode.NoContent);
-        using var client = host.CreateClient();
+        Assert.True(rendezvous.Met, "The two requests did not overlap.");
+        var statuses = responses.Select(r => r.StatusCode).Order().ToList();
+        var done = action == "delete" ? HttpStatusCode.NoContent : HttpStatusCode.OK;
+        Assert.Equal(new[] { done, HttpStatusCode.Conflict }.Order(), statuses);
         using var scope = host.App.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PortalDbContext>();
-        Assert.Equal(1, db.Users.Count(u => u.IsAdmin));
-        foreach (var result in results)
+        var admins = db.Users.Where(u => u.IsAdmin).AsEnumerable().Where(u => u.LockoutEnd != DateTimeOffset.MaxValue);
+        Assert.Single(admins);
+        foreach (var response in responses)
         {
-            result.Dispose();
+            response.Dispose();
         }
+
+        Task<HttpResponseMessage> Remove(AccountTestHost.Browser by, string id, string userName) => action switch
+        {
+            "delete" => by.Http.DeleteAsync("/api/users/" + id, Ct),
+            "lock" => by.Http.PostAsync("/api/users/" + id + "/lock", content: null, Ct),
+            _ => by.Http.PutAsJsonAsync("/api/users/" + id, new { userName, email = userName + "@example.com", isAdmin = false }, Ct),
+        };
     }
 
     [Fact]

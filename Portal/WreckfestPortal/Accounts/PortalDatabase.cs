@@ -17,10 +17,15 @@ public sealed class PortalDatabase(string path)
     /// <summary>The keys that protect the sign-in cookies. Deleting them signs everyone out.</summary>
     public string KeysFolder => System.IO.Path.Combine(System.IO.Path.GetDirectoryName(Path) ?? ".", "keys");
 
+    /// <summary>
+    /// A relative <see cref="PortalOptions.DatabasePath"/> is relative to the exe's folder, not
+    /// the working folder: the service starts in System32, and <c>create-admin</c> wherever it
+    /// is run from, and both must open the same database.
+    /// </summary>
     public static PortalDatabase Resolve(PortalOptions options, string baseDirectory) =>
         new(string.IsNullOrWhiteSpace(options.DatabasePath)
             ? System.IO.Path.Combine(baseDirectory, DefaultFolder, DefaultFile)
-            : Environment.ExpandEnvironmentVariables(options.DatabasePath));
+            : System.IO.Path.Combine(baseDirectory, Environment.ExpandEnvironmentVariables(options.DatabasePath)));
 
     /// <summary>Creates the database, or brings it up to date, before anything uses it.</summary>
     public static async Task MigrateAsync(IServiceProvider services, CancellationToken cancellationToken = default)

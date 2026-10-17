@@ -112,6 +112,9 @@ public static class ControllerSite
     /// </summary>
     private sealed class ControllerTransformer(PathString prefix) : HttpTransformer
     {
+        /// <summary>What every cookie of the portal's own is named with (Accounts/PortalAccounts.cs).</summary>
+        private const string PortalCookiePrefix = ".WreckfestPortal.";
+
         private static readonly string[] ForwardingHeaders =
         [
             "Forwarded", "X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host", "X-Forwarded-Prefix",
@@ -142,6 +145,24 @@ public static class ControllerSite
 
             proxyRequest.Headers.TryAddWithoutValidation("X-Forwarded-Proto", httpContext.Request.Scheme);
             proxyRequest.Headers.TryAddWithoutValidation("X-Forwarded-Prefix", prefix.ToUriComponent());
+
+            // The portal's own sign-in and antiforgery cookies belong to the whole site, so
+            // the browser sends them here too. They are the portal's credentials, never a
+            // controller's business: a controller that kept one could act as that user on
+            // the portal. The controller's own cookies go through.
+            if (proxyRequest.Headers.TryGetValues("Cookie", out var cookies))
+            {
+                var kept = cookies
+                    .SelectMany(header => header.Split(';'))
+                    .Select(cookie => cookie.Trim())
+                    .Where(cookie => cookie.Length > 0 && !cookie.StartsWith(PortalCookiePrefix, StringComparison.Ordinal))
+                    .ToList();
+                proxyRequest.Headers.Remove("Cookie");
+                if (kept.Count > 0)
+                {
+                    proxyRequest.Headers.TryAddWithoutValidation("Cookie", string.Join("; ", kept));
+                }
+            }
         }
     }
 }

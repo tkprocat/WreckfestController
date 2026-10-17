@@ -26,7 +26,7 @@ internal sealed class AccountTestHost : IAsyncDisposable
 
     public WebApplication App { get; }
 
-    public static async Task<AccountTestHost> StartAsync()
+    public static async Task<AccountTestHost> StartAsync(Action<IServiceCollection>? configureServices = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "wfc-portal-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(Path.Combine(root, "wwwroot"));
@@ -47,6 +47,7 @@ internal sealed class AccountTestHost : IAsyncDisposable
         PortalApp.ConfigureServices(builder.Services, builder.Configuration);
         builder.Services.AddHttpClient(ServerPoller.HttpClientName).ConfigurePrimaryHttpMessageHandler(() => new FakeController());
         builder.Services.AddSingleton<IStartupFilter, PeerAddressStartupFilter>();
+        configureServices?.Invoke(builder.Services);
 
         var app = builder.Build();
         PortalApp.ConfigurePipeline(app);

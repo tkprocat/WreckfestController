@@ -133,6 +133,32 @@ public sealed class ControllerSiteTests : IDisposable
         Assert.Null(forwarded.Header("Forwarded"));
     }
 
+    // The portal's sign-in is the portal's: a controller that kept it could act as that user there.
+    [Fact]
+    public async Task ThePortalsOwnCookies_AreNotPassedOn_TheControllersAre()
+    {
+        await using var app = await StartAsync();
+        using var client = Client(app);
+        client.DefaultRequestHeaders.Add("Cookie", ".WreckfestPortal.Auth=secret; sid=1; .WreckfestPortal.AuthC1=more; .WreckfestPortal.Antiforgery=x; other=2");
+
+        using var response = await client.GetAsync("/tvtp2/api/auth/state", Ct);
+
+        var forwarded = Assert.Single(_controller.Requests);
+        Assert.Equal("sid=1; other=2", forwarded.Header("Cookie"));
+    }
+
+    [Fact]
+    public async Task WithOnlyThePortalsCookies_NoCookieIsPassedOn()
+    {
+        await using var app = await StartAsync();
+        using var client = Client(app);
+        client.DefaultRequestHeaders.Add("Cookie", ".WreckfestPortal.Auth=secret");
+
+        using var response = await client.GetAsync("/tvtp2/api/auth/state", Ct);
+
+        Assert.Null(Assert.Single(_controller.Requests).Header("Cookie"));
+    }
+
     [Fact]
     public async Task BehindATrustedProxy_TheVisitorItSpeaksFor_IsPassedOn()
     {

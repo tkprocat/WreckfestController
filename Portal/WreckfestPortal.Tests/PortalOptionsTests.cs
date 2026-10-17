@@ -23,6 +23,20 @@ public sealed class PortalOptionsTests
         Assert.Equal("/tvtp2/", Server().Path);
     }
 
+    // The service starts in System32 and create-admin wherever it is run: both must open
+    // the same database.
+    [Theory]
+    [InlineData(null, @"C:\Portal\data\portal.db")]
+    [InlineData(@"accounts\portal.db", @"C:\Portal\accounts\portal.db")]
+    [InlineData(@"D:\Data\portal.db", @"D:\Data\portal.db")]
+    public void TheDatabasePath_IsResolvedAgainstTheExesFolder(string? configured, string expected)
+    {
+        var database = Accounts.PortalDatabase.Resolve(new PortalOptions { DatabasePath = configured }, @"C:\Portal");
+
+        Assert.Equal(expected, database.Path);
+        Assert.Equal(Path.Combine(Path.GetDirectoryName(expected)!, "keys"), database.KeysFolder);
+    }
+
     [Theory]
     [InlineData("tv tp2", "not usable as a path")]
     [InlineData("tvtp2/admin", "not usable as a path")]
