@@ -40,7 +40,9 @@ public static class CreateAdminCommand
         using var host = builder.Build();
 
         var interactive = ReferenceEquals(input, Console.In) && !Console.IsInputRedirected;
-        var password = interactive ? ConfirmPassword(ReadHidden, output) : input.ReadLine();
+        // Null only for a confirmation that did not match, which has said so; no input at all is
+        // no password.
+        var password = interactive ? ConfirmPassword(ReadHidden, output) : input.ReadLine() ?? "";
         if (password is null)
         {
             return 1;

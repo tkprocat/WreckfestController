@@ -309,4 +309,17 @@ public sealed class AccountTests
         Assert.Null(password);
         Assert.Contains("do not match", output.ToString(), StringComparison.Ordinal);
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("\n")]
+    public async Task CreateAdmin_WithNoPasswordPipedIn_SaysSo(string piped)
+    {
+        using var output = new StringWriter();
+
+        var exit = await CreateAdminCommand.RunAsync(["create-admin", "admin", "admin@example.com"], new StringReader(piped), output);
+
+        Assert.Equal(1, exit);
+        Assert.Contains("No password given.", output.ToString(), StringComparison.Ordinal);
+    }
 }
