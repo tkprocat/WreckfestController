@@ -284,4 +284,29 @@ public sealed class AccountTests
         Assert.Equal(1, exit);
         Assert.Contains("10", output.ToString(), StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void CreateAdmin_AsksTwice_AndTakesAPasswordThatMatches()
+    {
+        var answers = new Queue<string>(["correct horse battery", "correct horse battery"]);
+        var prompts = new List<string>();
+
+        var password = CreateAdminCommand.ConfirmPassword(prompt => { prompts.Add(prompt); return answers.Dequeue(); }, TextWriter.Null);
+
+        Assert.Equal("correct horse battery", password);
+        Assert.Equal(["Password: ", "Confirm password: "], prompts);
+    }
+
+    // The password is never shown, so a typo in it would otherwise be found only at sign-in.
+    [Fact]
+    public void CreateAdmin_RefusesPasswordsThatDiffer()
+    {
+        var answers = new Queue<string>(["correct horse battery", "correct horse batery"]);
+        using var output = new StringWriter();
+
+        var password = CreateAdminCommand.ConfirmPassword(_ => answers.Dequeue(), output);
+
+        Assert.Null(password);
+        Assert.Contains("do not match", output.ToString(), StringComparison.Ordinal);
+    }
 }
