@@ -6,7 +6,7 @@ namespace WreckfestPortal.Accounts;
 
 /// <summary>
 /// <c>WreckfestPortal.exe create-admin &lt;username&gt; &lt;email&gt;</c>: creates a global
-/// admin, asking for the password. Nothing reachable over HTTP creates an account without a
+/// admin, asking for the password twice. Nothing reachable over HTTP creates an account without a
 /// signed-in admin, so sitting at the portal's PC is the proof of ownership. It also works
 /// as recovery when every admin is locked out or has lost their password.
 /// </summary>
@@ -23,7 +23,7 @@ public static class CreateAdminCommand
         if (args.Length != 3)
         {
             await output.WriteLineAsync($"Usage: WreckfestPortal.exe {Name} <username> <email>");
-            await output.WriteLineAsync("Asks for the password, or reads it from the first line of input.");
+            await output.WriteLineAsync("Asks for the password twice, or reads it from the first line of input.");
             return 2;
         }
 
@@ -39,8 +39,16 @@ public static class CreateAdminCommand
         builder.Logging.ClearProviders();
         using var host = builder.Build();
 
-        var password = ReadPassword(input, output);
-        if (string.IsNullOrEmpty(password))
+        var interactive = ReferenceEquals(input, Console.In) && !Console.IsInputRedirected;
+        // Null only for a confirmation that did not match, which has said so; no input at all is
+        // no password.
+        var password = interactive ? ConfirmPassword(ReadHidden, output) : input.ReadLine() ?? "";
+        if (password is null)
+        {
+            return 1;
+        }
+
+        if (password.Length == 0)
         {
             await output.WriteLineAsync("No password given.");
             return 1;
@@ -72,15 +80,32 @@ public static class CreateAdminCommand
         return 0;
     }
 
-    /// <summary>Without echo at a console; the first line otherwise, so a script can pipe it in.</summary>
-    private static string? ReadPassword(TextReader input, TextWriter output)
+    /// <summary>
+    /// Asks for the password twice, so a typo cannot go unseen: it is never shown. Null, having
+    /// said so, when the two differ.
+    /// </summary>
+    /// <param name="ask">Shows the prompt and reads an answer without echo.</param>
+    public static string? ConfirmPassword(Func<string, string> ask, TextWriter output)
     {
-        if (!ReferenceEquals(input, Console.In) || Console.IsInputRedirected)
+        var password = ask("Password: ");
+        if (password.Length == 0)
         {
-            return input.ReadLine();
+            return password;
         }
 
-        output.Write("Password: ");
+        if (ask("Confirm password: ") != password)
+        {
+            output.WriteLine("The passwords do not match. Nothing was created.");
+            return null;
+        }
+
+        return password;
+    }
+
+    /// <summary>Shows <paramref name="prompt"/> and reads a line at the console without echo.</summary>
+    private static string ReadHidden(string prompt)
+    {
+        Console.Write(prompt);
         var password = new StringBuilder();
         for (var key = Console.ReadKey(intercept: true); key.Key != ConsoleKey.Enter; key = Console.ReadKey(intercept: true))
         {
@@ -97,7 +122,7 @@ public static class CreateAdminCommand
             }
         }
 
-        output.WriteLine();
+        Console.WriteLine();
         return password.ToString();
     }
 }

@@ -243,7 +243,7 @@ There is no sign-up page. Create the first admin on the portal's PC:
 C:\WreckfestPortal\WreckfestPortal.exe create-admin <username> <email>
 ```
 
-It asks for the password (or reads it from the first line of input). Run it again whenever
+It asks for the password twice (or reads it once from the first line of input). Run it again whenever
 you need another admin, for example when every admin is locked out or has lost their
 password.
 
